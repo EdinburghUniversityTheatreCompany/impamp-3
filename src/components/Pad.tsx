@@ -1,5 +1,26 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useDropzone, Accept } from 'react-dropzone';
+
+// Import the default key mapping function
+const getDefaultKeyForPadIndex = (padIndex: number, cols: number = 8): string | undefined => {
+  // Define keyboard rows with their keys
+  const keyboardRows = [
+    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';'],
+    ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
+  ];
+  
+  // Calculate row and column for the pad index
+  const row = Math.floor(padIndex / cols);
+  const col = padIndex % cols;
+  
+  // Check if we have a key defined for this position
+  if (row < keyboardRows.length && col < keyboardRows[row].length) {
+    return keyboardRows[row][col];
+  }
+  
+  return undefined; // No default key for this position
+};
 
 interface PadProps {
   id: string; // Unique identifier for the pad element itself
@@ -27,6 +48,10 @@ const Pad: React.FC<PadProps> = ({
   onDropAudio,
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
+  // Get the default key binding for this pad position if no custom binding is set
+  const displayKeyBinding = useMemo(() => {
+    return keyBinding || getDefaultKeyForPadIndex(padIndex);
+  }, [keyBinding, padIndex]);
   const handleDrop = React.useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
@@ -91,20 +116,20 @@ const Pad: React.FC<PadProps> = ({
           onClick();
         }
       }}
-      aria-label={`Sound pad ${padIndex + 1}${name !== 'Empty Pad' ? `: ${name}` : ''}${keyBinding ? `, key ${keyBinding}` : ''}`}
+      aria-label={`Sound pad ${padIndex + 1}${name !== 'Empty Pad' ? `: ${name}` : ''}${displayKeyBinding ? `, key ${displayKeyBinding}` : ''}`}
     >
       {/* Input element required by react-dropzone */}
       <input {...getInputProps()} />
 
-      {/* Key Binding Display */}
-      {keyBinding && (
-        <span className="absolute top-1 left-1 text-xs font-mono bg-gray-300 dark:bg-gray-600 px-1 rounded z-10">
-          {keyBinding}
+      {/* Pad Name Display - with better wrapping */}
+      <span className="text-sm font-medium break-all w-full text-center z-10">{name}</span>
+
+      {/* Key Binding Display at the bottom - show default key binding if no custom binding */}
+      {displayKeyBinding && (
+        <span className="absolute bottom-1 left-1/2 transform -translate-x-1/2 text-xs font-mono bg-gray-300 dark:bg-gray-600 px-1 rounded z-10">
+          {displayKeyBinding}
         </span>
       )}
-
-      {/* Pad Name Display */}
-      <span className="text-sm font-medium break-words z-10">{name}</span>
 
       {/* Progress bar with more dramatic styling (only shown when playing) */}
       {isPlaying && (

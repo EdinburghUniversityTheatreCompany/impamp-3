@@ -3,6 +3,28 @@ import { useProfileStore } from '@/store/profileStore';
 import { PadConfiguration, getPadConfigurationsForProfilePage } from '@/lib/db';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio } from '@/lib/audio';
 
+// Define a key mapping for a standard keyboard layout
+// This provides the default key bindings for pads based on their index
+const getDefaultKeyForPadIndex = (padIndex: number, cols: number = 8): string | undefined => {
+  // Define keyboard rows with their keys
+  const keyboardRows = [
+    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';'],
+    ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
+  ];
+  
+  // Calculate row and column for the pad index
+  const row = Math.floor(padIndex / cols);
+  const col = padIndex % cols;
+  
+  // Check if we have a key defined for this position
+  if (row < keyboardRows.length && col < keyboardRows[row].length) {
+    return keyboardRows[row][col];
+  }
+  
+  return undefined; // No default key for this position
+};
+
 // Re-use the audio buffer cache from PadGrid (consider moving cache to audio.ts or a context)
 const audioBufferCache = new Map<number, AudioBuffer | null>();
 
@@ -88,16 +110,35 @@ export function useKeyboardListener() {
         return;
     }
 
-    // Find pad config matching the key binding
+    // First try to find a pad with a custom key binding that matches
     let matchedConfig: PadConfiguration | null = null;
     let matchedPadIndex: number = -1;
 
+    // Check for custom key bindings first
     for (const [padIndex, config] of padConfigsRef.current.entries()) {
         // Case-insensitive comparison might be desirable depending on requirements
         if (config.keyBinding && config.keyBinding.toLowerCase() === pressedKey.toLowerCase()) {
             matchedConfig = config;
             matchedPadIndex = padIndex;
             break;
+        }
+    }
+
+    // If no custom key binding found, check for default key bindings
+    if (!matchedConfig) {
+        // Get all pad configurations for the current page
+        const allPadConfigs = await getPadConfigurationsForProfilePage(activeProfileId as number, currentPageIndex);
+        
+        // Find pad index that would have this default key
+        for (let i = 0; i < allPadConfigs.length; i++) {
+            const config = allPadConfigs[i];
+            const defaultKey = getDefaultKeyForPadIndex(config.padIndex);
+            
+            if (defaultKey && defaultKey.toLowerCase() === pressedKey.toLowerCase()) {
+                matchedConfig = config;
+                matchedPadIndex = config.padIndex;
+                break;
+            }
         }
     }
 

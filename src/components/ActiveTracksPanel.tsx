@@ -74,6 +74,11 @@ const ActiveTracksPanel: React.FC = () => {
           ))}
         </div>
       )}
+      
+      {/* Help text for ESC panic button */}
+      <div className="mt-3 pt-2 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200 dark:border-gray-700">
+        Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">ESC</kbd> to stop all sounds
+      </div>
     </div>
   );
 };
