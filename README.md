@@ -79,7 +79,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
     - [x] Flicker when switching banks is annoying
 - [x] Display the current playing tracks in a list + their remaining playtime + a button to stop them right now
     - [x] The stop button stops the sound but not remove from 
-- [ ] esc as panic stop playing button
+- [x] esc as panic stop playing button
 - [ ] dedicated keyboard shortcut for each pad (q w e r t y u i o p a s d f g etc)
 - [ ] Progress bars in the pads
 - [ ] Big delay when hitting play

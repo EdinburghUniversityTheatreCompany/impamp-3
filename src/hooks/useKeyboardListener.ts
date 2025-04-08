@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useProfileStore } from '@/store/profileStore';
 import { PadConfiguration, getPadConfigurationsForProfilePage } from '@/lib/db';
-import { loadAndDecodeAudio, playAudio, resumeAudioContext } from '@/lib/audio';
+import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio } from '@/lib/audio';
 
 // Re-use the audio buffer cache from PadGrid (consider moving cache to audio.ts or a context)
 const audioBufferCache = new Map<number, AudioBuffer | null>();
@@ -60,6 +60,14 @@ export function useKeyboardListener() {
     }
 
     const pressedKey = event.key; // e.g., "F1", "a", "1"
+    
+    // Handle Escape key as "panic button" to stop all audio
+    if (pressedKey === 'Escape') {
+        event.preventDefault();
+        console.log('Escape key pressed - stopping all audio playback');
+        stopAllAudio();
+        return;
+    }
     
     // Check if key is a number 0-9 for bank switching
     const numbersRegex = /^[0-9]$/;

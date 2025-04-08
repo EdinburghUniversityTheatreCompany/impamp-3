@@ -158,6 +158,19 @@ export function resumeAudioContext(): void {
   }
 }
 
+// Stop all currently playing audio tracks
+export function stopAllAudio(): void {
+  // Get all keys from activeTracks Map
+  const keys = Array.from(activeTracks.keys());
+  
+  // Stop each track
+  keys.forEach(key => {
+    stopAudio(key);
+  });
+  
+  console.log(`Stopped all active tracks (${keys.length} tracks)`);
+}
+
 // Get information about currently active tracks with timing information
 export function getActiveTracks(): Array<{
   key: string;
