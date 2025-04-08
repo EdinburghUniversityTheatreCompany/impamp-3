@@ -56,7 +56,12 @@ This document outlines the visual and interaction design guidelines for the ImpA
 ## 5. Interaction Patterns
 
 *   **Drag and Drop:** Visual feedback during drag-over and on drop.
-*   **Keyboard Navigation:** TBD
+*   **Keyboard Navigation:** Number keys 0-9 navigate between banks/pages.
+*   **Bank Navigation:** 
+    *   Keyboard shortcuts: Number keys 0-9 switch between banks/pages
+    *   Visual indicator: Current bank number is displayed prominently
+    *   UI buttons: Clickable numbered buttons (0-9) with active state highlighting
+    *   Bank switching is immediate with no transition animation
 *   **Sync Status:** Clear visual indicators for syncing, success, conflicts, errors.
 
 *(This document will be updated as design decisions are made during development.)*

@@ -25,7 +25,6 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   const totalPads = rows * cols;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
-  const [isLoading, setIsLoading] = useState(true);
   const [playingPadIndex, setPlayingPadIndex] = useState<number | null>(null);
   const hasInteracted = useRef(false);
   // Removed isDragging state, will handle visual feedback in Pad component
@@ -51,10 +50,12 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     const loadConfigs = async () => {
       if (activeProfileId === null) {
         setPadConfigs(new Map());
-        setIsLoading(false);
         return;
       }
-      setIsLoading(true);
+      
+      // Start loading but don't clear the previous configs yet
+      // This keeps existing visuals while loading new data
+      
       try {
         console.log(`Loading pad configs for profile ${activeProfileId}, page ${currentPageIndex}`);
         const configs = await getPadConfigurationsForProfilePage(activeProfileId, currentPageIndex);
@@ -62,18 +63,18 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
         configs.forEach(config => {
           configMap.set(config.padIndex, config);
         });
+        
+        // Only update the pad configs once the new data is loaded
         setPadConfigs(configMap);
         console.log(`Loaded ${configs.length} pad configs.`);
       } catch (error) {
         console.error("Failed to load pad configurations:", error);
-        // Handle error state in UI?
-      } finally {
-        setIsLoading(false);
+        // Error feedback could be added here
       }
     };
 
     loadConfigs();
-  }, [activeProfileId, currentPageIndex, refreshPadConfigs]); // Add refreshPadConfigs dependency
+  }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
   const handlePadClick = async (padIndex: number) => {
     // Resume AudioContext on first interaction
@@ -194,9 +195,8 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
 
-  if (isLoading) {
-    return <div className="text-center p-10">Loading pad configurations...</div>;
-  }
+  // Always render the grid with the current pad configurations
+  // Don't use a different loading placeholder, which causes flickering
 
   // Generate pad elements based on loaded configs or defaults
   const padElements = Array.from({ length: totalPads }, (_, i) => {

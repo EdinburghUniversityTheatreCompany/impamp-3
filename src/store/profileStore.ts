@@ -4,16 +4,19 @@ import { Profile, getAllProfiles, ensureDefaultProfile } from '@/lib/db';
 interface ProfileState {
   profiles: Profile[];
   activeProfileId: number | null;
+  currentPageIndex: number;  // Track the current bank/page
   isLoading: boolean;
   error: string | null;
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
+  setCurrentPageIndex: (index: number) => void;  // Add method to change banks
   // TODO: Add actions for creating, updating, deleting profiles later
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
   profiles: [],
   activeProfileId: null,
+  currentPageIndex: 0,  // Default to first bank
   isLoading: true,
   error: null,
 
@@ -53,6 +56,16 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       // TODO: Trigger loading of pad configurations for the new active profile
     } else {
         console.warn(`Profile with ID ${id} not found in the store. Active profile not changed.`);
+    }
+  },
+  
+  setCurrentPageIndex: (index: number) => {
+    // Ensure index is within valid bounds (0-9 for 10 banks)
+    if (index >= 0 && index <= 9) {
+      console.log(`Switching to bank/page: ${index}`);
+      set({ currentPageIndex: index });
+    } else {
+      console.warn(`Invalid bank/page index: ${index}. Must be between 0-9.`);
     }
   },
 }));

@@ -12,10 +12,9 @@ const DEBOUNCE_TIME_MS = 100; // Adjust as needed
 
 export function useKeyboardListener() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  // Assuming PadGrid manages current page index, we might need a shared state later.
-  // For now, let's assume page 0 for the listener.
-  // TODO: Get currentPageIndex from a shared state/context later.
-  const currentPageIndex = 0;
+  // Get current page index and setter from store
+  const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
+  const setCurrentPageIndex = useProfileStore((state) => state.setCurrentPageIndex);
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
   // We need access to the current pad configurations for the active page
@@ -61,6 +60,20 @@ export function useKeyboardListener() {
     }
 
     const pressedKey = event.key; // e.g., "F1", "a", "1"
+    
+    // Check if key is a number 0-9 for bank switching
+    const numbersRegex = /^[0-9]$/;
+    if (numbersRegex.test(pressedKey)) {
+        event.preventDefault();
+        const bankIndex = parseInt(pressedKey, 10);
+        
+        // Update the bank index in the store
+        console.log(`Bank switching key pressed: ${pressedKey}, switching to bank ${bankIndex}`);
+        setCurrentPageIndex(bankIndex);
+        
+        // Return early to prevent pad triggering with the same key
+        return;
+    }
 
     // Check debounce
     if (keyDebounceMap.has(pressedKey)) {
@@ -123,7 +136,7 @@ export function useKeyboardListener() {
             console.error(`Error during keyboard playback for key "${pressedKey}":`, error);
         }
     }
-  }, [activeProfileId, currentPageIndex]); // Dependencies for the callback
+  }, [activeProfileId, currentPageIndex, setCurrentPageIndex]); // Dependencies for the callback
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);

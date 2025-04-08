@@ -75,13 +75,15 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [x] Pad interaction with drag-and-drop
 - [x] Keyboard shortcuts
 - [ ] Page navigation
+    - [x] Display a browser tab style navigation of banks
+    - [x] Flicker when switching banks is annoying
 - [ ] Display the current playing tracks in a list + their remaining playtime + a button to stop them right now
 - [ ] esc as panic stop playing button
-- [ ] dedicated keyboard shortcut for each pad (1, 2, 3, 4, 5, 6, 7, next row q w e r t, next row a s d f, etc)
+- [ ] dedicated keyboard shortcut for each pad (q w e r t y u i o p a s d f g etc)
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration
-- [ ] PWA configuration
+- [ ] PWA configuration, make sure it works without internet connection
 - [ ] UI refinement & theming
 - [ ] Docker containerization
 
