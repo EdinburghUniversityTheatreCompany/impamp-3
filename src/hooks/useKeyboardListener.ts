@@ -127,7 +127,18 @@ export function useKeyboardListener() {
                 // Note: Keyboard doesn't easily support "stop on press again" like click does.
                 // It will always restart the sound or play over if not stopped.
                 // We choose to restart by calling playAudio which implicitly stops the previous one with the same key.
-                playAudio(buffer, playbackKey);
+                playAudio(
+                    buffer, 
+                    playbackKey,
+                    {
+                        name: matchedConfig.name || `Pad ${matchedPadIndex + 1}`,
+                        padInfo: {
+                            profileId: activeProfileId as number,
+                            pageIndex: currentPageIndex,
+                            padIndex: matchedPadIndex
+                        }
+                    }
+                );
                 // Optionally add visual feedback for keyboard activation?
             } else {
                 console.error(`Failed to load/decode audio for key "${pressedKey}", file ID: ${audioFileId}`);

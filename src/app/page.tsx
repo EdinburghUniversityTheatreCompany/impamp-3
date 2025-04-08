@@ -1,6 +1,7 @@
 'use client';
 
 import PadGrid from '@/components/PadGrid';
+import ActiveTracksPanel from '@/components/ActiveTracksPanel';
 import { useProfileStore } from '@/store/profileStore';
 
 export default function Home() {
@@ -16,39 +17,46 @@ export default function Home() {
         </h1>
       </div>
       
-      {/* Fixed height content container */}
-      <div className="w-full max-w-6xl flex-1 flex flex-col">
-        {/* Bank/Page Indicator */}
-        <div className="flex justify-between items-center mb-4">
-          <div className="text-gray-700 dark:text-gray-300">
-            <span className="font-medium">Current Bank: </span>
-            <span className="text-xl font-bold">{currentPageIndex}</span>
-            <span className="text-sm ml-2 text-gray-500">(Press 0-9 to switch banks)</span>
+      {/* Content container with sidebar layout */}
+      <div className="w-full max-w-6xl flex-1 flex flex-row gap-4">
+        {/* Main content area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Bank/Page Indicator */}
+          <div className="flex justify-between items-center mb-4">
+            <div className="text-gray-700 dark:text-gray-300">
+              <span className="font-medium">Current Bank: </span>
+              <span className="text-xl font-bold">{currentPageIndex}</span>
+              <span className="text-sm ml-2 text-gray-500">(Press 0-9 to switch banks)</span>
+            </div>
+            
+            {/* Bank Selector Buttons */}
+            <div className="flex space-x-2">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((bank) => (
+                <button
+                  key={bank}
+                  onClick={() => useProfileStore.getState().setCurrentPageIndex(bank)}
+                  className={`w-8 h-8 rounded flex items-center justify-center text-sm font-medium transition-colors
+                    ${bank === currentPageIndex
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                    }`}
+                  aria-label={`Switch to bank ${bank}`}
+                >
+                  {bank}
+                </button>
+              ))}
+            </div>
           </div>
           
-          {/* Bank Selector Buttons */}
-          <div className="flex space-x-2">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((bank) => (
-              <button
-                key={bank}
-                onClick={() => useProfileStore.getState().setCurrentPageIndex(bank)}
-                className={`w-8 h-8 rounded flex items-center justify-center text-sm font-medium transition-colors
-                  ${bank === currentPageIndex
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                  }`}
-                aria-label={`Switch to bank ${bank}`}
-              >
-                {bank}
-              </button>
-            ))}
-          </div>
+          {/* Pass the current page index to PadGrid */}
+          <PadGrid rows={4} cols={8} currentPageIndex={currentPageIndex} />
         </div>
         
-        {/* Pass the current page index to PadGrid */}
-        <PadGrid rows={4} cols={8} currentPageIndex={currentPageIndex} />
+        {/* Right sidebar for active tracks */}
+        <div className="w-80 sticky top-0">
+          <ActiveTracksPanel />
+        </div>
       </div>
-      {/* TODO: Add Footer or other UI elements later */}
     </main>
   );
 }

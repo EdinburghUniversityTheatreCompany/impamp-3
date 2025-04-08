@@ -77,9 +77,12 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [ ] Page navigation
     - [x] Display a browser tab style navigation of banks
     - [x] Flicker when switching banks is annoying
-- [ ] Display the current playing tracks in a list + their remaining playtime + a button to stop them right now
+- [x] Display the current playing tracks in a list + their remaining playtime + a button to stop them right now
+    - [x] The stop button stops the sound but not remove from 
 - [ ] esc as panic stop playing button
 - [ ] dedicated keyboard shortcut for each pad (q w e r t y u i o p a s d f g etc)
+- [ ] Progress bars in the pads
+- [ ] Big delay when hitting play
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration

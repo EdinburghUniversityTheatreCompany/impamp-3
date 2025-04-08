@@ -10,6 +10,7 @@ interface PadProps {
   name?: string;
   isConfigured: boolean;
   isPlaying: boolean;
+  playProgress?: number; // New prop to show play progress (0 to 1)
   onClick: () => void;
   onDropAudio: (acceptedFiles: File[], padIndex: number) => Promise<void>; // Callback for drop
 }
@@ -17,14 +18,14 @@ interface PadProps {
 const Pad: React.FC<PadProps> = ({
   id,
   padIndex,
-  profileId,
-  pageIndex,
   keyBinding,
   name = 'Empty Pad',
   isConfigured,
   isPlaying,
+  playProgress = 0,
   onClick,
   onDropAudio,
+  // profileId and pageIndex are passed but not used directly in this component
 }) => {
   const handleDrop = React.useCallback(
     (acceptedFiles: File[]) => {
@@ -42,6 +43,13 @@ const Pad: React.FC<PadProps> = ({
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
   });
+
+  // Log props for debugging
+  React.useEffect(() => {
+    if (isPlaying) {
+      console.log(`[Pad ${padIndex}] Playing: ${isPlaying}, Progress: ${playProgress}`);
+    }
+  }, [isPlaying, playProgress, padIndex]);
 
   // --- Styling ---
   const baseStyle =
@@ -97,6 +105,16 @@ const Pad: React.FC<PadProps> = ({
 
       {/* Pad Name Display */}
       <span className="text-sm font-medium break-words z-10">{name}</span>
+
+      {/* Progress bar with more dramatic styling (only shown when playing) */}
+      {isPlaying && (
+        <div className="absolute bottom-0 left-0 right-0 h-4 bg-gray-200 dark:bg-gray-700 z-50">
+          <div 
+            className="h-full bg-green-500 transition-all duration-100" 
+            style={{ width: `${playProgress * 100}%` }}
+          />
+        </div>
+      )}
 
       {/* Dropzone overlay message */}
       {isDragActive && (

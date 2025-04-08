@@ -3,8 +3,21 @@ import { getAudioFile } from './db';
 // Detect client-side environment
 const isClient = typeof window !== 'undefined';
 
+// Define interface for active track information
+export interface ActiveTrack {
+  source: AudioBufferSourceNode;
+  name: string;
+  startTime: number;
+  duration: number;
+  padInfo: {
+    profileId: number;
+    pageIndex: number;
+    padIndex: number;
+  };
+}
+
 let audioContext: AudioContext | null = null;
-const activeSources: Map<string, AudioBufferSourceNode> = new Map(); // Track active sounds by a unique key (e.g., padId)
+const activeTracks: Map<string, ActiveTrack> = new Map(); // Enhanced tracking with metadata
 
 // Define an interface for window with potential webkitAudioContext
 interface ExtendedWindow extends Window {
@@ -59,10 +72,18 @@ export async function loadAndDecodeAudio(audioFileId: number): Promise<AudioBuff
   }
 }
 
-// Play an AudioBuffer
+// Play an AudioBuffer with enhanced metadata
 export function playAudio(
     buffer: AudioBuffer,
     playbackKey: string, // Unique key to identify this playback instance (e.g., padId)
+    metadata: {
+      name: string;
+      padInfo: {
+        profileId: number;
+        pageIndex: number;
+        padIndex: number;
+      }
+    },
     volume: number = 1.0 // Volume from 0.0 to 1.0
 ): AudioBufferSourceNode | null {
   try {
@@ -82,12 +103,21 @@ export function playAudio(
 
     source.onended = () => {
       // Clean up when playback finishes naturally
-      activeSources.delete(playbackKey);
+      activeTracks.delete(playbackKey);
       console.log(`Playback finished for key: ${playbackKey}`);
     };
 
     source.start(0);
-    activeSources.set(playbackKey, source); // Track the new source
+    
+    // Store enhanced track information
+    activeTracks.set(playbackKey, {
+      source,
+      name: metadata.name,
+      startTime: context.currentTime,
+      duration: buffer.duration,
+      padInfo: metadata.padInfo
+    });
+    
     console.log(`Playback started for key: ${playbackKey}`);
     return source;
   } catch (error) {
@@ -98,19 +128,20 @@ export function playAudio(
 
 // Stop audio playback associated with a specific key
 export function stopAudio(playbackKey: string): void {
-  const source = activeSources.get(playbackKey);
-  if (source) {
+  const track = activeTracks.get(playbackKey);
+  if (track) {
     try {
-      source.stop(0);
-      // onended callback will handle cleanup from activeSources map
-      console.log(`Playback stopped for key: ${playbackKey}`);
+      track.source.stop(0);
+      // Explicitly delete from activeTracks immediately - don't wait for onended
+      activeTracks.delete(playbackKey);
+      console.log(`Playback stopped and removed for key: ${playbackKey}`);
     } catch (error) {
       // Ignore errors if the source was already stopped or in an invalid state
       if ((error as DOMException).name !== 'InvalidStateError') {
           console.error(`Error stopping audio for key ${playbackKey}:`, error);
       }
-      // Manually clean up if stop fails or onended doesn't fire
-      activeSources.delete(playbackKey);
+      // Manually clean up if stop fails
+      activeTracks.delete(playbackKey);
     }
   }
 }
@@ -125,6 +156,36 @@ export function resumeAudioContext(): void {
       console.error('Failed to resume AudioContext:', err);
     });
   }
+}
+
+// Get information about currently active tracks with timing information
+export function getActiveTracks(): Array<{
+  key: string;
+  name: string;
+  remainingTime: number;
+  totalDuration: number;
+  progress: number;
+  padInfo: {
+    profileId: number;
+    pageIndex: number;
+    padIndex: number;
+  };
+}> {
+  if (!audioContext) return [];
+  
+  const currentTime = audioContext.currentTime;
+  return Array.from(activeTracks.entries()).map(([key, track]) => {
+    const elapsed = currentTime - track.startTime;
+    const remaining = Math.max(0, track.duration - elapsed);
+    return {
+      key,
+      name: track.name,
+      remainingTime: remaining,
+      totalDuration: track.duration,
+      progress: Math.min(1, elapsed / track.duration),
+      padInfo: track.padInfo
+    };
+  });
 }
 
 // Preload common sounds or handle initial context state if needed

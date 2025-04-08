@@ -9,7 +9,7 @@ import {
   addAudioFile,
   upsertPadConfiguration,
 } from '@/lib/db';
-import { loadAndDecodeAudio, playAudio, stopAudio, resumeAudioContext } from '@/lib/audio';
+import { loadAndDecodeAudio, playAudio, stopAudio, resumeAudioContext, getActiveTracks } from '@/lib/audio';
 // useDropzone will be used in Pad component
 
 interface PadGridProps {
@@ -25,7 +25,8 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   const totalPads = rows * cols;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
-  const [playingPadIndex, setPlayingPadIndex] = useState<number | null>(null);
+  const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
+  const [padProgress, setPadProgress] = useState<Map<number, number>>(new Map());
   const hasInteracted = useRef(false);
   // Removed isDragging state, will handle visual feedback in Pad component
 
@@ -45,6 +46,43 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
       }
   }, [activeProfileId, currentPageIndex]);
 
+
+  // Effect to update pad progress for all playing tracks
+  useEffect(() => {
+    // Always run this effect to update progress for any playing tracks
+    const updateProgress = () => {
+      // Use getActiveTracks to get current progress
+      const tracks = getActiveTracks();
+      const newProgress = new Map<number, number>();
+      const currentlyPlayingPads = new Set<number>();
+      
+      // Debug which tracks are currently active
+      console.log(`[PadGrid] Currently active tracks: ${tracks.length}`);
+      
+      tracks.forEach(track => {
+        const { padInfo, progress } = track;
+        console.log(`[PadGrid] Track: ${track.name}, progress: ${progress}, padIndex: ${padInfo.padIndex}, pageIndex: ${padInfo.pageIndex}`);
+        
+        // Only track progress for pads on the current page
+        if (padInfo.pageIndex === currentPageIndex) {
+          newProgress.set(padInfo.padIndex, progress);
+          currentlyPlayingPads.add(padInfo.padIndex);
+          console.log(`[PadGrid] Added playing pad ${padInfo.padIndex} with progress ${progress}`);
+        }
+      });
+      
+      // Update the set of playing pads
+      if (currentlyPlayingPads.size > 0) {
+        console.log(`[PadGrid] Playing pads: ${Array.from(currentlyPlayingPads).join(', ')}`);
+      }
+      setPlayingPads(currentlyPlayingPads);
+      setPadProgress(newProgress);
+    };
+    
+    // Set interval for updates
+    const intervalId = setInterval(updateProgress, 100);
+    return () => clearInterval(intervalId);
+  }, [currentPageIndex]);
 
   useEffect(() => {
     const loadConfigs = async () => {
@@ -86,14 +124,14 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     const config = padConfigs.get(padIndex);
     const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padIndex}`; // Unique key
 
-    if (playingPadIndex === padIndex) {
+    // Check if this pad is currently playing
+    if (playingPads.has(padIndex)) {
       // Stop currently playing sound if the same pad is clicked again
       stopAudio(playbackKey);
-      setPlayingPadIndex(null);
+      // playingPads will be updated by the effect when getActiveTracks is called
       console.log(`Stopped playback for pad index: ${padIndex}`);
     } else if (config?.audioFileId) {
-      // Play new sound
-      setPlayingPadIndex(padIndex); // Visually indicate playback start
+      // Play new sound - visual feedback will be updated by the effect
       console.log(`Attempting to play audio for pad index: ${padIndex}, file ID: ${config.audioFileId}`);
 
       try {
@@ -110,26 +148,31 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
         }
 
         if (buffer) {
-          const source = playAudio(buffer, playbackKey);
+          const source = playAudio(
+            buffer, 
+            playbackKey,
+            {
+              name: config.name || `Pad ${padIndex + 1}`,
+              padInfo: {
+                profileId: activeProfileId as number,
+                pageIndex: currentPageIndex,
+                padIndex: padIndex
+              }
+            }
+          );
           if (source) {
-            // Use the 'onended' event from the source to clear the playing state
-            source.onended = () => {
-              setPlayingPadIndex((currentIndex) =>
-                currentIndex === padIndex ? null : currentIndex
-              );
-              console.log(`Playback naturally ended for pad index: ${padIndex}`);
-            };
+            // No need to manually handle this anymore as the effect will update the playing pads
+            // based on getActiveTracks which is updated when tracks end
           } else {
-             // Playback failed to start
-             setPlayingPadIndex(null);
+             // Playback failed to start - no need to update state
           }
         } else {
           console.error(`Failed to load or decode audio for file ID: ${config.audioFileId}`);
-          setPlayingPadIndex(null); // Clear playing state if audio fails
+          // No need to manually clear state for failed audio
         }
       } catch (error) {
         console.error(`Error during playback for pad index ${padIndex}:`, error);
-        setPlayingPadIndex(null); // Clear playing state on error
+        // No need to manually clear state on error
       }
     } else {
       console.log(`Pad index ${padIndex} has no audio configured.`);
@@ -203,6 +246,8 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
       const padIndex = i;
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? 'none'}-${currentPageIndex}-${padIndex}`;
+      const isPlaying = playingPads.has(padIndex);
+      const progress = padProgress.get(padIndex) || 0;
 
       return (
           <Pad
@@ -214,7 +259,8 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
               keyBinding={config?.keyBinding}
               name={config?.name}
               isConfigured={!!config?.audioFileId}
-              isPlaying={playingPadIndex === padIndex}
+              isPlaying={isPlaying}
+              playProgress={progress} // Pass the progress
               onClick={() => handlePadClick(padIndex)}
               onDropAudio={handleDropAudio} // Pass drop handler
           />
