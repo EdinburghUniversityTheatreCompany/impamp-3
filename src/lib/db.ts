@@ -198,7 +198,7 @@ export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   return db.get('audioFiles', id);
 }
 
-// Example: Add a profile
+// Add a profile
 export async function addProfile(profile: Omit<Profile, 'id' | 'createdAt' | 'updatedAt'>): Promise<number> {
     const db = await getDb();
     const tx = db.transaction('profiles', 'readwrite');
@@ -219,7 +219,79 @@ export async function addProfile(profile: Omit<Profile, 'id' | 'createdAt' | 'up
     }
 }
 
-// Example: Get all profiles
+// Get a profile by ID
+export async function getProfile(id: number): Promise<Profile | undefined> {
+    const db = await getDb();
+    return db.get('profiles', id);
+}
+
+// Update a profile
+export async function updateProfile(id: number, updates: Partial<Omit<Profile, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    const db = await getDb();
+    const tx = db.transaction('profiles', 'readwrite');
+    const store = tx.objectStore('profiles');
+    
+    try {
+        // Get the existing profile
+        const existingProfile = await store.get(id);
+        if (!existingProfile) {
+            throw new Error(`Profile with id ${id} not found`);
+        }
+        
+        // Update the profile
+        const updatedProfile = {
+            ...existingProfile,
+            ...updates,
+            updatedAt: new Date()
+        };
+        
+        await store.put(updatedProfile);
+        await tx.done;
+        console.log(`Updated profile with id: ${id}`);
+    } catch (error) {
+        console.error(`Failed to update profile ${id}:`, error);
+        throw error;
+    }
+}
+
+// Delete a profile
+export async function deleteProfile(id: number): Promise<void> {
+    const db = await getDb();
+    const tx = db.transaction(['profiles', 'padConfigurations', 'pageMetadata'], 'readwrite');
+    
+    try {
+        // Delete the profile
+        await tx.objectStore('profiles').delete(id);
+        
+        // Delete associated pad configurations
+        const padStore = tx.objectStore('padConfigurations');
+        const padIndex = padStore.index('profileId');
+        let padCursor = await padIndex.openCursor(id);
+        
+        while (padCursor) {
+            await padCursor.delete();
+            padCursor = await padCursor.continue();
+        }
+        
+        // Delete associated page metadata
+        const pageStore = tx.objectStore('pageMetadata');
+        const pageIndex = pageStore.index('profileId');
+        let pageCursor = await pageIndex.openCursor(id);
+        
+        while (pageCursor) {
+            await pageCursor.delete();
+            pageCursor = await pageCursor.continue();
+        }
+        
+        await tx.done;
+        console.log(`Deleted profile with id: ${id} and all associated data`);
+    } catch (error) {
+        console.error(`Failed to delete profile ${id}:`, error);
+        throw error;
+    }
+}
+
+// Get all profiles
 export async function getAllProfiles(): Promise<Profile[]> {
     const db = await getDb();
     return db.getAll('profiles');

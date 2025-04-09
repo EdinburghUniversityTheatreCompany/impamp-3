@@ -6,7 +6,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 - **Offline-First PWA**: Operates fully offline after initial load using PWA techniques
 - **Local Storage**: Stores configurations and audio files within the browser's IndexedDB
-- **Profile Management**: Create and switch between multiple sound profiles/collections
+- **Profile Management**: Create, edit, and switch between multiple sound profiles/collections
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
@@ -137,8 +137,15 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Click the red "X" button on configured pads to remove sounds
    - Or hold Delete key and click a pad to remove its sound
    - Removing a sound will reset the pad's name to "Empty Pad"
-5. **Creating Profiles**: (Coming soon)
-6. **Syncing**: (Coming soon)
+5. **Managing Profiles**: 
+   - Use the profile selector in the top-right corner to switch between profiles
+   - Click "Manage Profiles" to open the full profile manager
+   - Create new profiles with custom names
+   - Edit or delete existing profiles
+   - Each profile has its own set of sounds and bank configurations
+6. **Importing/Exporting Profiles**: (Coming soon)
+   - Manual file-based import/export will be added in a future update
+   - Google Drive integration for syncing across devices will be added in a future update
 
 ## Project Structure
 
@@ -188,7 +195,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Maybe add it to a list near currently playing?
    - What button should trigger playing it
 - [x] Removing sound from pad in edit mode
-- [ ] Profile management UI
+- [x] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration
 - [x] PWA configuration, make sure it works without internet connection
@@ -198,6 +205,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] Add some tests
 - [ ] Fix big delay when hitting play -> Memory issues
 - [ ] Fix that IndexedDB error on startup?
+
 ## License
 
 [MIT](LICENSE)

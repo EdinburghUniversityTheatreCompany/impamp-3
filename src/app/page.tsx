@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import PadGrid from '@/components/PadGrid';
 import ActiveTracksPanel from '@/components/ActiveTracksPanel';
 import { useProfileStore } from '@/store/profileStore';
@@ -161,10 +162,24 @@ export default function Home() {
         </div>
       )}
       {/* Fixed position header to prevent layout shifts */}
-      <div className="w-full max-w-6xl mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 text-center">
-          ImpAmp 2 Soundboard
-        </h1>
+      <div className="w-full max-w-6xl mb-8 flex flex-col gap-2">
+        <div className="flex justify-between items-center">
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
+            ImpAmp 2 Soundboard
+          </h1>
+          
+          {/* Profile Selector */}
+          <div className="flex items-center space-x-4">
+            {/* Import ProfileSelector here */}
+            {React.createElement(
+              // This dynamic import technique ensures the component is only loaded on the client
+              dynamic(() => import('@/components/profiles/ProfileSelector'), {
+                ssr: false,
+                loading: () => <div className="w-24 h-10 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+              })
+            )}
+          </div>
+        </div>
       </div>
       
       {/* Content container with sidebar layout */}

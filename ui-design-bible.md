@@ -49,9 +49,23 @@ This document outlines the visual and interaction design guidelines for the ImpA
 
 *   **Style:** TBD (Background, Padding, Shadow)
 
-### 4.4 Profile Selector
+### 4.4 Profile Management
 
-*   **Style:** TBD (Dropdown, List)
+*   **Profile Selector:**
+    *   Location: Top-right of the main interface
+    *   Style: Dropdown with icon and active profile name
+    *   Features: Quick profile switching, option to open full profile manager
+    *   Color: Consistent with main UI, highlighted active profile
+
+*   **Profile Manager Modal:**
+    *   Layout: Tabbed interface with Profiles and Import/Export tabs
+    *   Profile Cards: Displays name, sync type, creation date, active status
+    *   Card Actions: Activate, Edit, Delete buttons for each profile
+    *   Creation Form: Form for creating new profiles with name and sync type options
+
+*   **Import/Export:**
+    *   Reserved section for future file-based import/export functionality
+    *   Reserved section for future Google Drive integration
 
 ## 5. Interaction Patterns
 

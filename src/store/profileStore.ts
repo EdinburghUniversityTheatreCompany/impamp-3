@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import { Profile, getAllProfiles, ensureDefaultProfile } from '@/lib/db';
+import { 
+  Profile, 
+  SyncType, 
+  getAllProfiles, 
+  ensureDefaultProfile, 
+  addProfile, 
+  updateProfile, 
+  deleteProfile 
+} from '@/lib/db';
 
 interface ProfileState {
   profiles: Profile[];
@@ -9,6 +17,7 @@ interface ProfileState {
   isEditing: boolean;       // Track if we're currently in the middle of editing something
   isLoading: boolean;
   error: string | null;
+  isProfileManagerOpen: boolean; // Track if profile manager modal is open
   emergencySoundsVersion: number;  // Track changes to emergency sounds configuration
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
@@ -18,7 +27,15 @@ interface ProfileState {
   incrementEmergencySoundsVersion: () => void;   // Increment counter when emergency sounds change
   convertBankNumberToIndex: (bankNumber: number) => number; // Convert from UI bank number to internal index
   convertIndexToBankNumber: (index: number) => number;     // Convert from internal index to UI bank number
-  // TODO: Add actions for creating, updating, deleting profiles later
+  
+  // Profile management actions
+  createProfile: (profile: { name: string, syncType: SyncType }) => Promise<number>;
+  updateProfile: (id: number, updates: Partial<Omit<Profile, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
+  deleteProfile: (id: number) => Promise<void>;
+  
+  // Profile manager UI state
+  openProfileManager: () => void;
+  closeProfileManager: () => void;
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
@@ -29,6 +46,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   isEditing: false,     // Default to not currently editing
   isLoading: true,
   error: null,
+  isProfileManagerOpen: false, // Profile manager modal is closed by default
   emergencySoundsVersion: 0,  // Initial version for emergency sounds tracking
 
   fetchProfiles: async () => {
@@ -119,6 +137,52 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     console.log('Emergency sounds configuration changed, incrementing version');
     set((state) => ({ emergencySoundsVersion: state.emergencySoundsVersion + 1 }));
   },
+  
+  // Profile management actions
+  createProfile: async (profile) => {
+    try {
+      const id = await addProfile(profile);
+      await get().fetchProfiles(); // Refresh profiles list
+      return id;
+    } catch (error) {
+      console.error('Failed to create profile:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to create profile: ${errorMessage}` });
+      throw error;
+    }
+  },
+  
+  updateProfile: async (id, updates) => {
+    try {
+      await updateProfile(id, updates);
+      await get().fetchProfiles(); // Refresh profiles list
+    } catch (error) {
+      console.error(`Failed to update profile ${id}:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to update profile: ${errorMessage}` });
+      throw error;
+    }
+  },
+  
+  deleteProfile: async (id) => {
+    if (id === get().activeProfileId) {
+      throw new Error('Cannot delete the active profile. Please switch to another profile first.');
+    }
+    
+    try {
+      await deleteProfile(id);
+      await get().fetchProfiles(); // Refresh profiles list
+    } catch (error) {
+      console.error(`Failed to delete profile ${id}:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to delete profile: ${errorMessage}` });
+      throw error;
+    }
+  },
+  
+  // Profile manager UI state
+  openProfileManager: () => set({ isProfileManagerOpen: true }),
+  closeProfileManager: () => set({ isProfileManagerOpen: false }),
 }));
 
 // Initial fetch of profiles when the store is initialized

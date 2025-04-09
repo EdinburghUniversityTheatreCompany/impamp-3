@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { KeyboardListenerWrapper } from "@/components/KeyboardListenerWrapper";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+import ProfileManager from "@/components/profiles/ProfileManager";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -46,6 +47,7 @@ export default function RootLayout({
         <KeyboardListenerWrapper>
           {children}
           <PWAInstallPrompt />
+          <ProfileManager />
         </KeyboardListenerWrapper>
       </body>
     </html>

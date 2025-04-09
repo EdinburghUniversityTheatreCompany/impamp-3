@@ -1,6 +1,6 @@
 {
   "name": "impamp-2",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@types/gapi": "^0.0.47",
+    "date-fns": "^4.1.0",
     "google-api-javascript-client": "^0.1.0",
     "idb": "^8.0.2",
     "next": "15.2.4",
