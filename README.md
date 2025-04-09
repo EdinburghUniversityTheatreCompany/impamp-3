@@ -94,10 +94,12 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
    - [x] Shift-click on pad to rename
    - [x] Shift-click on bank to rename or to mark bank as emergency
    - [x] Show "+" button to the right of the banks to add a new one
-- [ ] Hitting enter should immediately play a random emergency that round-robins
+- [ ] Using alt-<number> to navigate to banks does not work. Pick something else maybe?
+- [x] Hitting enter should immediately play a random emergency that round-robins
 - [ ] Arm next sound effect to play so you can browse banks. 
    - Maybe add it to a list near currently playing?
    - What button should trigger playing it
+- [ ] Removing sound from pad in edit mode
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration

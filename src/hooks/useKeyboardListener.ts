@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useProfileStore } from '@/store/profileStore';
-import { PadConfiguration, getPadConfigurationsForProfilePage } from '@/lib/db';
+import { PadConfiguration, getPadConfigurationsForProfilePage, getAllPageMetadataForProfile } from '@/lib/db';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio } from '@/lib/audio';
 
 // Define a key mapping for a standard keyboard layout
@@ -25,12 +25,116 @@ const getDefaultKeyForPadIndex = (padIndex: number, cols: number = 8): string | 
   return undefined; // No default key for this position
 };
 
+// Interface for emergency sound configuration
+interface EmergencySound {
+  profileId: number;
+  pageIndex: number;
+  padIndex: number;
+  audioFileId: number;
+  name?: string;
+}
+
 // Re-use the audio buffer cache from PadGrid (consider moving cache to audio.ts or a context)
 const audioBufferCache = new Map<number, AudioBuffer | null>();
+
+// Global reference to track emergency sounds and current index for round-robin
+const emergencySoundsRef: { current: EmergencySound[] } = { current: [] };
+const currentEmergencyIndexRef: { current: number } = { current: 0 };
 
 // Debounce map to prevent rapid re-triggering
 const keyDebounceMap = new Map<string, boolean>();
 const DEBOUNCE_TIME_MS = 100; // Adjust as needed
+
+// Load all emergency sounds from emergency pages
+async function loadEmergencySounds(profileId: number): Promise<EmergencySound[]> {
+  if (!profileId) return [];
+  
+  try {
+    // 1. Get all pages for the profile
+    const allPages = await getAllPageMetadataForProfile(profileId);
+    
+    // 2. Filter to just emergency pages
+    const emergencyPages = allPages.filter(page => page.isEmergency);
+    
+    if (emergencyPages.length === 0) {
+      console.log('No emergency pages found');
+      return [];
+    }
+    
+    console.log(`Found ${emergencyPages.length} emergency pages`);
+    
+    // 3. Get all configured pads for these pages
+    const allEmergencySounds: EmergencySound[] = [];
+    
+    for (const page of emergencyPages) {
+      const padConfigs = await getPadConfigurationsForProfilePage(profileId, page.pageIndex);
+      
+      // Only include pads with audio files
+      const configuredPads = padConfigs.filter(pad => pad.audioFileId);
+      
+      const emergencySoundsForPage = configuredPads.map(pad => ({
+        profileId,
+        pageIndex: page.pageIndex,
+        padIndex: pad.padIndex,
+        audioFileId: pad.audioFileId as number,
+        name: pad.name
+      }));
+      
+      allEmergencySounds.push(...emergencySoundsForPage);
+    }
+    
+    console.log(`Loaded ${allEmergencySounds.length} emergency sounds`);
+    return allEmergencySounds;
+  } catch (error) {
+    console.error('Error loading emergency sounds:', error);
+    return [];
+  }
+}
+
+// Function to play an emergency sound
+async function playEmergencySound(sound: EmergencySound): Promise<void> {
+  if (!sound || !sound.audioFileId) {
+    console.error('Invalid emergency sound configuration');
+    return;
+  }
+  
+  try {
+    // Check if we have the audio buffer cached
+    let buffer = audioBufferCache.get(sound.audioFileId);
+    if (!buffer) {
+      // Load and decode the audio if not cached
+      buffer = await loadAndDecodeAudio(sound.audioFileId);
+      if (buffer) {
+        audioBufferCache.set(sound.audioFileId, buffer);
+      }
+    }
+    
+    if (buffer) {
+      // Generate a unique playback key for this emergency sound
+      const playbackKey = `emergency-${sound.profileId}-${sound.pageIndex}-${sound.padIndex}-${Date.now()}`;
+      
+      // Play the audio
+      playAudio(
+        buffer,
+        playbackKey,
+        {
+          name: sound.name || 'Emergency Sound',
+          padInfo: {
+            profileId: sound.profileId,
+            pageIndex: sound.pageIndex,
+            padIndex: sound.padIndex
+          }
+        }
+      );
+      
+      console.log(`Playing emergency sound: ${sound.name || 'Unnamed'} from page ${sound.pageIndex}, pad ${sound.padIndex}`);
+    } else {
+      console.error(`Failed to load audio buffer for emergency sound ID: ${sound.audioFileId}`);
+    }
+  } catch (error) {
+    console.error('Error playing emergency sound:', error);
+  }
+}
 
 export function useKeyboardListener() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
@@ -40,6 +144,8 @@ export function useKeyboardListener() {
   // Get edit mode states and setters from store
   const setEditMode = useProfileStore((state) => state.setEditMode);
   const isEditing = useProfileStore((state) => state.isEditing);
+  // Get emergency sounds version to detect changes
+  const emergencySoundsVersion = useProfileStore((state) => state.emergencySoundsVersion);
   
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
@@ -49,6 +155,41 @@ export function useKeyboardListener() {
   // For now, fetch directly within the hook for simplicity.
   const padConfigsRef = useRef<Map<number, PadConfiguration>>(new Map());
 
+  // Reference to track if we've loaded emergency sounds
+  const hasLoadedEmergencySounds = useRef(false);
+
+  // Function to reload emergency sounds - can be called when needed
+  const reloadEmergencySounds = useCallback(async () => {
+    console.log("Reloading emergency sounds...");
+    if (activeProfileId === null) {
+      console.log("No active profile, skipping emergency sounds load");
+      return;
+    }
+    
+    // Load emergency sounds
+    const sounds = await loadEmergencySounds(activeProfileId);
+    emergencySoundsRef.current = sounds;
+    currentEmergencyIndexRef.current = 0; // Reset index when loading new sounds
+    
+    hasLoadedEmergencySounds.current = true;
+    console.log(`Reloaded ${sounds.length} emergency sounds`);
+  }, [activeProfileId]);
+
+  // Effect to load emergency sounds when profile changes or when emergency sounds version changes
+  useEffect(() => {
+    console.log(`Loading emergency sounds (version: ${emergencySoundsVersion})`);
+    reloadEmergencySounds();
+    
+    // Set up a periodic refresh (every 60 seconds) as a fallback
+    // This ensures emergency sounds are up to date even if an update is missed
+    const intervalId = setInterval(() => {
+      reloadEmergencySounds();
+    }, 60000);
+    
+    return () => clearInterval(intervalId);
+  }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
+
+  // Effect to load pad configurations
   useEffect(() => {
     const loadConfigs = async () => {
       if (activeProfileId === null) {
@@ -74,21 +215,67 @@ export function useKeyboardListener() {
 
 
   const handleKeyDown = useCallback(async (event: KeyboardEvent) => {
+    // Ignore if typing in an input field, textarea, etc.
+    const targetElement = event.target as HTMLElement;
+    if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA' || targetElement.isContentEditable) {
+      return;
+    }
+
+    const pressedKey = event.key; // e.g., "F1", "a", "1", "Enter"
+    
+    // Handle Enter key to play emergency sound
+    if (pressedKey === 'Enter') {
+      event.preventDefault();
+      
+      // Resume AudioContext on first interaction
+      if (!hasInteracted.current) {
+        resumeAudioContext();
+        hasInteracted.current = true;
+      }
+      
+      // Check if we have any emergency sounds loaded
+      if (emergencySoundsRef.current.length > 0) {
+        // Get the current emergency sound (round-robin)
+        const index = currentEmergencyIndexRef.current;
+        const sound = emergencySoundsRef.current[index];
+        
+        // Update index for next time (round-robin)
+        currentEmergencyIndexRef.current = (index + 1) % emergencySoundsRef.current.length;
+        
+        // Play the sound
+        console.log(`Enter key pressed - playing emergency sound ${index + 1}/${emergencySoundsRef.current.length}`);
+        console.log(`Emergency sound details: ${sound.name || 'Unnamed'} from page ${sound.pageIndex}, pad ${sound.padIndex}`);
+        await playEmergencySound(sound);
+      } else {
+        console.warn('Enter key pressed but no emergency sounds are configured');
+        
+        // If we haven't loaded emergency sounds yet, try loading them now
+        if (!hasLoadedEmergencySounds.current) {
+          console.log('Attempting to load emergency sounds now...');
+          await reloadEmergencySounds();
+          
+          // Check again after loading
+          if (emergencySoundsRef.current.length > 0) {
+            const sound = emergencySoundsRef.current[0];
+            console.log(`Found ${emergencySoundsRef.current.length} emergency sounds after loading, playing first one`);
+            await playEmergencySound(sound);
+            currentEmergencyIndexRef.current = 1; // Set index to 1 for next time
+          } else {
+            console.warn('No emergency sounds found. Make sure to mark pages as emergency in settings.');
+          }
+        }
+      }
+      
+      return;
+    }
+    
     // Handle Shift key press to toggle edit mode
-    if (event.key === 'Shift') {
+    if (pressedKey === 'Shift') {
       console.log('Shift key pressed - entering edit mode');
       setEditMode(true);
       return;
     }
-    
-    // Ignore if typing in an input field, textarea, etc.
-    const targetElement = event.target as HTMLElement;
-    if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA' || targetElement.isContentEditable) {
-        return;
-    }
-
-    const pressedKey = event.key; // e.g., "F1", "a", "1"
-    
+        
     // Handle Escape key as "panic button" to stop all audio
     if (pressedKey === 'Escape') {
         event.preventDefault();
@@ -222,7 +409,7 @@ export function useKeyboardListener() {
             console.error(`Error during keyboard playback for key "${pressedKey}":`, error);
         }
     }
-  }, [activeProfileId, currentPageIndex, setCurrentPageIndex, setEditMode]); // Dependencies for the callback
+  }, [activeProfileId, currentPageIndex, setCurrentPageIndex, setEditMode, reloadEmergencySounds]); // Dependencies for the callback
   
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback((event: KeyboardEvent) => {

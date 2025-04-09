@@ -9,11 +9,13 @@ interface ProfileState {
   isEditing: boolean;       // Track if we're currently in the middle of editing something
   isLoading: boolean;
   error: string | null;
+  emergencySoundsVersion: number;  // Track changes to emergency sounds configuration
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
   setCurrentPageIndex: (bankNumber: number) => void;  // Changed param name to bankNumber for clarity
   setEditMode: (isActive: boolean) => void;      // Toggle edit mode
   setEditing: (isActive: boolean) => void;       // Toggle editing state
+  incrementEmergencySoundsVersion: () => void;   // Increment counter when emergency sounds change
   convertBankNumberToIndex: (bankNumber: number) => number; // Convert from UI bank number to internal index
   convertIndexToBankNumber: (index: number) => number;     // Convert from internal index to UI bank number
   // TODO: Add actions for creating, updating, deleting profiles later
@@ -27,6 +29,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   isEditing: false,     // Default to not currently editing
   isLoading: true,
   error: null,
+  emergencySoundsVersion: 0,  // Initial version for emergency sounds tracking
 
   fetchProfiles: async () => {
     set({ isLoading: true, error: null });
@@ -110,6 +113,11 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   setEditing: (isActive: boolean) => {
     console.log(`Setting editing state to: ${isActive}`);
     set({ isEditing: isActive });
+  },
+  
+  incrementEmergencySoundsVersion: () => {
+    console.log('Emergency sounds configuration changed, incrementing version');
+    set((state) => ({ emergencySoundsVersion: state.emergencySoundsVersion + 1 }));
   },
 }));
 

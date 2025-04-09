@@ -1,4 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { useProfileStore } from '@/store/profileStore';
 
 const DB_NAME = 'ImpAmp2DB';
 const DB_VERSION = 2; // Bump version for schema upgrade
@@ -248,6 +249,21 @@ export async function upsertPadConfiguration(padConfig: Omit<PadConfiguration, '
     }
 
     await tx.done;
+    
+    // After successfully updating the pad, check if it's on an emergency page
+    // If so, increment the emergency sounds version to trigger a refresh
+    try {
+        const isOnEmergencyPage = await isEmergencyPage(padConfig.profileId, padConfig.pageIndex);
+        if (isOnEmergencyPage) {
+            // This pad is on an emergency page, so increment the version counter
+            useProfileStore.getState().incrementEmergencySoundsVersion();
+            console.log(`Updated pad on emergency page ${padConfig.pageIndex}, triggered emergency sounds refresh`);
+        }
+    } catch (error) {
+        console.error("Error checking emergency page status:", error);
+        // Continue even if this check fails - don't block the main operation
+    }
+    
     return id;
 }
 
@@ -366,6 +382,10 @@ export async function setPageEmergencyState(profileId: number, pageIndex: number
     try {
         const metadata = await getPageMetadata(profileId, pageIndex);
         
+        // Check the current state to see if it's actually changing
+        const currentState = metadata?.isEmergency || false;
+        const isStateChanging = currentState !== isEmergency;
+        
         await upsertPageMetadata({
             profileId,
             pageIndex,
@@ -374,6 +394,13 @@ export async function setPageEmergencyState(profileId: number, pageIndex: number
         });
         
         console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
+        
+        // After successfully updating the page, increment the emergency sounds version 
+        // to trigger a refresh - but only if the state actually changed
+        if (isStateChanging) {
+            useProfileStore.getState().incrementEmergencySoundsVersion();
+            console.log(`Emergency state changed for page ${pageIndex}, triggered emergency sounds refresh`);
+        }
     } catch (error) {
         console.error(`Error setting emergency state for page ${pageIndex}:`, error);
         throw error;
