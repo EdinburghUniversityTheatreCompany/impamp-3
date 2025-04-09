@@ -191,6 +191,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - [x] Shift-click on bank to rename or to mark bank as emergency
    - [x] Show "+" button to the right of the banks to add a new one
 - [ ] Using alt-<number> to navigate to banks does not work. Pick something else maybe?
+- [ ] Accessing bank 10 is not possible due to the numbering being weird
 - [x] Hitting enter should immediately play a random emergency that round-robins
 - [ ] Arm next sound effect to play so you can browse banks. 
    - Maybe add it to a list near currently playing?
@@ -208,10 +209,11 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] Add some tests
 - [ ] Fix big delay when hitting play -> Memory issues
 - [ ] Fix that IndexedDB error on startup?
-- [x] Fix the PWA stuff. I can't see the offer to install it.
+- [ ] Fix the PWA stuff. I can't see the offer to install it. -> [https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps]
 - [ ] Favicon based on the SVG
 - [ ] The profile selector flickers when switching banks
-
+- [ ] Error when installing service workers
+- [x] Can't close the PWA pop-up
 ## License
 
 [MIT](LICENSE)

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { KeyboardListenerWrapper } from "@/components/KeyboardListenerWrapper";
-import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import ProfileManager from "@/components/profiles/ProfileManager";
-import "@/lib/pwaRegistration"; // Import to ensure service worker registration
+// PWA registration script
+import "./pwa-init";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,7 +19,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ImpAmp 2 Soundboard",
   description: "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
-  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -47,7 +46,6 @@ export default function RootLayout({
       >
         <KeyboardListenerWrapper>
           {children}
-          <PWAInstallPrompt />
           <ProfileManager />
         </KeyboardListenerWrapper>
       </body>
