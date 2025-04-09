@@ -83,8 +83,15 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [x] dedicated keyboard shortcut for each pad (q w e r t y u i o p a s d f g etc)
 - [x] Display keyboard shortcut for pad and esc as panic button in the track playing list
 - [x] Progress bars in the pads
-- [ ] Big delay when hitting play
-- [ ] Pencil icon edit button on pad to rename
+- [x] Move the panic button help text to the top
+- [ ] Holding shift enters edit mode
+   - [ ] Visually distinct mode to show you're in edit mode
+   - [ ] Shift-click on pad to rename
+   - [ ] Shift-click on bank to rename or to tick checkbox to mark bank as emergency
+- [ ] Hitting enter should immediately play a random emergency that round-robins
+- [ ] Arm next sound effect to play so you can browse banks. 
+   - Maybe add it to a list near currently playing?
+   - What button should trigger playing it
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration
@@ -92,6 +99,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
 - [ ] UI refinement & theming
 - [ ] Docker containerization
+- [ ] Fix big delay when hitting play
 
 ## License
 

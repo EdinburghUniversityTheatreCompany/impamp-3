@@ -32,7 +32,12 @@ const ActiveTracksPanel: React.FC = () => {
   
   return (
     <div className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg p-4 h-full">
-      <h2 className="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">Active Tracks</h2>
+      <h2 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">Active Tracks</h2>
+      
+      {/* Help text for ESC panic button at the top */}
+      <div className="mb-3 pb-2 text-xs text-gray-500 dark:text-gray-400 text-center border-b border-gray-200 dark:border-gray-700">
+        Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">ESC</kbd> to stop all sounds
+      </div>
       
       {activeTracks.length === 0 ? (
         // Show "Nothing playing" when no tracks are active
@@ -74,13 +79,9 @@ const ActiveTracksPanel: React.FC = () => {
           ))}
         </div>
       )}
-      
-      {/* Help text for ESC panic button */}
-      <div className="mt-3 pt-2 text-xs text-gray-500 dark:text-gray-400 text-center border-t border-gray-200 dark:border-gray-700">
-        Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">ESC</kbd> to stop all sounds
-      </div>
     </div>
   );
 };
 
 export default ActiveTracksPanel;
+
