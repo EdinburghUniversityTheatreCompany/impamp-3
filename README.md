@@ -10,7 +10,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
-- **Edit Mode**: Shift key activates edit mode for renaming pads and banks
+- **Edit Mode**: Shift key activates edit mode for renaming pads and banks, and removing sounds (via an "X" button or Delete+click)
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Alt+1 through Alt+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
@@ -48,7 +48,11 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 1. **Adding Sounds**: Drag and drop audio files onto the pads in the grid.
 2. **Playing Sounds**: Click on a pad or use the assigned keyboard shortcut.
 3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Alt+1 through Alt+0 for banks 11-20.
-4. **Edit Mode**: Hold Shift to enter edit mode, then Shift+click on pads or banks to rename them.
+4. **Edit Mode**: Hold Shift to enter edit mode
+   - Shift+click on pads or banks to rename them
+   - Click the red "X" button on configured pads to remove sounds
+   - Or hold Delete key and click a pad to remove its sound
+   - Removing a sound will reset the pad's name to "Empty Pad"
 5. **Creating Profiles**: (Coming soon)
 6. **Syncing**: (Coming soon)
 
@@ -99,7 +103,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [ ] Arm next sound effect to play so you can browse banks. 
    - Maybe add it to a list near currently playing?
    - What button should trigger playing it
-- [ ] Removing sound from pad in edit mode
+- [x] Removing sound from pad in edit mode
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration

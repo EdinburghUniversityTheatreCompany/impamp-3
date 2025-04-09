@@ -116,17 +116,20 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     loadConfigs();
   }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
-  // Track the Shift key state
+  // Track the Shift key state and Delete key state
   const [isShiftDown, setIsShiftDown] = useState(false);
+  const [isDeleteKeyDown, setIsDeleteKeyDown] = useState(false);
 
-  // Set up event listeners to track shift key state
+  // Set up event listeners to track shift key and delete key state
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') setIsShiftDown(true);
+      if (e.key === 'Delete') setIsDeleteKeyDown(true);
     };
     
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Shift') setIsShiftDown(false);
+      if (e.key === 'Delete') setIsDeleteKeyDown(false);
     };
     
     window.addEventListener('keydown', handleKeyDown);
@@ -138,7 +141,43 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     };
   }, []);
 
+  // Handler for removing sound from a pad
+  const handleRemoveSound = async (padIndex: number) => {
+    const config = padConfigs.get(padIndex);
+    
+    if (!config || !config.audioFileId) return;
+    
+    // Show confirmation dialog
+    if (confirm(`Remove sound "${config.name || `Pad ${padIndex + 1}`}" from this pad?`)) {
+      try {
+        // Update pad configuration with audioFileId set to undefined and reset name
+        await upsertPadConfiguration({
+          profileId: activeProfileId as number,
+          pageIndex: currentPageIndex,
+          padIndex: padIndex,
+          name: undefined, // Reset name to default "Empty Pad"
+          audioFileId: undefined, // Remove the audio file reference
+          keyBinding: config.keyBinding // Keep any custom key binding
+        });
+        
+        // Refresh the pad configurations
+        await refreshPadConfigs();
+        console.log(`Removed sound from pad ${padIndex}`);
+      } catch (error) {
+        console.error(`Failed to remove sound from pad ${padIndex}:`, error);
+      }
+    }
+  };
+
   const handlePadClick = async (padIndex: number, isShiftClick: boolean = false) => {
+    // If in edit mode and Delete key is pressed, handle removing sound
+    if (isEditMode && isDeleteKeyDown) {
+      const config = padConfigs.get(padIndex);
+      if (config?.audioFileId) {
+        handleRemoveSound(padIndex);
+        return;
+      }
+    }
     // In edit mode with shift pressed, handle renaming
     if (isEditMode && isShiftClick) {
       const config = padConfigs.get(padIndex);
@@ -333,6 +372,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
               onClick={() => handlePadClick(padIndex, false)}
               onShiftClick={() => handlePadClick(padIndex, true)}
               onDropAudio={handleDropAudio} // Pass drop handler
+              onRemoveSound={config?.audioFileId ? () => handleRemoveSound(padIndex) : undefined} // Only provide handler if pad has sound
           />
       );
   });

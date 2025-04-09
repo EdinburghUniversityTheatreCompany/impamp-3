@@ -36,6 +36,7 @@ interface PadProps {
   onClick: () => void;
   onShiftClick: () => void; // Callback for shift+click (for renaming)
   onDropAudio: (acceptedFiles: File[], padIndex: number) => Promise<void>; // Callback for drop
+  onRemoveSound?: () => void; // New callback for removing sound from pad
 }
 
 const Pad: React.FC<PadProps> = ({
@@ -50,6 +51,7 @@ const Pad: React.FC<PadProps> = ({
   onClick,
   onShiftClick,
   onDropAudio,
+  onRemoveSound,
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
   // Get the default key binding for this pad position if no custom binding is set
@@ -172,6 +174,21 @@ const Pad: React.FC<PadProps> = ({
             {!isDragAccept && !isDragReject && 'Drop audio file'}
           </span>
         </div>
+      )}
+
+      {/* Remove Sound Button - only shown in edit mode for configured pads */}
+      {isEditMode && isConfigured && onRemoveSound && (
+        <button
+          className="absolute top-1 right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity z-30"
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent triggering pad click
+            onRemoveSound();
+          }}
+          aria-label="Remove sound"
+          title="Remove sound"
+        >
+          <span className="text-xs font-bold">×</span>
+        </button>
       )}
     </div>
   );
