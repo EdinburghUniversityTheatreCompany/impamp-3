@@ -251,7 +251,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       let importData: ProfileExport;
       try {
         importData = JSON.parse(jsonData) as ProfileExport;
-      } catch (error) {
+      } catch {
         throw new Error('Invalid JSON format');
       }
       

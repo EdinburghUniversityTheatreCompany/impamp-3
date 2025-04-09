@@ -4,6 +4,7 @@ import "./globals.css";
 import { KeyboardListenerWrapper } from "@/components/KeyboardListenerWrapper";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import ProfileManager from "@/components/profiles/ProfileManager";
+import "@/lib/pwaRegistration"; // Import to ensure service worker registration
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

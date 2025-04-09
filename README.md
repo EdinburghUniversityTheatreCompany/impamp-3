@@ -208,7 +208,9 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] Add some tests
 - [ ] Fix big delay when hitting play -> Memory issues
 - [ ] Fix that IndexedDB error on startup?
-- [ ] Fix the PWA stuff. I can't see the offer to install it.
+- [x] Fix the PWA stuff. I can't see the offer to install it.
+- [ ] Favicon based on the SVG
+- [ ] The profile selector flickers when switching banks
 
 ## License
 
