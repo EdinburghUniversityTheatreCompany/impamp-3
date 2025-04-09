@@ -210,10 +210,11 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] Fix big delay when hitting play -> Memory issues
 - [ ] Fix that IndexedDB error on startup?
 - [ ] Fix the PWA stuff. I can't see the offer to install it. -> [https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps]
-- [ ] Favicon based on the SVG
+- [x] Favicon based on the SVG
 - [ ] The profile selector flickers when switching banks
-- [ ] Error when installing service workers
+- [x] Error when installing service workers
 - [x] Can't close the PWA pop-up
+
 ## License
 
 [MIT](LICENSE)

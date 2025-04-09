@@ -1,13 +1,15 @@
 {
   "name": "impamp-2",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "node scripts/generate-favicon.js && next build",
     "start": "next start",
     "lint": "next lint",
-    "pwa-build": "next build"
+    "pwa-build": "node scripts/generate-favicon.js && next build",
+    "generate-favicon": "node scripts/generate-favicon.js"
   },
   "dependencies": {
     "@types/gapi": "^0.0.47",
@@ -28,6 +30,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.2.4",
+    "sharp": "^0.34.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
