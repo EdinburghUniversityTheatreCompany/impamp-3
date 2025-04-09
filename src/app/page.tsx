@@ -13,10 +13,9 @@ export default function Home() {
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const setEditing = useProfileStore((state) => state.setEditing);
   const convertIndexToBankNumber = useProfileStore((state) => state.convertIndexToBankNumber);
-  const convertBankNumberToIndex = useProfileStore((state) => state.convertBankNumberToIndex);
+  // Only importing the functions we actually use
   
-  // Get the UI bank number (1-20) for the current page index
-  const currentBankNumber = convertIndexToBankNumber(currentPageIndex);
+  // Current bank number will be calculated where needed
   
   // Track if shift key is pressed
   const [isShiftDown, setIsShiftDown] = useState(false);

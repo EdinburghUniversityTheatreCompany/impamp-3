@@ -1,13 +1,13 @@
 {
   "name": "impamp-2",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
-    
+    "lint": "next lint",
+    "pwa-build": "next build"
   },
   "dependencies": {
     "@types/gapi": "^0.0.47",

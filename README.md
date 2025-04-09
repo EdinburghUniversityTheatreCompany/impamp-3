@@ -27,7 +27,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 1. Clone the repository
    ```bash
-   git clone https://github.com/your-username/impamp-2.git
+   git clone https://github.com/edinburghuniversitytheatrecompany/impamp-2.git
    cd impamp-2
    ```
 
@@ -42,6 +42,35 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
    ```
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser
+
+### Building for Production
+
+To build the application for production deployment with PWA support:
+
+1. Build the application
+   ```bash
+   npm run pwa-build
+   # or
+   npm run build
+   ```
+
+2. Start the production server
+   ```bash
+   npm run start
+   ```
+
+3. The app is now available with full PWA capabilities
+
+### PWA Features
+
+ImpAmp 2 is configured as a Progressive Web App (PWA), which means it:
+
+- Can be installed on desktops, mobile devices, and tablets
+- Works offline after the initial load
+- Caches audio files for offline playback
+- Updates automatically when new versions are deployed
+
+For installation instructions on different devices, refer to the [PWA Usage Guide](docs/pwa-usage-guide.md).
 
 ## Usage
 
@@ -107,7 +136,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [ ] Profile management UI
 - [ ] Manual import/export
 - [ ] Google Drive integration
-- [ ] PWA configuration, make sure it works without internet connection
+- [x] PWA configuration, make sure it works without internet connection
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
 - [ ] UI refinement & theming
 - [ ] Docker containerization
