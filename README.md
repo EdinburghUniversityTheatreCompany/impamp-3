@@ -143,8 +143,9 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Create new profiles with custom names
    - Edit or delete existing profiles
    - Each profile has its own set of sounds and bank configurations
-6. **Importing/Exporting Profiles**: (Coming soon)
-   - Manual file-based import/export will be added in a future update
+6. **Importing/Exporting Profiles**: 
+   - Export profiles to JSON files for backup or transfer to other devices
+   - Import profiles from previously exported JSON files
    - Google Drive integration for syncing across devices will be added in a future update
 
 ## Project Structure
@@ -196,15 +197,18 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - What button should trigger playing it
 - [x] Removing sound from pad in edit mode
 - [x] Profile management UI
-- [ ] Manual import/export
+   - [ ] Remember the last selected profile and start there
+- [x] Manual import/export
 - [ ] Google Drive integration
 - [x] PWA configuration, make sure it works without internet connection
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
-- [ ] UI refinement & theming
+- [ ] UI refinement & theming 
+   - [ ] Mobile layout
 - [x] Docker containerization
 - [ ] Add some tests
 - [ ] Fix big delay when hitting play -> Memory issues
 - [ ] Fix that IndexedDB error on startup?
+- [ ] Fix the PWA stuff. I can't see the offer to install it.
 
 ## License
 

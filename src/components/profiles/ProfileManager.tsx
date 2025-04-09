@@ -1,16 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, ChangeEvent } from 'react';
 import { useProfileStore } from '@/store/profileStore';
 import { SyncType } from '@/lib/db';
 import ProfileCard from './ProfileCard';
 
 export default function ProfileManager() {
-  const { profiles, activeProfileId, isProfileManagerOpen, closeProfileManager, createProfile } = useProfileStore();
+  const { 
+    profiles, 
+    activeProfileId, 
+    isProfileManagerOpen, 
+    closeProfileManager, 
+    createProfile,
+    exportProfileToJSON,
+    importProfileFromJSON
+  } = useProfileStore();
+  
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileSyncType, setNewProfileSyncType] = useState<SyncType>('local');
   const [isCreating, setIsCreating] = useState(false);
   const [activeTab, setActiveTab] = useState<'profiles' | 'import-export'>('profiles');
+  const [exportProfileId, setExportProfileId] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,17 +185,57 @@ export default function ProfileManager() {
                   Export your profiles and their configurations to a file that you can use for backup or transfer.
                 </p>
                 
-                {/* TODO: Implement export functionality */}
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-                    Export functionality will be available in a future update.
-                  </p>
+                  <div className="mb-4">
+                    <label htmlFor="exportProfile" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Select Profile to Export
+                    </label>
+                    <select
+                      id="exportProfile"
+                      value={exportProfileId || ''}
+                      onChange={(e) => setExportProfileId(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                    >
+                      <option value="">Select a profile</option>
+                      {profiles.map(profile => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name} {profile.id === activeProfileId ? '(Active)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
                   <button
-                    disabled
-                    className="px-4 py-2 bg-gray-200 text-gray-500 rounded-md cursor-not-allowed"
+                    onClick={async () => {
+                      if (!exportProfileId) {
+                        alert('Please select a profile to export');
+                        return;
+                      }
+                      
+                      try {
+                        setIsExporting(true);
+                        await exportProfileToJSON(exportProfileId);
+                        setIsExporting(false);
+                      } catch (error) {
+                        console.error('Failed to export profile:', error);
+                        setIsExporting(false);
+                        alert('Failed to export profile. Please try again.');
+                      }
+                    }}
+                    disabled={isExporting || !exportProfileId}
+                    className={`px-4 py-2 ${
+                      exportProfileId
+                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                        : 'bg-gray-200 text-gray-500'
+                    } rounded-md transition-colors ${
+                      isExporting || !exportProfileId ? 'cursor-not-allowed' : ''
+                    }`}
                   >
-                    Export Profile
+                    {isExporting ? 'Exporting...' : 'Export Profile'}
                   </button>
+                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    Exported files will include all bank configurations and sounds.
+                  </p>
                 </div>
               </section>
               
@@ -190,17 +246,81 @@ export default function ProfileManager() {
                   Import a previously exported profile configuration file.
                 </p>
                 
-                {/* TODO: Implement import functionality */}
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-                    Import functionality will be available in a future update.
-                  </p>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept=".json"
+                    onChange={async (e: ChangeEvent<HTMLInputElement>) => {
+                      // Reset states
+                      setImportError(null);
+                      setImportSuccess(null);
+                      
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      
+                      try {
+                        setIsImporting(true);
+                        
+                        // Read the file
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          try {
+                            const content = event.target?.result as string;
+                            const newProfileId = await importProfileFromJSON(content);
+                            setImportSuccess(`Profile imported successfully! (ID: ${newProfileId})`);
+                            setIsImporting(false);
+                            
+                            // Reset the file input
+                            if (fileInputRef.current) {
+                              fileInputRef.current.value = '';
+                            }
+                          } catch (error) {
+                            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+                            setImportError(`Failed to import profile: ${errorMessage}`);
+                            setIsImporting(false);
+                          }
+                        };
+                        
+                        reader.onerror = () => {
+                          setImportError('Failed to read file');
+                          setIsImporting(false);
+                        };
+                        
+                        reader.readAsText(file);
+                      } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+                        setImportError(`Failed to import profile: ${errorMessage}`);
+                        setIsImporting(false);
+                      }
+                    }}
+                  />
+                  
+                  {importError && (
+                    <div className="mb-4 p-2 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded border border-red-200 dark:border-red-800">
+                      {importError}
+                    </div>
+                  )}
+                  
+                  {importSuccess && (
+                    <div className="mb-4 p-2 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300 rounded border border-green-200 dark:border-green-800">
+                      {importSuccess}
+                    </div>
+                  )}
+                  
                   <button
-                    disabled
-                    className="px-4 py-2 bg-gray-200 text-gray-500 rounded-md cursor-not-allowed"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className={`px-4 py-2 ${
+                      isImporting ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-500 text-white hover:bg-blue-600'
+                    } rounded-md transition-colors`}
                   >
-                    Import Profile
+                    {isImporting ? 'Importing...' : 'Select File to Import'}
                   </button>
+                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    Only import files that were previously exported from ImpAmp 2.
+                  </p>
                 </div>
               </section>
               

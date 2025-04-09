@@ -6,7 +6,10 @@ import {
   ensureDefaultProfile, 
   addProfile, 
   updateProfile, 
-  deleteProfile 
+  deleteProfile,
+  exportProfile,
+  importProfile,
+  ProfileExport
 } from '@/lib/db';
 
 interface ProfileState {
@@ -32,6 +35,10 @@ interface ProfileState {
   createProfile: (profile: { name: string, syncType: SyncType }) => Promise<number>;
   updateProfile: (id: number, updates: Partial<Omit<Profile, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
   deleteProfile: (id: number) => Promise<void>;
+  
+  // Import/Export functionality
+  exportProfileToJSON: (profileId: number) => Promise<boolean>;
+  importProfileFromJSON: (jsonData: string) => Promise<number>;
   
   // Profile manager UI state
   openProfileManager: () => void;
@@ -176,6 +183,78 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       console.error(`Failed to delete profile ${id}:`, error);
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       set({ error: `Failed to delete profile: ${errorMessage}` });
+      throw error;
+    }
+  },
+  
+  // Import/Export functionality
+  exportProfileToJSON: async (profileId: number) => {
+    try {
+      const exportData = await exportProfile(profileId);
+      
+      // Convert to JSON string
+      const jsonString = JSON.stringify(exportData, null, 2);
+      
+      // Get profile name for filename
+      const profile = get().profiles.find(p => p.id === profileId);
+      const profileName = profile?.name || 'profile';
+      const sanitizedName = profileName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      
+      // Create download
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create a link and trigger download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `impamp-${sanitizedName}-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to export profile:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to export profile: ${errorMessage}` });
+      throw error;
+    }
+  },
+  
+  importProfileFromJSON: async (jsonData: string) => {
+    try {
+      // Parse the JSON data
+      let importData: ProfileExport;
+      try {
+        importData = JSON.parse(jsonData) as ProfileExport;
+      } catch (error) {
+        throw new Error('Invalid JSON format');
+      }
+      
+      // Validate the import data structure
+      if (!importData.exportVersion || 
+          !importData.profile || 
+          !Array.isArray(importData.padConfigurations) || 
+          !Array.isArray(importData.pageMetadata) || 
+          !Array.isArray(importData.audioFiles)) {
+        throw new Error('Invalid profile export format');
+      }
+      
+      // Import the profile
+      const newProfileId = await importProfile(importData);
+      
+      // Refresh the profiles list
+      await get().fetchProfiles();
+      
+      return newProfileId;
+    } catch (error) {
+      console.error('Failed to import profile:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to import profile: ${errorMessage}` });
       throw error;
     }
   },

@@ -479,6 +479,334 @@ export async function setPageEmergencyState(profileId: number, pageIndex: number
     }
 }
 
+// Export profile data
+export interface ProfileExport {
+  exportVersion: number;
+  exportDate: string;
+  profile: Profile;
+  padConfigurations: PadConfiguration[];
+  pageMetadata: PageMetadata[];
+  audioFiles: {
+    id: number;
+    name: string;
+    type: string;
+    data: string; // Base64 encoded audio data
+  }[];
+}
+
+// Export a profile to a JSON object
+export async function exportProfile(profileId: number): Promise<ProfileExport> {
+  try {
+    // Get the profile data
+    const profile = await getProfile(profileId);
+    if (!profile) {
+      throw new Error(`Profile with ID ${profileId} not found`);
+    }
+
+    // Get all pad configurations for this profile
+    const padConfigurations = await getAllPadConfigurationsForProfile(profileId);
+
+    // Get all page metadata for this profile
+    const pageMetadata = await getAllPageMetadataForProfile(profileId);
+    
+    // Get all audio files referenced by this profile's pads
+    const audioFileIds = new Set<number>();
+    padConfigurations.forEach(pad => {
+      if (pad.audioFileId !== undefined) {
+        audioFileIds.add(pad.audioFileId);
+      }
+    });
+    
+    // Convert audio blobs to base64
+    const audioFiles = [];
+    for (const audioFileId of audioFileIds) {
+      const audioFile = await getAudioFile(audioFileId);
+      if (audioFile) {
+        const base64data = await blobToBase64(audioFile.blob);
+        audioFiles.push({
+          id: audioFileId,
+          name: audioFile.name,
+          type: audioFile.type,
+          data: base64data
+        });
+      }
+    }
+    
+    // Create the export object
+    const exportData: ProfileExport = {
+      exportVersion: 1, // Initial version
+      exportDate: new Date().toISOString(),
+      profile: { ...profile },
+      padConfigurations,
+      pageMetadata,
+      audioFiles
+    };
+    
+    return exportData;
+  } catch (error) {
+    console.error('Failed to export profile:', error);
+    throw error;
+  }
+}
+
+// Import a profile from an export object
+export async function importProfile(exportData: ProfileExport): Promise<number> {
+  const db = await getDb();
+  let profileId: number;
+  const now = new Date();
+  
+  try {
+    // Step 1: Create a new profile (separate transaction)
+    profileId = await createImportedProfile(db, exportData, now);
+    console.log(`Created imported profile with ID ${profileId}`);
+    
+    // Step 2: Import audio files (separate transaction)
+    const audioIdMap = await importAudioFiles(db, exportData.audioFiles, now);
+    console.log(`Imported ${audioIdMap.size} audio files`);
+    
+    // Step 3: Import page metadata (separate transaction)
+    await importPageMetadata(db, exportData.pageMetadata, profileId, now);
+    console.log(`Imported page metadata`);
+    
+    // Step 4: Import pad configurations (separate transaction)
+    await importPadConfigurations(db, exportData.padConfigurations, profileId, audioIdMap, now);
+    console.log(`Imported pad configurations`);
+    
+    console.log(`Successfully completed profile import with ID ${profileId}`);
+    return profileId;
+  } catch (error) {
+    console.error('Failed to import profile:', error);
+    throw error;
+  }
+}
+
+// Helper function to create a new profile for import
+async function createImportedProfile(
+  db: IDBPDatabase<ImpAmpDBSchema>, 
+  exportData: ProfileExport, 
+  now: Date
+): Promise<number> {
+  // Find a unique name for the profile
+  const originalName = exportData.profile.name;
+  let profileName = originalName;
+  let counter = 1;
+  let nameExists = true;
+  
+  // Separate transaction just to check names
+  while (nameExists) {
+    try {
+      const nameTx = db.transaction('profiles', 'readonly');
+      const nameIndex = nameTx.store.index('name');
+      const existing = await nameIndex.get(profileName);
+      await nameTx.done;
+      
+      if (!existing) {
+        nameExists = false;
+      } else {
+        profileName = `${originalName} (${counter})`;
+        counter++;
+      }
+    } catch (error) {
+      console.error('Error checking profile name:', error);
+      nameExists = false; // Break the loop on error
+    }
+  }
+  
+  // Now create the profile in a separate transaction
+  const profileTx = db.transaction('profiles', 'readwrite');
+  const profileStore = profileTx.objectStore('profiles');
+  
+  const newProfile = {
+    name: profileName,
+    syncType: exportData.profile.syncType,
+    createdAt: now,
+    updatedAt: now
+  };
+  
+  const profileId = await profileStore.add(newProfile);
+  await profileTx.done;
+  
+  return profileId;
+}
+
+// Helper function to import audio files
+async function importAudioFiles(
+  db: IDBPDatabase<ImpAmpDBSchema>, 
+  audioFiles: ProfileExport['audioFiles'], 
+  now: Date
+): Promise<Map<number, number>> {
+  // Create a map to store the original ID to new ID mapping
+  const audioIdMap = new Map<number, number>();
+  
+  console.log(`Starting import of ${audioFiles.length} audio files`);
+  
+  // Import each audio file individually
+  for (const audioFileExport of audioFiles) {
+    try {
+      // First convert base64 to blob OUTSIDE of any transaction
+      console.log(`Converting audio file ${audioFileExport.name} from base64 to blob...`);
+      const blob = await base64ToBlob(audioFileExport.data, audioFileExport.type);
+      
+      // Prepare the audio file object
+      const newAudioFile = {
+        blob,
+        name: audioFileExport.name,
+        type: audioFileExport.type,
+        createdAt: now
+      };
+      
+      // Now add the file to the database in a simple transaction
+      let newAudioId: number;
+      try {
+        // Use the simpler method to add an audio file directly
+        newAudioId = await addAudioFile(newAudioFile);
+        
+        // Add mapping of original ID to new ID
+        audioIdMap.set(audioFileExport.id, newAudioId);
+        console.log(`Successfully imported audio file: ${audioFileExport.name} (Original ID: ${audioFileExport.id}, New ID: ${newAudioId})`);
+      } catch (dbError) {
+        console.error(`Database error adding audio file ${audioFileExport.name}:`, dbError);
+      }
+    } catch (error) {
+      console.error(`Failed to process audio file: ${audioFileExport.name}`, error);
+    }
+  }
+  
+  console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
+  return audioIdMap;
+}
+
+// Helper function to import page metadata
+async function importPageMetadata(
+  db: IDBPDatabase<ImpAmpDBSchema>, 
+  pageMetadata: PageMetadata[], 
+  profileId: number, 
+  now: Date
+): Promise<void> {
+  const pageTx = db.transaction('pageMetadata', 'readwrite');
+  const pageStore = pageTx.objectStore('pageMetadata');
+  
+  // Create an array of promises for adding all page metadata
+  const pagePromises = pageMetadata.map(page => 
+    pageStore.add({
+      profileId,
+      pageIndex: page.pageIndex,
+      name: page.name,
+      isEmergency: page.isEmergency,
+      createdAt: now,
+      updatedAt: now
+    })
+  );
+  
+  // Wait for all page metadata to be added
+  await Promise.all(pagePromises);
+  
+  // Complete the transaction
+  await pageTx.done;
+}
+
+// Helper function to import pad configurations
+async function importPadConfigurations(
+  db: IDBPDatabase<ImpAmpDBSchema>, 
+  padConfigurations: PadConfiguration[], 
+  profileId: number, 
+  audioIdMap: Map<number, number>, 
+  now: Date
+): Promise<void> {
+  console.log(`Starting import of ${padConfigurations.length} pad configurations with audioIdMap size: ${audioIdMap.size}`);
+  
+  // Debug: Log the audio ID mappings
+  audioIdMap.forEach((newId, oldId) => {
+    console.log(`Audio ID mapping: ${oldId} -> ${newId}`);
+  });
+
+  // Import pad configurations one by one
+  for (const pad of padConfigurations) {
+    try {
+      const padTx = db.transaction('padConfigurations', 'readwrite');
+      const padStore = padTx.objectStore('padConfigurations');
+      
+      let mappedAudioId = undefined;
+      if (pad.audioFileId !== undefined) {
+        mappedAudioId = audioIdMap.get(pad.audioFileId);
+        if (mappedAudioId === undefined) {
+          console.warn(`No mapping found for audio ID ${pad.audioFileId} in pad at pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}`);
+        } else {
+          console.log(`Using mapped audio ID: ${pad.audioFileId} -> ${mappedAudioId}`);
+        }
+      }
+      
+      const newPad = {
+        profileId,
+        padIndex: pad.padIndex,
+        pageIndex: pad.pageIndex,
+        keyBinding: pad.keyBinding,
+        name: pad.name,
+        audioFileId: mappedAudioId,
+        createdAt: now,
+        updatedAt: now
+      };
+      
+      // Add the pad configuration
+      await padStore.add(newPad);
+      await padTx.done;
+      
+      console.log(`Imported pad: pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}, with audioFileId ${mappedAudioId}`);
+    } catch (error) {
+      console.error(`Failed to import pad at pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}:`, error);
+    }
+  }
+  
+  console.log('Completed pad configuration import');
+}
+
+// Helper function to get all pad configurations for a profile
+export async function getAllPadConfigurationsForProfile(profileId: number): Promise<PadConfiguration[]> {
+  const db = await getDb();
+  const tx = db.transaction('padConfigurations', 'readonly');
+  const store = tx.objectStore('padConfigurations');
+  const index = store.index('profileId');
+  return index.getAll(profileId);
+}
+
+// Helper function to convert Blob to Base64 string
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = () => {
+      reject(new Error('Failed to convert blob to base64'));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Helper function to convert Base64 string to Blob
+function base64ToBlob(base64: string, type: string): Promise<Blob> {
+  // Decode base64
+  const byteCharacters = atob(base64);
+  const byteArrays = [];
+
+  // Slice the byteCharacters into smaller chunks to prevent memory issues
+  for (let offset = 0; offset < byteCharacters.length; offset += 1024) {
+    const slice = byteCharacters.slice(offset, offset + 1024);
+    
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+    
+    const byteArray = new Uint8Array(byteNumbers);
+    byteArrays.push(byteArray);
+  }
+
+  return Promise.resolve(new Blob(byteArrays, { type }));
+}
+
 // Only initialize the database on the client side
 if (isClient) {
   // Call getDb() early to initiate the connection and upgrade process
