@@ -37,6 +37,10 @@ export function useKeyboardListener() {
   // Get current page index and setter from store
   const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
   const setCurrentPageIndex = useProfileStore((state) => state.setCurrentPageIndex);
+  // Get edit mode states and setters from store
+  const setEditMode = useProfileStore((state) => state.setEditMode);
+  const isEditing = useProfileStore((state) => state.isEditing);
+  
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
   // We need access to the current pad configurations for the active page
@@ -70,11 +74,13 @@ export function useKeyboardListener() {
 
 
   const handleKeyDown = useCallback(async (event: KeyboardEvent) => {
-    // Ignore if modifier keys are pressed (unless specifically intended)
-    if (event.metaKey || event.ctrlKey || event.altKey) {
+    // Handle Shift key press to toggle edit mode
+    if (event.key === 'Shift') {
+      console.log('Shift key pressed - entering edit mode');
+      setEditMode(true);
       return;
     }
-
+    
     // Ignore if typing in an input field, textarea, etc.
     const targetElement = event.target as HTMLElement;
     if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA' || targetElement.isContentEditable) {
@@ -91,20 +97,40 @@ export function useKeyboardListener() {
         return;
     }
     
-    // Check if key is a number 0-9 for bank switching
+    // Bank switching with number keys 1-9 and 0
     const numbersRegex = /^[0-9]$/;
     if (numbersRegex.test(pressedKey)) {
-        event.preventDefault();
-        const bankIndex = parseInt(pressedKey, 10);
-        
-        // Update the bank index in the store
-        console.log(`Bank switching key pressed: ${pressedKey}, switching to bank ${bankIndex}`);
-        setCurrentPageIndex(bankIndex);
-        
-        // Return early to prevent pad triggering with the same key
-        return;
+        // If the Alt key is pressed, handle banks 11-20
+        if (event.altKey) {
+            event.preventDefault();
+            // Alt+1 maps to bank 11, Alt+2 to bank 12, etc. Alt+0 maps to bank 20
+            const altBankNumber = pressedKey === '0' ? 20 : 10 + parseInt(pressedKey, 10);
+            
+            // Update the bank index in the store
+            console.log(`Alt+${pressedKey} pressed, switching to bank ${altBankNumber}`);
+            setCurrentPageIndex(altBankNumber);
+            
+            // Return early to prevent pad triggering with the same key
+            return;
+        } else {
+            event.preventDefault();
+            // Regular number keys 1-9 map to banks 1-9, 0 maps to bank 10
+            const bankNumber = parseInt(pressedKey, 10);
+            
+            // Update the bank index in the store
+            console.log(`Number key ${pressedKey} pressed, switching to bank ${bankNumber === 0 ? 10 : bankNumber}`);
+            setCurrentPageIndex(bankNumber);
+            
+            // Return early to prevent pad triggering with the same key
+            return;
+        }
     }
 
+    // Ignore if Ctrl or Meta keys are pressed (but still allow Alt for bank switching)
+    if (event.metaKey || event.ctrlKey) {
+      return;
+    }
+    
     // Check debounce
     if (keyDebounceMap.has(pressedKey)) {
         return;
@@ -196,16 +222,34 @@ export function useKeyboardListener() {
             console.error(`Error during keyboard playback for key "${pressedKey}":`, error);
         }
     }
-  }, [activeProfileId, currentPageIndex, setCurrentPageIndex]); // Dependencies for the callback
+  }, [activeProfileId, currentPageIndex, setCurrentPageIndex, setEditMode]); // Dependencies for the callback
+  
+  // Add a keyup handler to detect when shift key is released
+  const handleKeyUp = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Shift') {
+      console.log('Shift key released - checking if we should exit edit mode');
+      // Only exit edit mode if we're not currently editing something
+      if (!isEditing) {
+        console.log('Not editing anything, exiting edit mode');
+        setEditMode(false);
+      } else {
+        console.log('Currently editing, staying in edit mode');
+      }
+    }
+  }, [setEditMode, isEditing]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
-    console.log('Keyboard listener added.');
+    window.addEventListener('keyup', handleKeyUp);
+    console.log('Keyboard listeners added.');
 
-    // Cleanup listener on unmount
+    // Cleanup listeners on unmount
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      console.log('Keyboard listener removed.');
+      window.removeEventListener('keyup', handleKeyUp);
+      // Ensure edit mode is turned off when component unmounts
+      setEditMode(false);
+      console.log('Keyboard listeners removed.');
     };
-  }, [handleKeyDown]); // Re-attach listener if handleKeyDown changes
+  }, [handleKeyDown, handleKeyUp, setEditMode]); // Re-attach listeners if callbacks change
 }

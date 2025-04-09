@@ -24,3 +24,69 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Edit Mode Styles */
+.edit-mode {
+  /* Add a subtle indication that the app is in edit mode */
+  position: relative;
+}
+
+.edit-mode::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  border: 8px solid rgba(251, 191, 36, 0.2); /* amber-500 with opacity */
+  z-index: 40;
+}
+
+/* Pad edit styles */
+.edit-mode .edit-indicator {
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.edit-mode .pad:hover .edit-indicator {
+  opacity: 1;
+}
+
+/* Make editable elements more obvious in edit mode */
+.edit-mode [data-editable="true"] {
+  position: relative;
+  cursor: text;
+}
+
+/* Checkbox styling for emergency banks */
+.emergency-checkbox {
+  appearance: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid #d1d5db;
+  border-radius: 0.25rem;
+  margin-right: 0.5rem;
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.emergency-checkbox:checked {
+  background-color: #ef4444; /* red-500 */
+  border-color: #ef4444;
+}
+
+.emergency-checkbox:checked::after {
+  content: '✓';
+  position: absolute;
+  color: white;
+  font-size: 0.875rem;
+  top: -2px;
+  left: 2px;
+}
+
+.emergency-checkbox:focus {
+  outline: 2px solid rgba(239, 68, 68, 0.5);
+  outline-offset: 2px;
+}

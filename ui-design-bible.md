@@ -62,6 +62,44 @@ This document outlines the visual and interaction design guidelines for the ImpA
     *   Visual indicator: Current bank number is displayed prominently
     *   UI buttons: Clickable numbered buttons (0-9) with active state highlighting
     *   Bank switching is immediate with no transition animation
+*   **Edit Mode:**
+    *   Activation: Hold the Shift key to enter edit mode
+    *   Visual Indicator: Amber-colored border around the entire application
+    *   Banner: "EDIT MODE" banner appears at the top of the screen
+    *   Exit: Release the Shift key to exit edit mode
+*   **Renaming:**
+    *   Pads: Shift-click on a pad in edit mode to rename it
+    *   Banks: Shift-click on a bank in edit mode to rename it
+*   **Emergency Banks:**
+    *   Visual Indicator: Red dot/ring on bank buttons marked as emergency
+    *   Toggle: When renaming a bank in edit mode, option to mark as emergency
+    *   Usage: Emergency banks can be triggered with the Enter key (round-robin)
 *   **Sync Status:** Clear visual indicators for syncing, success, conflicts, errors.
+
+## 6. Edit Mode Design
+
+### 6.1 Global Indicators
+
+*   **Border:** 8px amber-colored semi-transparent border around the entire application
+*   **Banner:** Fixed-position amber banner at the top with white text stating "EDIT MODE"
+*   **Helper Text:** Shift+click instructions appear in relevant areas
+
+### 6.2 Editable Elements
+
+*   **Pads:**
+    *   Border: Amber dashed border
+    *   Interaction: Shift+click to rename
+    *   Visual Feedback: Highlight on hover in edit mode
+
+*   **Banks:**
+    *   Border: Amber dashed border
+    *   Tooltip: Shows bank name and edit instructions on hover
+    *   Interaction: Shift+click to rename and set emergency status
+    *   Emergency Indicator: Red dot in top-right corner for emergency banks
+
+*   **Add Bank Button:**
+    *   Visibility: Only visible in edit mode
+    *   Style: Amber-colored "+" button that appears at the end of the bank list
+    *   Position: Right side of bank buttons
 
 *(This document will be updated as design decisions are made during development.)*

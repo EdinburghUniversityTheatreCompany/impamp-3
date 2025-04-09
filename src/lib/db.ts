@@ -1,7 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
 const DB_NAME = 'ImpAmp2DB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bump version for schema upgrade
 
 // Define the structure of audio file data
 export interface AudioFile {
@@ -37,6 +37,17 @@ export interface PadConfiguration {
   updatedAt: Date;
 }
 
+// Define the structure of page/bank metadata
+export interface PageMetadata {
+  id?: number; // Auto-incrementing primary key
+  profileId: number; // Foreign key to Profiles store
+  pageIndex: number; // 0-based index for the page
+  name: string; // Name of the bank/page
+  isEmergency: boolean; // Whether this is an emergency bank
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Define the database schema using DBSchema
 interface ImpAmpDBSchema extends DBSchema {
   audioFiles: {
@@ -53,6 +64,11 @@ interface ImpAmpDBSchema extends DBSchema {
     key: number;
     value: PadConfiguration;
     indexes: { profileId: number; profilePagePad: [number, number, number] }; // Index for profileId, and compound index for profile/page/pad
+  };
+  pageMetadata: {
+    key: number;
+    value: PageMetadata;
+    indexes: { profileId: number; profilePage: [number, number] }; // Index for profileId, and compound index for profile+page
   };
 }
 
@@ -109,6 +125,22 @@ function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             'padIndex',
           ], { unique: true });
           console.log('Created padConfigurations object store');
+        }
+
+        // Create pageMetadata store (in version 2)
+        if (oldVersion < 2 && !db.objectStoreNames.contains('pageMetadata')) {
+          const pageMetadataStore = db.createObjectStore('pageMetadata', {
+            keyPath: 'id',
+            autoIncrement: true,
+          });
+          // Index to quickly find all pages for a specific profile
+          pageMetadataStore.createIndex('profileId', 'profileId');
+          // Compound index to quickly find metadata for a specific page in a profile
+          pageMetadataStore.createIndex('profilePage', [
+            'profileId',
+            'pageIndex',
+          ], { unique: true });
+          console.log('Created pageMetadata object store');
         }
 
         // --- Data seeding/migration can happen here ---
@@ -250,6 +282,101 @@ export async function ensureDefaultProfile() {
         }
     } catch (error) {
         console.error("Error ensuring default profile:", error);
+    }
+}
+
+// Function to get page metadata for a specific profile and page
+export async function getPageMetadata(profileId: number, pageIndex: number): Promise<PageMetadata | undefined> {
+    const db = await getDb();
+    const tx = db.transaction('pageMetadata', 'readonly');
+    const store = tx.objectStore('pageMetadata');
+    const index = store.index('profilePage');
+    // Use get with the compound index
+    return index.get([profileId, pageIndex]);
+}
+
+// Function to get all page metadata for a specific profile
+export async function getAllPageMetadataForProfile(profileId: number): Promise<PageMetadata[]> {
+    const db = await getDb();
+    const tx = db.transaction('pageMetadata', 'readonly');
+    const store = tx.objectStore('pageMetadata');
+    const index = store.index('profileId');
+    return index.getAll(profileId);
+}
+
+// Function to add or update page metadata
+export async function upsertPageMetadata(pageMetadata: Omit<PageMetadata, 'id' | 'createdAt' | 'updatedAt'>): Promise<number> {
+    const db = await getDb();
+    const tx = db.transaction('pageMetadata', 'readwrite');
+    const store = tx.objectStore('pageMetadata');
+    const index = store.index('profilePage');
+    const now = new Date();
+
+    // Check if metadata already exists for this profile/page combination
+    const existing = await index.get([pageMetadata.profileId, pageMetadata.pageIndex]);
+
+    let id: number;
+    if (existing?.id) {
+        // Update existing
+        id = existing.id;
+        await store.put({ ...existing, ...pageMetadata, updatedAt: now });
+        console.log(`Updated page metadata with id: ${id}`);
+    } else {
+        // Add new
+        id = await store.add({ ...pageMetadata, createdAt: now, updatedAt: now });
+        console.log(`Added page metadata with id: ${id}`);
+    }
+
+    await tx.done;
+    return id;
+}
+
+// Helper function to check if a page is marked as emergency
+export async function isEmergencyPage(profileId: number, pageIndex: number): Promise<boolean> {
+    try {
+        const metadata = await getPageMetadata(profileId, pageIndex);
+        return metadata?.isEmergency || false;
+    } catch (error) {
+        console.error(`Error checking if page ${pageIndex} is emergency:`, error);
+        return false;
+    }
+}
+
+// Helper function to rename a page
+export async function renamePage(profileId: number, pageIndex: number, newName: string): Promise<void> {
+    try {
+        const metadata = await getPageMetadata(profileId, pageIndex);
+        
+        await upsertPageMetadata({
+            profileId,
+            pageIndex,
+            name: newName,
+            isEmergency: metadata?.isEmergency || false
+        });
+        
+        console.log(`Renamed page ${pageIndex} to "${newName}"`);
+    } catch (error) {
+        console.error(`Error renaming page ${pageIndex}:`, error);
+        throw error;
+    }
+}
+
+// Helper function to set emergency state for a page
+export async function setPageEmergencyState(profileId: number, pageIndex: number, isEmergency: boolean): Promise<void> {
+    try {
+        const metadata = await getPageMetadata(profileId, pageIndex);
+        
+        await upsertPageMetadata({
+            profileId,
+            pageIndex,
+            name: metadata?.name || `Bank ${pageIndex}`,
+            isEmergency
+        });
+        
+        console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
+    } catch (error) {
+        console.error(`Error setting emergency state for page ${pageIndex}:`, error);
+        throw error;
     }
 }
 

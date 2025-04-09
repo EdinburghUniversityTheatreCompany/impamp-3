@@ -32,7 +32,9 @@ interface PadProps {
   isConfigured: boolean;
   isPlaying: boolean;
   playProgress?: number; // New prop to show play progress (0 to 1)
+  isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   onClick: () => void;
+  onShiftClick: () => void; // Callback for shift+click (for renaming)
   onDropAudio: (acceptedFiles: File[], padIndex: number) => Promise<void>; // Callback for drop
 }
 
@@ -44,7 +46,9 @@ const Pad: React.FC<PadProps> = ({
   isConfigured,
   isPlaying,
   playProgress = 0,
+  isEditMode,
   onClick,
+  onShiftClick,
   onDropAudio,
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
@@ -82,15 +86,25 @@ const Pad: React.FC<PadProps> = ({
   const configuredStyle = isConfigured
     ? 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600'
     : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700';
+  
+  const editModeStyle = isEditMode
+    ? 'border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400'
+    : '';
+    
   const playingStyle = isPlaying
     ? 'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-blue-500' // Ensure ring is visible
     : '';
+  
   const textStyle = isConfigured
     ? 'text-gray-800 dark:text-gray-200'
     : 'text-gray-500 dark:text-gray-400';
 
   // Dropzone visual feedback styles
-  const dropzoneActiveStyle = isDragActive ? 'border-blue-500 border-dashed' : 'border-gray-300 dark:border-gray-600';
+  const dropzoneActiveStyle = isDragActive 
+    ? 'border-blue-500 border-dashed' 
+    : isEditMode 
+      ? '' // Edit mode already has a border style
+      : 'border-gray-300 dark:border-gray-600';
   const dropzoneAcceptStyle = isDragAccept ? 'bg-green-100 dark:bg-green-900 border-green-500' : '';
   const dropzoneRejectStyle = isDragReject ? 'bg-red-100 dark:bg-red-900 border-red-500' : '';
 
@@ -99,13 +113,19 @@ const Pad: React.FC<PadProps> = ({
     <div
       {...getRootProps()}
       id={id} // Use the passed unique ID
-      className={`${baseStyle} ${configuredStyle} ${playingStyle} ${textStyle} ${dropzoneActiveStyle} ${dropzoneAcceptStyle} ${dropzoneRejectStyle}`}
+      className={`${baseStyle} ${configuredStyle} ${editModeStyle} ${playingStyle} ${textStyle} ${dropzoneActiveStyle} ${dropzoneAcceptStyle} ${dropzoneRejectStyle}`}
       // Make clickable area separate from dropzone root if needed, but here it's combined
       // The single onClick handler below manages both playback and prevents dropzone default click
       onClick={(e) => {
           // Prevent dropzone's default click behavior if necessary, though noClick should handle it
           e.stopPropagation();
-          onClick();
+          
+          // Check if shift key is pressed
+          if (e.shiftKey && isEditMode) {
+            onShiftClick();
+          } else {
+            onClick();
+          }
       }}
       role="button"
       tabIndex={0} // Make it focusable
@@ -121,8 +141,10 @@ const Pad: React.FC<PadProps> = ({
       {/* Input element required by react-dropzone */}
       <input {...getInputProps()} />
 
-      {/* Pad Name Display - with better wrapping */}
-      <span className="text-sm font-medium break-all w-full text-center z-10">{name}</span>
+      {/* Pad Name Display - with better wrapping and edit mode indicator */}
+      <span className="text-sm font-medium break-all w-full text-center z-10">
+        {name}
+      </span>
 
       {/* Key Binding Display at the bottom - show default key binding if no custom binding */}
       {displayKeyBinding && (

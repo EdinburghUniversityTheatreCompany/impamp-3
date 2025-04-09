@@ -9,7 +9,10 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Profile Management**: Create and switch between multiple sound profiles/collections
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
-- **Multi-Page Support**: Multiple pages of sounds within each profile
+- **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
+- **Edit Mode**: Shift key activates edit mode for renaming pads and banks
+- **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Alt+1 through Alt+0 for banks 11-20
+- **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
 - **Containerization**: Deployed as a Docker container (coming soon)
 
@@ -44,8 +47,10 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 1. **Adding Sounds**: Drag and drop audio files onto the pads in the grid.
 2. **Playing Sounds**: Click on a pad or use the assigned keyboard shortcut.
-3. **Creating Profiles**: (Coming soon)
-4. **Syncing**: (Coming soon)
+3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Alt+1 through Alt+0 for banks 11-20.
+4. **Edit Mode**: Hold Shift to enter edit mode, then Shift+click on pads or banks to rename them.
+5. **Creating Profiles**: (Coming soon)
+6. **Syncing**: (Coming soon)
 
 ## Project Structure
 
@@ -84,10 +89,11 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [x] Display keyboard shortcut for pad and esc as panic button in the track playing list
 - [x] Progress bars in the pads
 - [x] Move the panic button help text to the top
-- [ ] Holding shift enters edit mode
-   - [ ] Visually distinct mode to show you're in edit mode
-   - [ ] Shift-click on pad to rename
-   - [ ] Shift-click on bank to rename or to tick checkbox to mark bank as emergency
+- [x] Holding shift enters edit mode
+   - [x] Visually distinct mode to show you're in edit mode
+   - [x] Shift-click on pad to rename
+   - [x] Shift-click on bank to rename or to mark bank as emergency
+   - [x] Show "+" button to the right of the banks to add a new one
 - [ ] Hitting enter should immediately play a random emergency that round-robins
 - [ ] Arm next sound effect to play so you can browse banks. 
    - Maybe add it to a list near currently playing?
@@ -99,7 +105,8 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
 - [ ] UI refinement & theming
 - [ ] Docker containerization
-- [ ] Fix big delay when hitting play
+- [ ] Add some tests
+- [ ] Fix big delay when hitting play -> Memory issues
 
 ## License
 

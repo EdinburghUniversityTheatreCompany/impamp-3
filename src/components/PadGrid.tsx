@@ -24,6 +24,8 @@ const audioBufferCache = new Map<number, AudioBuffer | null>(); // Allow null fo
 const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex = 0 }) => {
   const totalPads = rows * cols;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
+  const isEditMode = useProfileStore((state) => state.isEditMode); 
+  const setEditing = useProfileStore((state) => state.setEditing);
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
   const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
   const [padProgress, setPadProgress] = useState<Map<number, number>>(new Map());
@@ -114,7 +116,73 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     loadConfigs();
   }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
-  const handlePadClick = async (padIndex: number) => {
+  // Track the Shift key state
+  const [isShiftDown, setIsShiftDown] = useState(false);
+
+  // Set up event listeners to track shift key state
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftDown(true);
+    };
+    
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftDown(false);
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const handlePadClick = async (padIndex: number, isShiftClick: boolean = false) => {
+    // In edit mode with shift pressed, handle renaming
+    if (isEditMode && isShiftClick) {
+      const config = padConfigs.get(padIndex);
+      const currentName = config?.name || `Pad ${padIndex + 1}`;
+      
+      // Set editing state to true before showing prompt
+      setEditing(true);
+      
+      // Prompt for a new name
+      const newName = prompt("Enter new name for pad:", currentName);
+      
+      // Set editing state back to false after prompt
+      setEditing(false);
+      
+      // Check if shift is still pressed, if not, exit edit mode
+      if (!isShiftDown) {
+        useProfileStore.getState().setEditMode(false);
+      }
+      
+      // If the user cancels or enters an empty string, don't update
+      if (newName === null || newName.trim() === '') return;
+      
+      // Update the pad configuration with the new name
+      try {
+        await upsertPadConfiguration({
+          profileId: activeProfileId as number,
+          pageIndex: currentPageIndex,
+          padIndex: padIndex,
+          name: newName.trim(),
+          audioFileId: config?.audioFileId,
+          keyBinding: config?.keyBinding
+        });
+        
+        // Refresh the pad configurations to show the updated name
+        await refreshPadConfigs();
+        console.log(`Renamed pad ${padIndex} to "${newName.trim()}"`);
+      } catch (error) {
+        console.error(`Failed to rename pad ${padIndex}:`, error);
+      }
+      
+      return;
+    }
+    
+    // Regular playback functionality (unchanged for non-edit mode)
     // Resume AudioContext on first interaction
     if (!hasInteracted.current) {
         resumeAudioContext();
@@ -261,7 +329,9 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
               isConfigured={!!config?.audioFileId}
               isPlaying={isPlaying}
               playProgress={progress} // Pass the progress
-              onClick={() => handlePadClick(padIndex)}
+              isEditMode={isEditMode} // Pass edit mode state
+              onClick={() => handlePadClick(padIndex, false)}
+              onShiftClick={() => handlePadClick(padIndex, true)}
               onDropAudio={handleDropAudio} // Pass drop handler
           />
       );
