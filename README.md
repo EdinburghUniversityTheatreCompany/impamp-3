@@ -105,6 +105,22 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 [MIT](LICENSE)
 
+## Contributing
+Open an issue if you find an error or have an idea for an improvement. Preferably do this before opening a pull request so we can discuss the implementation.
+
+### Prefixes
+feat: For new features 
+content: For content updates  
+fix: For small changes
+bug: For bugfixes  
+dep: For dependency updates  
+doc: Updating documentation
+
+### Versioning
+Major: proper releases  
+Minor: Feature updates  
+Patch: Content changes and bugfixes
+
 ## Acknowledgements
 
-Inspired by the original ImpAmp soundboard application.
+Inspired by the original [ImpAmp](https://github.com/EdinburghUniversityTheatreCompany/ImpAmp) soundboard application.
