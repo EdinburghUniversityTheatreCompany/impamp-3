@@ -64,6 +64,17 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       const profiles = await getAllProfiles();
       set({ profiles, isLoading: false });
 
+      // Check for a saved profile ID in localStorage
+      const savedProfileId = localStorage.getItem('impamp-activeProfileId');
+      const savedId = savedProfileId ? parseInt(savedProfileId, 10) : null;
+      
+      // If we have a saved ID and it exists in our profiles, use it
+      if (savedId && profiles.some(p => p.id === savedId)) {
+        set({ activeProfileId: savedId });
+        console.log(`Restored active profile from localStorage: ${savedId}`);
+        return;
+      }
+      
       // If no active profile is set, or the active one is no longer valid,
       // set the first profile as active (preferring the default if it exists)
       const currentActiveId = get().activeProfileId;
@@ -88,7 +99,16 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     const profileExists = get().profiles.some(p => p.id === id);
     if (id === null || profileExists) {
       set({ activeProfileId: id });
-      console.log(`Active profile ID set to: ${id}`);
+      
+      // Save the active profile ID to localStorage for persistence
+      if (id !== null) {
+        localStorage.setItem('impamp-activeProfileId', id.toString());
+        console.log(`Active profile ID set to: ${id} and saved to localStorage`);
+      } else {
+        localStorage.removeItem('impamp-activeProfileId');
+        console.log('Active profile ID cleared from localStorage');
+      }
+      
       // TODO: Trigger loading of pad configurations for the new active profile
     } else {
         console.warn(`Profile with ID ${id} not found in the store. Active profile not changed.`);

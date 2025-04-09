@@ -197,7 +197,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - What button should trigger playing it
 - [x] Removing sound from pad in edit mode
 - [x] Profile management UI
-   - [ ] Remember the last selected profile and start there
+   - [x] Remember the last selected profile and start there
 - [x] Manual import/export
 - [ ] Google Drive integration
 - [x] PWA configuration, make sure it works without internet connection
