@@ -1,0 +1,22 @@
+# Development Dockerfile for ImpAmp 2
+FROM node:22-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install development dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy application files
+# No need to copy node_modules as it's mounted as a volume in docker-compose.yml
+COPY . .
+
+# Expose development server port
+EXPOSE 3000
+
+# Turbopack is used in development mode
+ENV NEXT_TURBO=true
+
+# Start development server with hot reloading
+CMD ["npm", "run", "dev"]

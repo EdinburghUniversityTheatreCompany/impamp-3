@@ -14,7 +14,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Alt+1 through Alt+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
-- **Containerization**: Deployed as a Docker container (coming soon)
+- **Containerization**: Deployed as a Docker container for easy deployment
 
 ## Getting Started
 
@@ -60,6 +60,61 @@ To build the application for production deployment with PWA support:
    ```
 
 3. The app is now available with full PWA capabilities
+
+### Docker Deployment
+
+ImpAmp 2 can be deployed using Docker for easier deployment and consistent environments:
+
+#### Production Deployment
+
+The docker-compose.yml file is configured with profiles to allow you to run only the production container in production environments:
+
+1. Direct Docker run (without compose):
+   ```bash
+   # Build the image
+   docker build -t impamp2:latest .
+   
+   # Run the container (defaults to port 3025)
+   docker run -p 3025:3000 impamp2:latest
+   
+   # Or specify a custom port
+   docker run -p 8080:3000 impamp2:latest
+   ```
+
+2. Using Docker Compose:
+   ```bash
+   # Start only the production app (binds to port 3025 by default)
+   docker-compose up app
+   
+   # Start with custom port
+   HOST_PORT=8080 docker-compose up app
+   ```
+
+3. Access the application at http://localhost:3025 (or your custom port)
+
+#### Portainer Deployment
+
+For Portainer deployment:
+
+1. Add the docker-compose.yml file to your Portainer stack
+2. By default, only the production app will start (the dev service has a profile restriction)
+3. You can set the HOST_PORT environment variable in Portainer to change the default port (3025)
+4. Deploy the stack
+
+#### Development with Docker Compose
+
+For local development with hot-reloading:
+
+```bash
+# Start the development environment with hot-reloading
+COMPOSE_PROFILES=development docker-compose up
+
+# Start only the dev environment
+COMPOSE_PROFILES=development docker-compose up dev
+
+# Start with custom port
+COMPOSE_PROFILES=development DEV_PORT=8081 docker-compose up dev
+```
 
 ### PWA Features
 
@@ -139,10 +194,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [x] PWA configuration, make sure it works without internet connection
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
 - [ ] UI refinement & theming
-- [ ] Docker containerization
+- [x] Docker containerization
 - [ ] Add some tests
 - [ ] Fix big delay when hitting play -> Memory issues
-
+- [ ] Fix that IndexedDB error on startup?
 ## License
 
 [MIT](LICENSE)
