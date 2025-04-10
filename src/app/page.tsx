@@ -154,7 +154,7 @@ export default function Home() {
   };
   
   return (
-    <main className={`flex min-h-screen flex-col items-center p-8 bg-gray-100 dark:bg-gray-800 ${isEditMode ? 'edit-mode' : ''}`}>
+    <main className={`flex min-h-screen flex-col items-center p-8 pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? 'edit-mode' : ''}`}>
       {/* Edit mode indicator */}
       {isEditMode && (
         <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-1 z-50">
@@ -182,10 +182,10 @@ export default function Home() {
         </div>
       </div>
       
-      {/* Content container with sidebar layout */}
-      <div className="w-full max-w-6xl flex-1 flex flex-row gap-4">
+      {/* Content container - no longer using sidebar layout */}
+      <div className="w-full max-w-6xl flex-1 flex flex-col mb-24">
         {/* Main content area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex flex-col min-w-0">
           {/* Help text panel */}
           <div className="bg-white dark:bg-gray-700 rounded-lg p-4 mb-4 shadow-sm">
             <div className="text-gray-700 dark:text-gray-300">
@@ -312,11 +312,11 @@ export default function Home() {
           {/* Pass the current page index to PadGrid */}
           <PadGrid rows={4} cols={8} currentPageIndex={currentPageIndex} />
         </div>
-        
-        {/* Right sidebar for active tracks */}
-        <div className="w-80 sticky top-0">
-          <ActiveTracksPanel />
-        </div>
+      </div>
+      
+      {/* Active Tracks panel at the bottom of the screen */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <ActiveTracksPanel />
       </div>
     </main>
   );

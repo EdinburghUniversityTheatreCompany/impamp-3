@@ -22,6 +22,7 @@ interface ProfileState {
   error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
   emergencySoundsVersion: number;  // Track changes to emergency sounds configuration
+  fadeoutDuration: number;   // Duration in seconds for the fadeout effect
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
   setCurrentPageIndex: (bankNumber: number) => void;  // Changed param name to bankNumber for clarity
@@ -30,6 +31,8 @@ interface ProfileState {
   incrementEmergencySoundsVersion: () => void;   // Increment counter when emergency sounds change
   convertBankNumberToIndex: (bankNumber: number) => number; // Convert from UI bank number to internal index
   convertIndexToBankNumber: (index: number) => number;     // Convert from internal index to UI bank number
+  getFadeoutDuration: () => number;              // Get the current fadeout duration
+  setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   
   // Profile management actions
   createProfile: (profile: { name: string, syncType: SyncType }) => Promise<number>;
@@ -55,6 +58,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   error: null,
   isProfileManagerOpen: false, // Profile manager modal is closed by default
   emergencySoundsVersion: 0,  // Initial version for emergency sounds tracking
+  fadeoutDuration: 3,   // Default fadeout duration in seconds
 
   fetchProfiles: async () => {
     set({ isLoading: true, error: null });
@@ -282,6 +286,49 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   // Profile manager UI state
   openProfileManager: () => set({ isProfileManagerOpen: true }),
   closeProfileManager: () => set({ isProfileManagerOpen: false }),
+  
+  // Fadeout duration management
+  getFadeoutDuration: () => {
+    // If we already have a value in state, use it
+    const stateValue = get().fadeoutDuration;
+    if (stateValue !== undefined) return stateValue;
+    
+    // Otherwise try to get from localStorage
+    try {
+      const savedValue = localStorage.getItem('impamp-fadeoutDuration');
+      if (savedValue) {
+        const duration = parseFloat(savedValue);
+        if (!isNaN(duration) && duration > 0) {
+          // Update the state with the value from localStorage
+          set({ fadeoutDuration: duration });
+          return duration;
+        }
+      }
+    } catch (error) {
+      console.error('Error accessing localStorage for fadeout duration:', error);
+    }
+    
+    // Fall back to default value (3 seconds)
+    return 3;
+  },
+  
+  setFadeoutDuration: (seconds: number) => {
+    if (seconds <= 0) {
+      console.warn('Fadeout duration must be positive, ignoring invalid value:', seconds);
+      return;
+    }
+    
+    // Update state
+    set({ fadeoutDuration: seconds });
+    
+    // Persist to localStorage
+    try {
+      localStorage.setItem('impamp-fadeoutDuration', seconds.toString());
+      console.log(`Fadeout duration set to ${seconds} seconds and saved to localStorage`);
+    } catch (error) {
+      console.error('Error saving fadeout duration to localStorage:', error);
+    }
+  },
 }));
 
 // Initial fetch of profiles when the store is initialized

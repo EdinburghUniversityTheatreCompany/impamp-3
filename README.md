@@ -179,7 +179,9 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
     - [x] Display a browser tab style navigation of banks
     - [x] Flicker when switching banks is annoying
 - [x] Display the current playing tracks in a list + their remaining playtime + a button to stop them right now
-    - [x] The stop button stops the sound but not remove from 
+    - [x] Click on track to immediately stop it
+    - [x] Fadeout button to gradually reduce volume over time
+    - [x] Configurable fadeout duration (stored per profile)
 - [x] esc as panic stop playing button
 - [x] dedicated keyboard shortcut for each pad (q w e r t y u i o p a s d f g etc)
 - [x] Display keyboard shortcut for pad and esc as panic button in the track playing list
@@ -218,8 +220,8 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [x] Can't close the PWA pop-up
 - [ ] Search feature to find a specific sound effect based on filename and name
    - [ ] When the search window is open, how to close it? Esc is the natural option but already used, but then the qwerty etc keys also lose their function.
-- [ ] Add fadeout button to currently playing tracks
-- [ ] Move currently playing track list to the bottom?
+- [x] Add fadeout button to currently playing tracks with configurable duration
+- [x] Move currently playing track list to the bottom of the screen
 
 ## License
 

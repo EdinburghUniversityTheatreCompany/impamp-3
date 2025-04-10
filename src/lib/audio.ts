@@ -18,6 +18,7 @@ export interface ActiveTrack {
 
 let audioContext: AudioContext | null = null;
 const activeTracks: Map<string, ActiveTrack> = new Map(); // Enhanced tracking with metadata
+const fadingTracks: Map<string, boolean> = new Map(); // Track which sounds are currently fading out
 
 // Define an interface for window with potential webkitAudioContext
 interface ExtendedWindow extends Window {
@@ -126,6 +127,11 @@ export function playAudio(
   }
 }
 
+// Check if a track is currently fading out
+export function isTrackFading(playbackKey: string): boolean {
+  return fadingTracks.get(playbackKey) === true;
+}
+
 // Stop audio playback associated with a specific key
 export function stopAudio(playbackKey: string): void {
   const track = activeTracks.get(playbackKey);
@@ -134,6 +140,8 @@ export function stopAudio(playbackKey: string): void {
       track.source.stop(0);
       // Explicitly delete from activeTracks immediately - don't wait for onended
       activeTracks.delete(playbackKey);
+      // Also clear from fading tracks if it was fading
+      fadingTracks.delete(playbackKey);
       console.log(`Playback stopped and removed for key: ${playbackKey}`);
     } catch (error) {
       // Ignore errors if the source was already stopped or in an invalid state
@@ -142,7 +150,61 @@ export function stopAudio(playbackKey: string): void {
       }
       // Manually clean up if stop fails
       activeTracks.delete(playbackKey);
+      fadingTracks.delete(playbackKey);
     }
+  }
+}
+
+// Fade out audio over a specified duration
+export function fadeOutAudio(playbackKey: string, durationInSeconds: number = 3): void {
+  const track = activeTracks.get(playbackKey);
+  if (!track) return;
+  
+  // If already fading, don't restart the fadeout
+  if (fadingTracks.get(playbackKey)) return;
+  
+  try {
+    const context = getAudioContext();
+    const source = track.source;
+    
+    // Disconnect the source from its current destination
+    source.disconnect();
+    
+    // Create a gain node
+    const gainNode = context.createGain();
+    // Start at current volume (1)
+    gainNode.gain.setValueAtTime(1, context.currentTime);
+    // Fade to 0 over the specified duration
+    gainNode.gain.linearRampToValueAtTime(0, context.currentTime + durationInSeconds);
+    
+    // Connect source -> gain -> destination
+    source.connect(gainNode);
+    gainNode.connect(context.destination);
+    
+    // Mark track as fading
+    fadingTracks.set(playbackKey, true);
+    
+    console.log(`Starting fadeout for key: ${playbackKey} over ${durationInSeconds} seconds`);
+    
+    // Remove the track from activeTracks after the fade completes
+    setTimeout(() => {
+      // Only try to stop if it's still active
+      if (activeTracks.has(playbackKey)) {
+        try {
+          source.stop(0);
+        } catch {
+          // Ignore errors if already stopped
+        }
+        activeTracks.delete(playbackKey);
+        fadingTracks.delete(playbackKey); // Remove from fading tracks
+        console.log(`Fadeout completed for key: ${playbackKey}`);
+      }
+    }, durationInSeconds * 1000);
+    
+  } catch (error) {
+    console.error(`Error fading out audio for key ${playbackKey}:`, error);
+    // Fallback to immediate stop if fadeout fails
+    stopAudio(playbackKey);
   }
 }
 
@@ -178,6 +240,7 @@ export function getActiveTracks(): Array<{
   remainingTime: number;
   totalDuration: number;
   progress: number;
+  isFading: boolean;
   padInfo: {
     profileId: number;
     pageIndex: number;
@@ -196,6 +259,7 @@ export function getActiveTracks(): Array<{
       remainingTime: remaining,
       totalDuration: track.duration,
       progress: Math.min(1, elapsed / track.duration),
+      isFading: isTrackFading(key),
       padInfo: track.padInfo
     };
   });
