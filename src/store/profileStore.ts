@@ -140,12 +140,26 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     // Convert bank number to internal index
     const index = get().convertBankNumberToIndex(bankNumber);
     
-    // Ensure index is within valid bounds (0-19 for 20 banks)
-    if (index >= 0 && index < 20) {
+    // First check if index is within valid bounds (0-19 for 20 banks)
+    if (index < 0 || index >= 20) {
+      console.warn(`Invalid bank number: ${bankNumber}. Must be 1-9, 0 (for bank 10), or 11-20.`);
+      return; // Don't change the bank selection
+    }
+
+    // Check if we're trying to access a bank (11-20) that doesn't exist yet
+    // We'll assume banks 1-10 always exist as they have default values
+    const allBanks = document.querySelectorAll('[data-bank-index]');
+    const bankExists = Array.from(allBanks).some(element => 
+      parseInt((element as HTMLElement).dataset.bankIndex || '-1', 10) === index
+    );
+    
+    // For banks 0-9 (UI: 1-10), we'll always allow access as they have defaults
+    if (index <= 9 || bankExists) {
       console.log(`Switching to bank ${bankNumber} (internal index: ${index})`);
       set({ currentPageIndex: index });
     } else {
-      console.warn(`Invalid bank number: ${bankNumber}. Must be 1-9, 0 (for bank 10), or 11-20.`);
+      console.warn(`Bank ${bankNumber} (internal index: ${index}) does not exist yet. Current bank selection maintained.`);
+      // Don't change the current index - maintain the current bank selection
     }
   },
 

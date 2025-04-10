@@ -303,14 +303,13 @@ export function useKeyboardListener() {
     // Bank switching with number keys 1-9 and 0
     const numbersRegex = /^[0-9]$/;
     if (numbersRegex.test(pressedKey)) {
-        // If the Alt key is pressed, handle banks 11-20
-        if (event.altKey) {
+        // If the Ctrl key is pressed, handle banks 11-20
+        if (event.ctrlKey) {
             event.preventDefault();
-            // Alt+1 maps to bank 11, Alt+2 to bank 12, etc. Alt+0 maps to bank 20
+            // Ctrl+1 maps to bank 11, Ctrl+2 to bank 12, etc. Ctrl+0 maps to bank 20
             const altBankNumber = pressedKey === '0' ? 20 : 10 + parseInt(pressedKey, 10);
             
             // Update the bank index in the store
-            console.log(`Alt+${pressedKey} pressed, switching to bank ${altBankNumber}`);
             setCurrentPageIndex(altBankNumber);
             
             // Return early to prevent pad triggering with the same key
@@ -329,7 +328,7 @@ export function useKeyboardListener() {
         }
     }
 
-    // Ignore if Ctrl or Meta keys are pressed (but still allow Alt for bank switching)
+    // Ignore if Ctrl or Meta keys are pressed (but still allow Ctrl for bank switching)
     if (event.metaKey || event.ctrlKey) {
       return;
     }

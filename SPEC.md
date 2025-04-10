@@ -72,8 +72,8 @@ ImpAmp 2 is a web-based soundboard application allowing users to map local audio
     * **Requirement:** Implement the following bank switching shortcuts:
         * `1` through `9`: Switch to Banks 1-9 (Indices 0-8).
         * `0`: Switch to Bank 10 (Index 9).
-        * `Alt+1` through `Alt+9`: Switch to Banks 11-19 (Indices 10-18).
-        * `Alt+0`: Switch to Bank 20 (Index 19).
+        * `Ctrl+1` through `Ctrl+9`: Switch to Banks 11-19 (Indices 10-18).
+        * `Ctrl+0`: Switch to Bank 20 (Index 19).
     * These shortcuts should take precedence over pad triggers if the keys overlap (e.g., number keys should switch banks, not trigger pads).
 * **Adding Banks:** A "+" button is visible only in Edit Mode, allowing users to add new banks (up to Bank 20).
 
@@ -188,7 +188,7 @@ ImpAmp 2 is a web-based soundboard application allowing users to map local audio
 
 * **IndexedDB Server Access Error:** The warning "Attempted to access IndexedDB on the server" during server startup (`ensureDefaultProfile` call stack) needs to be resolved. Database operations should only occur client-side. Wrap DB access calls in checks for `typeof window !== 'undefined'` or ensure they are only called from client components/effects.
 * **PWA Implementation:** Review and likely reimplement the PWA setup (service worker, manifest, registration logic) to ensure reliable installation, offline functionality, and update handling.
-* **Bank Navigation Shortcuts:** Fix the implementation of `Alt+1` to `Alt+0` shortcuts for banks 11-20.
+* **Bank Navigation Shortcuts:** Fix the implementation of `Ctrl+1` to `Ctrl+0` shortcuts for banks 11-20.
 * **Bank 10 Access:** Ensure the '0' key correctly maps to bank 10 (index 9).
 
 ### 7. Future Considerations / Open Questions

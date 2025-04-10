@@ -11,7 +11,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
 - **Edit Mode**: Shift key activates edit mode for renaming pads and banks, and removing sounds (via an "X" button or Delete+click)
-- **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Alt+1 through Alt+0 for banks 11-20
+- **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
 - **Containerization**: Deployed as a Docker container for easy deployment
@@ -131,7 +131,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 
 1. **Adding Sounds**: Drag and drop audio files onto the pads in the grid.
 2. **Playing Sounds**: Click on a pad or use the assigned keyboard shortcut.
-3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Alt+1 through Alt+0 for banks 11-20.
+3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Ctrl+1 through Ctrl+0 for banks 11-20.
 4. **Edit Mode**: Hold Shift to enter edit mode
    - Shift+click on pads or banks to rename them
    - Click the red "X" button on configured pads to remove sounds
@@ -192,8 +192,8 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - [x] Shift-click on pad to rename
    - [x] Shift-click on bank to rename or to mark bank as emergency
    - [x] Show "+" button to the right of the banks to add a new one
-- [ ] Using alt-<number> to navigate to banks does not work. Pick something else maybe?
-- [ ] Accessing bank 10 is not possible due to the numbering being weird
+- [x] Using ctrl-<number> to navigate to banks does not work. Pick something else maybe?
+- [x] Accessing bank 10 is not possible due to the numbering being weird
 - [x] Hitting enter should immediately play a random emergency that round-robins
 - [ ] Arm next sound effect to play so you can browse banks. 
    - Maybe add it to a list near currently playing?

@@ -202,7 +202,7 @@ export default function Home() {
               <span className="text-sm ml-4 text-gray-500">
                 {isEditMode 
                   ? "Shift+click to rename banks and pads." 
-                  : "Press 1-9, 0 to switch banks 1-9, 10. Press Alt+1 through Alt+0 for banks 11-20. Hold SHIFT for edit mode. "
+                  : "Press 1-9, 0 to switch banks 1-9, 10. Press Ctrl+1 through Ctrl+0 for banks 11-20. Hold SHIFT for edit mode. "
                 }
               </span>
             </div>
@@ -219,6 +219,7 @@ export default function Home() {
                   return (
                   <button
                     key={index}
+                    data-bank-index={index}
                     onClick={(e) => {
                       if (e.shiftKey && isEditMode) {
                         handleBankClick(index, true);
