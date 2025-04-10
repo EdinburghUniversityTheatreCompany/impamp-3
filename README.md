@@ -201,8 +201,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - [x] Remember the last selected profile and start there
 - [x] Manual import/export
 - [ ] Google Drive integration
+   - [ ] Add merging of profiles if two (or more) people edited the same Google Drive profile while offline. How to decide who gets to merge, and communicate if the merge happened.
 - [x] PWA configuration, make sure it works without internet connection
 - [ ] Help page with shortcuts, how to import/export, sync with Google Drive
+- [ ] Short product tour/tutorial on first use
 - [ ] UI refinement & theming 
    - [ ] Mobile layout
 - [x] Docker containerization
@@ -214,6 +216,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] The profile selector flickers when switching banks
 - [x] Error when installing service workers
 - [x] Can't close the PWA pop-up
+- [ ] Search feature to find a specific sound effect based on filename and name
+   - [ ] When the search window is open, how to close it? Esc is the natural option but already used, but then the qwerty etc keys also lose their function.
+- [ ] Add fadeout button to currently playing tracks
+- [ ] Move currently playing track list to the bottom?
 
 ## License
 
