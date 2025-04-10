@@ -3,8 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { KeyboardListenerWrapper } from "@/components/KeyboardListenerWrapper";
 import ProfileManager from "@/components/profiles/ProfileManager";
-// PWA registration script
-import "./pwa-init";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
