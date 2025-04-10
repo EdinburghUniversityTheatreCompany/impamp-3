@@ -1,6 +1,6 @@
-# ImpAmp 2 Soundboard
+# ImpAmp3 Soundboard
 
-A modern, web-based soundboard application built with Next.js, TypeScript, IndexedDB, and Web Audio API. ImpAmp 2 allows users to map locally stored audio files to keyboard shortcuts and trigger them instantly via keyboard or mouse clicks.
+A modern, web-based soundboard application built with Next.js, TypeScript, IndexedDB, and Web Audio API. ImpAmp3 allows users to map locally stored audio files to keyboard shortcuts and trigger them instantly via keyboard or mouse clicks.
 
 ## Features
 
@@ -27,8 +27,8 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 1. Clone the repository
    ```bash
-   git clone https://github.com/edinburghuniversitytheatrecompany/impamp-2.git
-   cd impamp-2
+   git clone https://github.com/edinburghuniversitytheatrecompany/impamp-3.git
+   cd impamp-3
    ```
 
 2. Install dependencies
@@ -63,7 +63,7 @@ To build the application for production deployment with PWA support:
 
 ### Docker Deployment
 
-ImpAmp 2 can be deployed using Docker for easier deployment and consistent environments:
+ImpAmp3 can be deployed using Docker for easier deployment and consistent environments:
 
 #### Production Deployment
 
@@ -72,13 +72,13 @@ The docker-compose.yml file is configured with profiles to allow you to run only
 1. Direct Docker run (without compose):
    ```bash
    # Build the image
-   docker build -t impamp2:latest .
+   docker build -t impamp3:latest .
    
    # Run the container (defaults to port 3025)
-   docker run -p 3025:3000 impamp2:latest
+   docker run -p 3025:3000 impamp3:latest
    
    # Or specify a custom port
-   docker run -p 8080:3000 impamp2:latest
+   docker run -p 8080:3000 impamp3:latest
    ```
 
 2. Using Docker Compose:
@@ -118,7 +118,7 @@ COMPOSE_PROFILES=development DEV_PORT=8081 docker-compose up dev
 
 ### PWA Features
 
-ImpAmp 2 is configured as a Progressive Web App (PWA), which means it:
+ImpAmp3 is configured as a Progressive Web App (PWA), which means it:
 
 - Can be installed on desktops, mobile devices, and tablets
 - Works offline after the initial load

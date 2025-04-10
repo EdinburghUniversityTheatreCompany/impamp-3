@@ -1,7 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { useProfileStore } from '@/store/profileStore';
 
-const DB_NAME = 'ImpAmp2DB';
+const DB_NAME = 'impamp3DB';
 const DB_VERSION = 2; // Bump version for schema upgrade
 
 // Define the structure of audio file data

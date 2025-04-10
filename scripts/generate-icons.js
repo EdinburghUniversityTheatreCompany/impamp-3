@@ -31,7 +31,7 @@ sizes.forEach(size => {
   ctx.font = `bold ${size * 0.5}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('ImpAmp 2', size / 2, size / 2);
+  ctx.fillText('ImpAmp3', size / 2, size / 2);
   
   // Add a sound wave effect (simplified)
   ctx.strokeStyle = '#4a9eff';

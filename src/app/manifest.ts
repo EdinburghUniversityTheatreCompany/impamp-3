@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "ImpAmp 2 Soundboard",
-    short_name: "ImpAmp 2",
+    name: "ImpAmp3 Soundboard",
+    short_name: "ImpAmp3",
     description: "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
     start_url: "/",
     display: "standalone",

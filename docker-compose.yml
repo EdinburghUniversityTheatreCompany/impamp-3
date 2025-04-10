@@ -6,8 +6,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: impamp2:latest
-    container_name: impamp2-app
+    image: impamp3:latest
+    container_name: impamp3-app
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-3025}:3000"  # Map to host port specified by HOST_PORT env var (default: 3025)
@@ -20,8 +20,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: impamp2-dev:latest
-    container_name: impamp2-dev
+    image: impamp3-dev:latest
+    container_name: impamp3-dev
     profiles: ["development"]  # Only start when the "development" profile is active
     volumes:
       - .:/app

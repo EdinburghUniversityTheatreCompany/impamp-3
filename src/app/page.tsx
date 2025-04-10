@@ -165,7 +165,7 @@ export default function Home() {
       <div className="w-full max-w-6xl mb-8 flex flex-col gap-2">
         <div className="flex justify-between items-center">
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
-            ImpAmp 2 Soundboard
+            ImpAmp3 Soundboard
           </h1>
           
           {/* Profile Selector */}

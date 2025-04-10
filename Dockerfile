@@ -1,4 +1,4 @@
-# Multi-stage build for ImpAmp 2 Soundboard
+# Multi-stage build for impamp3 Soundboard
 
 # Build stage
 FROM node:22-alpine AS builder

@@ -1,6 +1,6 @@
-# UI Design Bible - ImpAmp 2 Soundboard
+# UI Design Bible - ImpAmp3 Soundboard
 
-This document outlines the visual and interaction design guidelines for the ImpAmp 2 Soundboard application.
+This document outlines the visual and interaction design guidelines for the ImpAmp3 Soundboard application.
 
 ## 1. Color Palette
 

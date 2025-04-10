@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ImpAmp 2 Soundboard",
+  title: "ImpAmp3 Soundboard",
   description: "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
   icons: {
     icon: [
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "ImpAmp 2",
+    title: "ImpAmp3",
   },
 };
 

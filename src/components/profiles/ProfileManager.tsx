@@ -319,7 +319,7 @@ export default function ProfileManager() {
                     {isImporting ? 'Importing...' : 'Select File to Import'}
                   </button>
                   <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                    Only import files that were previously exported from ImpAmp 2.
+                    Only import files that were previously exported from ImpAmp3.
                   </p>
                 </div>
               </section>
