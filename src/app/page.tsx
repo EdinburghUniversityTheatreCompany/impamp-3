@@ -1,12 +1,18 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import PadGrid from '@/components/PadGrid';
 import ActiveTracksPanel from '@/components/ActiveTracksPanel';
 import SearchButton from '@/components/SearchButton';
 import { useProfileStore } from '@/store/profileStore';
 import { renamePage, setPageEmergencyState, upsertPageMetadata, getAllPageMetadataForProfile, PageMetadata } from '@/lib/db';
+
+// Pre-load ProfileSelector component to avoid remounting during bank switches
+const ProfileSelector = dynamic(() => import('@/components/profiles/ProfileSelector'), {
+  ssr: false, 
+  loading: () => <div className="w-24 h-10 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+});
 
 export default function Home() {
   // Get state and utility functions from profile store
@@ -18,6 +24,11 @@ export default function Home() {
   // Only importing the functions we actually use
   
   // Current bank number will be calculated where needed
+  
+  // Memoized components to prevent unnecessary remounting
+  const renderProfileSelector = useCallback(() => {
+    return <ProfileSelector />;
+  }, []); // Empty dependency array ensures this doesn't change when banks switch
   
   // Track if shift key is pressed
   const [isShiftDown, setIsShiftDown] = useState(false);
@@ -174,14 +185,8 @@ export default function Home() {
             {/* Search Icon */}
             <SearchButton />
             
-            {/* Import ProfileSelector here */}
-            {React.createElement(
-              // This dynamic import technique ensures the component is only loaded on the client
-              dynamic(() => import('@/components/profiles/ProfileSelector'), {
-                ssr: false,
-                loading: () => <div className="w-24 h-10 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
-              })
-            )}
+            {/* Using the memoized ProfileSelector render function */}
+            {renderProfileSelector()}
           </div>
         </div>
       </div>

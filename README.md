@@ -215,7 +215,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] Fix that IndexedDB error on startup?
 - [ ] Fix the PWA stuff. I can't see the offer to install it. -> [https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps]
 - [x] Favicon based on the SVG
-- [ ] The profile selector flickers when switching banks
+- [x] The profile selector flickers when switching banks
 - [x] Error when installing service workers
 - [x] Can't close the PWA pop-up
 - [x] Search feature to find a specific sound effect based on filename and name
