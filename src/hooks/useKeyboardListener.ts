@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useProfileStore } from '@/store/profileStore';
 import { PadConfiguration, getPadConfigurationsForProfilePage, getAllPageMetadataForProfile } from '@/lib/db';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio } from '@/lib/audio';
+import { useSearchModal } from '@/components/SearchModalProvider';
 
 // Define a key mapping for a standard keyboard layout
 // This provides the default key bindings for pads based on their index
@@ -146,6 +147,8 @@ export function useKeyboardListener() {
   const isEditing = useProfileStore((state) => state.isEditing);
   // Get emergency sounds version to detect changes
   const emergencySoundsVersion = useProfileStore((state) => state.emergencySoundsVersion);
+  // Get search modal context
+  const { openSearchModal, isSearchModalOpen } = useSearchModal();
   
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
@@ -223,6 +226,19 @@ export function useKeyboardListener() {
 
     const pressedKey = event.key; // e.g., "F1", "a", "1", "Enter"
     
+    // Handle Ctrl+F to open search modal
+    if (pressedKey === 'f' && event.ctrlKey) {
+      event.preventDefault();
+      openSearchModal();
+      console.log("heya heya, in ctrl+f")
+      return;
+    }
+    
+    // If search modal is open, don't process other keyboard shortcuts except Escape (handled in modal)
+    if (isSearchModalOpen) {
+      return;
+    }
+    
     // Handle Enter key to play emergency sound
     if (pressedKey === 'Enter') {
       event.preventDefault();
@@ -276,8 +292,8 @@ export function useKeyboardListener() {
       return;
     }
         
-    // Handle Escape key as "panic button" to stop all audio
-    if (pressedKey === 'Escape') {
+    // Handle Escape key as "panic button" to stop all audio (only if search modal is closed)
+    if (pressedKey === 'Escape' && !isSearchModalOpen) {
         event.preventDefault();
         console.log('Escape key pressed - stopping all audio playback');
         stopAllAudio();
@@ -409,7 +425,7 @@ export function useKeyboardListener() {
             console.error(`Error during keyboard playback for key "${pressedKey}":`, error);
         }
     }
-  }, [activeProfileId, currentPageIndex, setCurrentPageIndex, setEditMode, reloadEmergencySounds]); // Dependencies for the callback
+  }, [activeProfileId, currentPageIndex, setCurrentPageIndex, setEditMode, reloadEmergencySounds, openSearchModal, isSearchModalOpen]); // Dependencies for the callback
   
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback((event: KeyboardEvent) => {

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import PadGrid from '@/components/PadGrid';
 import ActiveTracksPanel from '@/components/ActiveTracksPanel';
+import SearchButton from '@/components/SearchButton';
 import { useProfileStore } from '@/store/profileStore';
 import { renamePage, setPageEmergencyState, upsertPageMetadata, getAllPageMetadataForProfile, PageMetadata } from '@/lib/db';
 
@@ -168,8 +169,11 @@ export default function Home() {
             ImpAmp3 Soundboard
           </h1>
           
-          {/* Profile Selector */}
+          {/* Profile Selector and Search Icon */}
           <div className="flex items-center space-x-4">
+            {/* Search Icon */}
+            <SearchButton />
+            
             {/* Import ProfileSelector here */}
             {React.createElement(
               // This dynamic import technique ensures the component is only loaded on the client

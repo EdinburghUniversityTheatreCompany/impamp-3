@@ -218,8 +218,8 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] The profile selector flickers when switching banks
 - [x] Error when installing service workers
 - [x] Can't close the PWA pop-up
-- [ ] Search feature to find a specific sound effect based on filename and name
-   - [ ] When the search window is open, how to close it? Esc is the natural option but already used, but then the qwerty etc keys also lose their function.
+- [x] Search feature to find a specific sound effect based on filename and name
+   - [x] When the search window is open, how to close it? Esc is the natural option but already used, but then the qwerty etc keys also lose their function.
 - [x] Add fadeout button to currently playing tracks with configurable duration
 - [x] Move currently playing track list to the bottom of the screen
 
