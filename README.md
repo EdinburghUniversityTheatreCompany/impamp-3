@@ -214,6 +214,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - [ ] Convert vitest tests to end-to-end tests
    - [ ] Figure out Wallaby
    - [ ] Run end-to-end tests in actions
+- [ ] Fix big delay when hitting play -> Memory issues > https://gemini.google.com/app/b63e1cb7120d9bb3?pli=1
 - [ ] Fix that IndexedDB error on startup?
 - [ ] Fix the PWA stuff. I can't see the offer to install it. -> [https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps]
 - [x] Favicon based on the SVG
@@ -224,6 +225,14 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - [x] When the search window is open, how to close it? Esc is the natural option but already used, but then the qwerty etc keys also lose their function.
 - [x] Add fadeout button to currently playing tracks with configurable duration
 - [x] Move currently playing track list to the bottom of the screen
+- [ ] Render remaining play time in seconds in the green progress bar on the pad.
+- [ ] Fade all button
+- [ ] Close search modal after clicking result
+- [ ] Left mouseclick to preload on pads and search results
+- [ ] Display Github commit the version is based on.. How? -> const latestCommitHash = process.env.COMMIT_HASH: & https://stackoverflow.com/questions/74372016/how-to-get-version-from-package-json-in-next-js and paste this in front of next build: `COMMIT_HASH=$(git rev-parse HEAD)`
+- [ ] Import from ImpAmp 2
+- [ ] Add license
+- [ ] Some way of importing a bunch of files to a bank at a time and then you can just drag them around?
 
 ## License
 
