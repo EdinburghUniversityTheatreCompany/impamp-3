@@ -210,8 +210,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 - [ ] UI refinement & theming 
    - [ ] Mobile layout
 - [x] Docker containerization
-- [ ] Add some tests
-- [ ] Fix big delay when hitting play -> Memory issues
+- [ ] Add some end-to-end tests
+   - [ ] Convert vitest tests to end-to-end tests
+   - [ ] Figure out Wallaby
+   - [ ] Run end-to-end tests in actions
 - [ ] Fix that IndexedDB error on startup?
 - [ ] Fix the PWA stuff. I can't see the offer to install it. -> [https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps]
 - [x] Favicon based on the SVG

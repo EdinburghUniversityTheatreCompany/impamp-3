@@ -3,7 +3,7 @@
 *Written by Gemini 2.5 Pro*
 ### 1. Overview
 
-ImpAmp 2 is a web-based soundboard application allowing users to map local audio files to keyboard shortcuts for instant playback. It features multiple sound banks, profile management, offline PWA support, and edit modes for configuration.
+ImpAmp3 is a web-based soundboard application allowing users to map local audio files to keyboard shortcuts for instant playback. It features multiple sound banks, profile management, offline PWA support, and edit modes for configuration.
 
 ### 2. Core Functionality
 
