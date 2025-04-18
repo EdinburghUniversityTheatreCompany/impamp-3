@@ -34,6 +34,7 @@ export default function Home() {
   const [isShiftDown, setIsShiftDown] = useState(false);
   
   // Set up event listeners to track shift key state
+  // TODO: Is keyhandling currently duplicated?
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') setIsShiftDown(true);
@@ -212,7 +213,7 @@ export default function Home() {
           <div className="mb-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center">
               {/* Bank Selector Tabs - show all available banks */}
-              <div className="flex flex-1 space-x-1 overflow-x-auto pb-1">
+              <div className="flex flex-1 space-x-1 overflow-x-auto pb-1" role="tablist">
                 {Object.keys(bankNames).map((bankKey) => {
                   const index = parseInt(bankKey, 10);
                   const bankNumber = convertIndexToBankNumber(index);

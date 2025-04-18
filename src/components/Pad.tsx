@@ -140,8 +140,8 @@ const Pad: React.FC<PadProps> = ({
       }}
       aria-label={`Sound pad ${padIndex + 1}${name !== 'Empty Pad' ? `: ${name}` : ''}${displayKeyBinding ? `, key ${displayKeyBinding}` : ''}`}
     >
-      {/* Input element required by react-dropzone */}
-      <input {...getInputProps()} />
+      {/* Input element required by react-dropzone - add data-testid */}
+      <input {...getInputProps()} data-testid={`pad-drop-input-${padIndex}`} />
 
       {/* Pad Name Display - with better wrapping and edit mode indicator */}
       <span className="text-sm font-medium break-all w-full text-center z-10">
