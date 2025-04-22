@@ -1,11 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react'; // Removed useRef
 import dynamic from 'next/dynamic';
 import PadGrid from '@/components/PadGrid';
 import ActiveTracksPanel from '@/components/ActiveTracksPanel';
 import SearchButton from '@/components/SearchButton';
 import { useProfileStore } from '@/store/profileStore';
+import { useUIStore } from '@/store/uiStore'; // Import UI store
+import EditBankModalContent from '@/components/modals/EditBankModalContent'; // Import modal content
+import PromptModalContent from '@/components/modals/PromptModalContent'; // Import modal content
 import { renamePage, setPageEmergencyState, upsertPageMetadata, getAllPageMetadataForProfile, PageMetadata } from '@/lib/db';
 
 // Pre-load ProfileSelector component to avoid remounting during bank switches
@@ -21,9 +24,8 @@ export default function Home() {
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const setEditing = useProfileStore((state) => state.setEditing);
   const convertIndexToBankNumber = useProfileStore((state) => state.convertIndexToBankNumber);
+  const { openModal, closeModal } = useUIStore(); // Get modal actions
   // Only importing the functions we actually use
-  
-  // Current bank number will be calculated where needed
   
   // Memoized components to prevent unnecessary remounting
   const renderProfileSelector = useCallback(() => {
@@ -103,67 +105,85 @@ export default function Home() {
   }, [activeProfileId, currentPageIndex, convertIndexToBankNumber]);
   
   // Handle bank click with shift key in edit mode
-  const handleBankClick = async (bankIndex: number, isShiftClick: boolean) => {
+  const handleBankClick = (bankIndex: number, isShiftClick: boolean) => { // Removed async as modal handles async internally
     if (!isEditMode || !isShiftClick || activeProfileId === null) {
-      // Regular bank switch (handled by the button's onClick)
+      // Regular bank switch (handled by the button's onClick) - This part remains synchronous
       return;
     }
     
     // In edit mode with shift pressed, show dialog to rename and set emergency flag
-    const bankNumber = convertIndexToBankNumber(bankIndex);
+    const bankNumber = convertIndexToBankNumber(bankIndex); // Keep only one declaration
     const currentName = bankNames[bankIndex] || `Bank ${bankNumber}`;
-    const isEmergency = emergencyBanks[bankIndex] || false;
-    
-    // Set editing state to true
+    const currentIsEmergency = emergencyBanks[bankIndex] || false;
+
+    // Variable to hold the data from the modal content
+    let modalData = { name: currentName, isEmergency: currentIsEmergency };
+
+    // Set editing state to true before opening modal
     setEditing(true);
-    
-    // Prompt for a new name
-    const newName = prompt(`Enter new name for bank ${bankNumber}:`, currentName);
-    
-    // If the user cancels, don't update the name but still ask about emergency
-    if (newName !== null) {
-      try {
-        await renamePage(activeProfileId, bankIndex, newName.trim() || currentName);
-        
-        // Update local state
-        setBankNames(prev => ({
-          ...prev,
-          [bankIndex]: newName.trim() || currentName
-        }));
-      } catch (error) {
-        console.error(`Failed to rename bank ${bankNumber}:`, error);
+
+    openModal({
+      title: `Edit Bank ${bankNumber}`,
+      content: (
+        <EditBankModalContent
+          initialName={currentName}
+          initialIsEmergency={currentIsEmergency}
+          onDataChange={(data) => {
+            modalData = data; // Update the scoped variable
+          }}
+        />
+      ),
+      confirmText: 'Save Changes',
+      onConfirm: async () => {
+        // Read data from the scoped variable
+        const { name: newName, isEmergency: newIsEmergency } = modalData;
+        const finalName = newName.trim() || currentName; // Use current name if trimmed is empty
+        let nameChanged = false;
+        let emergencyChanged = false;
+
+        try {
+          // Update name if changed
+          if (finalName !== currentName) {
+            await renamePage(activeProfileId, bankIndex, finalName);
+            setBankNames(prev => ({ ...prev, [bankIndex]: finalName }));
+            nameChanged = true;
+            console.log(`Renamed bank ${bankNumber} to "${finalName}"`);
+          }
+
+          // Update emergency state if changed
+          if (newIsEmergency !== currentIsEmergency) {
+            await setPageEmergencyState(activeProfileId, bankIndex, newIsEmergency);
+            setEmergencyBanks(prev => ({ ...prev, [bankIndex]: newIsEmergency }));
+            emergencyChanged = true;
+            console.log(`Set emergency status for bank ${bankNumber} to ${newIsEmergency}`);
+          }
+
+          if (nameChanged || emergencyChanged) {
+            // Optionally show success feedback
+          }
+
+        } catch (error) {
+          console.error(`Failed to update bank ${bankNumber}:`, error);
+          // TODO: Show error feedback in modal or via toast
+          alert(`Failed to update bank ${bankNumber}. Please try again.`);
+        } finally {
+          closeModal(); // Close the modal after operation
+          // Set editing state back to false and check shift key
+          setEditing(false);
+          if (!isShiftDown) {
+            useProfileStore.getState().setEditMode(false);
+          }
+        }
+      },
+      onCancel: () => {
+        // Also handle setting editing state back and checking shift on cancel
+        setEditing(false);
+        if (!isShiftDown) {
+          useProfileStore.getState().setEditMode(false);
+        }
+        // closeModal is handled by the store automatically
       }
-    }
-    
-    // Ask about emergency state
-    const shouldBeEmergency = confirm(
-      `Mark bank ${bankNumber} as emergency?\n\n` +
-      `Emergency banks can be triggered with the Enter key.` +
-      (isEmergency ? '\n\nThis bank is currently marked as emergency.' : '')
-    );
-    
-    // Set editing state back to false
-    setEditing(false);
-    
-    // Check if shift is still pressed, if not, exit edit mode
-    if (!isShiftDown) {
-      useProfileStore.getState().setEditMode(false);
-    }
-    
-    // Update emergency state if it changed
-    if (shouldBeEmergency !== isEmergency) {
-      try {
-        await setPageEmergencyState(activeProfileId, bankIndex, shouldBeEmergency);
-        
-        // Update local state
-        setEmergencyBanks(prev => ({
-          ...prev,
-          [bankIndex]: shouldBeEmergency
-        }));
-      } catch (error) {
-        console.error(`Failed to update emergency state for bank ${bankNumber}:`, error);
-      }
-    }
+    });
   };
   
   return (
@@ -221,6 +241,8 @@ export default function Home() {
                   <button
                     key={index}
                     data-bank-index={index}
+                    role="tab"
+                    aria-selected={index === currentPageIndex}
                     onClick={(e) => {
                       if (e.shiftKey && isEditMode) {
                         handleBankClick(index, true);
@@ -254,8 +276,7 @@ export default function Home() {
               {isEditMode && (
                 <button
                   onClick={() => {
-                    // Set editing state to true
-                    setEditing(true);
+                    console.log('[Add Bank Button] Clicked!'); // DEBUG LOG
                     // Find the next available bank number
                     // Get all current bank indices and find the next available index
                     const usedIndices = Object.keys(bankNames).map(k => parseInt(k, 10));
@@ -272,43 +293,87 @@ export default function Home() {
                     
                     // Get the bank number for display
                     const nextBankNumber = convertIndexToBankNumber(nextIndex);
-                    
-                    // Prompt for the new bank name
-                    const newBankName = prompt(`Enter name for new bank ${nextBankNumber}:`, `Bank ${nextBankNumber}`);
-                    if (newBankName === null) return;
-                    
-                    // Create the new bank
-                    if (activeProfileId !== null) {
-                      // Create new bank in database
-                      upsertPageMetadata({
-                        profileId: activeProfileId,
-                        pageIndex: nextIndex,
-                        name: newBankName.trim() || `Bank ${nextBankNumber}`,
-                        isEmergency: false
-                      }).then(() => {
-                        // Update local state
-                        setBankNames(prev => ({
-                          ...prev,
-                          [nextIndex]: newBankName.trim() || `Bank ${nextBankNumber}`
-                        }));
-                        
-                        // Switch to the new bank
-                        useProfileStore.getState().setCurrentPageIndex(nextBankNumber);
-                        
-                        console.log(`Created new bank ${nextBankNumber} (index ${nextIndex}): ${newBankName}`);
-                      }).catch((error: Error) => {
-                        console.error(`Failed to create new bank:`, error);
-                        alert('Failed to create new bank. Please try again.');
-                      }).finally(() => {
-                        // Set editing state back to false
+
+                    console.log(`[Add Bank Button] isEditMode=${isEditMode}, activeProfileId=${activeProfileId}, nextIndex=${nextIndex}, nextBankNumber=${nextBankNumber}`); // DEBUG LOG
+
+                    // Variable to hold the new bank name
+                    let modalDataValue = `Bank ${nextBankNumber}`;
+
+                    // Set editing state to true before opening modal
+                    setEditing(true);
+
+                    openModal({
+                      title: 'Add New Bank',
+                      content: (
+                        <PromptModalContent
+                          label={`Enter name for new bank ${nextBankNumber}:`}
+                          initialValue={`Bank ${nextBankNumber}`}
+                          onValueChange={(value) => {
+                            modalDataValue = value; // Update scoped variable
+                          }}
+                        />
+                      ),
+                      confirmText: 'Create Bank',
+                      onConfirm: async () => {
+                        // Read data from scoped variable
+                        const newBankName = modalDataValue;
+                        const finalBankName = newBankName.trim() || `Bank ${nextBankNumber}`;
+
+                        if (activeProfileId !== null) {
+                          try {
+                            await upsertPageMetadata({
+                              profileId: activeProfileId,
+                              pageIndex: nextIndex,
+                              name: finalBankName,
+                              isEmergency: false
+                            });
+
+                            // Update local state
+                            setBankNames(prev => ({
+                              ...prev,
+                              [nextIndex]: finalBankName
+                            }));
+                            setEmergencyBanks(prev => ({ // Also ensure emergency state is set
+                              ...prev,
+                              [nextIndex]: false
+                            }));
+
+
+                            // Switch to the new bank
+                            useProfileStore.getState().setCurrentPageIndex(nextBankNumber);
+
+                            console.log(`Created new bank ${nextBankNumber} (index ${nextIndex}): ${finalBankName}`);
+                          } catch (error) {
+                            console.error(`Failed to create new bank:`, error);
+                            alert('Failed to create new bank. Please try again.');
+                          } finally {
+                            closeModal();
+                            // Set editing state back and check shift
+                            setEditing(false);
+                            if (!isShiftDown) {
+                              useProfileStore.getState().setEditMode(false);
+                            }
+                          }
+                        } else {
+                          console.error('[Add Bank Button] activeProfileId is null, cannot create bank.');
+                          alert('Cannot create bank, no active profile.');
+                          closeModal();
+                          // Set editing state back and check shift
+                          setEditing(false);
+                          if (!isShiftDown) {
+                            useProfileStore.getState().setEditMode(false);
+                          }
+                        }
+                      },
+                      onCancel: () => {
+                        // Set editing state back and check shift on cancel
                         setEditing(false);
-                        
-                        // Check if shift is still pressed, if not, exit edit mode
                         if (!isShiftDown) {
                           useProfileStore.getState().setEditMode(false);
                         }
-                      });
-                    }
+                        // closeModal is handled by the store automatically
+                      }
+                    });
                   }}
                   className="ml-2 px-3 py-2 rounded flex items-center justify-center text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
                   aria-label="Add new bank"

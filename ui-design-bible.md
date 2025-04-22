@@ -45,9 +45,27 @@ This document outlines the visual and interaction design guidelines for the ImpA
 *   **Secondary Button:** TBD (Style for less prominent actions)
 *   **Icon Button:** TBD
 
-### 4.3 Modals
+### 4.3 Modals (`src/components/Modal.tsx`, `src/store/uiStore.ts`)
 
-*   **Style:** TBD (Background, Padding, Shadow)
+*   **Purpose:** Provides a consistent way to display confirmations, prompts, or custom forms, replacing native browser dialogs.
+*   **Structure:**
+    *   Fixed overlay (`bg-black bg-opacity-50`).
+    *   Centered content container (`bg-white dark:bg-gray-800`, rounded, shadow, padding).
+    *   Optional title area.
+    *   Main content area (renders custom `children`).
+    *   Optional action button area (Confirm/Cancel).
+    *   Close button (top-right 'X').
+*   **Usage:**
+    *   Managed globally via `useUIStore`.
+    *   Call `openModal(config)` with a configuration object.
+    *   The `config.content` property takes a ReactNode, typically one of the specific content components:
+        *   `ConfirmModalContent`: Displays a simple message.
+        *   `PromptModalContent`: Displays a label and text input.
+        *   `EditBankModalContent`: Displays bank name input and emergency checkbox.
+    *   `config.onConfirm` contains the logic to execute when the confirm button is clicked (often reading data collected by the content component).
+    *   `config.onCancel` (optional) runs when the modal is closed via overlay click, close button, or cancel button.
+    *   `closeModal()` closes the currently open modal.
+*   **Styling:** Uses Tailwind CSS for styling. Key elements have `data-testid` attributes for testing.
 
 ### 4.4 Profile Management
 
@@ -81,13 +99,17 @@ This document outlines the visual and interaction design guidelines for the ImpA
     *   Visual Indicator: Amber-colored border around the entire application
     *   Banner: "EDIT MODE" banner appears at the top of the screen
     *   Exit: Release the Shift key to exit edit mode
-*   **Renaming:**
-    *   Pads: Shift-click on a pad in edit mode to rename it
-    *   Banks: Shift-click on a bank in edit mode to rename it
+*   **Renaming/Editing (via Modal):**
+    *   Pads: Shift+click on a pad in edit mode opens a modal (`PromptModalContent`) to enter a new name.
+    *   Banks: Shift+click on a bank tab in edit mode opens a modal (`EditBankModalContent`) to edit the name and toggle emergency status.
+*   **Adding Banks (via Modal):**
+    *   Clicking the '+' button in edit mode opens a modal (`PromptModalContent`) to enter the new bank's name.
+*   **Removing Pad Sound (via Modal):**
+    *   Clicking the 'x' button on a configured pad in edit mode opens a confirmation modal (`ConfirmModalContent`).
 *   **Emergency Banks:**
-    *   Visual Indicator: Red dot/ring on bank buttons marked as emergency
-    *   Toggle: When renaming a bank in edit mode, option to mark as emergency
-    *   Usage: Emergency banks can be triggered with the Enter key (round-robin)
+    *   Visual Indicator: Red dot/ring on bank tabs marked as emergency.
+    *   Toggle: Handled within the `EditBankModalContent` via a checkbox.
+    *   Usage: Emergency banks can be triggered with the Enter key (round-robin).
 *   **Sync Status:** Clear visual indicators for syncing, success, conflicts, errors.
 
 ## 6. Edit Mode Design
