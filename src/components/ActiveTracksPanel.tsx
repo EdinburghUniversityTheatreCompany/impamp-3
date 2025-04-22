@@ -55,7 +55,10 @@ const ActiveTracksPanel: React.FC = () => {
   };
   
   return (
-    <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-4 w-full shadow-lg">
+    <div 
+      className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-4 w-full shadow-lg"
+      data-testid="active-tracks-panel" // Added test ID
+    >
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center">

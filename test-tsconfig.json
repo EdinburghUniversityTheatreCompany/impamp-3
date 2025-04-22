@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowJs": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["vitest/globals", "node", "jest"]
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "test/**/*.ts",
+    "e2e-tests/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

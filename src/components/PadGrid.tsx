@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Pad from './Pad';
 import { useProfileStore } from '@/store/profileStore';
+import { useUIStore } from '@/store/uiStore'; // Import UI store
+import PromptModalContent from './modals/PromptModalContent'; // Import modal content
+import ConfirmModalContent from './modals/ConfirmModalContent'; // Import modal content
 import {
   getPadConfigurationsForProfilePage,
   PadConfiguration,
@@ -26,6 +29,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode); 
   const setEditing = useProfileStore((state) => state.setEditing);
+  const { openModal, closeModal } = useUIStore(); // Get modal actions
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
   const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
   const [padProgress, setPadProgress] = useState<Map<number, number>>(new Map());
@@ -142,34 +146,43 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   }, []);
 
   // Handler for removing sound from a pad
-  const handleRemoveSound = async (padIndex: number) => {
+  const handleRemoveSound = (padIndex: number) => { // Removed async
     const config = padConfigs.get(padIndex);
-    
-    if (!config || !config.audioFileId) return;
-    
-    // Show confirmation dialog
-    if (confirm(`Remove sound "${config.name || `Pad ${padIndex + 1}`}" from this pad?`)) {
-      try {
-        // Update pad configuration with audioFileId set to undefined and reset name
-        await upsertPadConfiguration({
-          profileId: activeProfileId as number,
-          pageIndex: currentPageIndex,
-          padIndex: padIndex,
-          name: undefined, // Reset name to default "Empty Pad"
-          audioFileId: undefined, // Remove the audio file reference
-          keyBinding: config.keyBinding // Keep any custom key binding
-        });
-        
-        // Refresh the pad configurations
-        await refreshPadConfigs();
-        console.log(`Removed sound from pad ${padIndex}`);
-      } catch (error) {
-        console.error(`Failed to remove sound from pad ${padIndex}:`, error);
-      }
-    }
+    if (!config || !config.audioFileId || activeProfileId === null) return;
+
+    const soundName = config.name || `Pad ${padIndex + 1}`;
+
+    openModal({
+      title: 'Remove Sound',
+      content: (
+        <ConfirmModalContent message={`Remove sound "${soundName}" from this pad?`} />
+      ),
+      confirmText: 'Remove',
+      onConfirm: async () => {
+        try {
+          await upsertPadConfiguration({
+            profileId: activeProfileId,
+            pageIndex: currentPageIndex,
+            padIndex: padIndex,
+            name: undefined,
+            audioFileId: undefined,
+            keyBinding: config.keyBinding
+          });
+          await refreshPadConfigs();
+          console.log(`Removed sound from pad ${padIndex}`);
+        } catch (error) {
+          console.error(`Failed to remove sound from pad ${padIndex}:`, error);
+          alert(`Failed to remove sound "${soundName}". Please try again.`);
+        } finally {
+          closeModal();
+          // No need to handle setEditing or shift key here as removal doesn't depend on it
+        }
+      },
+      // onCancel is handled by default closeModal
+    });
   };
 
-  const handlePadClick = async (padIndex: number, isShiftClick: boolean = false) => {
+  const handlePadClick = (padIndex: number, isShiftClick: boolean = false) => { // Removed async
     // If in edit mode and Delete key is pressed, handle removing sound
     if (isEditMode && isDeleteKeyDown) {
       const config = padConfigs.get(padIndex);
@@ -181,108 +194,139 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     // In edit mode with shift pressed, handle renaming
     if (isEditMode && isShiftClick) {
       const config = padConfigs.get(padIndex);
-      const currentName = config?.name || `Pad ${padIndex + 1}`;
-      
-      // Set editing state to true before showing prompt
+      const currentName = config?.name || `Pad ${padIndex + 1}`; // Default name if not configured
+
+      // Variable to hold the new name from the modal
+      let modalDataValue = currentName;
+
+      // Set editing state to true before opening modal
       setEditing(true);
-      
-      // Prompt for a new name
-      const newName = prompt("Enter new name for pad:", currentName);
-      
-      // Set editing state back to false after prompt
-      setEditing(false);
-      
-      // Check if shift is still pressed, if not, exit edit mode
-      if (!isShiftDown) {
-        useProfileStore.getState().setEditMode(false);
-      }
-      
-      // If the user cancels or enters an empty string, don't update
-      if (newName === null || newName.trim() === '') return;
-      
-      // Update the pad configuration with the new name
-      try {
-        await upsertPadConfiguration({
-          profileId: activeProfileId as number,
-          pageIndex: currentPageIndex,
-          padIndex: padIndex,
-          name: newName.trim(),
-          audioFileId: config?.audioFileId,
-          keyBinding: config?.keyBinding
-        });
-        
-        // Refresh the pad configurations to show the updated name
-        await refreshPadConfigs();
-        console.log(`Renamed pad ${padIndex} to "${newName.trim()}"`);
-      } catch (error) {
-        console.error(`Failed to rename pad ${padIndex}:`, error);
-      }
-      
-      return;
+
+      openModal({
+        title: 'Rename Pad',
+        content: (
+          <PromptModalContent
+            label="Enter new name for pad:"
+            initialValue={currentName}
+            onValueChange={(value) => {
+              modalDataValue = value;
+            }}
+          />
+        ),
+        confirmText: 'Rename',
+        onConfirm: async () => {
+          const newName = modalDataValue;
+          // If the user enters an empty string, keep the old name
+          const finalName = newName.trim() || currentName; 
+
+          // Only update if name actually changed (or if it was default)
+          if (finalName !== currentName || !config?.name) {
+            try {
+              if (activeProfileId !== null) {
+                await upsertPadConfiguration({
+                  profileId: activeProfileId,
+                  pageIndex: currentPageIndex,
+                  padIndex: padIndex,
+                  name: finalName,
+                  audioFileId: config?.audioFileId, // Keep existing audio/keybinding
+                  keyBinding: config?.keyBinding
+                });
+                await refreshPadConfigs();
+                console.log(`Renamed pad ${padIndex} to "${finalName}"`);
+              } else {
+                 console.error("Cannot rename pad, no active profile.");
+                 alert("Cannot rename pad, no active profile selected.");
+              }
+            } catch (error) {
+              console.error(`Failed to rename pad ${padIndex}:`, error);
+              alert(`Failed to rename pad ${padIndex}. Please try again.`);
+            } finally {
+              closeModal();
+              // Set editing state back and check shift key
+              setEditing(false);
+              if (!isShiftDown) {
+                useProfileStore.getState().setEditMode(false);
+              }
+            }
+          } else {
+            // Name didn't change, just close modal and handle editing state
+            closeModal();
+            setEditing(false);
+            if (!isShiftDown) {
+              useProfileStore.getState().setEditMode(false);
+            }
+          }
+        },
+        onCancel: () => {
+          // Set editing state back and check shift key on cancel
+          setEditing(false);
+          if (!isShiftDown) {
+            useProfileStore.getState().setEditMode(false);
+          }
+          // closeModal is handled by the store automatically
+        }
+      });
+      return; // Prevent playback logic when renaming
     }
-    
-    // Regular playback functionality (unchanged for non-edit mode)
+
+    // --- Regular playback functionality (only if not renaming/removing) ---
     // Resume AudioContext on first interaction
     if (!hasInteracted.current) {
         resumeAudioContext();
         hasInteracted.current = true;
     }
 
-    const config = padConfigs.get(padIndex);
+    const config = padConfigs.get(padIndex); // Get config again (might have changed if rename happened, though unlikely due to return)
     const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padIndex}`; // Unique key
 
     // Check if this pad is currently playing
     if (playingPads.has(padIndex)) {
       // Stop currently playing sound if the same pad is clicked again
       stopAudio(playbackKey);
-      // playingPads will be updated by the effect when getActiveTracks is called
       console.log(`Stopped playback for pad index: ${padIndex}`);
-    } else if (config?.audioFileId) {
-      // Play new sound - visual feedback will be updated by the effect
+    } else if (config?.audioFileId && activeProfileId !== null) { // Ensure profileId is not null
+      // Play new sound
       console.log(`Attempting to play audio for pad index: ${padIndex}, file ID: ${config.audioFileId}`);
 
-      try {
-        let buffer = audioBufferCache.get(config.audioFileId);
-        if (!buffer) {
-          console.log(`Audio buffer not in cache for file ID: ${config.audioFileId}. Loading...`);
-          buffer = await loadAndDecodeAudio(config.audioFileId);
-          if (buffer) {
-            audioBufferCache.set(config.audioFileId, buffer);
-            console.log(`Audio buffer cached for file ID: ${config.audioFileId}`);
-          }
-        } else {
-            console.log(`Audio buffer retrieved from cache for file ID: ${config.audioFileId}`);
-        }
-
-        if (buffer) {
-          const source = playAudio(
-            buffer, 
-            playbackKey,
-            {
-              name: config.name || `Pad ${padIndex + 1}`,
-              padInfo: {
-                profileId: activeProfileId as number,
-                pageIndex: currentPageIndex,
-                padIndex: padIndex
-              }
+      // Use an async IIFE to handle audio loading/playing without making handlePadClick async
+      (async () => {
+        try {
+          let buffer = audioBufferCache.get(config.audioFileId as number); // Type assertion
+          if (!buffer) {
+            console.log(`Audio buffer not in cache for file ID: ${config.audioFileId}. Loading...`);
+            buffer = await loadAndDecodeAudio(config.audioFileId as number); // Type assertion
+            if (buffer) {
+              audioBufferCache.set(config.audioFileId as number, buffer); // Type assertion
+              console.log(`Audio buffer cached for file ID: ${config.audioFileId}`);
             }
-          );
-          if (source) {
-            // No need to manually handle this anymore as the effect will update the playing pads
-            // based on getActiveTracks which is updated when tracks end
           } else {
-             // Playback failed to start - no need to update state
+              console.log(`Audio buffer retrieved from cache for file ID: ${config.audioFileId}`);
           }
-        } else {
-          console.error(`Failed to load or decode audio for file ID: ${config.audioFileId}`);
-          // No need to manually clear state for failed audio
+
+          if (buffer) {
+            playAudio(
+              buffer,
+              playbackKey,
+              {
+                name: config.name || `Pad ${padIndex + 1}`,
+                padInfo: {
+                  profileId: activeProfileId, // No need for assertion here
+                  pageIndex: currentPageIndex,
+                  padIndex: padIndex
+                }
+              }
+            );
+            // State updates (playingPads, padProgress) are handled by the useEffect hook listening to getActiveTracks
+          } else {
+            console.error(`Failed to load or decode audio for file ID: ${config.audioFileId}`);
+          }
+        } catch (error) {
+          console.error(`Error during playback for pad index ${padIndex}:`, error);
         }
-      } catch (error) {
-        console.error(`Error during playback for pad index ${padIndex}:`, error);
-        // No need to manually clear state on error
-      }
+      })(); // Immediately invoke the async function
+
     } else {
-      console.log(`Pad index ${padIndex} has no audio configured.`);
+      console.log(`Pad index ${padIndex} has no audio configured or no active profile.`);
       // Optionally provide feedback for empty pads
     }
   };

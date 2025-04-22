@@ -9,7 +9,13 @@
     "start": "next start",
     "lint": "next lint",
     "pwa-build": "node scripts/generate-favicon.js && next build",
-    "generate-favicon": "node scripts/generate-favicon.js"
+    "generate-favicon": "node scripts/generate-favicon.js",
+    "test:e2e": "playwright test",
+    "test:e2e:audio": "playwright test audio-playback.spec.ts",
+    "test:e2e:profiles": "playwright test profiles.spec.ts",
+    "test:e2e:edit": "playwright test edit-mode.spec.ts",
+    "test:e2e:keyboard": "playwright test keyboard-shortcuts.spec.ts",
+    "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
     "@types/gapi": "^0.0.47",
@@ -24,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.42.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
