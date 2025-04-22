@@ -1,68 +1,12 @@
 import React, { useMemo } from 'react';
 import { useDropzone, Accept } from 'react-dropzone';
-
-const getDefaultKeyForPadIndex = (padIndex: number, cols: number): string | undefined => {
-  // Corrected special indices for Stop All (ESC) and Fade Out All (SPACE)
-  // Ensure cols is at least 1 to avoid division by zero or negative indices
-  const validCols = Math.max(1, cols);
-  const STOP_ALL_INDEX = 1 * validCols + (validCols - 1); // Row 2, final col
-  const FADE_OUT_ALL_INDEX = 2 * validCols + (validCols - 1); // Row 3, final col
-  const MANUAL_ROW_START_INDEX = 3 * validCols + 0; // Row 4 start
-
-  // Check for special pads first
-  if (padIndex === STOP_ALL_INDEX) {
-    console.log(`[KeyMap] Pad ${padIndex}: Returning 'Escape' (Stop All)`);
-    return 'Escape'; // Use 'Escape' to match KeyboardEvent.key
-  }
-  if (padIndex === FADE_OUT_ALL_INDEX) {
-    console.log(`[KeyMap] Pad ${padIndex}: Returning ' ' (Fade Out All)`);
-    return ' '; // Use ' ' (space) to match KeyboardEvent.key
-  }
-  // Check if pad is in the manual row (Indices 36-47)
-  // Note: FADE_OUT_ALL_INDEX is 35, so this check is correct
-  if (padIndex >= MANUAL_ROW_START_INDEX) {
-    console.log(`[KeyMap] Pad ${padIndex}: Returning undefined (Manual Row)`);
-    return undefined;
-  }
-
-  // Define keyboard rows for the first 3 rows (0-35), 12 columns wide
-  // Note: Indices 23 (Stop All) and 35 (Fade Out All) are handled above.
-  const keyboardRows = [
-    // Row 1 (Indices 0-11)
-    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']'],
-    // Row 2 (Indices 12-23) - Index 23 is Stop All (ESC)
-    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'"], // Using backslash for index 23 placeholder, but it's handled above
-    // Row 3 (Indices 24-35) - Index 35 is Fade Out All (SPACE)
-    ['\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', undefined, undefined] // Using undefined for index 35 placeholder, but it's handled above
-  ];
-
-  // Calculate row and column for the pad index relative to the grid
-  const row = Math.floor(padIndex / validCols);
-  const col = padIndex % validCols;
-
-  // Check if we have a key defined for this position within the first 3 rows
-  // This check implicitly skips indices 23 and 35 because they are handled above.
-  if (row < keyboardRows.length && col < keyboardRows[row].length) {
-    const key = keyboardRows[row][col];
-    // Ensure we don't accidentally return a key for the special indices if the logic above failed
-    if (key !== undefined && padIndex !== STOP_ALL_INDEX && padIndex !== FADE_OUT_ALL_INDEX) {
-        console.log(`[KeyMap] Pad ${padIndex} (Row ${row}, Col ${col}): Returning '${key}'`);
-        return key;
-    }
-  }
-
-  // Default case: No key binding for this position (should only apply to indices > 35 not handled above)
-  console.log(`[KeyMap] Pad ${padIndex}: Returning undefined (No default mapping)`);
-  return undefined;
-};
-
+import { getDefaultKeyForPadIndex } from '@/lib/keyboardUtils';
 
 interface PadProps {
   id: string; // Unique identifier for the pad element itself
   padIndex: number; // Index of the pad within its page/grid
   profileId: number | null; // ID of the current profile
   pageIndex: number; // Index of the current page
-  cols: number; // Number of columns in the grid
   keyBinding?: string;
   name?: string;
   isConfigured: boolean;
@@ -79,7 +23,6 @@ interface PadProps {
 const Pad: React.FC<PadProps> = ({
   id,
   padIndex,
-  cols,
   keyBinding,
   name = 'Empty Pad',
   isConfigured,
@@ -101,8 +44,8 @@ const Pad: React.FC<PadProps> = ({
   // Get the default key binding for this pad position if no custom binding is set
   const displayKeyBinding = useMemo(() => {
     // Pass cols to the key mapping function
-    return keyBinding || getDefaultKeyForPadIndex(padIndex, cols);
-  }, [keyBinding, padIndex, cols]);
+    return keyBinding || getDefaultKeyForPadIndex(padIndex);
+  }, [keyBinding, padIndex]);
   const handleDrop = React.useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {

@@ -22,10 +22,9 @@ import {
   fadeOutAllAudio
 } from '@/lib/audio'; 
 // useDropzone will be used in Pad component
+import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from '@/lib/constants';
 
 interface PadGridProps {
-  rows: number;
-  cols: number;
   currentPageIndex: number;
 }
 
@@ -39,8 +38,7 @@ type PadPlaybackState = {
   totalDuration: number;
 };
 
-const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
-  const totalPads = rows * cols;
+const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode); 
   const setEditing = useProfileStore((state) => state.setEditing);
@@ -403,7 +401,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
   // Don't use a different loading placeholder, which causes flickering
 
   // Generate pad elements based on loaded configs or defaults
-  const padElements = Array.from({ length: totalPads }, (_, i) => { // totalPads is now 48
+  const padElements = Array.from({ length: TOTAL_PADS }, (_, i) => {
       const padIndex = i;
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? 'none'}-${currentPageIndex}-${padIndex}`;
@@ -414,8 +412,9 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
       const remainingTime = currentPlaybackState?.remainingTime; // Will be undefined if not playing/tracked
 
       // --- Special Pad Logic ---
-      const STOP_ALL_INDEX = 23; // Corrected Index: Row 2, Col 12
-      const FADE_OUT_ALL_INDEX = 35; // Corrected Index: Row 3, Col 12
+      // Calculate special indices dynamically based on the number of columns
+      const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Row 2 (index 1), last column
+      const FADE_OUT_ALL_INDEX = 2 * GRID_COLS + (GRID_COLS - 1); // Row 3 (index 2), last column
 
       if (padIndex === STOP_ALL_INDEX) {
         // Render Stop All button
@@ -424,7 +423,6 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
             key={padId}
             id={padId}
             padIndex={padIndex}
-            cols={cols}
             profileId={activeProfileId}
             pageIndex={currentPageIndex}
             keyBinding="Escape" // Explicitly set keybinding
@@ -448,7 +446,6 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
             key={padId}
             id={padId}
             padIndex={padIndex}
-            cols={cols}
             profileId={activeProfileId}
             pageIndex={currentPageIndex}
             keyBinding=" " // Explicitly set keybinding (Space)
@@ -471,7 +468,6 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
               key={padId}
               id={padId}
               padIndex={padIndex} // Pass index
-              cols={cols}
               profileId={activeProfileId} // Pass profile ID
               pageIndex={currentPageIndex} // Pass page index
               keyBinding={config?.keyBinding} // Use config or default
@@ -494,8 +490,8 @@ const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
     <div
       className="grid gap-2 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg shadow"
       style={{
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+        gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 1fr))`,
       }}
     >
       {/* Render the generated pad elements */}

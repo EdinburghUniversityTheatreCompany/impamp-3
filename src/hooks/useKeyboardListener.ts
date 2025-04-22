@@ -3,28 +3,7 @@ import { useProfileStore } from '@/store/profileStore';
 import { PadConfiguration, getPadConfigurationsForProfilePage, getAllPageMetadataForProfile } from '@/lib/db';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio, fadeOutAllAudio } from '@/lib/audio';
 import { useSearchModal } from '@/components/SearchModalProvider';
-
-// Define a key mapping for a standard keyboard layout
-// This provides the default key bindings for pads based on their index
-const getDefaultKeyForPadIndex = (padIndex: number, cols: number = 8): string | undefined => {
-  // Define keyboard rows with their keys
-  const keyboardRows = [
-    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
-    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';'],
-    ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/']
-  ];
-  
-  // Calculate row and column for the pad index
-  const row = Math.floor(padIndex / cols);
-  const col = padIndex % cols;
-  
-  // Check if we have a key defined for this position
-  if (row < keyboardRows.length && col < keyboardRows[row].length) {
-    return keyboardRows[row][col];
-  }
-  
-  return undefined; // No default key for this position
-};
+import { getDefaultKeyForPadIndex } from '@/lib/keyboardUtils'; // Import the shared function
 
 // Interface for emergency sound configuration
 interface EmergencySound {

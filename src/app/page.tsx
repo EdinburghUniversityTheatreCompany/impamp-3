@@ -349,7 +349,7 @@ export default function Home() {
           </div>
           
           {/* Pass the current page index to PadGrid */}
-          <PadGrid rows={4} cols={12} currentPageIndex={currentPageIndex} />
+          <PadGrid currentPageIndex={currentPageIndex} />
         </div>
       </div>
       
