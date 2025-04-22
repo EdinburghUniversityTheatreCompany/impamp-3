@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useProfileStore } from '@/store/profileStore';
 import { PadConfiguration, getPadConfigurationsForProfilePage, getAllPageMetadataForProfile } from '@/lib/db';
-import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio } from '@/lib/audio';
+import { loadAndDecodeAudio, playAudio, resumeAudioContext, stopAllAudio, fadeOutAllAudio } from '@/lib/audio';
 import { useSearchModal } from '@/components/SearchModalProvider';
 
 // Define a key mapping for a standard keyboard layout
@@ -297,6 +297,14 @@ export function useKeyboardListener() {
         console.log('Escape key pressed - stopping all audio playback');
         stopAllAudio();
         return;
+    }
+
+    // Handle Space key to fade out all audio (only if search modal is closed)
+    if (pressedKey === ' ' && !isSearchModalOpen) {
+        event.preventDefault(); // Prevent default space action (e.g., scrolling)
+        console.log('Space key pressed - fading out all audio playback');
+        fadeOutAllAudio(); // Use the imported function
+        return; // Don't process further for pad matching
     }
     
     // Bank switching with number keys 1-9 and 0

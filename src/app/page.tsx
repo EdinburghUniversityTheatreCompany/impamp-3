@@ -166,7 +166,7 @@ export default function Home() {
         </div>
       )}
       {/* Fixed position header to prevent layout shifts */}
-      <div className="w-full max-w-6xl mb-8 flex flex-col gap-2">
+      <div className="w-full mb-8 flex flex-col gap-2">
         <div className="flex justify-between items-center">
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
             ImpAmp3 Soundboard
@@ -183,8 +183,8 @@ export default function Home() {
         </div>
       </div>
       
-      {/* Content container - no longer using sidebar layout */}
-      <div className="w-full max-w-6xl flex-1 flex flex-col mb-24">
+      {/* Content container */}
+      <div className="w-full flex-1 flex flex-col mb-24">
         {/* Main content area */}
         <div className="flex flex-col min-w-0">
           {/* Help text panel */}
@@ -349,7 +349,7 @@ export default function Home() {
           </div>
           
           {/* Pass the current page index to PadGrid */}
-          <PadGrid rows={4} cols={8} currentPageIndex={currentPageIndex} />
+          <PadGrid rows={4} cols={12} currentPageIndex={currentPageIndex} />
         </div>
       </div>
       

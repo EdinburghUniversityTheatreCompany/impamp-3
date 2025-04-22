@@ -23,9 +23,13 @@ This document outlines the visual and interaction design guidelines for the ImpA
 
 *   **Main Layout:** TBD (e.g., Sidebar + Main Content, Full Width)
 *   **Pad Grid:**
-    *   Columns: TBD (e.g., 8)
-    *   Rows: TBD (e.g., 4)
-    *   Gap: TBD (e.g., `gap-2`)
+    *   Columns: 12
+    *   Rows: 4
+    *   Gap: `gap-2` (Tailwind)
+    *   **Special Pads:**
+        *   Index 23 (Row 2, Col 12): "Stop All" button (Triggered by `ESC`, displays "ESC").
+        *   Index 35 (Row 3, Col 12): "Fade Out All" button (Triggered by `SPACE`, displays "SPACE").
+    *   **Manual Row:** Row 4 (Indices 36-47) is reserved for pads without default key bindings.
 *   **Spacing:** Use Tailwind spacing scale consistently.
 
 ## 4. Components
@@ -88,9 +92,18 @@ This document outlines the visual and interaction design guidelines for the ImpA
 ## 5. Interaction Patterns
 
 *   **Drag and Drop:** Visual feedback during drag-over and on drop.
-*   **Keyboard Navigation:** Number keys 0-9 navigate between banks/pages.
+*   **Keyboard Navigation:**
+    *   Number keys 1-9, 0: Switch banks 1-10.
+    *   Ctrl + (1-9, 0): Switch banks 11-20.
+    *   Pad Keys (QWERTY row, ASDF row up to `\`, ZXCV row up to `/`): Trigger corresponding pads (indices 0-22, 24-34).
+    *   `Escape`: Stop all currently playing audio (corresponds to Pad Index 23).
+    *   `Space`: Fade out all currently playing audio (corresponds to Pad Index 35).
+    *   `Enter`: Play next emergency sound (round-robin).
+    *   `Shift` (Hold): Enter Edit Mode.
+    *   `Delete` (in Edit Mode): Show remove confirmation for the clicked pad.
+    *   `Ctrl + F`: Open Search Modal.
 *   **Bank Navigation:** 
-    *   Keyboard shortcuts: Number keys 0-9 switch between banks/pages
+    *   Keyboard shortcuts: See Keyboard Navigation section.
     *   Visual indicator: Current bank number is displayed prominently
     *   UI buttons: Clickable numbered buttons (0-9) with active state highlighting
     *   Bank switching is immediate with no transition animation

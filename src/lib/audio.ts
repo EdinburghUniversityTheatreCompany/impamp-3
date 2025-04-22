@@ -230,7 +230,23 @@ export function stopAllAudio(): void {
     stopAudio(key);
   });
   
-  console.log(`Stopped all active tracks (${keys.length} tracks)`);
+  console.log(`[Audio] Stopped all active tracks (${keys.length} tracks)`); // Added prefix for clarity
+}
+
+// Fade out all currently playing audio tracks
+export function fadeOutAllAudio(durationInSeconds: number = 3): void {
+  // Get all keys from activeTracks Map
+  const keys = Array.from(activeTracks.keys());
+
+  // Fade out each track
+  keys.forEach(key => {
+    // Check if the track is already fading to avoid restarting the fade
+    if (!isTrackFading(key)) {
+      fadeOutAudio(key, durationInSeconds);
+    }
+  });
+
+  console.log(`[Audio] Initiated fade out for all active tracks (${keys.length} tracks) over ${durationInSeconds} seconds`); // Added logging
 }
 
 // Get information about currently active tracks with timing information

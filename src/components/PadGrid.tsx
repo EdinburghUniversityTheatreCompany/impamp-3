@@ -12,13 +12,21 @@ import {
   addAudioFile,
   upsertPadConfiguration,
 } from '@/lib/db';
-import { loadAndDecodeAudio, playAudio, stopAudio, resumeAudioContext, getActiveTracks } from '@/lib/audio';
+import { 
+  loadAndDecodeAudio, 
+  playAudio, 
+  stopAudio, 
+  resumeAudioContext, 
+  getActiveTracks,
+  stopAllAudio,
+  fadeOutAllAudio
+} from '@/lib/audio'; 
 // useDropzone will be used in Pad component
 
 interface PadGridProps {
-  rows?: number;
-  cols?: number;
-  currentPageIndex?: number; // Add page index prop
+  rows: number;
+  cols: number;
+  currentPageIndex: number;
 }
 
 // Cache for decoded audio buffers to avoid re-decoding
@@ -31,7 +39,7 @@ type PadPlaybackState = {
   totalDuration: number;
 };
 
-const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex = 0 }) => {
+const PadGrid: React.FC<PadGridProps> = ({ rows, cols, currentPageIndex }) => {
   const totalPads = rows * cols;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode); 
@@ -377,12 +385,25 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     }
   }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
+  // --- Special Pad Handlers ---
+  const handleStopAllClick = useCallback(() => {
+    console.log('[PadGrid] Stop All button clicked');
+    stopAllAudio();
+    // No need to resume context here, as it's a stop action
+  }, []); // No dependencies needed
+
+  const handleFadeOutAllClick = useCallback(() => {
+    console.log('[PadGrid] Fade Out All button clicked');
+    fadeOutAllAudio(); // Default fade duration is 3 seconds
+    // No need to resume context here, as it's a fade action
+  }, []); // No dependencies needed
+
 
   // Always render the grid with the current pad configurations
   // Don't use a different loading placeholder, which causes flickering
 
   // Generate pad elements based on loaded configs or defaults
-  const padElements = Array.from({ length: totalPads }, (_, i) => {
+  const padElements = Array.from({ length: totalPads }, (_, i) => { // totalPads is now 48
       const padIndex = i;
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? 'none'}-${currentPageIndex}-${padIndex}`;
@@ -392,22 +413,76 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
       const progress = currentPlaybackState?.progress ?? 0;
       const remainingTime = currentPlaybackState?.remainingTime; // Will be undefined if not playing/tracked
 
+      // --- Special Pad Logic ---
+      const STOP_ALL_INDEX = 23; // Corrected Index: Row 2, Col 12
+      const FADE_OUT_ALL_INDEX = 35; // Corrected Index: Row 3, Col 12
+
+      if (padIndex === STOP_ALL_INDEX) {
+        // Render Stop All button
+        return (
+          <Pad
+            key={padId}
+            id={padId}
+            padIndex={padIndex}
+            cols={cols}
+            profileId={activeProfileId}
+            pageIndex={currentPageIndex}
+            keyBinding="Escape" // Explicitly set keybinding
+            name="Stop All" // Explicitly set name
+            isConfigured={true} // Treat as configured for styling
+            isPlaying={false} // Never shows as playing
+            isEditMode={isEditMode} // Pass edit mode state
+            onClick={handleStopAllClick} // Use specific handler
+            onShiftClick={() => {}} // No shift-click action
+            onDropAudio={async () => {}} // Disable drop
+            onRemoveSound={undefined} // Cannot remove
+            // Add specific styling if needed via className or props
+          />
+        );
+      }
+
+      if (padIndex === FADE_OUT_ALL_INDEX) {
+        // Render Fade Out All button
+        return (
+          <Pad
+            key={padId}
+            id={padId}
+            padIndex={padIndex}
+            cols={cols}
+            profileId={activeProfileId}
+            pageIndex={currentPageIndex}
+            keyBinding=" " // Explicitly set keybinding (Space)
+            name="Fade Out All" // Explicitly set name
+            isConfigured={true} // Treat as configured for styling
+            isPlaying={false} // Never shows as playing
+            isEditMode={isEditMode} // Pass edit mode state
+            onClick={handleFadeOutAllClick} // Use specific handler
+            onShiftClick={() => {}} // No shift-click action
+            onDropAudio={async () => {}} // Disable drop
+            onRemoveSound={undefined} // Cannot remove
+            // Add specific styling if needed via className or props
+          />
+        );
+      }
+
+      // --- Regular Pad Logic (for all other indices) ---
       return (
           <Pad
               key={padId}
               id={padId}
               padIndex={padIndex} // Pass index
+              cols={cols}
               profileId={activeProfileId} // Pass profile ID
               pageIndex={currentPageIndex} // Pass page index
-              keyBinding={config?.keyBinding}
-              name={config?.name}
+              keyBinding={config?.keyBinding} // Use config or default
+              name={config?.name} // Use config name or default in Pad component
               isConfigured={!!config?.audioFileId}
               isPlaying={isPlaying}
               playProgress={progress} // Pass the progress
               remainingTime={remainingTime} // Pass remaining time
               isEditMode={isEditMode} // Pass edit mode state
-              onClick={() => handlePadClick(padIndex, false)}
-              onShiftClick={() => handlePadClick(padIndex, true)}
+              onClick={() => handlePadClick(padIndex, false)} // Regular click handler
+              onShiftClick={() => handlePadClick(padIndex, true)} // Regular shift-click handler
               onDropAudio={handleDropAudio} // Pass drop handler
               onRemoveSound={config?.audioFileId ? () => handleRemoveSound(padIndex) : undefined} // Only provide handler if pad has sound
           />
