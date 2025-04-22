@@ -183,10 +183,11 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div 
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" data-testid="search-modal-backdrop">
+      <div
         ref={modalRef}
         className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+        data-testid="search-modal"
       >
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center">
           <div className="mr-2 text-gray-500 dark:text-gray-400">
@@ -229,6 +230,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                   key={`${result.pageIndex}-${result.padIndex}`}
                   onClick={() => handlePlaySound(result)}
                   className="bg-white dark:bg-gray-700 rounded p-3 shadow cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                  data-testid="search-result-item"
                 >
                   <div className="font-medium text-gray-900 dark:text-white">
                     {result.name}

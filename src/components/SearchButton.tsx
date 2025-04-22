@@ -12,6 +12,7 @@ const SearchButton: React.FC = () => {
       className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
       aria-label="Search sounds"
       title="Search sounds (Ctrl+F)"
+      data-testid="search-button"
     >
       <svg 
         xmlns="http://www.w3.org/2000/svg" 
