@@ -1,19 +1,27 @@
 import { test, expect } from '@playwright/test';
-import { createTestAudioFilePath } from './test-helpers'; // Import helper
+import { createTestAudioFilePath, prepareAudioContext } from './test-helpers';
 
 test.describe('Search Modal', () => {
+  test.beforeEach(async ({ page }) => {
+    // Go to the app
+    await page.goto('/');
+    
+    // Wait for the app to fully load
+    await page.waitForSelector('[id^="pad-"]');
+    
+    // Prepare the audio context for testing
+    await prepareAudioContext(page);
+  });
+
   test('should open, allow searching, play sound, and close automatically on sound selection', async ({ page }) => {
     // --- Setup: Add a known sound to a pad ---
-    const expectedFileName = 'Accordion_BassNote_01'; // Assuming app displays name
+    const expectedFileName = 'Accordion_BassNote_01';
     const audioFilePath = await createTestAudioFilePath(expectedFileName);
 
     // Get the first pad and its corresponding file input
     const firstPad = page.locator('[id^="pad-"]').first();
     // Assuming the input is associated with the first pad (index 0)
     const firstPadInput = page.locator('[data-testid="pad-drop-input-0"]'); 
-    
-    // Ensure edit mode is off if necessary (might depend on default state)
-    // await page.keyboard.press('Shift'); // Example if needed
 
     // Add audio to the pad using setInputFiles
     await firstPadInput.setInputFiles(audioFilePath);
