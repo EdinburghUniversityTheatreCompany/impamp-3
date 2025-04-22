@@ -32,29 +32,6 @@ export default function Home() {
     return <ProfileSelector />;
   }, []); // Empty dependency array ensures this doesn't change when banks switch
   
-  // Track if shift key is pressed
-  const [isShiftDown, setIsShiftDown] = useState(false);
-  
-  // Set up event listeners to track shift key state
-  // TODO: Is keyhandling currently duplicated?
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftDown(true);
-    };
-    
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftDown(false);
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-  
   // State for bank metadata
   const [bankNames, setBankNames] = useState<{[key: number]: string}>({});
   const [emergencyBanks, setEmergencyBanks] = useState<{[key: number]: boolean}>({});
@@ -168,19 +145,13 @@ export default function Home() {
           alert(`Failed to update bank ${bankNumber}. Please try again.`);
         } finally {
           closeModal(); // Close the modal after operation
-          // Set editing state back to false and check shift key
+          // Set editing state back to false. The listener will handle isEditMode.
           setEditing(false);
-          if (!isShiftDown) {
-            useProfileStore.getState().setEditMode(false);
-          }
         }
       },
       onCancel: () => {
-        // Also handle setting editing state back and checking shift on cancel
+        // Also handle setting editing state back on cancel
         setEditing(false);
-        if (!isShiftDown) {
-          useProfileStore.getState().setEditMode(false);
-        }
         // closeModal is handled by the store automatically
       }
     });
@@ -243,8 +214,9 @@ export default function Home() {
                     data-bank-index={index}
                     role="tab"
                     aria-selected={index === currentPageIndex}
-                    onClick={(e) => {
-                      if (e.shiftKey && isEditMode) {
+                    onClick={() => { 
+                      // Rely solely on isEditMode from the store
+                      if (isEditMode) { 
                         handleBankClick(index, true);
                       } else {
                         useProfileStore.getState().setCurrentPageIndex(bankNumber);
@@ -348,29 +320,20 @@ export default function Home() {
                             alert('Failed to create new bank. Please try again.');
                           } finally {
                             closeModal();
-                            // Set editing state back and check shift
+                            // Set editing state back. The listener will handle isEditMode.
                             setEditing(false);
-                            if (!isShiftDown) {
-                              useProfileStore.getState().setEditMode(false);
-                            }
                           }
                         } else {
                           console.error('[Add Bank Button] activeProfileId is null, cannot create bank.');
                           alert('Cannot create bank, no active profile.');
                           closeModal();
-                          // Set editing state back and check shift
+                          // Set editing state back. The listener will handle isEditMode.
                           setEditing(false);
-                          if (!isShiftDown) {
-                            useProfileStore.getState().setEditMode(false);
-                          }
                         }
                       },
                       onCancel: () => {
-                        // Set editing state back and check shift on cancel
+                        // Set editing state back on cancel
                         setEditing(false);
-                        if (!isShiftDown) {
-                          useProfileStore.getState().setEditMode(false);
-                        }
                         // closeModal is handled by the store automatically
                       }
                     });

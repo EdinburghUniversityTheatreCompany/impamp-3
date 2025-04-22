@@ -120,19 +120,18 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
     loadConfigs();
   }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
 
-  // Track the Shift key state and Delete key state
-  const [isShiftDown, setIsShiftDown] = useState(false);
+  // Track the Delete key state (Shift key state is now handled globally)
   const [isDeleteKeyDown, setIsDeleteKeyDown] = useState(false);
 
-  // Set up event listeners to track shift key and delete key state
+  // Set up event listeners to track delete key state
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftDown(true);
+      // console.log('[PadGrid] Local Shift key down - setting local isShiftDown=true'); // <-- REMOVED LOG
       if (e.key === 'Delete') setIsDeleteKeyDown(true);
     };
     
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftDown(false);
+      // console.log('[PadGrid] Local Shift key up - setting local isShiftDown=false'); // <-- REMOVED LOG
       if (e.key === 'Delete') setIsDeleteKeyDown(false);
     };
     
@@ -144,6 +143,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, []);
+
 
   // Handler for removing sound from a pad
   const handleRemoveSound = (padIndex: number) => { // Removed async
@@ -242,27 +242,18 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
               alert(`Failed to rename pad ${padIndex}. Please try again.`);
             } finally {
               closeModal();
-              // Set editing state back and check shift key
+              // Set editing state back. The listener will handle isEditMode.
               setEditing(false);
-              if (!isShiftDown) {
-                useProfileStore.getState().setEditMode(false);
-              }
             }
           } else {
             // Name didn't change, just close modal and handle editing state
             closeModal();
             setEditing(false);
-            if (!isShiftDown) {
-              useProfileStore.getState().setEditMode(false);
-            }
           }
         },
         onCancel: () => {
-          // Set editing state back and check shift key on cancel
+          // Set editing state back on cancel
           setEditing(false);
-          if (!isShiftDown) {
-            useProfileStore.getState().setEditMode(false);
-          }
           // closeModal is handled by the store automatically
         }
       });

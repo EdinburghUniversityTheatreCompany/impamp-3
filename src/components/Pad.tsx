@@ -122,8 +122,9 @@ const Pad: React.FC<PadProps> = ({
           // Prevent dropzone's default click behavior if necessary, though noClick should handle it
           e.stopPropagation();
           
-          // Check if shift key is pressed
-          if (e.shiftKey && isEditMode) {
+          // console.log(`[Pad ${padIndex} Click] e.shiftKey=${e.shiftKey}, props.isEditMode=${isEditMode}`); // <-- REMOVED LOG
+          // Rely solely on isEditMode prop from the store
+          if (isEditMode) { 
             onShiftClick();
           } else {
             onClick();

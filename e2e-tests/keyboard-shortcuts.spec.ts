@@ -97,7 +97,7 @@ test.describe('ImpAmp3 Keyboard Shortcuts', () => {
 
    // Enter edit mode
    await page.keyboard.down('Shift');
-   await page.waitForTimeout(1000);
+   await page.waitForTimeout(300);
    
    // Find the "+" button to add a new bank
    const addBankButton = page.getByRole('button', { name: 'Add new bank' })

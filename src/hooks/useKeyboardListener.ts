@@ -287,7 +287,6 @@ export function useKeyboardListener() {
     
     // Handle Shift key press to toggle edit mode
     if (pressedKey === 'Shift') {
-      console.log('Shift key pressed - entering edit mode');
       setEditMode(true);
       return;
     }
@@ -429,13 +428,10 @@ export function useKeyboardListener() {
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback((event: KeyboardEvent) => {
     if (event.key === 'Shift') {
-      console.log('Shift key released - checking if we should exit edit mode');
       // Only exit edit mode if we're not currently editing something
       if (!isEditing) {
-        console.log('Not editing anything, exiting edit mode');
         setEditMode(false);
       } else {
-        console.log('Currently editing, staying in edit mode');
       }
     }
   }, [setEditMode, isEditing]);
