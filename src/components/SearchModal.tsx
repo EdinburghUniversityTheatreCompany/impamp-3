@@ -172,6 +172,8 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             }
           }
         );
+        // Close the modal after initiating playback
+        onClose();
       }
     } catch (error) {
       console.error('Error playing sound:', error);
