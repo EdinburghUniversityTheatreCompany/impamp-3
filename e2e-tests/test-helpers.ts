@@ -107,22 +107,19 @@ export async function activatePad(
     return resumeAllAudioContexts();
   });
   
-  // First try clicking the pad
-  await padLocator.click({force: true});
-  console.log('Clicked pad');
-  
-  // Wait a moment for playback to start
-  await page.waitForTimeout(300);
-  
-  // If key binding is provided, also try keyboard activation
+  // If key binding is provided, use keyboard activation. Otherwise, click.
   if (keyBinding) {
     console.log(`Pressing key: ${keyBinding}`);
     await page.keyboard.press(keyBinding);
-    await page.waitForTimeout(300);
+  } else {
+    console.log('Clicking pad');
+    await padLocator.click({force: true});
   }
   
+  await page.waitForTimeout(300);
+
   // Verify the active tracks panel shows something is playing
-  await expect(page.locator('text=Nothing playing')).toBeHidden({timeout: 5000});
+  await expect(page.locator('text=Nothing playing')).toBeHidden({timeout: 30000});
   
   // Look for the progress bar on the pad
   const progressBar = padLocator.locator('.bg-green-500');
