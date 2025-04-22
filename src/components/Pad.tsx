@@ -31,7 +31,8 @@ interface PadProps {
   name?: string;
   isConfigured: boolean;
   isPlaying: boolean;
-  playProgress?: number; // New prop to show play progress (0 to 1)
+  playProgress?: number; // Prop to show play progress (0 to 1)
+  remainingTime?: number; // Prop for remaining time in seconds
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   onClick: () => void;
   onShiftClick: () => void; // Callback for shift+click (for renaming)
@@ -47,6 +48,8 @@ const Pad: React.FC<PadProps> = ({
   isConfigured,
   isPlaying,
   playProgress = 0,
+  remainingTime, // Destructure new prop
+  // totalDuration, // Destructure new props - REMOVED
   isEditMode,
   onClick,
   onShiftClick,
@@ -54,6 +57,11 @@ const Pad: React.FC<PadProps> = ({
   onRemoveSound,
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
+  // Calculate remaining seconds (rounded) if playing and time is available
+  const remainingSeconds = isPlaying && typeof remainingTime === 'number'
+    ? Math.max(0, Math.round(remainingTime))
+    : null;
+
   // Get the default key binding for this pad position if no custom binding is set
   const displayKeyBinding = useMemo(() => {
     return keyBinding || getDefaultKeyForPadIndex(padIndex);
@@ -156,13 +164,20 @@ const Pad: React.FC<PadProps> = ({
         </span>
       )}
 
-      {/* Progress bar with more dramatic styling (only shown when playing) */}
+      {/* Progress bar with timer (only shown when playing) */}
       {isPlaying && (
-        <div className="absolute bottom-0 left-0 right-0 h-4 bg-gray-200 dark:bg-gray-700 z-50">
-          <div 
-            className="h-full bg-green-500 transition-all duration-100" 
+        <div className="absolute bottom-0 left-0 right-0 h-4 bg-gray-200 dark:bg-gray-700 z-50 flex items-center justify-center">
+          {/* Background progress */}
+          <div
+            className="absolute left-0 top-0 bottom-0 bg-green-500 transition-all duration-100" // Use absolute positioning for background fill
             style={{ width: `${playProgress * 100}%` }}
           />
+          {/* Timer text - centered on top */}
+          {remainingSeconds !== null && (
+            <span className="relative z-10 text-xs font-semibold text-white mix-blend-difference">
+              {remainingSeconds}s
+            </span>
+          )}
         </div>
       )}
 

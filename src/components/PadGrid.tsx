@@ -24,6 +24,13 @@ interface PadGridProps {
 // Cache for decoded audio buffers to avoid re-decoding
 const audioBufferCache = new Map<number, AudioBuffer | null>(); // Allow null for failed decodes
 
+// Define a type for the detailed playback state of a pad
+type PadPlaybackState = {
+  progress: number;
+  remainingTime: number;
+  totalDuration: number;
+};
+
 const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex = 0 }) => {
   const totalPads = rows * cols;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
@@ -32,7 +39,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   const { openModal, closeModal } = useUIStore(); // Get modal actions
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
   const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
-  const [padProgress, setPadProgress] = useState<Map<number, number>>(new Map());
+  const [padPlaybackState, setPadPlaybackState] = useState<Map<number, PadPlaybackState>>(new Map());
   const hasInteracted = useRef(false);
   // Removed isDragging state, will handle visual feedback in Pad component
 
@@ -56,37 +63,28 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
   // Effect to update pad progress for all playing tracks
   useEffect(() => {
     // Always run this effect to update progress for any playing tracks
-    const updateProgress = () => {
-      // Use getActiveTracks to get current progress
-      const tracks = getActiveTracks();
-      const newProgress = new Map<number, number>();
+    const updatePlaybackState = () => {
+      // Use getActiveTracks to get current playback details
+      const tracks = getActiveTracks(); // This now returns { key, name, remainingTime, totalDuration, progress, isFading, padInfo }
+      const newPlaybackState = new Map<number, PadPlaybackState>();
       const currentlyPlayingPads = new Set<number>();
-      
-      // Debug which tracks are currently active
-      console.log(`[PadGrid] Currently active tracks: ${tracks.length}`);
-      
+
       tracks.forEach(track => {
-        const { padInfo, progress } = track;
-        console.log(`[PadGrid] Track: ${track.name}, progress: ${progress}, padIndex: ${padInfo.padIndex}, pageIndex: ${padInfo.pageIndex}`);
-        
-        // Only track progress for pads on the current page
+        const { padInfo, progress, remainingTime, totalDuration } = track;
+        // Only track state for pads on the current page
         if (padInfo.pageIndex === currentPageIndex) {
-          newProgress.set(padInfo.padIndex, progress);
+          newPlaybackState.set(padInfo.padIndex, { progress, remainingTime, totalDuration });
           currentlyPlayingPads.add(padInfo.padIndex);
-          console.log(`[PadGrid] Added playing pad ${padInfo.padIndex} with progress ${progress}`);
         }
       });
-      
-      // Update the set of playing pads
-      if (currentlyPlayingPads.size > 0) {
-        console.log(`[PadGrid] Playing pads: ${Array.from(currentlyPlayingPads).join(', ')}`);
-      }
+
+      // Update the state maps
       setPlayingPads(currentlyPlayingPads);
-      setPadProgress(newProgress);
+      setPadPlaybackState(newPlaybackState);
     };
-    
+
     // Set interval for updates
-    const intervalId = setInterval(updateProgress, 100);
+    const intervalId = setInterval(updatePlaybackState, 100);
     return () => clearInterval(intervalId);
   }, [currentPageIndex]);
 
@@ -389,7 +387,10 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? 'none'}-${currentPageIndex}-${padIndex}`;
       const isPlaying = playingPads.has(padIndex);
-      const progress = padProgress.get(padIndex) || 0;
+      // Get detailed playback state if available
+      const currentPlaybackState = padPlaybackState.get(padIndex);
+      const progress = currentPlaybackState?.progress ?? 0;
+      const remainingTime = currentPlaybackState?.remainingTime; // Will be undefined if not playing/tracked
 
       return (
           <Pad
@@ -403,6 +404,7 @@ const PadGrid: React.FC<PadGridProps> = ({ rows = 4, cols = 8, currentPageIndex 
               isConfigured={!!config?.audioFileId}
               isPlaying={isPlaying}
               playProgress={progress} // Pass the progress
+              remainingTime={remainingTime} // Pass remaining time
               isEditMode={isEditMode} // Pass edit mode state
               onClick={() => handlePadClick(padIndex, false)}
               onShiftClick={() => handlePadClick(padIndex, true)}
