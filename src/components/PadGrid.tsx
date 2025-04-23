@@ -18,10 +18,11 @@ import {
   playAudio, 
   stopAudio, 
   resumeAudioContext, 
-  getActiveTracks,
   stopAllAudio,
-  fadeOutAllAudio
-} from '@/lib/audio'; 
+  fadeOutAllAudio,
+  preloadAudioForPage // Import the preloading function
+} from '@/lib/audio';
+import { usePlaybackStore, PlaybackState } from '@/store/playbackStore'; // Import playback store
 // useDropzone will be used in Pad component
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from '@/lib/constants';
 
@@ -29,15 +30,6 @@ interface PadGridProps {
   currentPageIndex: number;
 }
 
-// Cache for decoded audio buffers to avoid re-decoding
-const audioBufferCache = new Map<number, AudioBuffer | null>(); // Allow null for failed decodes
-
-// Define a type for the detailed playback state of a pad
-type PadPlaybackState = {
-  progress: number;
-  remainingTime: number;
-  totalDuration: number;
-};
 
 const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
@@ -45,9 +37,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const incrementEmergencySoundsVersion = useProfileStore((state) => state.incrementEmergencySoundsVersion); // Get the action
   const { openModal, closeModal } = useUIStore(); // Get modal actions
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
-  const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
-  const [padPlaybackState, setPadPlaybackState] = useState<Map<number, PadPlaybackState>>(new Map());
   const hasInteracted = useRef(false);
+
+  // Subscribe to the playback store
+  const activePlayback = usePlaybackStore((state) => state.activePlayback);
 
   // Function to refresh pad configurations after an update
   const refreshPadConfigs = useCallback(async () => {
@@ -66,33 +59,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   }, [activeProfileId, currentPageIndex]);
 
 
-  // Effect to update pad progress for all playing tracks
-  useEffect(() => {
-    // Always run this effect to update progress for any playing tracks
-    const updatePlaybackState = () => {
-      // Use getActiveTracks to get current playback details
-      const tracks = getActiveTracks(); // This now returns { key, name, remainingTime, totalDuration, progress, isFading, padInfo }
-      const newPlaybackState = new Map<number, PadPlaybackState>();
-      const currentlyPlayingPads = new Set<number>();
-
-      tracks.forEach(track => {
-        const { padInfo, progress, remainingTime, totalDuration } = track;
-        // Only track state for pads on the current page
-        if (padInfo.pageIndex === currentPageIndex) {
-          newPlaybackState.set(padInfo.padIndex, { progress, remainingTime, totalDuration });
-          currentlyPlayingPads.add(padInfo.padIndex);
-        }
-      });
-
-      // Update the state maps
-      setPlayingPads(currentlyPlayingPads);
-      setPadPlaybackState(newPlaybackState);
-    };
-
-    // Set interval for updates
-    const intervalId = setInterval(updatePlaybackState, 100);
-    return () => clearInterval(intervalId);
-  }, [currentPageIndex]);
 
   useEffect(() => {
     const loadConfigs = async () => {
@@ -122,7 +88,27 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     };
 
     loadConfigs();
-  }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
+  }, [activeProfileId, currentPageIndex, refreshPadConfigs]); // Keep refreshPadConfigs dependency? Maybe not needed if loadConfigs covers it. Let's keep for now.
+
+  // Effect to preload audio for the current page when configs change
+  useEffect(() => {
+    if (activeProfileId === null || padConfigs.size === 0) {
+      return; // No profile or no configs loaded yet
+    }
+
+    const audioIdsToLoad: number[] = [];
+    padConfigs.forEach(config => {
+      if (config.audioFileId) {
+        audioIdsToLoad.push(config.audioFileId);
+      }
+    });
+
+    if (audioIdsToLoad.length > 0) {
+      console.log(`[PadGrid Preload] Triggering preload for ${audioIdsToLoad.length} audio IDs on page ${currentPageIndex}`);
+      preloadAudioForPage(audioIdsToLoad); // Fire and forget, errors handled internally
+    }
+  }, [padConfigs, activeProfileId, currentPageIndex]); // Rerun when configs, profile, or page changes
+
 
   // Track the Delete key state (Shift key state is now handled globally)
   const [isDeleteKeyDown, setIsDeleteKeyDown] = useState(false);
@@ -280,11 +266,11 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     const config = padConfigs.get(padIndex); // Get config again (might have changed if rename happened, though unlikely due to return)
     const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padIndex}`; // Unique key
 
-    // Check if this pad is currently playing
-    if (playingPads.has(padIndex)) {
+    // Check if this pad is currently playing by looking in the store's activePlayback map
+    if (activePlayback.has(playbackKey)) {
       // Stop currently playing sound if the same pad is clicked again
-      stopAudio(playbackKey);
-      console.log(`Stopped playback for pad index: ${padIndex}`);
+      stopAudio(playbackKey); // stopAudio handles removing from store
+      console.log(`[PadGrid] Stopped playback for pad index: ${padIndex} (key: ${playbackKey})`);
     } else if (config?.audioFileId && activeProfileId !== null) { // Ensure profileId is not null
       // Play new sound
       console.log(`Attempting to play audio for pad index: ${padIndex}, file ID: ${config.audioFileId}`);
@@ -292,20 +278,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       // Use an async IIFE to handle audio loading/playing without making handlePadClick async
       (async () => {
         try {
-          let buffer = audioBufferCache.get(config.audioFileId as number); // Type assertion
-          if (!buffer) {
-            console.log(`Audio buffer not in cache for file ID: ${config.audioFileId}. Loading...`);
-            buffer = await loadAndDecodeAudio(config.audioFileId as number); // Type assertion
-            if (buffer) {
-              audioBufferCache.set(config.audioFileId as number, buffer); // Type assertion
-              console.log(`Audio buffer cached for file ID: ${config.audioFileId}`);
-            }
-          } else {
-              console.log(`Audio buffer retrieved from cache for file ID: ${config.audioFileId}`);
-          }
+          // Load (and potentially decode/cache) the audio buffer using the centralized function
+          console.log(`[PadGrid] Requesting audio buffer for file ID: ${config.audioFileId}`);
+          const buffer = await loadAndDecodeAudio(config.audioFileId as number); // Type assertion
 
           if (buffer) {
-            playAudio(
+            console.log(`[PadGrid] Buffer obtained for file ID: ${config.audioFileId}. Playing...`);
+            playAudio( // playAudio now handles adding to store and starting rAF loop
               buffer,
               playbackKey,
               {
@@ -317,9 +296,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
                 }
               }
             );
-            // State updates (playingPads, padProgress) are handled by the useEffect hook listening to getActiveTracks
+            // State updates are now handled reactively via the playbackStore subscription
           } else {
-            console.error(`Failed to load or decode audio for file ID: ${config.audioFileId}`);
+            console.error(`[PadGrid] Failed to load or decode audio for file ID: ${config.audioFileId}`);
+            // TODO: User feedback for failed load?
           }
         } catch (error) {
           console.error(`Error during playback for pad index ${padIndex}:`, error);
@@ -383,12 +363,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           console.log(`Pad updated via drop on emergency page ${currentPageIndex}, triggered emergency sounds refresh`);
         }
 
-        // 4. Optional: Pre-cache the newly added audio buffer
-        const buffer = await loadAndDecodeAudio(audioFileId);
-        if (buffer) {
-            audioBufferCache.set(audioFileId, buffer);
-            console.log(`Pre-cached audio buffer for new file ID: ${audioFileId}`);
-        }
+        // 4. Pre-cache the newly added audio buffer using the centralized function
+        // This ensures it's decoded and ready in the internal cache in audio.ts
+        console.log(`[PadGrid] Pre-caching dropped audio file ID: ${audioFileId}`);
+        await loadAndDecodeAudio(audioFileId); // Result not needed here, just triggers load/decode/cache
 
     } catch (error) {
         console.error(`Error processing dropped file for pad index ${padIndex}:`, error);
@@ -418,9 +396,9 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       const padIndex = i;
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? 'none'}-${currentPageIndex}-${padIndex}`;
-      const isPlaying = playingPads.has(padIndex);
-      // Get detailed playback state if available
-      const currentPlaybackState = padPlaybackState.get(padIndex);
+      // Get playback state directly from the subscribed store data
+      const currentPlaybackState: PlaybackState | undefined = activePlayback.get(padId);
+      const isPlaying = !!currentPlaybackState;
       const progress = currentPlaybackState?.progress ?? 0;
       const remainingTime = currentPlaybackState?.remainingTime; // Will be undefined if not playing/tracked
 

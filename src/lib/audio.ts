@@ -1,7 +1,78 @@
 import { getAudioFile } from './db';
+import { playbackStoreActions } from '@/store/playbackStore'; // Import store actions
+import type { PlaybackState } from '@/store/playbackStore'; // Import the state type
 
 // Detect client-side environment
 const isClient = typeof window !== 'undefined';
+
+// rAF loop ID
+let rAFId: number | null = null;
+
+// --- rAF Playback Loop ---
+
+function playbackLoopTick() {
+  if (!audioContext || activeTracks.size === 0) {
+    stopPlaybackLoop(); // Stop if context lost or no tracks
+    return;
+  }
+
+  const currentTime = audioContext.currentTime;
+  const currentPlaybackState = new Map<string, PlaybackState>();
+
+  activeTracks.forEach((track, key) => {
+    const elapsed = currentTime - track.startTime;
+    const remaining = Math.max(0, track.duration - elapsed);
+    const progress = Math.min(1, elapsed / track.duration);
+
+    // If remaining time is effectively zero and it's not already fading,
+    // treat it as ended (handles cases where onended might be delayed)
+    if (remaining <= 0 && !track.isFading) {
+      // This track should be removed, but let onended handle the primary cleanup.
+      // We'll just exclude it from the state update for this tick.
+      // Alternatively, could trigger removal here, but might conflict with onended.
+      // Let's rely on onended/stop/fadeout for removal for now.
+      return; // Skip adding to current state if naturally ended
+    }
+
+    currentPlaybackState.set(key, {
+      key,
+      name: track.name,
+      remainingTime: remaining,
+      totalDuration: track.duration,
+      progress: progress,
+      isFading: track.isFading,
+      padInfo: track.padInfo,
+    });
+  });
+
+  // Update the Zustand store with the latest state
+  if (currentPlaybackState.size > 0) {
+    playbackStoreActions.setPlaybackState(currentPlaybackState);
+    // Schedule the next frame
+    rAFId = requestAnimationFrame(playbackLoopTick);
+  } else {
+    // If the loop ran but resulted in no tracks needing state updates, stop the loop.
+    stopPlaybackLoop();
+  }
+}
+
+function startPlaybackLoop() {
+  if (rAFId === null && activeTracks.size > 0 && isClient) {
+    console.log('[Audio] Starting playback loop...');
+    rAFId = requestAnimationFrame(playbackLoopTick);
+  }
+}
+
+function stopPlaybackLoop() {
+  if (rAFId !== null) {
+    console.log('[Audio] Stopping playback loop.');
+    cancelAnimationFrame(rAFId);
+    rAFId = null;
+    // Optionally clear the store state when the loop stops entirely
+    // playbackStoreActions.clearAllTracks(); // Consider if this is desired behavior
+  }
+}
+
 
 // Define interface for active track information
 export interface ActiveTrack {
@@ -14,11 +85,15 @@ export interface ActiveTrack {
     pageIndex: number;
     padIndex: number;
   };
+  isFading: boolean; // Added for integrated fade state
 }
 
 let audioContext: AudioContext | null = null;
 const activeTracks: Map<string, ActiveTrack> = new Map(); // Enhanced tracking with metadata
-const fadingTracks: Map<string, boolean> = new Map(); // Track which sounds are currently fading out
+// const fadingTracks: Map<string, boolean> = new Map(); // REMOVED - Integrated into ActiveTrack
+
+// Internal cache for decoded audio buffers
+const audioBufferCache = new Map<number, AudioBuffer | null>(); // Allow null for failed decodes
 
 // Define an interface for window with potential webkitAudioContext
 interface ExtendedWindow extends Window {
@@ -57,19 +132,42 @@ async function decodeAudioBlob(blob: Blob): Promise<AudioBuffer> {
   }
 }
 
-// Load audio file from DB and decode it
+// Load audio file from DB and decode it, using an internal cache
 export async function loadAndDecodeAudio(audioFileId: number): Promise<AudioBuffer | null> {
+  // 1. Check cache first
+  if (audioBufferCache.has(audioFileId)) {
+    // Explicitly get and check the value to satisfy TS
+    const cachedValue = audioBufferCache.get(audioFileId);
+    if (cachedValue !== undefined) { // Check if the key truly exists with a value (even if null)
+        console.log(`[Cache ${cachedValue ? 'HIT' : 'HIT (Failed)'}] Audio buffer for file ID: ${audioFileId}`);
+        return cachedValue; // Return cached buffer or null
+    }
+    // If undefined, it means the key wasn't actually there, proceed to load (shouldn't happen often with .has check)
+  }
+
+  // 2. If not in cache, load from DB
+  console.log(`[Cache MISS] Loading audio file ID: ${audioFileId} from DB...`);
   try {
     const audioFileData = await getAudioFile(audioFileId);
     if (!audioFileData?.blob) {
       console.warn(`Audio file with ID ${audioFileId} not found or has no blob.`);
+      audioBufferCache.set(audioFileId, null); // Cache the failure (not found)
       return null;
     }
+
+    // 3. Decode
     console.log(`Decoding audio for file ID: ${audioFileId}, name: ${audioFileData.name}`);
-    return await decodeAudioBlob(audioFileData.blob);
+    const decodedBuffer = await decodeAudioBlob(audioFileData.blob);
+
+    // 4. Cache the result
+    audioBufferCache.set(audioFileId, decodedBuffer);
+    console.log(`[Cache SET] Audio buffer cached for file ID: ${audioFileId}`);
+    return decodedBuffer;
+
   } catch (error) {
     console.error(`Error loading/decoding audio file ID ${audioFileId}:`, error);
-    return null;
+    audioBufferCache.set(audioFileId, null); // Cache the failure (decode error)
+    return null; // Return null on error
   }
 }
 
@@ -104,8 +202,10 @@ export function playAudio(
 
     source.onended = () => {
       // Clean up when playback finishes naturally
+      console.log(`[Audio] Playback naturally finished for key: ${playbackKey}`);
       activeTracks.delete(playbackKey);
-      console.log(`Playback finished for key: ${playbackKey}`);
+      playbackStoreActions.removeTrack(playbackKey); // Remove from store
+      stopPlaybackLoop(); // Check if loop should stop
     };
 
     source.start(0);
@@ -116,10 +216,26 @@ export function playAudio(
       name: metadata.name,
       startTime: context.currentTime,
       duration: buffer.duration,
-      padInfo: metadata.padInfo
+      padInfo: metadata.padInfo,
+      isFading: false // Initialize isFading state
     });
-    
-    console.log(`Playback started for key: ${playbackKey}`);
+
+    // Add to playback store
+    const initialState: PlaybackState = {
+      key: playbackKey,
+      name: metadata.name,
+      progress: 0,
+      remainingTime: buffer.duration,
+      totalDuration: buffer.duration,
+      isFading: false,
+      padInfo: metadata.padInfo,
+    };
+    playbackStoreActions.addTrack(playbackKey, initialState);
+
+    // Start the rAF loop if it's not already running
+    startPlaybackLoop();
+
+    console.log(`[Audio] Playback started for key: ${playbackKey}`);
     return source;
   } catch (error) {
     console.error(`Error playing audio for key ${playbackKey}:`, error);
@@ -127,9 +243,9 @@ export function playAudio(
   }
 }
 
-// Check if a track is currently fading out
+// Check if a track is currently fading out by checking the activeTracks map
 export function isTrackFading(playbackKey: string): boolean {
-  return fadingTracks.get(playbackKey) === true;
+  return activeTracks.get(playbackKey)?.isFading === true;
 }
 
 // Stop audio playback associated with a specific key
@@ -140,9 +256,10 @@ export function stopAudio(playbackKey: string): void {
       track.source.stop(0);
       // Explicitly delete from activeTracks immediately - don't wait for onended
       activeTracks.delete(playbackKey);
-      // Also clear from fading tracks if it was fading
-      fadingTracks.delete(playbackKey);
-      console.log(`Playback stopped and removed for key: ${playbackKey}`);
+      playbackStoreActions.removeTrack(playbackKey); // Remove from store
+      stopPlaybackLoop(); // Check if loop should stop
+      // No need to clear from fadingTracks anymore
+      console.log(`[Audio] Playback stopped and removed for key: ${playbackKey}`);
     } catch (error) {
       // Ignore errors if the source was already stopped or in an invalid state
       if ((error as DOMException).name !== 'InvalidStateError') {
@@ -150,7 +267,9 @@ export function stopAudio(playbackKey: string): void {
       }
       // Manually clean up if stop fails
       activeTracks.delete(playbackKey);
-      fadingTracks.delete(playbackKey);
+      playbackStoreActions.removeTrack(playbackKey); // Ensure removal from store on error too
+      stopPlaybackLoop(); // Check if loop should stop
+      // No need to clear from fadingTracks anymore
     }
   }
 }
@@ -158,11 +277,9 @@ export function stopAudio(playbackKey: string): void {
 // Fade out audio over a specified duration
 export function fadeOutAudio(playbackKey: string, durationInSeconds: number = 3): void {
   const track = activeTracks.get(playbackKey);
-  if (!track) return;
-  
-  // If already fading, don't restart the fadeout
-  if (fadingTracks.get(playbackKey)) return;
-  
+  // If track doesn't exist or is already fading, do nothing
+  if (!track || track.isFading) return;
+
   try {
     const context = getAudioContext();
     const source = track.source;
@@ -180,13 +297,14 @@ export function fadeOutAudio(playbackKey: string, durationInSeconds: number = 3)
     // Connect source -> gain -> destination
     source.connect(gainNode);
     gainNode.connect(context.destination);
-    
-    // Mark track as fading
-    fadingTracks.set(playbackKey, true);
-    
-    console.log(`Starting fadeout for key: ${playbackKey} over ${durationInSeconds} seconds`);
-    
-    // Remove the track from activeTracks after the fade completes
+
+    // Mark track as fading directly in the activeTracks map
+    track.isFading = true;
+    playbackStoreActions.setTrackFading(playbackKey, true); // Update store
+
+    console.log(`[Audio] Starting fadeout for key: ${playbackKey} over ${durationInSeconds} seconds`);
+
+    // Remove the track from activeTracks and store after the fade completes
     setTimeout(() => {
       // Only try to stop if it's still active
       if (activeTracks.has(playbackKey)) {
@@ -196,8 +314,10 @@ export function fadeOutAudio(playbackKey: string, durationInSeconds: number = 3)
           // Ignore errors if already stopped
         }
         activeTracks.delete(playbackKey);
-        fadingTracks.delete(playbackKey); // Remove from fading tracks
-        console.log(`Fadeout completed for key: ${playbackKey}`);
+        playbackStoreActions.removeTrack(playbackKey); // Remove from store
+        stopPlaybackLoop(); // Check if loop should stop
+        // No need to clear from fadingTracks anymore
+        console.log(`[Audio] Fadeout completed for key: ${playbackKey}`);
       }
     }, durationInSeconds * 1000);
     
@@ -227,10 +347,15 @@ export function stopAllAudio(): void {
   
   // Stop each track
   keys.forEach(key => {
-    stopAudio(key);
+    stopAudio(key); // stopAudio now handles store removal and loop check
   });
-  
-  console.log(`[Audio] Stopped all active tracks (${keys.length} tracks)`); // Added prefix for clarity
+
+  // Explicitly clear store state after stopping all
+  playbackStoreActions.clearAllTracks();
+  // Ensure loop is stopped
+  stopPlaybackLoop();
+
+  console.log(`[Audio] Stopped all active tracks (${keys.length} tracks)`);
 }
 
 // Fade out all currently playing audio tracks
@@ -246,40 +371,44 @@ export function fadeOutAllAudio(durationInSeconds: number = 3): void {
     }
   });
 
-  console.log(`[Audio] Initiated fade out for all active tracks (${keys.length} tracks) over ${durationInSeconds} seconds`); // Added logging
+  console.log(`[Audio] Initiated fade out for all active tracks (${keys.length} tracks) over ${durationInSeconds} seconds`);
+  // fadeOutAudio handles individual store updates and loop checks via its timeout
 }
 
-// Get information about currently active tracks with timing information
-export function getActiveTracks(): Array<{
-  key: string;
-  name: string;
-  remainingTime: number;
-  totalDuration: number;
-  progress: number;
-  isFading: boolean;
-  padInfo: {
-    profileId: number;
-    pageIndex: number;
-    padIndex: number;
-  };
-}> {
-  if (!audioContext) return [];
-  
-  const currentTime = audioContext.currentTime;
-  return Array.from(activeTracks.entries()).map(([key, track]) => {
-    const elapsed = currentTime - track.startTime;
-    const remaining = Math.max(0, track.duration - elapsed);
-    return {
-      key,
-      name: track.name,
-      remainingTime: remaining,
-      totalDuration: track.duration,
-      progress: Math.min(1, elapsed / track.duration),
-      isFading: isTrackFading(key),
-      padInfo: track.padInfo
-    };
-  });
+// --- Preloading ---
+
+/**
+ * Preloads audio files for a given set of IDs by fetching and decoding them into the cache.
+ * Does not fail on individual errors, allowing other files to load.
+ * @param audioFileIds Array of audio file IDs to preload.
+ */
+export async function preloadAudioForPage(audioFileIds: number[]): Promise<void> {
+  if (!isClient) return; // Only run on client
+
+  const uniqueIds = [...new Set(audioFileIds)].filter(id => typeof id === 'number' && !isNaN(id)); // Ensure unique, valid numbers
+  if (uniqueIds.length === 0) return;
+
+  console.log(`[Audio Preload] Starting preload for ${uniqueIds.length} unique audio file IDs...`);
+  const startTime = performance.now();
+
+  const preloadPromises = uniqueIds.map(id =>
+    loadAndDecodeAudio(id).catch(error => {
+      // Catch errors during individual loads/decodes so Promise.allSettled works
+      console.error(`[Audio Preload] Error preloading ID ${id}:`, error);
+      return null; // Indicate failure for this specific ID
+    })
+  );
+
+  const results = await Promise.allSettled(preloadPromises);
+
+  const endTime = performance.now();
+  const duration = endTime - startTime;
+  const successfulCount = results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
+  const failedCount = results.length - successfulCount;
+
+  console.log(`[Audio Preload] Finished preloading ${results.length} files in ${duration.toFixed(2)}ms. Success: ${successfulCount}, Failed: ${failedCount}`);
 }
+
 
 // Preload common sounds or handle initial context state if needed
 // Example: Ensure context is ready on load

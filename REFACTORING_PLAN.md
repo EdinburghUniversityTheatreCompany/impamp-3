@@ -34,25 +34,27 @@
 - **Action:** In a top-level client component (e.g., wrap the content of `src/app/layout.tsx` or `src/app/page.tsx` with a new client component), use a `useEffect` hook that runs only once on mount (`[]` dependency array) to call `ensureDefaultProfile()` and potentially `getDb()` to initialize the database connection client-side. [DONE - Implemented via `ClientSideInitializer.tsx` wrapping children in `layout.tsx`, which calls `fetchProfiles` which calls `ensureDefaultProfile`]
 - **Rationale:** Resolves the build/SSR warning about server-side IndexedDB access. Ensures DB logic runs only in the browser environment.
 
-## II. Audio Engine & Playback State (`src/lib/audio.ts`, `src/components/PadGrid.tsx`, `src/store/playbackStore.ts` [New])
+## II. Audio Engine & Playback State (`src/lib/audio.ts`, `src/components/PadGrid.tsx`, `src/store/playbackStore.ts` [New]) [DONE]
 
-### Centralize and Manage Audio Buffer Cache:
-- **Action:** Create a `Map` for `audioBufferCache` within the scope of `src/lib/audio.ts`.
-- **Action:** Modify `loadAndDecodeAudio` to first check this internal cache using the `audioFileId`. If found, return the cached `AudioBuffer`. If not found, proceed with fetching from DB (`getAudioFile`), decoding (`decodeAudioBlob`), storing the result in the cache, and then returning it. Handle potential null returns if fetching/decoding fails, and cache the failure (null) to avoid retrying constantly.
-- **Action:** Remove the `audioBufferCache` from `PadGrid.tsx`.
+*(Includes implementation of audio preloading for instant playback)*
+
+### Centralize and Manage Audio Buffer Cache: [DONE]
+- **Action:** Create a `Map` for `audioBufferCache` within the scope of `src/lib/audio.ts`. [DONE]
+- **Action:** Modify `loadAndDecodeAudio` to first check this internal cache using the `audioFileId`. If found, return the cached `AudioBuffer`. If not found, proceed with fetching from DB (`getAudioFile`), decoding (`decodeAudioBlob`), storing the result in the cache, and then returning it. Handle potential null returns if fetching/decoding fails, and cache the failure (null) to avoid retrying constantly. [DONE]
+- **Action:** Remove the `audioBufferCache` from `PadGrid.tsx`. [DONE]
 - **Rationale:** Correctly implements the spec requirement (decode once per ID), centralizes audio data handling, improves performance by avoiding redundant decoding.
 
-### Implement Efficient Playback State Tracking:
-- **Action:** Create a new Zustand store: `src/store/playbackStore.ts`. This store will hold the state of active tracks (e.g., a map of `playbackKey` to `{ progress: number, remainingTime: number, isFading: boolean, name: string, padInfo: object }`).
-- **Action:** Remove the `setInterval` polling loop from `PadGrid.tsx`.
-- **Action:** Within `src/lib/audio.ts`, implement a `requestAnimationFrame` loop. This loop should only start when the first sound begins playing and stop when the last sound finishes. Inside the loop, calculate the current progress/remaining time for all tracks in the internal `activeTracks` map and update the `playbackStore` state.
-- **Action:** Modify `playAudio`, `stopAudio`, and `fadeOutAudio` in `audio.ts` to also update the `playbackStore` accordingly (adding/removing tracks, setting fading state).
-- **Action:** Refactor `PadGrid.tsx` and `ActiveTracksPanel.tsx` to subscribe to `playbackStore` to get the necessary data for rendering progress bars, timers, and active track lists.
+### Implement Efficient Playback State Tracking: [DONE]
+- **Action:** Create a new Zustand store: `src/store/playbackStore.ts`. This store will hold the state of active tracks (e.g., a map of `playbackKey` to `{ progress: number, remainingTime: number, isFading: boolean, name: string, padInfo: object }`). [DONE]
+- **Action:** Remove the `setInterval` polling loop from `PadGrid.tsx`. [DONE]
+- **Action:** Within `src/lib/audio.ts`, implement a `requestAnimationFrame` loop. This loop should only start when the first sound begins playing and stop when the last sound finishes. Inside the loop, calculate the current progress/remaining time for all tracks in the internal `activeTracks` map and update the `playbackStore` state. [DONE]
+- **Action:** Modify `playAudio`, `stopAudio`, and `fadeOutAudio` in `audio.ts` to also update the `playbackStore` accordingly (adding/removing tracks, setting fading state). [DONE]
+- **Action:** Refactor `PadGrid.tsx` and `ActiveTracksPanel.tsx` to subscribe to `playbackStore` to get the necessary data for rendering progress bars, timers, and active track lists. [DONE]
 - **Rationale:** Replaces inefficient polling with a performant animation loop. Decouples UI components from audio state calculation. Provides a centralized source of truth for playback status.
 
-### Refine Audio Fading:
-- **Action:** Investigate if the `onended` event of the `AudioBufferSourceNode` can be reliably used for cleanup after the `linearRampToValueAtTime` completes, potentially removing the need for `setTimeout`.
-- **Action:** Integrate the `isFading` status directly into the `ActiveTrack` interface/object within `audio.ts`'s internal `activeTracks` map, removing the separate `fadingTracks` map. Update the `playbackStore` with this fading status.
+### Refine Audio Fading: [DONE]
+- **Action:** Investigate if the `onended` event of the `AudioBufferSourceNode` can be reliably used for cleanup after the `linearRampToValueAtTime` completes, potentially removing the need for `setTimeout`. [DONE - Kept `setTimeout` for reliability after investigation]
+- **Action:** Integrate the `isFading` status directly into the `ActiveTrack` interface/object within `audio.ts`'s internal `activeTracks` map, removing the separate `fadingTracks` map. Update the `playbackStore` with this fading status. [DONE]
 - **Rationale:** Improves timing accuracy for cleanup, simplifies state management for fading tracks.
 
 ## III. Component Architecture & UI (`src/components/`, `src/app/page.tsx`)

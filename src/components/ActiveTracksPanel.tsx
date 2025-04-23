@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { getActiveTracks, stopAudio, fadeOutAudio } from '@/lib/audio';
+import React, { useState, useEffect, useMemo } from 'react';
+import { stopAudio, fadeOutAudio } from '@/lib/audio';
 import { useProfileStore } from '@/store/profileStore';
+import { usePlaybackStore, PlaybackState } from '@/store/playbackStore';
 
 // Format time in seconds to MM:SS format
 const formatTime = (seconds: number): string => {
@@ -12,7 +13,11 @@ const formatTime = (seconds: number): string => {
 };
 
 const ActiveTracksPanel: React.FC = () => {
-  const [activeTracks, setActiveTracks] = useState<ReturnType<typeof getActiveTracks>>([]);
+  // Subscribe to the playback store
+  const activePlaybackMap = usePlaybackStore((state) => state.activePlayback);
+  // Convert map to array for easier rendering and memoize it
+  const activeTracksArray = useMemo(() => Array.from(activePlaybackMap.values()), [activePlaybackMap]);
+
   const getFadeoutDuration = useProfileStore(state => state.getFadeoutDuration);
   const setFadeoutDuration = useProfileStore(state => state.setFadeoutDuration);
   const [showSettings, setShowSettings] = useState(false);
@@ -26,34 +31,20 @@ const ActiveTracksPanel: React.FC = () => {
       setDurationInput(getFadeoutDuration().toString());
     }
   }, [showSettings, getFadeoutDuration]);
-  
-  // Update the list every 100ms to show accurate remaining time
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setActiveTracks(getActiveTracks());
-    }, 100);
-    
-    return () => clearInterval(intervalId);
-  }, []);
-  
-  // Custom stop function that removes the track from the list immediately
+  // Stop function - just calls the audio lib function which handles store updates
   const handleStopTrack = (key: string) => {
-    // Stop the audio
     stopAudio(key);
-    // Remove from local state immediately for better UX
-    setActiveTracks(current => current.filter(track => track.key !== key));
   };
-  
+
   // Handle fadeout with current fadeout duration
   const handleFadeoutTrack = (key: string) => {
     // Get current fadeout duration from profile store
     const duration = getFadeoutDuration();
     // Fade out the audio
     fadeOutAudio(key, duration);
-    // We don't remove from local state here as the track will still show
-    // as fading out until the fadeout completes
+    // Store updates are handled within fadeOutAudio and the rAF loop
   };
-  
+
   return (
     <div 
       className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-4 w-full shadow-lg"
@@ -132,8 +123,8 @@ const ActiveTracksPanel: React.FC = () => {
             </div>
           </div>
         )}
-        
-        {activeTracks.length === 0 ? (
+
+        {activeTracksArray.length === 0 ? (
           // Show "Nothing playing" when no tracks are active
           <div className="text-gray-500 dark:text-gray-400 text-center py-3">
             Nothing playing
@@ -141,9 +132,10 @@ const ActiveTracksPanel: React.FC = () => {
         ) : (
           // List of active tracks with better overflow handling for bottom panel
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[20vh] overflow-y-auto pr-1 pb-safe">
-            {activeTracks.map((track) => (
-              <div 
-                key={track.key} 
+            {/* Use the memoized array derived from the store */}
+            {activeTracksArray.map((track: PlaybackState) => (
+              <div
+                key={track.key}
                 className={`flex items-center space-x-3 p-3 rounded shadow-sm cursor-pointer
                   transition-colors ${track.isFading ? 
                   'bg-blue-50 dark:bg-blue-900/30 animate-pulse' : 
