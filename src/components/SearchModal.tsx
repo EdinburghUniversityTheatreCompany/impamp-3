@@ -5,6 +5,7 @@ import { useProfileStore } from '@/store/profileStore';
 import { getAudioFile } from '@/lib/db';
 import { getAllPadConfigurationsForProfile } from '@/lib/importExport';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext } from '@/lib/audio';
+import { convertIndexToBankNumber } from '@/lib/bankUtils';
 
 interface SearchResult {
   profileId: number;
@@ -30,7 +31,6 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   
   // Get active profile from store
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const convertIndexToBankNumber = useProfileStore((state) => state.convertIndexToBankNumber);
 
   // Focus input when modal opens
   useEffect(() => {
@@ -132,7 +132,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }, 300);
 
     return () => clearTimeout(debounceTimeout);
-  }, [searchTerm, isOpen, activeProfileId, convertIndexToBankNumber]);
+  }, [searchTerm, isOpen, activeProfileId]); // Removed convertIndexToBankNumber from dependency array
 
   // Handle clicking outside to close
   useEffect(() => {
