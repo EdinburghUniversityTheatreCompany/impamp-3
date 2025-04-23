@@ -13,6 +13,7 @@ import {
   fadeOutAllAudio,
 } from "@/lib/audio";
 import { useSearchModal } from "@/components/SearchModalProvider";
+import { useUIStore } from "@/store/uiStore";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils"; // Import the shared function
 
 // Interface for emergency sound configuration
@@ -144,8 +145,13 @@ export function useKeyboardListener() {
   const emergencySoundsVersion = useProfileStore(
     (state) => state.emergencySoundsVersion,
   );
+
   // Get search modal context
   const { openSearchModal, isSearchModalOpen } = useSearchModal();
+  // Get modal state and actions from UI store individually to prevent unnecessary re-renders
+  const isModalOpen = useUIStore((state) => state.isModalOpen);
+  const modalConfig = useUIStore((state) => state.modalConfig);
+  const closeModal = useUIStore((state) => state.closeModal);
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
@@ -226,13 +232,35 @@ export function useKeyboardListener() {
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
+      // --- Ctrl+S to Confirm/Close Modal ---
+      // IMPORTANT: This must come BEFORE the input/textarea check
+      // so it works even when the prompt input is focused.
+      if (event.key === 's' && event.ctrlKey) {
+        if (isModalOpen) {
+          event.preventDefault();
+          console.log("Ctrl+S detected: Modal open. Attempting confirm and close.");
+          try {
+            // Await the confirm action if it's async
+            await modalConfig?.onConfirm?.();
+          } catch (error) {
+            console.error("Error during modal confirm on Ctrl+S:", error);
+          } finally {
+            // Always close the modal afterwards
+            closeModal();
+          }
+          return; // Stop further processing
+        }
+        // If modal is not open, allow default browser save or other handlers
+      }
+
       // Prevent default browser tabbing behavior
-      if (event.key === 'Tab') {
+      if (event.key === "Tab") {
         event.preventDefault();
         return; // Stop further processing for Tab key
       }
 
-      // Ignore if typing in an input field, textarea, etc.
+      // Ignore other keys if typing in an input field, textarea, etc.
+      // (but allow Ctrl+S handled above)
       const targetElement = event.target as HTMLElement;
       if (
         targetElement.tagName === "INPUT" ||
@@ -482,6 +510,10 @@ export function useKeyboardListener() {
       reloadEmergencySounds,
       openSearchModal,
       isSearchModalOpen,
+      // Add modal state and actions as dependencies
+      isModalOpen,
+      modalConfig,
+      closeModal,
     ],
   ); // Dependencies for the callback
 

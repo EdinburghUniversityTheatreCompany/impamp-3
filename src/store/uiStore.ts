@@ -20,7 +20,7 @@ interface UIState {
   closeModal: () => void;
 }
 
-export const useUIStore = create<UIState>((set, get) => ({
+export const useUIStore = create<UIState>((set) => ({
   isModalOpen: false,
   modalConfig: null,
 
@@ -34,11 +34,9 @@ export const useUIStore = create<UIState>((set, get) => ({
     set({ isModalOpen: true, modalConfig: fullConfig });
   },
 
-  closeModal: async () => {
-    const { modalConfig } = get();
-    if (modalConfig?.onCancel) {
-      await modalConfig.onCancel();
-    }
+  // closeModal should only handle closing the modal state.
+  // Callbacks like onCancel should be handled by the specific action triggering the close (e.g., Cancel button).
+  closeModal: () => {
     set({ isModalOpen: false, modalConfig: null });
   },
 }));
