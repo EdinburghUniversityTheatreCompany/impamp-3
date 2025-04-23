@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useProfileStore } from '@/store/profileStore';
-import { getAllPadConfigurationsForProfile, getAudioFile } from '@/lib/db';
+import { getAudioFile } from '@/lib/db';
+import { getAllPadConfigurationsForProfile } from '@/lib/importExport';
 import { loadAndDecodeAudio, playAudio, resumeAudioContext } from '@/lib/audio';
 
 interface SearchResult {

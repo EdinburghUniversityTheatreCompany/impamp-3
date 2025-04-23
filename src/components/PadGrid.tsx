@@ -11,6 +11,7 @@ import {
   PadConfiguration,
   addAudioFile,
   upsertPadConfiguration,
+  isEmergencyPage,
 } from '@/lib/db';
 import { 
   loadAndDecodeAudio, 
@@ -40,8 +41,9 @@ type PadPlaybackState = {
 
 const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const isEditMode = useProfileStore((state) => state.isEditMode); 
+  const isEditMode = useProfileStore((state) => state.isEditMode);
   const setEditing = useProfileStore((state) => state.setEditing);
+  const incrementEmergencySoundsVersion = useProfileStore((state) => state.incrementEmergencySoundsVersion); // Get the action
   const { openModal, closeModal } = useUIStore(); // Get modal actions
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
   const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
@@ -174,6 +176,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           });
           await refreshPadConfigs();
           console.log(`Removed sound from pad ${padIndex}`);
+          
+          // Check if the page is emergency and trigger version increment
+          const isEmergency = await isEmergencyPage(activeProfileId, currentPageIndex);
+          if (isEmergency) {
+            incrementEmergencySoundsVersion();
+            console.log(`Pad removed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`);
+          }
         } catch (error) {
           console.error(`Failed to remove sound from pad ${padIndex}:`, error);
           alert(`Failed to remove sound "${soundName}". Please try again.`);
@@ -237,6 +246,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
                 });
                 await refreshPadConfigs();
                 console.log(`Renamed pad ${padIndex} to "${finalName}"`);
+
+                // Check if the page is emergency and trigger version increment
+                const isEmergency = await isEmergencyPage(activeProfileId, currentPageIndex);
+                if (isEmergency) {
+                  incrementEmergencySoundsVersion();
+                  console.log(`Pad renamed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`);
+                }
               } else {
                  console.error("Cannot rename pad, no active profile.");
                  alert("Cannot rename pad, no active profile selected.");
@@ -369,6 +385,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
         // 3. Refresh the grid UI to show the new configuration
         await refreshPadConfigs();
+
+        // Check if the page is emergency and trigger version increment
+        const isEmergency = await isEmergencyPage(activeProfileId, currentPageIndex);
+        if (isEmergency) {
+          incrementEmergencySoundsVersion();
+          console.log(`Pad updated via drop on emergency page ${currentPageIndex}, triggered emergency sounds refresh`);
+        }
 
         // 4. Optional: Pre-cache the newly added audio buffer
         const buffer = await loadAndDecodeAudio(audioFileId);

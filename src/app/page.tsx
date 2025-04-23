@@ -24,6 +24,7 @@ export default function Home() {
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const setEditing = useProfileStore((state) => state.setEditing);
   const convertIndexToBankNumber = useProfileStore((state) => state.convertIndexToBankNumber);
+  const incrementEmergencySoundsVersion = useProfileStore((state) => state.incrementEmergencySoundsVersion); // Get the action
   const { openModal, closeModal } = useUIStore(); // Get modal actions
   // Only importing the functions we actually use
   
@@ -132,7 +133,9 @@ export default function Home() {
             await setPageEmergencyState(activeProfileId, bankIndex, newIsEmergency);
             setEmergencyBanks(prev => ({ ...prev, [bankIndex]: newIsEmergency }));
             emergencyChanged = true;
-            console.log(`Set emergency status for bank ${bankNumber} to ${newIsEmergency}`);
+            // Increment version only if state actually changed
+            incrementEmergencySoundsVersion(); 
+            console.log(`Set emergency status for bank ${bankNumber} to ${newIsEmergency}, triggered emergency sounds refresh`);
           }
 
           if (nameChanged || emergencyChanged) {

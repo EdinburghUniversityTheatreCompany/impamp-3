@@ -4,27 +4,27 @@
 
 ## I. Core Data Layer & State Management (src/lib/db.ts, src/store/profileStore.ts, src/lib/importExport.ts [New])
 
-### Modularize Import/Export Logic:
-- **Action:** Create a new file `src/lib/importExport.ts`.
-- **Action:** Move the `ProfileExport` interface, `Impamp2Export` type (from `impamp2Types.ts`), `exportProfile`, `importProfile`, `importImpamp2Profile`, `blobToBase64`, and `base64ToBlob` functions from `src/lib/db.ts` to the new `importExport.ts`.
-- **Action:** Update `src/lib/db.ts` and `src/store/profileStore.ts` to import these functions from the new location.
+### Modularize Import/Export Logic: [DONE]
+- **Action:** Create a new file `src/lib/importExport.ts`. [DONE]
+- **Action:** Move the `ProfileExport` interface, `Impamp2Export` type (from `impamp2Types.ts`), `exportProfile`, `importProfile`, `importImpamp2Profile`, `blobToBase64`, and `base64ToBlob` functions from `src/lib/db.ts` to the new `importExport.ts`. [DONE]
+- **Action:** Update `src/lib/db.ts` and `src/store/profileStore.ts` to import these functions from the new location. [DONE]
 - **Rationale:** Significantly cleans up `db.ts`, making it solely focused on IndexedDB interactions. Improves code organization and separation of concerns.
 
-### Optimize DB Transactions & Efficiency:
-- **Action:** Refactor the `importAudioFiles` helper function (within the new `importExport.ts`) to perform all audio file additions (`addAudioFile`) within a single IndexedDB transaction, rather than one transaction per file.
-- **Action:** Similarly, review `importPageMetadata` and `importPadConfigurations` to ensure they use single, efficient transactions for their respective bulk operations.
+### Optimize DB Transactions & Efficiency: [DONE]
+- **Action:** Refactor the `importAudioFiles` helper function (within the new `importExport.ts`) to perform all audio file additions (`addAudioFile`) within a single IndexedDB transaction, rather than one transaction per file. [DONE - Implemented during initial move]
+- **Action:** Similarly, review `importPageMetadata` and `importPadConfigurations` to ensure they use single, efficient transactions for their respective bulk operations. [DONE - Implemented during initial move]
 - **Rationale:** Drastically improves performance during profile imports, especially those with many audio files. Reduces transaction overhead.
 
-### Decouple DB Operations from UI State:
-- **Action:** Locate and remove the direct calls to `useProfileStore.getState().incrementEmergencySoundsVersion()` within `upsertPadConfiguration` and `setPageEmergencyState` in `src/lib/db.ts`.
-- **Action:** Modify the code calling these DB functions (likely within `src/app/page.tsx` or potentially store actions if refactored) to check the result/context and then call the Zustand action if needed (e.g., after successfully setting a page to emergency).
+### Decouple DB Operations from UI State: [DONE]
+- **Action:** Locate and remove the direct calls to `useProfileStore.getState().incrementEmergencySoundsVersion()` within `upsertPadConfiguration` and `setPageEmergencyState` in `src/lib/db.ts`. [DONE]
+- **Action:** Modify the code calling these DB functions (`src/components/PadGrid.tsx` for `upsertPadConfiguration`, `src/app/page.tsx` for `setPageEmergencyState`) to check the result/context and then call the Zustand action if needed (e.g., after successfully setting a page to emergency). [DONE]
 - **Rationale:** Enforces separation of concerns. The DB layer should only manage data; UI state updates are a separate responsibility. Makes DB functions pure data operations.
 
 ### Refine Profile Store (`src/store/profileStore.ts`):
-- **Action:** Refactor profile CRUD actions (`createProfile`, `updateProfile`, `deleteProfile`) and import actions (`exportProfileToJSON`, `importProfileFromJSON`, `importProfileFromImpamp2JSON`) to call the newly modularized functions from `src/lib/db.ts` and `src/lib/importExport.ts`.
-- **Action:** Instead of calling `fetchProfiles()` after every modification, update the `profiles` array in the store directly based on the successful result of the add/update/delete/import operation. This avoids redundant reads from the DB.
-- **Action:** Implement Zustand's persistence middleware (`persist` from `zustand/middleware`) to manage storing `activeProfileId` and `fadeoutDuration` in localStorage. Remove manual `localStorage.getItem/setItem` calls.
-- **Action:** Crucially, fix the `setCurrentPageIndex` logic. Remove the DOM query (`document.querySelectorAll`). Instead, fetch the necessary `pageMetadata` for the active profile (perhaps store it within the profile store itself or fetch it when the profile loads) and check against this data to determine if a target bank index exists before allowing the switch.
+- **Action:** Refactor profile CRUD actions (`createProfile`, `updateProfile`, `deleteProfile`) and import actions (`exportProfileToJSON`, `importProfileFromJSON`, `importProfileFromImpamp2JSON`) to call the newly modularized functions from `src/lib/db.ts` and `src/lib/importExport.ts`. [DONE - Completed during import path updates]
+- **Action:** Instead of calling `fetchProfiles()` after every modification, update the `profiles` array in the store directly based on the successful result of the add/update/delete/import operation. This avoids redundant reads from the DB. [DONE]
+- **Action:** Implement Zustand's persistence middleware (`persist` from `zustand/middleware`) to manage storing `activeProfileId` and `fadeoutDuration` in localStorage. Remove manual `localStorage.getItem/setItem` calls. [DONE]
+- **Action:** Crucially, fix the `setCurrentPageIndex` logic. Remove the DOM query (`document.querySelectorAll`). Instead, fetch the necessary `pageMetadata` for the active profile (perhaps store it within the profile store itself or fetch it when the profile loads) and check against this data to determine if a target bank index exists before allowing the switch. [DONE]
 - **Action:** Analyze the usage of `isEditMode` (global Shift state) and `isEditing` (action-in-progress state) across components (`page.tsx`, `PadGrid.tsx`). Simplify the logic if possible, perhaps by relying more on modal open state (`uiStore`) or deriving `isEditing` implicitly. Ensure `isEditing` is reliably reset when modals close (confirm or cancel).
 - **Action:** Move the bank number/index conversion functions (`convertBankNumberToIndex`, `convertIndexToBankNumber`) to a utility file like `src/lib/keyboardUtils.ts` or a new `src/lib/bankUtils.ts` for better organization.
 - **Rationale:** Streamlines the store, improves performance, enhances robustness (persistence middleware), fixes incorrect DOM dependency, reduces state complexity, and improves code organization.
