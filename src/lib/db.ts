@@ -1,5 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { useProfileStore } from '@/store/profileStore';
+import { Impamp2Export } from './impamp2Types';
+import { getPadIndexForKey } from './keyboardUtils';
 
 const DB_NAME = 'impamp3DB';
 const DB_VERSION = 2; // Bump version for schema upgrade
@@ -811,4 +813,180 @@ function base64ToBlob(base64: string, type: string): Promise<Blob> {
 if (isClient) {
   // Call getDb() early to initiate the connection and upgrade process
   getDb().catch(console.error);
+}
+
+// --- Impamp2 Import Functionality ---
+
+/**
+ * Imports a profile from the legacy impamp2 JSON export format.
+ * Parses the data, transforms it to the current application's structure,
+ * and saves it as a new profile.
+ *
+ * @param jsonData The JSON string content of the impamp2 export file.
+ * @returns The ID of the newly created profile.
+ */
+export async function importImpamp2Profile(jsonData: string): Promise<number> {
+  const db = await getDb();
+  let profileId: number | undefined = undefined; // Initialize profileId
+  const now = new Date();
+  let impamp2Data: Impamp2Export;
+
+  console.log("Starting impamp2 profile import...");
+
+  // Step 1: Parse and validate the JSON data
+  try {
+    impamp2Data = JSON.parse(jsonData) as Impamp2Export;
+    // Basic validation
+    if (!impamp2Data || typeof impamp2Data.pages !== 'object' || impamp2Data.pages === null) {
+      throw new Error('Invalid impamp2 JSON structure: "pages" object not found or invalid.');
+    }
+    console.log(`Parsed impamp2 JSON successfully. Found ${Object.keys(impamp2Data.pages).length} pages.`);
+  } catch (error) {
+    console.error('Failed to parse impamp2 JSON:', error);
+    const message = error instanceof Error ? error.message : 'Unknown parsing error';
+    throw new Error(`Invalid impamp2 JSON format: ${message}`);
+  }
+
+  // Step 2: Create a placeholder profile name (will be refined by createImportedProfile)
+  // We need a name to pass to createImportedProfile, even if it gets modified.
+  // Let's try to find the name of the first page, or default to "Imported Impamp2 Profile".
+  const firstPageKey = Object.keys(impamp2Data.pages)[0];
+  const initialProfileName = firstPageKey ? impamp2Data.pages[firstPageKey]?.name || 'Imported Impamp2 Profile' : 'Imported Impamp2 Profile';
+
+  // Create a temporary Profile object structure similar to ProfileExport for createImportedProfile
+  const pseudoExportData = {
+    exportVersion: 0, // Indicate it's not a standard export
+    exportDate: now.toISOString(),
+    profile: {
+      name: initialProfileName,
+      syncType: 'local' as SyncType, // Assume local sync for imported impamp2 profiles
+      createdAt: now,
+      updatedAt: now,
+    },
+    // Provide empty arrays for other parts expected by createImportedProfile
+    padConfigurations: [],
+    pageMetadata: [],
+    audioFiles: [],
+  };
+
+  try {
+    // Step 3: Create the new profile entry (handles name conflicts)
+    // Assign the result to profileId
+    profileId = await createImportedProfile(db, pseudoExportData, now);
+    console.log(`Created base profile entry for impamp2 import with ID: ${profileId}`);
+
+    // Step 4: Iterate through pages and pads, transform, and save
+    for (const pageNoStr in impamp2Data.pages) {
+      if (!Object.prototype.hasOwnProperty.call(impamp2Data.pages, pageNoStr)) continue;
+
+      const pageData = impamp2Data.pages[pageNoStr];
+      const pageIndex = parseInt(pageNoStr, 10);
+
+      if (isNaN(pageIndex)) {
+        console.warn(`Skipping page with invalid page number key: ${pageNoStr}`);
+        continue;
+      }
+
+      console.log(`Processing page ${pageIndex}: "${pageData.name}"`);
+
+      // Save page metadata
+      try {
+        await upsertPageMetadata({
+          profileId,
+          pageIndex,
+          name: pageData.name || `Page ${pageIndex + 1}`, // Use page name or default
+          isEmergency: false, // Assume false for impamp2 imports
+        });
+        console.log(`Saved metadata for page ${pageIndex}`);
+      } catch (error) {
+        console.error(`Failed to save metadata for page ${pageIndex}:`, error);
+        // Continue processing other pages/pads even if metadata fails
+      }
+
+      // Process pads within the page
+      for (const key in pageData.pads) {
+        if (!Object.prototype.hasOwnProperty.call(pageData.pads, key)) continue;
+
+        const padData = pageData.pads[key];
+        console.log(`Processing pad with key "${key}" on page ${pageIndex}`);
+
+        // Map key to padIndex
+        const padIndex = getPadIndexForKey(key);
+        if (padIndex === undefined) {
+          console.warn(`Skipping pad: No valid pad index found for key "${key}" on page ${pageIndex}.`);
+          continue;
+        }
+        console.log(`Mapped key "${key}" to padIndex ${padIndex}`);
+
+        // Extract audio data
+        const dataUrl = padData.file;
+        if (!dataUrl || !dataUrl.startsWith('data:audio/')) {
+          console.warn(`Skipping pad "${padData.name}" (key: ${key}, page: ${pageIndex}): Invalid or missing audio data URL.`);
+          continue;
+        }
+
+        let audioFileId: number | undefined = undefined;
+        try {
+          // Parse data URL
+          const parts = dataUrl.match(/^data:(.+);base64,(.+)$/);
+          if (!parts || parts.length !== 3) {
+            throw new Error('Could not parse data URL format.');
+          }
+          const mimeType = parts[1];
+          const base64Data = parts[2];
+
+          // Convert base64 to Blob
+          console.log(`Converting base64 to blob for pad "${padData.name}"...`);
+          const blob = await base64ToBlob(base64Data, mimeType);
+          console.log(`Blob created with type ${blob.type} and size ${blob.size}`);
+
+          // Add audio file to DB
+          audioFileId = await addAudioFile({
+            blob,
+            name: padData.filename || padData.name || `imported_audio_${profileId}_${pageIndex}_${padIndex}`,
+            type: mimeType,
+          });
+          console.log(`Saved audio file for pad "${padData.name}", got audioFileId: ${audioFileId}`);
+
+        } catch (error) {
+          console.error(`Failed to process or save audio for pad "${padData.name}" (key: ${key}, page: ${pageIndex}):`, error);
+          // Continue to next pad, but this pad won't have audio
+        }
+
+        // Save pad configuration
+        try {
+          await upsertPadConfiguration({
+            profileId,
+            pageIndex,
+            padIndex,
+            keyBinding: key, // Store the original key
+            name: padData.name || padData.filename || `Pad ${padIndex}`,
+            audioFileId: audioFileId, // Will be undefined if audio processing failed
+          });
+          console.log(`Saved pad configuration for page ${pageIndex}, padIndex ${padIndex}`);
+        } catch (error) {
+          console.error(`Failed to save pad configuration for page ${pageIndex}, padIndex ${padIndex}:`, error);
+          // Continue processing other pads
+        }
+      } // End pad loop
+    } // End page loop
+
+    console.log(`Successfully completed impamp2 profile import. New profile ID: ${profileId}`);
+    return profileId;
+
+  } catch (error) {
+    console.error('Critical error during impamp2 profile import process:', error);
+    // Attempt to clean up the partially created profile if an error occurred after creation
+    // Check if profileId was successfully assigned before attempting cleanup
+    if (profileId !== undefined) {
+      console.warn(`Attempting to delete partially imported profile ID: ${profileId}`);
+      try {
+        await deleteProfile(profileId); // Use the assigned profileId
+        console.log(`Cleaned up partially imported profile ID: ${profileId}`);
+      } catch (cleanupError) {
+        console.error(`Failed to clean up partially imported profile ID: ${profileId}`, cleanupError);
+      }
+    }
+    throw error; // Re-throw the original error
+  }
 }

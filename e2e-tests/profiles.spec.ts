@@ -80,4 +80,91 @@ test.describe('ImpAmp3 Profile Management', () => {
     // Delete button should be hidden for active profile
     await expect(deleteButton).toBeHidden();
   });
+
+  test('Can import an impamp2 profile file', async ({ page }) => {
+    // Minimal valid impamp2 data structure
+    const impamp2ProfileData = {
+      padCount: 1,
+      pages: {
+        "0": {
+          pageNo: "0",
+          name: "Impamp2 Test Page",
+          emergencies: 0,
+          updatedAt: Date.now(),
+          pads: {
+            "q": {
+              page: "0",
+              key: "q",
+              name: "Test Sound Q",
+              // Minimal valid base64 for a tiny WAV file (silent)
+              file: "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA",
+              filename: "test_q.wav",
+              filesize: 100,
+              startTime: null,
+              endTime: null,
+              updatedAt: Date.now(),
+              readable: true
+            }
+          }
+        }
+      }
+    };
+    const impamp2JsonString = JSON.stringify(impamp2ProfileData);
+    const impamp2FileName = 'impamp2-test-import.json';
+
+    // Find and click profile selector
+    const profileSelector = await page.getByRole('button', { name: /profile/i });
+    await profileSelector.click();
+
+    // Open the manage profiles modal
+    await page.getByRole('menuitem', { name: 'Manage Profiles' }).click();
+    await expect(page.getByText(/Profile Manager/i)).toBeVisible();
+
+    // Switch to Import / Export tab
+    await page.getByRole('button', { name: 'Import / Export' }).click();
+    await expect(page.getByRole('heading', { name: 'Import Profile' })).toBeVisible();
+
+    // Locate the hidden file input associated with the "Select File to Import" button
+    // The input is likely a sibling or near the button. We target it directly.
+    const fileInput = page.locator('[data-testid="import-profile-file-input"]')
+    await expect(fileInput).toBeAttached(); // Ensure the input exists
+
+    // Simulate file upload
+    await fileInput.setInputFiles({
+      name: impamp2FileName,
+      mimeType: 'application/json',
+      buffer: Buffer.from(impamp2JsonString)
+    });
+
+    // Wait for success message
+    const successMessage = page.locator('.bg-green-50'); // Adjust selector based on actual success message element
+    await expect(successMessage).toContainText(/Impamp2 profile imported successfully!/i);
+    await expect(successMessage).toBeVisible({ timeout: 10000 });
+
+    // Switch back to Profiles tab
+    await page.getByRole('button', { name: 'Profiles' }).click();
+
+    // Verify the new profile exists in the manager list
+    const newProfileHeading = page.getByRole('heading', { name: /Impamp2 Test Page/i });
+    await expect(newProfileHeading).toBeVisible();
+
+    // Close the profile manager
+    await page.getByLabel('Close').click();
+    await expect(page.getByText(/Profile Manager/i)).toBeHidden();
+
+    // Switch to the newly imported profile
+    await profileSelector.click();
+    // Use the exact name found in the manager list to select the profile
+    const profileName = 'Impamp2 Test Page';
+    await page.getByRole('menuitem', { name: profileName }).click();
+
+    // Verify the new profile is now active
+    const importedProfilebutton = page.getByRole('button', { name: profileName });
+    await expect(importedProfilebutton).toBeVisible();
+
+    // Verify the imported pad ('q' key maps to index 0) has the correct name
+    const firstPad = page.getByRole('button', { name: 'Sound pad 1: Test Sound Q,' });
+    await expect(firstPad).toBeVisible();
+    await expect(firstPad).toContainText('Test Sound Q');
+  });
 });

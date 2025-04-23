@@ -8,14 +8,15 @@ import ProfileCard from './ProfileCard';
 export default function ProfileManager() {
   const { 
     profiles, 
-    activeProfileId, 
-    isProfileManagerOpen, 
-    closeProfileManager, 
+    activeProfileId,
+    isProfileManagerOpen,
+    closeProfileManager,
     createProfile,
     exportProfileToJSON,
-    importProfileFromJSON
+    importProfileFromJSON,
+    importProfileFromImpamp2JSON
   } = useProfileStore();
-  
+
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileSyncType, setNewProfileSyncType] = useState<SyncType>('local');
   const [isCreating, setIsCreating] = useState(false);
@@ -225,7 +226,7 @@ export default function ProfileManager() {
                     disabled={isExporting || !exportProfileId}
                     className={`px-4 py-2 ${
                       exportProfileId
-                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
                         : 'bg-gray-200 text-gray-500'
                     } rounded-md transition-colors ${
                       isExporting || !exportProfileId ? 'cursor-not-allowed' : ''
@@ -250,8 +251,9 @@ export default function ProfileManager() {
                   <input
                     type="file"
                     ref={fileInputRef}
+                    data-testid="import-profile-file-input"
                     className="hidden"
-                    accept=".json"
+                    accept=".json,.iajson"
                     onChange={async (e: ChangeEvent<HTMLInputElement>) => {
                       // Reset states
                       setImportError(null);
@@ -266,20 +268,54 @@ export default function ProfileManager() {
                         // Read the file
                         const reader = new FileReader();
                         reader.onload = async (event) => {
-                          try {
-                            const content = event.target?.result as string;
-                            const newProfileId = await importProfileFromJSON(content);
-                            setImportSuccess(`Profile imported successfully! (ID: ${newProfileId})`);
+                          const content = event.target?.result as string;
+                          if (!content) {
+                            setImportError('Failed to read file content.');
                             setIsImporting(false);
-                            
-                            // Reset the file input
+                            return;
+                          }
+
+                          try {
+                            // --- Try importing as impamp2 format first ---
+                            console.log('Attempting import as impamp2 format...');
+                            const impamp2ProfileId = await importProfileFromImpamp2JSON(content);
+                            setImportSuccess(`Impamp2 profile imported successfully! (New ID: ${impamp2ProfileId})`);
+                            setIsImporting(false);
+                          } catch (impamp2Error) {
+                            console.warn('Import as impamp2 format failed:', impamp2Error);
+                            // --- If impamp2 fails, try importing as current format ---
+                            try {
+                              console.log('Attempting import as current format...');
+                              const currentProfileId = await importProfileFromJSON(content);
+                              setImportSuccess(`Profile imported successfully! (New ID: ${currentProfileId})`);
+                              setIsImporting(false);
+                            } catch (currentError) {
+                              console.error('Import as current format also failed:', currentError);
+                              // Determine the most likely error to show
+                              let finalErrorMessage = 'Failed to import profile: ';
+                              if (impamp2Error instanceof Error && currentError instanceof Error) {
+                                if (impamp2Error.message.includes('Invalid impamp2 JSON format')) {
+                                  finalErrorMessage += 'File is not a valid impamp2 export. ';
+                                }
+                                if (currentError.message.includes('Invalid profile export format')) {
+                                  finalErrorMessage += 'File is not a valid current profile export.';
+                                } else if (currentError.message.includes('Invalid JSON format')) {
+                                  finalErrorMessage += 'File contains invalid JSON.';
+                                } else {
+                                  // Generic fallback if specific errors aren't matched
+                                  finalErrorMessage += 'Unsupported format or invalid file content.';
+                                }
+                              } else {
+                                finalErrorMessage += 'Unsupported format or invalid file content.';
+                              }
+                              setImportError(finalErrorMessage);
+                              setIsImporting(false);
+                            }
+                          } finally {
+                            // Reset the file input regardless of success or failure
                             if (fileInputRef.current) {
                               fileInputRef.current.value = '';
                             }
-                          } catch (error) {
-                            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-                            setImportError(`Failed to import profile: ${errorMessage}`);
-                            setIsImporting(false);
                           }
                         };
                         
@@ -319,7 +355,7 @@ export default function ProfileManager() {
                     {isImporting ? 'Importing...' : 'Select File to Import'}
                   </button>
                   <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                    Only import files that were previously exported from ImpAmp3.
+                    Only import files that were previously exported from ImpAmp2 or ImpAmp3.
                   </p>
                 </div>
               </section>

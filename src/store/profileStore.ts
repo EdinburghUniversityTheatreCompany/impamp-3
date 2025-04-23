@@ -9,6 +9,7 @@ import {
   deleteProfile,
   exportProfile,
   importProfile,
+  importImpamp2Profile,
   ProfileExport
 } from '@/lib/db';
 
@@ -41,7 +42,8 @@ interface ProfileState {
   
   // Import/Export functionality
   exportProfileToJSON: (profileId: number) => Promise<boolean>;
-  importProfileFromJSON: (jsonData: string) => Promise<number>;
+  importProfileFromJSON: (jsonData: string) => Promise<number>; // For current format
+  importProfileFromImpamp2JSON: (jsonData: string) => Promise<number>; // For impamp2 format
   
   // Profile manager UI state
   openProfileManager: () => void;
@@ -294,6 +296,23 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       set({ error: `Failed to import profile: ${errorMessage}` });
       throw error;
+    }
+  },
+  
+  importProfileFromImpamp2JSON: async (jsonData: string) => {
+    try {
+      // Call the specific impamp2 import function from db.ts
+      const newProfileId = await importImpamp2Profile(jsonData);
+      
+      // Refresh the profiles list
+      await get().fetchProfiles();
+      
+      return newProfileId;
+    } catch (error) {
+      console.error('Failed to import impamp2 profile:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      set({ error: `Failed to import impamp2 profile: ${errorMessage}` });
+      throw error; // Re-throw so the UI can catch it
     }
   },
   
