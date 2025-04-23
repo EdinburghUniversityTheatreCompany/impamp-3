@@ -6,10 +6,11 @@ import PadGrid from '@/components/PadGrid';
 import ActiveTracksPanel from '@/components/ActiveTracksPanel';
 import SearchButton from '@/components/SearchButton';
 import { useProfileStore } from '@/store/profileStore';
-import { useUIStore } from '@/store/uiStore'; // Import UI store
-import EditBankModalContent from '@/components/modals/EditBankModalContent'; // Import modal content
-import PromptModalContent from '@/components/modals/PromptModalContent'; // Import modal content
+import { useUIStore } from '@/store/uiStore'; 
+import EditBankModalContent from '@/components/modals/EditBankModalContent';
+import PromptModalContent from '@/components/modals/PromptModalContent';
 import { renamePage, setPageEmergencyState, upsertPageMetadata, getAllPageMetadataForProfile, PageMetadata } from '@/lib/db';
+import { convertIndexToBankNumber } from '@/lib/bankUtils';
 
 // Pre-load ProfileSelector component to avoid remounting during bank switches
 const ProfileSelector = dynamic(() => import('@/components/profiles/ProfileSelector'), {
@@ -22,11 +23,8 @@ export default function Home() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
   const isEditMode = useProfileStore((state) => state.isEditMode);
-  const setEditing = useProfileStore((state) => state.setEditing);
-  const convertIndexToBankNumber = useProfileStore((state) => state.convertIndexToBankNumber);
   const incrementEmergencySoundsVersion = useProfileStore((state) => state.incrementEmergencySoundsVersion); // Get the action
   const { openModal, closeModal } = useUIStore(); // Get modal actions
-  // Only importing the functions we actually use
   
   // Memoized components to prevent unnecessary remounting
   const renderProfileSelector = useCallback(() => {
@@ -80,7 +78,7 @@ export default function Home() {
     };
     
     loadBankMetadata();
-  }, [activeProfileId, currentPageIndex, convertIndexToBankNumber]);
+  }, [activeProfileId, currentPageIndex]);
   
   // Handle bank click with shift key in edit mode
   const handleBankClick = (bankIndex: number, isShiftClick: boolean) => { // Removed async as modal handles async internally
@@ -96,9 +94,6 @@ export default function Home() {
 
     // Variable to hold the data from the modal content
     let modalData = { name: currentName, isEmergency: currentIsEmergency };
-
-    // Set editing state to true before opening modal
-    setEditing(true);
 
     openModal({
       title: `Edit Bank ${bankNumber}`,
@@ -148,13 +143,9 @@ export default function Home() {
           alert(`Failed to update bank ${bankNumber}. Please try again.`);
         } finally {
           closeModal(); // Close the modal after operation
-          // Set editing state back to false. The listener will handle isEditMode.
-          setEditing(false);
         }
       },
       onCancel: () => {
-        // Also handle setting editing state back on cancel
-        setEditing(false);
         // closeModal is handled by the store automatically
       }
     });
@@ -274,8 +265,6 @@ export default function Home() {
                     // Variable to hold the new bank name
                     let modalDataValue = `Bank ${nextBankNumber}`;
 
-                    // Set editing state to true before opening modal
-                    setEditing(true);
 
                     openModal({
                       title: 'Add New Bank',
@@ -323,20 +312,14 @@ export default function Home() {
                             alert('Failed to create new bank. Please try again.');
                           } finally {
                             closeModal();
-                            // Set editing state back. The listener will handle isEditMode.
-                            setEditing(false);
                           }
                         } else {
                           console.error('[Add Bank Button] activeProfileId is null, cannot create bank.');
                           alert('Cannot create bank, no active profile.');
                           closeModal();
-                          // Set editing state back. The listener will handle isEditMode.
-                          setEditing(false);
                         }
                       },
                       onCancel: () => {
-                        // Set editing state back on cancel
-                        setEditing(false);
                         // closeModal is handled by the store automatically
                       }
                     });

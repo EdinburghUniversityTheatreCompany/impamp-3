@@ -25,13 +25,13 @@
 - **Action:** Instead of calling `fetchProfiles()` after every modification, update the `profiles` array in the store directly based on the successful result of the add/update/delete/import operation. This avoids redundant reads from the DB. [DONE]
 - **Action:** Implement Zustand's persistence middleware (`persist` from `zustand/middleware`) to manage storing `activeProfileId` and `fadeoutDuration` in localStorage. Remove manual `localStorage.getItem/setItem` calls. [DONE]
 - **Action:** Crucially, fix the `setCurrentPageIndex` logic. Remove the DOM query (`document.querySelectorAll`). Instead, fetch the necessary `pageMetadata` for the active profile (perhaps store it within the profile store itself or fetch it when the profile loads) and check against this data to determine if a target bank index exists before allowing the switch. [DONE]
-- **Action:** Analyze the usage of `isEditMode` (global Shift state) and `isEditing` (action-in-progress state) across components (`page.tsx`, `PadGrid.tsx`). Simplify the logic if possible, perhaps by relying more on modal open state (`uiStore`) or deriving `isEditing` implicitly. Ensure `isEditing` is reliably reset when modals close (confirm or cancel).
-- **Action:** Move the bank number/index conversion functions (`convertBankNumberToIndex`, `convertIndexToBankNumber`) to a utility file like `src/lib/keyboardUtils.ts` or a new `src/lib/bankUtils.ts` for better organization.
+- **Action:** Analyze the usage of `isEditMode` (global Shift state) and `isEditing` (action-in-progress state) across components (`page.tsx`, `PadGrid.tsx`). Simplify the logic if possible, perhaps by relying more on modal open state (`uiStore`) or deriving `isEditing` implicitly. Ensure `isEditing` is reliably reset when modals close (confirm or cancel). [DONE]
+- **Action:** Move the bank number/index conversion functions (`convertBankNumberToIndex`, `convertIndexToBankNumber`) to a utility file like `src/lib/keyboardUtils.ts` or a new `src/lib/bankUtils.ts` for better organization. [DONE]
 - **Rationale:** Streamlines the store, improves performance, enhances robustness (persistence middleware), fixes incorrect DOM dependency, reduces state complexity, and improves code organization.
 
-### Prevent Server-Side DB Access:
+### Prevent Server-Side DB Access: [DONE]
 - **Action:** Identify where `ensureDefaultProfile()` is currently called (likely at the bottom of `profileStore.ts`). Remove this call. [DONE]
-- **Action:** In a top-level client component (e.g., wrap the content of `src/app/layout.tsx` or `src/app/page.tsx` with a new client component), use a `useEffect` hook that runs only once on mount (`[]` dependency array) to call `ensureDefaultProfile()` and potentially `getDb()` to initialize the database connection client-side. [DONE]
+- **Action:** In a top-level client component (e.g., wrap the content of `src/app/layout.tsx` or `src/app/page.tsx` with a new client component), use a `useEffect` hook that runs only once on mount (`[]` dependency array) to call `ensureDefaultProfile()` and potentially `getDb()` to initialize the database connection client-side. [DONE - Implemented via `ClientSideInitializer.tsx` wrapping children in `layout.tsx`, which calls `fetchProfiles` which calls `ensureDefaultProfile`]
 - **Rationale:** Resolves the build/SSR warning about server-side IndexedDB access. Ensures DB logic runs only in the browser environment.
 
 ## II. Audio Engine & Playback State (`src/lib/audio.ts`, `src/components/PadGrid.tsx`, `src/store/playbackStore.ts` [New])

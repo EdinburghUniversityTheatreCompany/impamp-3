@@ -42,14 +42,12 @@ type PadPlaybackState = {
 const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode);
-  const setEditing = useProfileStore((state) => state.setEditing);
   const incrementEmergencySoundsVersion = useProfileStore((state) => state.incrementEmergencySoundsVersion); // Get the action
   const { openModal, closeModal } = useUIStore(); // Get modal actions
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map()); // Map padIndex to config
   const [playingPads, setPlayingPads] = useState<Set<number>>(new Set());
   const [padPlaybackState, setPadPlaybackState] = useState<Map<number, PadPlaybackState>>(new Map());
   const hasInteracted = useRef(false);
-  // Removed isDragging state, will handle visual feedback in Pad component
 
   // Function to refresh pad configurations after an update
   const refreshPadConfigs = useCallback(async () => {
@@ -152,7 +150,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
 
   // Handler for removing sound from a pad
-  const handleRemoveSound = (padIndex: number) => { // Removed async
+  const handleRemoveSound = (padIndex: number) => {
     const config = padConfigs.get(padIndex);
     if (!config || !config.audioFileId || activeProfileId === null) return;
 
@@ -212,9 +210,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       // Variable to hold the new name from the modal
       let modalDataValue = currentName;
 
-      // Set editing state to true before opening modal
-      setEditing(true);
-
       openModal({
         title: 'Rename Pad',
         content: (
@@ -262,18 +257,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
               alert(`Failed to rename pad ${padIndex}. Please try again.`);
             } finally {
               closeModal();
-              // Set editing state back. The listener will handle isEditMode.
-              setEditing(false);
             }
           } else {
             // Name didn't change, just close modal and handle editing state
             closeModal();
-            setEditing(false);
           }
         },
         onCancel: () => {
-          // Set editing state back on cancel
-          setEditing(false);
           // closeModal is handled by the store automatically
         }
       });
@@ -404,7 +394,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         console.error(`Error processing dropped file for pad index ${padIndex}:`, error);
         // TODO: Show user feedback
     }
-  }, [activeProfileId, currentPageIndex, refreshPadConfigs]);
+  }, [activeProfileId, currentPageIndex, incrementEmergencySoundsVersion, refreshPadConfigs]);
 
   // --- Special Pad Handlers ---
   const handleStopAllClick = useCallback(() => {
