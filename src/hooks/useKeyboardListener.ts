@@ -209,7 +209,6 @@ export function useKeyboardListener() {
     if (pressedKey === 'f' && event.ctrlKey) {
       event.preventDefault();
       openSearchModal();
-      console.log("heya heya, in ctrl+f")
       return;
     }
     

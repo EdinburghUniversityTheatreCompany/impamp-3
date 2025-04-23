@@ -242,7 +242,6 @@ export default function Home() {
               {isEditMode && (
                 <button
                   onClick={() => {
-                    console.log('[Add Bank Button] Clicked!'); // DEBUG LOG
                     // Find the next available bank number
                     // Get all current bank indices and find the next available index
                     const usedIndices = Object.keys(bankNames).map(k => parseInt(k, 10));
@@ -260,7 +259,6 @@ export default function Home() {
                     // Get the bank number for display
                     const nextBankNumber = convertIndexToBankNumber(nextIndex);
 
-                    console.log(`[Add Bank Button] isEditMode=${isEditMode}, activeProfileId=${activeProfileId}, nextIndex=${nextIndex}, nextBankNumber=${nextBankNumber}`); // DEBUG LOG
 
                     // Variable to hold the new bank name
                     let modalDataValue = `Bank ${nextBankNumber}`;

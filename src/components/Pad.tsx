@@ -67,13 +67,6 @@ const Pad: React.FC<PadProps> = ({
     multiple: false, // Accept only one file at a time
   });
 
-  // Log props for debugging
-  React.useEffect(() => {
-    if (isPlaying) {
-      console.log(`[Pad ${padIndex}] Playing: ${isPlaying}, Progress: ${playProgress}`);
-    }
-  }, [isPlaying, playProgress, padIndex]);
-
   // --- Styling with clsx ---
   const padClasses = useMemo(() => clsx(
     'relative', 'aspect-square', 'border', 'rounded-md', 'flex', 'flex-col',
