@@ -1,6 +1,7 @@
-import { getAudioFile } from "./db";
-import { playbackStoreActions } from "@/store/playbackStore"; // Import store actions
-import type { PlaybackState } from "@/store/playbackStore"; // Import the state type
+import { getAudioFile, PadConfiguration } from "./db";
+import { playbackStoreActions } from "@/store/playbackStore";
+import type { PlaybackState } from "@/store/playbackStore";
+import { useProfileStore } from "@/store/profileStore";
 
 // Detect client-side environment
 const isClient = typeof window !== "undefined";
@@ -182,10 +183,128 @@ export async function loadAndDecodeAudio(
   }
 }
 
-// Play an AudioBuffer with enhanced metadata
-export function playAudio(
+// --- Public function to trigger pad playback ---
+
+/**
+ * Handles the user interaction to play a pad's audio.
+ * Checks activePadBehavior, loads audio if needed, and calls _playBuffer.
+ */
+export async function triggerAudioForPad(
+  padConfig: PadConfiguration,
+  activeProfileId: number,
+  currentPageIndex: number,
+): Promise<void> {
+  if (!padConfig.audioFileId) {
+    console.log(
+      `[triggerAudioForPad] Pad index ${padConfig.padIndex} has no audio configured.`,
+    );
+    return;
+  }
+
+  const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padConfig.padIndex}`;
+  const isAlreadyPlaying = activeTracks.has(playbackKey);
+  const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
+
+  console.log(
+    `[Audio Trigger] Key: ${playbackKey}, Is Playing: ${isAlreadyPlaying}, Behavior: ${activePadBehavior}`,
+  );
+
+  // Handle behavior if the track is already playing
+  if (isAlreadyPlaying) {
+    switch (activePadBehavior) {
+      case "continue":
+        console.log(
+          `[Audio Trigger Action] Behavior=continue. Doing nothing for key: ${playbackKey}`,
+        );
+        return; // Do nothing
+      case "stop":
+        console.log(
+          `[Audio Trigger Action] Behavior=stop. Stopping key: ${playbackKey}`,
+        );
+        stopAudio(playbackKey); // Stop the existing sound
+        return; // Don't proceed to play again
+      case "restart": {
+        // Use block scope for clarity
+        console.log(
+          `[Audio Trigger Action] Behavior=restart. Handling restart for key: ${playbackKey}`,
+        );
+        const existingTrack = activeTracks.get(playbackKey);
+        if (existingTrack) {
+          console.log(
+            `[Audio Trigger Action] Nullifying onended and stopping existing source for key: ${playbackKey}`,
+          );
+          existingTrack.source.onended = null; // Prevent old onended from firing later
+          try {
+            existingTrack.source.stop(0); // Stop only the Web Audio source
+          } catch (error) {
+            // Ignore errors if the source was already stopped or in an invalid state
+            if ((error as DOMException).name !== "InvalidStateError") {
+              console.error(
+                `[Audio Trigger Action] Error stopping existing source during restart for key ${playbackKey}:`,
+                error,
+              );
+            }
+          }
+          // DO NOT remove from activeTracks or playbackStore here. _playBuffer will update the entry.
+        } else {
+          console.warn(
+            `[Audio Trigger Action] Restart requested for key ${playbackKey}, but no existing track found in activeTracks map.`,
+          );
+        }
+        // Proceed to play again (logic continues below)
+        break;
+      }
+      default:
+        console.warn(
+          `[Audio Trigger] Unknown activePadBehavior: ${activePadBehavior}. Defaulting to 'continue'.`,
+        );
+        return; // Default to continue
+    }
+  }
+
+  // --- Proceed to load and play the sound (either it wasn't playing, or behavior is 'restart') ---
+  console.log(
+    `[Audio Trigger Action] Proceeding to load/play for key: ${playbackKey}, File ID: ${padConfig.audioFileId}`,
+  );
+  try {
+    // Load and decode the audio buffer
+    const buffer = await loadAndDecodeAudio(padConfig.audioFileId);
+
+    // If buffer loaded successfully, play it
+    if (buffer) {
+      console.log(
+        `[Audio Trigger Action] Buffer obtained for File ID: ${padConfig.audioFileId}. Calling _playBuffer...`,
+      );
+      _playBuffer(buffer, playbackKey, {
+        // Call the internal play function
+        name: padConfig.name || `Pad ${padConfig.padIndex + 1}`,
+        padInfo: {
+          profileId: activeProfileId,
+          pageIndex: currentPageIndex,
+          padIndex: padConfig.padIndex,
+        },
+      });
+    } else {
+      console.error(
+        `[Audio Trigger] Failed to load or decode audio for File ID: ${padConfig.audioFileId}`,
+      );
+      // Optionally show an error to the user
+    }
+  } catch (error) {
+    console.error(
+      `[Audio Trigger] Error during load/decode for key ${playbackKey}:`,
+      error,
+    );
+    // Optionally show an error to the user
+  }
+}
+
+// --- Internal Playback Logic ---
+
+// Internal function to play a pre-loaded buffer and update state
+function _playBuffer(
   buffer: AudioBuffer,
-  playbackKey: string, // Unique key to identify this playback instance (e.g., padId)
+  playbackKey: string,
   metadata: {
     name: string;
     padInfo: {
@@ -194,14 +313,12 @@ export function playAudio(
       padIndex: number;
     };
   },
-  volume: number = 1.0, // Volume from 0.0 to 1.0
+  volume: number = 1.0,
 ): AudioBufferSourceNode | null {
   try {
     const context = getAudioContext();
 
-    // Stop any existing sound playing with the same key
-    stopAudio(playbackKey);
-
+    console.log(`[_playBuffer] Starting playback for key: ${playbackKey}`);
     const source = context.createBufferSource();
     source.buffer = buffer;
 

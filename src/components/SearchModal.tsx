@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { getAudioFile } from "@/lib/db";
+import { getAudioFile, PadConfiguration } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
-import { loadAndDecodeAudio, playAudio, resumeAudioContext } from "@/lib/audio";
+import { triggerAudioForPad, resumeAudioContext } from "@/lib/audio";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 
 interface SearchResult {
@@ -175,21 +175,24 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       // Resume audio context first
       resumeAudioContext();
 
-      // Load and play the audio
-      const audioBuffer = await loadAndDecodeAudio(result.audioFileId);
-      if (audioBuffer) {
-        const playbackKey = `pad-${result.profileId}-${result.pageIndex}-${result.padIndex}`;
-        playAudio(audioBuffer, playbackKey, {
-          name: result.name,
-          padInfo: {
-            profileId: result.profileId,
-            pageIndex: result.pageIndex,
-            padIndex: result.padIndex,
-          },
-        });
-        // Close the modal after initiating playback
-        onClose();
-      }
+      // Create a PadConfiguration-like object from the search result
+      // Note: We might not have keyBinding here, but triggerAudioForPad doesn't need it
+      const padConfig: PadConfiguration = {
+        profileId: result.profileId,
+        pageIndex: result.pageIndex,
+        padIndex: result.padIndex,
+        name: result.name,
+        audioFileId: result.audioFileId,
+        // createdAt and updatedAt are not strictly needed for triggering
+        createdAt: new Date(), // Placeholder
+        updatedAt: new Date(), // Placeholder
+      };
+
+      // Call the centralized trigger function
+      await triggerAudioForPad(padConfig, result.profileId, result.pageIndex);
+
+      // Close the modal after initiating playback attempt
+      onClose();
     } catch (error) {
       console.error("Error playing sound:", error);
     }

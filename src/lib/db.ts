@@ -20,9 +20,13 @@ export interface Profile {
   syncType: SyncType;
   googleDriveFolderId?: string;
   lastSyncedEtag?: string; // ETag for profile.json in Drive
+  activePadBehavior?: ActivePadBehavior; // How to handle activating an already active pad
   createdAt: Date;
   updatedAt: Date;
 }
+
+// Define the possible behaviors for activating an already active pad
+export type ActivePadBehavior = "continue" | "stop" | "restart";
 
 // Define the structure of pad configuration data
 export interface PadConfiguration {

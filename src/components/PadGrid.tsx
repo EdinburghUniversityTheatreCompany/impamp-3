@@ -15,8 +15,7 @@ import {
 } from "@/lib/db";
 import {
   loadAndDecodeAudio,
-  playAudio,
-  stopAudio,
+  triggerAudioForPad,
   resumeAudioContext,
   stopAllAudio,
   fadeOutAllAudio,
@@ -231,10 +230,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   };
 
   // Handles starting/stopping playback
-  const handlePlaybackInteraction = (
-    padConfig: PadConfiguration,
-    padIndex: number,
-  ) => {
+  const handlePlaybackInteraction = (padConfig: PadConfiguration) => {
     if (activeProfileId === null) return;
 
     if (!hasInteracted.current) {
@@ -242,55 +238,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       hasInteracted.current = true;
     }
 
-    const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padIndex}`;
-
-    if (activePlayback.has(playbackKey)) {
-      stopAudio(playbackKey);
-      console.log(
-        `[PadGrid] Stopped playback for pad index: ${padIndex} (key: ${playbackKey})`,
-      );
-    } else if (padConfig.audioFileId) {
-      // Check if audioFileId exists
-      console.log(
-        `Attempting to play audio for pad index: ${padIndex}, file ID: ${padConfig.audioFileId}`,
-      );
-      (async () => {
-        try {
-          // Ensure audioFileId is a number before calling loadAndDecodeAudio
-          if (typeof padConfig.audioFileId === "number") {
-            const buffer = await loadAndDecodeAudio(padConfig.audioFileId);
-            if (buffer) {
-              console.log(
-                `[PadGrid] Buffer obtained for file ID: ${padConfig.audioFileId}. Playing...`,
-              );
-              playAudio(buffer, playbackKey, {
-                name: padConfig.name || `Pad ${padIndex + 1}`,
-                padInfo: {
-                  profileId: activeProfileId,
-                  pageIndex: currentPageIndex,
-                  padIndex: padIndex,
-                },
-              });
-            } else {
-              console.error(
-                `[PadGrid] Failed to load or decode audio for file ID: ${padConfig.audioFileId}`,
-              );
-            }
-          } else {
-            console.error(
-              `[PadGrid] Invalid audioFileId for pad index ${padIndex}: ${padConfig.audioFileId}`,
-            );
-          }
-        } catch (error) {
-          console.error(
-            `Error during playback for pad index ${padIndex}:`,
-            error,
-          );
-        }
-      })();
-    } else {
-      console.log(`Pad index ${padIndex} has no audio configured.`);
-    }
+    triggerAudioForPad(padConfig, activeProfileId, currentPageIndex);
   };
 
   // Main click handler - delegates to other handlers
@@ -305,7 +253,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       }
     } else {
       if (config) {
-        handlePlaybackInteraction(config, padIndex);
+        handlePlaybackInteraction(config);
       } else {
         console.log(`Pad index ${padIndex} has no config, cannot play.`);
       }

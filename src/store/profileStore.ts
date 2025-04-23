@@ -9,6 +9,7 @@ import {
   updateProfile,
   deleteProfile,
   getProfile,
+  ActivePadBehavior,
 } from "@/lib/db";
 import {
   exportProfile,
@@ -35,6 +36,8 @@ interface ProfileState {
   incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
+  getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
+  setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
 
   // Profile management actions
   createProfile: (profile: {
@@ -430,6 +433,61 @@ export const useProfileStore = create<ProfileState>()(
         }
         // Update state (persist middleware handles saving)
         set({ fadeoutDuration: seconds });
+      },
+
+      getActivePadBehavior: () => {
+        const { profiles, activeProfileId } = get();
+        const activeProfile = profiles.find((p) => p.id === activeProfileId);
+        // Default to 'continue' if profile not found or behavior not set
+        return activeProfile?.activePadBehavior || "continue";
+      },
+
+      setActivePadBehavior: async (behavior: ActivePadBehavior) => {
+        console.log(
+          `[ProfileStore] setActivePadBehavior called with behavior: ${behavior}`,
+        ); // Log received value
+        const { activeProfileId } = get();
+        if (activeProfileId === null) {
+          console.warn(
+            "Cannot set active pad behavior: No active profile selected.",
+          );
+          return;
+        }
+
+        try {
+          // Persist change to DB
+          await updateProfile(activeProfileId, { activePadBehavior: behavior });
+
+          // Update state
+          set((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === activeProfileId
+                ? { ...p, activePadBehavior: behavior, updatedAt: new Date() }
+                : p,
+            ),
+          }));
+          // Log the state *after* update to verify
+          const updatedProfile = get().profiles.find(
+            (p) => p.id === activeProfileId,
+          );
+          console.log(
+            `[ProfileStore] State updated for profile ${activeProfileId}. New behavior: ${updatedProfile?.activePadBehavior}`,
+          );
+        } catch (error) {
+          console.error(
+            `Failed to set activePadBehavior for profile ${activeProfileId}:`,
+            error,
+          );
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "An unknown error occurred";
+          set({
+            error: `Failed to set active pad behavior: ${errorMessage}`,
+          });
+          // Re-throw might be useful depending on how calling code handles errors
+          // throw error;
+        }
       },
     }),
     {

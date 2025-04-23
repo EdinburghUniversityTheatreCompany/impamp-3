@@ -6,11 +6,10 @@ import {
   getAllPageMetadataForProfile,
 } from "@/lib/db";
 import {
-  loadAndDecodeAudio,
-  playAudio,
   resumeAudioContext,
   stopAllAudio,
   fadeOutAllAudio,
+  triggerAudioForPad,
 } from "@/lib/audio";
 import { useSearchModal } from "@/components/SearchModalProvider";
 import { useUIStore } from "@/store/uiStore";
@@ -24,9 +23,6 @@ interface EmergencySound {
   audioFileId: number;
   name?: string;
 }
-
-// Re-use the audio buffer cache from PadGrid (consider moving cache to audio.ts or a context)
-const audioBufferCache = new Map<number, AudioBuffer | null>();
 
 // Global reference to track emergency sounds and current index for round-robin
 const emergencySoundsRef: { current: EmergencySound[] } = { current: [] };
@@ -94,42 +90,21 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     return;
   }
 
-  try {
-    // Check if we have the audio buffer cached
-    let buffer = audioBufferCache.get(sound.audioFileId);
-    if (!buffer) {
-      // Load and decode the audio if not cached
-      buffer = await loadAndDecodeAudio(sound.audioFileId);
-      if (buffer) {
-        audioBufferCache.set(sound.audioFileId, buffer);
-      }
-    }
+  // Create a PadConfiguration-like object from the emergency sound data
+  const padConfig: PadConfiguration = {
+    profileId: sound.profileId,
+    pageIndex: sound.pageIndex,
+    padIndex: sound.padIndex,
+    name: sound.name,
+    audioFileId: sound.audioFileId,
+    // createdAt and updatedAt are not strictly needed for triggering
+    createdAt: new Date(), // Placeholder
+    updatedAt: new Date(), // Placeholder
+  };
 
-    if (buffer) {
-      // Generate a unique playback key for this emergency sound
-      const playbackKey = `emergency-${sound.profileId}-${sound.pageIndex}-${sound.padIndex}-${Date.now()}`;
-
-      // Play the audio
-      playAudio(buffer, playbackKey, {
-        name: sound.name || "Emergency Sound",
-        padInfo: {
-          profileId: sound.profileId,
-          pageIndex: sound.pageIndex,
-          padIndex: sound.padIndex,
-        },
-      });
-
-      console.log(
-        `Playing emergency sound: ${sound.name || "Unnamed"} from page ${sound.pageIndex}, pad ${sound.padIndex}`,
-      );
-    } else {
-      console.error(
-        `Failed to load audio buffer for emergency sound ID: ${sound.audioFileId}`,
-      );
-    }
-  } catch (error) {
-    console.error("Error playing emergency sound:", error);
-  }
+  // Call the centralized trigger function
+  // Note: We don't need error handling here as triggerAudioForPad handles its own errors
+  await triggerAudioForPad(padConfig, sound.profileId, sound.pageIndex);
 }
 
 export function useKeyboardListener() {
@@ -461,47 +436,16 @@ export function useKeyboardListener() {
         }
 
         const audioFileId = matchedConfig.audioFileId;
-        const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${matchedPadIndex}`; // Consistent playback key
 
         console.log(
           `Key "${pressedKey}" matched pad index ${matchedPadIndex}, audio ID ${audioFileId}`,
         );
 
-        // Play audio (similar logic to handlePadClick)
-        // TODO: Refactor playback logic into a reusable function?
-        try {
-          let buffer = audioBufferCache.get(audioFileId);
-          if (!buffer) {
-            buffer = await loadAndDecodeAudio(audioFileId);
-            if (buffer) {
-              audioBufferCache.set(audioFileId, buffer);
-            }
-          }
-
-          if (buffer) {
-            // Note: Keyboard doesn't easily support "stop on press again" like click does.
-            // It will always restart the sound or play over if not stopped.
-            // We choose to restart by calling playAudio which implicitly stops the previous one with the same key.
-            playAudio(buffer, playbackKey, {
-              name: matchedConfig.name || `Pad ${matchedPadIndex + 1}`,
-              padInfo: {
-                profileId: activeProfileId as number,
-                pageIndex: currentPageIndex,
-                padIndex: matchedPadIndex,
-              },
-            });
-            // Optionally add visual feedback for keyboard activation?
-          } else {
-            console.error(
-              `Failed to load/decode audio for key "${pressedKey}", file ID: ${audioFileId}`,
-            );
-          }
-        } catch (error) {
-          console.error(
-            `Error during keyboard playback for key "${pressedKey}":`,
-            error,
-          );
-        }
+        triggerAudioForPad(
+          matchedConfig,
+          activeProfileId as number,
+          currentPageIndex,
+        );
       }
     },
     [

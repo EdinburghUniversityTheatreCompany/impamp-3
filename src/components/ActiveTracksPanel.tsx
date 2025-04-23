@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { stopAudio, fadeOutAudio } from "@/lib/audio";
 import { useProfileStore } from "@/store/profileStore";
+import { ActivePadBehavior } from "@/lib/db";
 import { usePlaybackStore, PlaybackState } from "@/store/playbackStore";
 
 // Format time in seconds to MM:SS format
@@ -27,17 +28,27 @@ const ActiveTracksPanel: React.FC = () => {
   const setFadeoutDuration = useProfileStore(
     (state) => state.setFadeoutDuration,
   );
-  const [showSettings, setShowSettings] = useState(false);
-  const [durationInput, setDurationInput] = useState<string>(() => {
-    return getFadeoutDuration().toString();
-  });
+  const getActivePadBehavior = useProfileStore(
+    (state) => state.getActivePadBehavior,
+  );
+  const setActivePadBehavior = useProfileStore(
+    (state) => state.setActivePadBehavior,
+  );
 
-  // Update the input field when settings modal opens
+  const [showSettings, setShowSettings] = useState(false);
+  // State for the modal inputs
+  const [durationInput, setDurationInput] = useState<string>("");
+  const [behaviorInput, setBehaviorInput] =
+    useState<ActivePadBehavior>("continue");
+
+  // Update the input fields when settings modal opens
   useEffect(() => {
     if (showSettings) {
+      // Initialize modal state with current store values
       setDurationInput(getFadeoutDuration().toString());
+      setBehaviorInput(getActivePadBehavior());
     }
-  }, [showSettings, getFadeoutDuration]);
+  }, [showSettings, getFadeoutDuration, getActivePadBehavior]);
   // Stop function - just calls the audio lib function which handles store updates
   const handleStopTrack = (key: string) => {
     stopAudio(key);
@@ -106,11 +117,15 @@ const ActiveTracksPanel: React.FC = () => {
         {showSettings && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-                Fadeout Settings
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
+                Playback Settings
               </h3>
 
-              <div className="mb-4">
+              {/* Fadeout Duration Section */}
+              <div className="mb-6 border-b border-gray-200 dark:border-gray-700 pb-6">
+                <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                  Fadeout
+                </h4>
                 <label
                   htmlFor="fadeout-duration"
                   className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
@@ -133,7 +148,48 @@ const ActiveTracksPanel: React.FC = () => {
                 </p>
               </div>
 
-              <div className="flex justify-end space-x-3">
+              {/* Active Pad Behavior Section */}
+              <div className="mb-4">
+                <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                  Active Pad Trigger Behavior
+                </h4>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+                  What happens when you trigger a pad that&apos;s already
+                  playing?
+                </p>
+                <div className="space-y-2">
+                  {(
+                    [
+                      {
+                        value: "continue",
+                        label: "Continue Playing (Default)",
+                      },
+                      { value: "stop", label: "Stop Sound" },
+                      { value: "restart", label: "Restart Sound" },
+                    ] as { value: ActivePadBehavior; label: string }[]
+                  ).map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex items-center space-x-2 cursor-pointer"
+                    >
+                      <input
+                        type="radio"
+                        name="activePadBehavior"
+                        value={option.value}
+                        checked={behaviorInput === option.value}
+                        onChange={() => setBehaviorInput(option.value)}
+                        className="form-radio h-4 w-4 text-blue-600 dark:text-blue-400 border-gray-300 dark:border-gray-600 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-gray-700"
+                      />
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        {option.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <button
                   onClick={() => setShowSettings(false)}
                   className="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-md text-gray-800 dark:text-white"
@@ -141,20 +197,30 @@ const ActiveTracksPanel: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    // Make async for setActivePadBehavior
                     const duration = parseFloat(durationInput);
+                    let durationIsValid = false;
+
                     if (!isNaN(duration) && duration >= 0.5 && duration <= 10) {
                       setFadeoutDuration(duration);
-                      setShowSettings(false);
+                      durationIsValid = true;
                     } else {
                       alert(
-                        "Please enter a valid duration between 0.5 and 10 seconds",
+                        "Please enter a valid fadeout duration between 0.5 and 10 seconds.",
                       );
+                    }
+
+                    // Only proceed if duration was valid
+                    if (durationIsValid) {
+                      // Save the behavior setting (already validated by radio buttons)
+                      await setActivePadBehavior(behaviorInput);
+                      setShowSettings(false); // Close modal on successful save
                     }
                   }}
                   className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-md text-white"
                 >
-                  Save
+                  Save Settings
                 </button>
               </div>
             </div>

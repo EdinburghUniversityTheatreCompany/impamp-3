@@ -13,8 +13,6 @@ import {
 } from "./db"; // Import necessary types and DB functions from db.ts
 import { getPadIndexForKey } from "./keyboardUtils";
 
-// --- Types moved from impamp2Types.ts ---
-
 /**
  * Represents a single pad within an impamp2 page.
  * Note: The 'file' property contains a data URL string.
@@ -245,6 +243,7 @@ async function createImportedProfile(
     // Add other fields if they exist in the export, otherwise they remain undefined
     googleDriveFolderId: (exportData.profile as Profile).googleDriveFolderId,
     lastSyncedEtag: (exportData.profile as Profile).lastSyncedEtag,
+    activePadBehavior: (exportData.profile as Profile).activePadBehavior,
     createdAt: now,
     updatedAt: now,
   };

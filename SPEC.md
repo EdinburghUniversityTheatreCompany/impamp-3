@@ -21,9 +21,14 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     * **Panic Stop (Esc):** Pressing the `Escape` key immediately stops *all* currently playing sounds. This function should *not* be active when the search modal is open.
     * **Individual Stop:** Clicking on the entry for a currently playing track in the "Active Tracks" panel immediately stops that specific sound.
     * **Individual Fadeout:** A dedicated "Fadeout" button will be added to each entry in the "Active Tracks" panel.
-        * Clicking this button initiates a fade-out over a default duration of 3 seconds.
-        * The fade-out duration should be a configurable setting within the profile.
-    * **Restart on Re-trigger:** Pressing the keyboard shortcut for a pad that is already playing should restart the sound from the beginning (implicitly stopping the current instance). Clicking a pad that is already playing should stop it.
+        * Clicking this button initiates a fade-out over a default duration (configurable, default 3 seconds).
+        * The fade-out duration is configurable in the Playback Settings modal (accessed via the gear icon in the Active Tracks Panel).
+    * **Active Pad Trigger Behavior:** A profile setting determines what happens when a pad is triggered (via click or keyboard shortcut) while it is already playing:
+        * `"continue"` (Default): The sound continues playing uninterrupted.
+        * `"stop"`: The sound stops immediately.
+        * `"restart"`: The sound stops and then immediately starts playing again from the beginning.
+        * This setting is configurable in the Playback Settings modal.
+        * **Note:** Clicking the track entry in the "Active Tracks" panel *always* stops the sound immediately, regardless of this setting.
 * **Multiple Sounds:** The application should support playing multiple sounds concurrently.
 
 #### 2.2. Pad Configuration
@@ -140,7 +145,7 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 #### 4.1. Profiles
 
 * **Storage:** Profiles are stored in the `profiles` IndexedDB object store.
-* **Structure:** Defined by the `Profile` interface (id, name, syncType, googleDriveFolderId?, lastSyncedEtag?, createdAt, updatedAt).
+* **Structure:** Defined by the `Profile` interface (id, name, syncType, googleDriveFolderId?, lastSyncedEtag?, activePadBehavior?, fadeoutDuration?, createdAt, updatedAt).
 * **Management:**
     * Users can create, rename, and delete profiles via the Profile Manager UI.
     * The active profile cannot be deleted.
@@ -158,9 +163,9 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 
 #### 4.3. Import / Export
 
-* **Format:** Export uses a JSON structure (`ProfileExport`) containing profile details, all associated pad configurations, all associated page metadata, and base64-encoded audio file data.
+* **Format:** Export uses a JSON structure (`ProfileExport`) containing profile details (including `fadeoutDuration` and `activePadBehavior`), all associated pad configurations, all associated page metadata, and base64-encoded audio file data.
 * **Export:** Users select a profile to export, generating a downloadable JSON file named `impamp-<profile-name>-<date>.json`.
-* **Import:** Users select an exported JSON file. The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`), imports audio blobs, page metadata, and pad configurations, mapping original audio IDs to newly created ones.
+* **Import:** Users select an exported JSON file. The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`), imports audio blobs, page metadata, pad configurations, and profile settings (`fadeoutDuration`, `activePadBehavior`), mapping original audio IDs to newly created ones.
 
 #### 4.4. Sync (Future - Google Drive)
 
