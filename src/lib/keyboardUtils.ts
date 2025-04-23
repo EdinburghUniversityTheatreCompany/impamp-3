@@ -1,14 +1,14 @@
 import { GRID_COLS } from "./constants";
 
 // Define keyboard rows for the first 3 rows (indices 0 up to MANUAL_ROW_START_INDEX)
-// Adjust the keys based on the desired default layout for the grid size  
-const KEYBOARD_ROWS =  [
+// Adjust the keys based on the desired default layout for the grid size
+const KEYBOARD_ROWS = [
   // Row 1 (Indices 0 to cols-1)
-  ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']'],
+  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "[", "]"],
   // Row 2 (Indices cols to 2*cols-1) - Excluding STOP_ALL_INDEX
-  ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'"],
+  ["a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "'"],
   // Row 3 (Indices 2*cols to 3*cols-1) - Excluding FADE_OUT_ALL_INDEX
-  ['\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
+  ["\\", "z", "x", "c", "v", "b", "n", "m", ",", ".", "/"],
 ];
 
 /**
@@ -18,7 +18,9 @@ const KEYBOARD_ROWS =  [
  * @param padIndex The index of the pad (0-based).
  * @returns The corresponding key string (e.g., 'q', 'Escape', ' ') or undefined if no default mapping exists.
  */
-export const getDefaultKeyForPadIndex = (padIndex: number): string | undefined => {
+export const getDefaultKeyForPadIndex = (
+  padIndex: number,
+): string | undefined => {
   // Define special indices based on the grid layout
   // These might need adjustment if the grid layout changes significantly
   const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Assumes Stop All is in Row 2, last col
@@ -27,16 +29,15 @@ export const getDefaultKeyForPadIndex = (padIndex: number): string | undefined =
 
   // Check for special pads first
   if (padIndex === STOP_ALL_INDEX) {
-    return 'Escape'; // Use 'Escape' to match KeyboardEvent.key
+    return "Escape"; // Use 'Escape' to match KeyboardEvent.key
   }
   if (padIndex === FADE_OUT_ALL_INDEX) {
-    return ' '; // Use ' ' (space) to match KeyboardEvent.key
+    return " "; // Use ' ' (space) to match KeyboardEvent.key
   }
   // Check if pad is in the manual row (or beyond)
   if (padIndex >= MANUAL_ROW_START_INDEX) {
     return undefined; // No default keys for manual rows
   }
-
 
   // Calculate row and column for the pad index relative to the grid
   const row = Math.floor(padIndex / GRID_COLS);
@@ -47,8 +48,12 @@ export const getDefaultKeyForPadIndex = (padIndex: number): string | undefined =
     const key = KEYBOARD_ROWS[row][col];
     // Ensure we don't accidentally return a key for the special indices if the logic above failed
     // (This check is redundant if the special index handling above is correct, but safe)
-    if (key !== undefined && padIndex !== STOP_ALL_INDEX && padIndex !== FADE_OUT_ALL_INDEX) {
-        return key;
+    if (
+      key !== undefined &&
+      padIndex !== STOP_ALL_INDEX &&
+      padIndex !== FADE_OUT_ALL_INDEX
+    ) {
+      return key;
     }
   }
 
@@ -71,10 +76,11 @@ export const getPadIndexForKey = (key: string): number | undefined => {
   const MANUAL_ROW_START_INDEX = 3 * GRID_COLS; // Assumes manual row starts at Row 4
 
   // Check for special keys first
-  if (key === 'Escape') {
+  if (key === "Escape") {
     return STOP_ALL_INDEX;
   }
-  if (key === ' ') { // Check for space key
+  if (key === " ") {
+    // Check for space key
     return FADE_OUT_ALL_INDEX;
   }
 
@@ -88,7 +94,11 @@ export const getPadIndexForKey = (key: string): number | undefined => {
       // Important: Ensure the calculated index doesn't accidentally match a special index
       // that should have been handled above or is outside the mapped range.
       // This check prevents mapping regular keys to special function pads if the layout changes.
-      if (padIndex < MANUAL_ROW_START_INDEX && padIndex !== STOP_ALL_INDEX && padIndex !== FADE_OUT_ALL_INDEX) {
+      if (
+        padIndex < MANUAL_ROW_START_INDEX &&
+        padIndex !== STOP_ALL_INDEX &&
+        padIndex !== FADE_OUT_ALL_INDEX
+      ) {
         return padIndex;
       }
     }

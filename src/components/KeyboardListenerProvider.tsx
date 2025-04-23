@@ -1,9 +1,13 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { useKeyboardListener } from '@/hooks/useKeyboardListener';
+import React from "react";
+import { useKeyboardListener } from "@/hooks/useKeyboardListener";
 
-export function KeyboardListenerProvider({ children }: { children: React.ReactNode }) {
+export function KeyboardListenerProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // This hook sets up the global keyboard event listener
   useKeyboardListener();
 

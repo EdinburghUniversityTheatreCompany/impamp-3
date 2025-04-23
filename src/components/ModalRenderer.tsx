@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { useUIStore } from '@/store/uiStore';
-import Modal from './Modal';
+import React from "react";
+import { useUIStore } from "@/store/uiStore";
+import Modal from "./Modal";
 
 const ModalRenderer: React.FC = () => {
   // Select individual state pieces

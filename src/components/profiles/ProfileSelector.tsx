@@ -1,27 +1,31 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { useProfileStore } from '@/store/profileStore';
+import { useState, useRef, useEffect } from "react";
+import { useProfileStore } from "@/store/profileStore";
 
 export default function ProfileSelector() {
-  const { profiles, activeProfileId, setActiveProfileId, openProfileManager } = useProfileStore();
+  const { profiles, activeProfileId, setActiveProfileId, openProfileManager } =
+    useProfileStore();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Get the active profile object
-  const activeProfile = profiles.find(p => p.id === activeProfileId);
+  const activeProfile = profiles.find((p) => p.id === activeProfileId);
 
   // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
     }
-    
-    document.addEventListener('mousedown', handleClickOutside);
+
+    document.addEventListener("mousedown", handleClickOutside);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
 
@@ -38,29 +42,33 @@ export default function ProfileSelector() {
         aria-expanded={isOpen}
         aria-haspopup="true"
       >
-        <svg 
-          xmlns="http://www.w3.org/2000/svg" 
-          viewBox="0 0 24 24" 
-          fill="none" 
-          stroke="currentColor" 
-          strokeWidth="2" 
-          strokeLinecap="round" 
-          strokeLinejoin="round" 
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           className="w-5 h-5 text-gray-500 dark:text-gray-300"
         >
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
           <circle cx="12" cy="7" r="4"></circle>
         </svg>
         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[150px]">
-          {activeProfile?.name || 'No Profile'}
+          {activeProfile?.name || "No Profile"}
         </span>
-        <svg 
-          xmlns="http://www.w3.org/2000/svg" 
-          viewBox="0 0 20 20" 
-          fill="currentColor" 
-          className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'transform rotate-180' : ''}`}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? "transform rotate-180" : ""}`}
         >
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+          <path
+            fillRule="evenodd"
+            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+            clipRule="evenodd"
+          />
         </svg>
       </button>
 
@@ -75,8 +83,8 @@ export default function ProfileSelector() {
                   onClick={() => handleProfileChange(profile.id!)}
                   className={`block w-full text-left px-4 py-2 text-sm ${
                     profile.id === activeProfileId
-                      ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                      : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+                      ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                      : "text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
                   }`}
                   role="menuitem"
                 >
@@ -98,7 +106,9 @@ export default function ProfileSelector() {
                     )}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {profile.syncType === 'googleDrive' ? 'Google Drive' : 'Local'}
+                    {profile.syncType === "googleDrive"
+                      ? "Google Drive"
+                      : "Local"}
                   </div>
                 </button>
               ))}
@@ -117,14 +127,14 @@ export default function ProfileSelector() {
               role="menuitem"
             >
               <div className="flex items-center">
-                <svg 
-                  xmlns="http://www.w3.org/2000/svg" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                   className="h-4 w-4 mr-2"
                 >
                   <path d="M12 20h9"></path>

@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 
 interface EditBankModalContentProps {
   initialName: string;
@@ -41,7 +41,10 @@ const EditBankModalContent: React.FC<EditBankModalContentProps> = ({
     <div className="space-y-4">
       {/* Bank Name Input */}
       <div>
-        <label htmlFor="bank-name-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        <label
+          htmlFor="bank-name-input"
+          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+        >
           Bank Name
         </label>
         <input
@@ -66,7 +69,10 @@ const EditBankModalContent: React.FC<EditBankModalContentProps> = ({
           onChange={handleEmergencyChange}
           className="h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-700 dark:border-gray-600 dark:focus:ring-red-600 dark:ring-offset-gray-800"
         />
-        <label htmlFor="emergency-checkbox" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+        <label
+          htmlFor="emergency-checkbox"
+          className="ml-2 block text-sm text-gray-900 dark:text-gray-300"
+        >
           Mark as Emergency Bank
           <span className="block text-xs text-gray-500 dark:text-gray-400">
             (Can be triggered with the Enter key)

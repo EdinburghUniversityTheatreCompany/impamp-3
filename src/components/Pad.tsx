@@ -1,8 +1,8 @@
-import React, { useMemo } from 'react';
-import { useDropzone, Accept } from 'react-dropzone';
-import clsx from 'clsx';
-import { getDefaultKeyForPadIndex } from '@/lib/keyboardUtils';
-import PadProgressBar from './PadProgressBar'; // Import the new component
+import React, { useMemo } from "react";
+import { useDropzone, Accept } from "react-dropzone";
+import clsx from "clsx";
+import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
+import PadProgressBar from "./PadProgressBar"; // Import the new component
 
 interface PadProps {
   id: string; // Unique identifier for the pad element itself
@@ -27,7 +27,7 @@ const Pad: React.FC<PadProps> = ({
   id,
   padIndex,
   keyBinding,
-  name = 'Empty Pad',
+  name = "Empty Pad",
   isConfigured,
   isPlaying,
   isFading = false, // Default to false
@@ -41,9 +41,10 @@ const Pad: React.FC<PadProps> = ({
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
   // Calculate remaining seconds (rounded) if playing and time is available
-  const remainingSeconds = isPlaying && typeof remainingTime === 'number'
-    ? Math.max(0, Math.round(remainingTime))
-    : null;
+  const remainingSeconds =
+    isPlaying && typeof remainingTime === "number"
+      ? Math.max(0, Math.round(remainingTime))
+      : null;
 
   // Get the default key binding for this pad position if no custom binding is set
   const displayKeyBinding = useMemo(() => {
@@ -56,48 +57,87 @@ const Pad: React.FC<PadProps> = ({
         onDropAudio(acceptedFiles, padIndex);
       }
     },
-    [onDropAudio, padIndex]
+    [onDropAudio, padIndex],
   );
 
-  const { getRootProps, getInputProps, isDragActive, isDragAccept, isDragReject } = useDropzone({
+  const {
+    getRootProps,
+    getInputProps,
+    isDragActive,
+    isDragAccept,
+    isDragReject,
+  } = useDropzone({
     onDrop: handleDrop,
-    accept: { 'audio/*': [] } as Accept, // Accept all audio types
+    accept: { "audio/*": [] } as Accept, // Accept all audio types
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
   });
 
   // --- Styling with clsx ---
-  const padClasses = useMemo(() => clsx(
-    'relative', 'aspect-square', 'border', 'rounded-md', 'flex', 'flex-col',
-    'items-center', 'justify-center', 'p-2', 'text-center', 'cursor-pointer',
-    'transition-all', 'duration-150', 'overflow-hidden',
-    { // Base background/hover based on configuration
-      'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600': isConfigured,
-      'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700': !isConfigured,
-    },
-    { // Text color based on configuration
-      'text-gray-800 dark:text-gray-200': isConfigured,
-      'text-gray-500 dark:text-gray-400': !isConfigured,
-    },
-    { // Edit mode border
-      'border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400': isEditMode,
-    },
-    { // Playing/Fading ring indicator
-      'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-yellow-500 animate-pulse': isFading,
-      'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-blue-500': isPlaying && !isFading,
-    },
-    { // Dropzone active state border (overrides default/edit border if active)
-      'border-blue-500 border-dashed': isDragActive,
-      'border-gray-300 dark:border-gray-600': !isDragActive && !isEditMode, // Default border if not dragging and not editing
-      // No explicit border needed for !isDragActive && isEditMode, as editModeStyle handles it
-    },
-    { // Dropzone accept/reject background/border
-      'bg-green-100 dark:bg-green-900 border-green-500': isDragAccept,
-      'bg-red-100 dark:bg-red-900 border-red-500': isDragReject,
-    }
-  ), [isConfigured, isEditMode, isPlaying, isFading, isDragActive, isDragAccept, isDragReject]);
-
+  const padClasses = useMemo(
+    () =>
+      clsx(
+        "relative",
+        "aspect-square",
+        "border",
+        "rounded-md",
+        "flex",
+        "flex-col",
+        "items-center",
+        "justify-center",
+        "p-2",
+        "text-center",
+        "cursor-pointer",
+        "transition-all",
+        "duration-150",
+        "overflow-hidden",
+        {
+          // Base background/hover based on configuration
+          "bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600":
+            isConfigured,
+          "bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700":
+            !isConfigured,
+        },
+        {
+          // Text color based on configuration
+          "text-gray-800 dark:text-gray-200": isConfigured,
+          "text-gray-500 dark:text-gray-400": !isConfigured,
+        },
+        {
+          // Edit mode border
+          "border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400":
+            isEditMode,
+        },
+        {
+          // Playing/Fading ring indicator
+          "ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-yellow-500 animate-pulse":
+            isFading,
+          "ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-blue-500":
+            isPlaying && !isFading,
+        },
+        {
+          // Dropzone active state border (overrides default/edit border if active)
+          "border-blue-500 border-dashed": isDragActive,
+          "border-gray-300 dark:border-gray-600": !isDragActive && !isEditMode, // Default border if not dragging and not editing
+          // No explicit border needed for !isDragActive && isEditMode, as editModeStyle handles it
+        },
+        {
+          // Dropzone accept/reject background/border
+          "bg-green-100 dark:bg-green-900 border-green-500": isDragAccept,
+          "bg-red-100 dark:bg-red-900 border-red-500": isDragReject,
+        },
+      ),
+    [
+      isConfigured,
+      isEditMode,
+      isPlaying,
+      isFading,
+      isDragActive,
+      isDragAccept,
+      isDragReject,
+    ],
+  );
 
   return (
     // Spread dropzone props onto the root div
@@ -108,26 +148,26 @@ const Pad: React.FC<PadProps> = ({
       // Make clickable area separate from dropzone root if needed, but here it's combined
       // The single onClick handler below manages both playback and prevents dropzone default click
       onClick={(e) => {
-          // Prevent dropzone's default click behavior if necessary, though noClick should handle it
-          e.stopPropagation();
-          
-          // Rely solely on isEditMode prop from the store
-          if (isEditMode) { 
-            onShiftClick();
-          } else {
-            onClick();
-          }
+        // Prevent dropzone's default click behavior if necessary, though noClick should handle it
+        e.stopPropagation();
+
+        // Rely solely on isEditMode prop from the store
+        if (isEditMode) {
+          onShiftClick();
+        } else {
+          onClick();
+        }
       }}
       role="button"
       tabIndex={0} // Make it focusable
       onKeyDown={(e) => {
         // Allow space/enter for playback activation, but not dropzone activation
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault(); // Prevent potential default actions
           onClick();
         }
       }}
-      aria-label={`Sound pad ${padIndex + 1}${name !== 'Empty Pad' ? `: ${name}` : ''}${displayKeyBinding ? `, key ${displayKeyBinding}` : ''}`}
+      aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}`}
     >
       {/* Input element required by react-dropzone - add data-testid */}
       <input {...getInputProps()} data-testid={`pad-drop-input-${padIndex}`} />
@@ -141,7 +181,11 @@ const Pad: React.FC<PadProps> = ({
       {displayKeyBinding && (
         <span className="absolute bottom-1 left-1/2 transform -translate-x-1/2 text-xs font-mono bg-gray-300 dark:bg-gray-600 px-1 rounded z-10">
           {/* Display 'ESC' or 'SPACE' nicely, otherwise show the key */}
-          {displayKeyBinding === 'Escape' ? 'ESC' : displayKeyBinding === ' ' ? 'SPACE' : displayKeyBinding}
+          {displayKeyBinding === "Escape"
+            ? "ESC"
+            : displayKeyBinding === " "
+              ? "SPACE"
+              : displayKeyBinding}
         </span>
       )}
 
@@ -157,9 +201,9 @@ const Pad: React.FC<PadProps> = ({
       {isDragActive && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
           <span className="text-white text-lg font-semibold">
-            {isDragAccept && 'Drop audio here'}
-            {isDragReject && 'Invalid file type'}
-            {!isDragAccept && !isDragReject && 'Drop audio file'}
+            {isDragAccept && "Drop audio here"}
+            {isDragReject && "Invalid file type"}
+            {!isDragAccept && !isDragReject && "Drop audio file"}
           </span>
         </div>
       )}

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getPadConfigurationsForProfilePage, PadConfiguration } from '@/lib/db'; // Assuming PadConfiguration is exported from db.ts
+import { useState, useEffect, useCallback } from "react";
+import { getPadConfigurationsForProfilePage, PadConfiguration } from "@/lib/db"; // Assuming PadConfiguration is exported from db.ts
 
 interface UsePadConfigurationsResult {
   padConfigs: Map<number, PadConfiguration>;
@@ -16,9 +16,11 @@ interface UsePadConfigurationsResult {
  */
 export function usePadConfigurations(
   profileId: string | null,
-  pageIndex: number
+  pageIndex: number,
 ): UsePadConfigurationsResult {
-  const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(new Map());
+  const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(
+    new Map(),
+  );
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -33,7 +35,9 @@ export function usePadConfigurations(
 
     setIsLoading(true);
     setError(null);
-    console.log(`usePadConfigurations: Fetching for profile ${profileId}, page ${pageIndex}`);
+    console.log(
+      `usePadConfigurations: Fetching for profile ${profileId}, page ${pageIndex}`,
+    );
 
     try {
       // Convert profileId string to number before calling DB function
@@ -43,23 +47,39 @@ export function usePadConfigurations(
       }
 
       // Fetch the configurations as an array using the numeric ID
-      const configArray = await getPadConfigurationsForProfilePage(numericProfileId, pageIndex);
-      console.log(`usePadConfigurations: Fetched ${configArray.length} configs for profile ID ${numericProfileId}`);
+      const configArray = await getPadConfigurationsForProfilePage(
+        numericProfileId,
+        pageIndex,
+      );
+      console.log(
+        `usePadConfigurations: Fetched ${configArray.length} configs for profile ID ${numericProfileId}`,
+      );
 
       // Convert the array to a Map, using padIndex as the key
       const configMap = new Map<number, PadConfiguration>();
-      configArray.forEach(config => {
-        if (config.padIndex !== undefined) { // Ensure padIndex exists
+      configArray.forEach((config) => {
+        if (config.padIndex !== undefined) {
+          // Ensure padIndex exists
           configMap.set(config.padIndex, config);
         } else {
-          console.warn('usePadConfigurations: Found config without padIndex, skipping:', config);
+          console.warn(
+            "usePadConfigurations: Found config without padIndex, skipping:",
+            config,
+          );
         }
       });
 
       setPadConfigs(configMap);
     } catch (err) {
-      console.error('usePadConfigurations: Error fetching pad configurations:', err);
-      setError(err instanceof Error ? err : new Error('Failed to fetch pad configurations'));
+      console.error(
+        "usePadConfigurations: Error fetching pad configurations:",
+        err,
+      );
+      setError(
+        err instanceof Error
+          ? err
+          : new Error("Failed to fetch pad configurations"),
+      );
       setPadConfigs(new Map()); // Clear configs on error
     } finally {
       setIsLoading(false);

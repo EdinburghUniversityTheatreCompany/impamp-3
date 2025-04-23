@@ -1,15 +1,17 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { KeyboardListenerProvider } from './KeyboardListenerProvider';
-import { SearchModalProvider } from './SearchModalProvider';
+import React from "react";
+import { KeyboardListenerProvider } from "./KeyboardListenerProvider";
+import { SearchModalProvider } from "./SearchModalProvider";
 
-export function KeyboardListenerWrapper({ children }: { children: React.ReactNode }) {
+export function KeyboardListenerWrapper({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <SearchModalProvider>
-      <KeyboardListenerProvider>
-        {children}
-      </KeyboardListenerProvider>
+      <KeyboardListenerProvider>{children}</KeyboardListenerProvider>
     </SearchModalProvider>
   );
 }
