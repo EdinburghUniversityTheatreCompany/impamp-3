@@ -57,19 +57,19 @@
 - **Action:** Integrate the `isFading` status directly into the `ActiveTrack` interface/object within `audio.ts`'s internal `activeTracks` map, removing the separate `fadingTracks` map. Update the `playbackStore` with this fading status. [DONE]
 - **Rationale:** Improves timing accuracy for cleanup, simplifies state management for fading tracks.
 
-## III. Component Architecture & UI (`src/components/`, `src/app/page.tsx`)
+## III. Component Architecture & UI (`src/components/`, `src/app/page.tsx`) [DONE]
 
 ### Deconstruct `PadGrid.tsx`:
-- **Action:** Create and use a new custom hook `usePadConfigurations(profileId, pageIndex)` that encapsulates the logic for fetching pad data (`getPadConfigurationsForProfilePage`) and managing the `padConfigs` state map. `PadGrid` will call this hook.
-- **Action:** `PadGrid` will subscribe to the new `playbackStore` (created in II.2) to get `playingPads` and `padPlaybackState` instead of calculating it locally.
-- **Action:** Break down the large `handlePadClick` function into smaller, more focused internal functions (e.g., `handleRenameClick`, `handleRemoveClick`, `handlePlaybackClick`).
-- **Action:** Refine modal interactions. Instead of passing complex `onConfirm` logic directly, consider passing simpler update functions (e.g., `updatePadName(padIndex, newName)`) to the modal trigger, which then calls the necessary DB/store functions. Or, pass necessary IDs/data to the modal content component, which handles the update logic itself upon confirmation.
-- **Action:** Define the configuration for special pads ("Stop All", "Fade Out All") outside the main rendering loop, perhaps as constants or part of a configuration object, making their placement and behavior easier to manage than relying on calculated indices within the `map` function.
+- **Action:** Create and use a new custom hook `usePadConfigurations(profileId, pageIndex)` that encapsulates the logic for fetching pad data (`getPadConfigurationsForProfilePage`) and managing the `padConfigs` state map. `PadGrid` will call this hook. [DONE]
+- **Action:** `PadGrid` will subscribe to the new `playbackStore` (created in II.2) to get `playingPads` and `padPlaybackState` instead of calculating it locally. [DONE]
+- **Action:** Break down the large `handlePadClick` function into smaller, more focused internal functions (e.g., `handleRenameClick`, `handleRemoveClick`, `handlePlaybackClick`). [DONE]
+- **Action:** Refine modal interactions. Instead of passing complex `onConfirm` logic directly, consider passing simpler update functions (e.g., `updatePadName(padIndex, newName)`) to the modal trigger, which then calls the necessary DB/store functions. Or, pass necessary IDs/data to the modal content component, which handles the update logic itself upon confirmation. [DONE]
+- **Action:** Define the configuration for special pads ("Stop All", "Fade Out All") outside the main rendering loop, perhaps as constants or part of a configuration object, making their placement and behavior easier to manage than relying on calculated indices within the `map` function. [DONE]
 - **Rationale:** Dramatically reduces the complexity of `PadGrid`, making it easier to understand, test, and maintain. Improves separation of concerns.
 
 ### Enhance `Pad.tsx`:
-- **Action:** Introduce the `clsx` library (or a similar utility) to combine conditional class names for styling (`baseStyle`, `configuredStyle`, `editModeStyle`, etc.), making the `className` prop much cleaner.
-- **Action:** Optionally, extract the progress bar display (including the timer logic) into a separate functional component (`PadProgressBar.tsx`?) used within `Pad.tsx`.
+- **Action:** Introduce the `clsx` library (or a similar utility) to combine conditional class names for styling (`baseStyle`, `configuredStyle`, `editModeStyle`, etc.), making the `className` prop much cleaner. [DONE]
+- **Action:** Optionally, extract the progress bar display (including the timer logic) into a separate functional component (`PadProgressBar.tsx`?) used within `Pad.tsx`. [DONE]
 - **Rationale:** Improves code readability and maintainability of the styling logic.
 
 ## V. General Quality Improvements

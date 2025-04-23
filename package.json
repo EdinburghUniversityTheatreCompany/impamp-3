@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@types/gapi": "^0.0.47",
+    "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "google-api-javascript-client": "^0.1.0",
     "idb": "^8.0.2",
