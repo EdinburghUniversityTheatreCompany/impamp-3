@@ -188,14 +188,3 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 
 * **IndexedDB Server Access Error:** The warning "Attempted to access IndexedDB on the server" during server startup (`ensureDefaultProfile` call stack) needs to be resolved. Database operations should only occur client-side. Wrap DB access calls in checks for `typeof window !== 'undefined'` or ensure they are only called from client components/effects.
 * **PWA Implementation:** Review and likely reimplement the PWA setup (service worker, manifest, registration logic) to ensure reliable installation, offline functionality, and update handling.
-* **Bank Navigation Shortcuts:** Fix the implementation of `Ctrl+1` to `Ctrl+0` shortcuts for banks 11-20.
-* **Bank 10 Access:** Ensure the '0' key correctly maps to bank 10 (index 9).
-
-### 7. Future Considerations / Open Questions
-
-* **Testing:** Add unit and integration tests.
-* **Arm Next Sound - Trigger:** Finalize the mechanism for *playing* an armed sound.
-* **Google Drive - Merge Strategy:** Decide on the specific merge/conflict resolution strategy.
-* **Google Drive - Audio Sync:** Decide if audio *files* themselves should be synced via Drive or only configurations (requiring users to have the same audio files locally on different devices).
-* **Fadeout Duration:** Confirm if the 3-second default is acceptable and how profile-specific configuration should be implemented.
-* **UI Theming:** Define specific color palettes and typography.
