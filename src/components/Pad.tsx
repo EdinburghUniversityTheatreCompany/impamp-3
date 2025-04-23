@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useDropzone, Accept } from 'react-dropzone';
+import clsx from 'clsx';
 import { getDefaultKeyForPadIndex } from '@/lib/keyboardUtils';
+import PadProgressBar from './PadProgressBar'; // Import the new component
 
 interface PadProps {
   id: string; // Unique identifier for the pad element itself
@@ -11,6 +13,7 @@ interface PadProps {
   name?: string;
   isConfigured: boolean;
   isPlaying: boolean;
+  isFading?: boolean; // Prop to indicate if the sound is fading out
   playProgress?: number; // Prop to show play progress (0 to 1)
   remainingTime?: number; // Prop for remaining time in seconds
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
@@ -27,6 +30,7 @@ const Pad: React.FC<PadProps> = ({
   name = 'Empty Pad',
   isConfigured,
   isPlaying,
+  isFading = false, // Default to false
   playProgress = 0,
   remainingTime,
   isEditMode,
@@ -63,54 +67,50 @@ const Pad: React.FC<PadProps> = ({
     multiple: false, // Accept only one file at a time
   });
 
-  // Log props for debugging
-  React.useEffect(() => {
-    if (isPlaying) {
-      console.log(`[Pad ${padIndex}] Playing: ${isPlaying}, Progress: ${playProgress}`);
+  // --- Styling with clsx ---
+  const padClasses = useMemo(() => clsx(
+    'relative', 'aspect-square', 'border', 'rounded-md', 'flex', 'flex-col',
+    'items-center', 'justify-center', 'p-2', 'text-center', 'cursor-pointer',
+    'transition-all', 'duration-150', 'overflow-hidden',
+    { // Base background/hover based on configuration
+      'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600': isConfigured,
+      'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700': !isConfigured,
+    },
+    { // Text color based on configuration
+      'text-gray-800 dark:text-gray-200': isConfigured,
+      'text-gray-500 dark:text-gray-400': !isConfigured,
+    },
+    { // Edit mode border
+      'border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400': isEditMode,
+    },
+    { // Playing/Fading ring indicator
+      'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-yellow-500 animate-pulse': isFading,
+      'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-blue-500': isPlaying && !isFading,
+    },
+    { // Dropzone active state border (overrides default/edit border if active)
+      'border-blue-500 border-dashed': isDragActive,
+      'border-gray-300 dark:border-gray-600': !isDragActive && !isEditMode, // Default border if not dragging and not editing
+      // No explicit border needed for !isDragActive && isEditMode, as editModeStyle handles it
+    },
+    { // Dropzone accept/reject background/border
+      'bg-green-100 dark:bg-green-900 border-green-500': isDragAccept,
+      'bg-red-100 dark:bg-red-900 border-red-500': isDragReject,
     }
-  }, [isPlaying, playProgress, padIndex]);
+  ), [isConfigured, isEditMode, isPlaying, isFading, isDragActive, isDragAccept, isDragReject]);
 
-  // --- Styling ---
-  const baseStyle =
-    'relative aspect-square border rounded-md flex flex-col items-center justify-center p-2 text-center cursor-pointer transition-all duration-150 overflow-hidden'; // Added relative and overflow-hidden
-  const configuredStyle = isConfigured
-    ? 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600'
-    : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700';
-  
-  const editModeStyle = isEditMode
-    ? 'border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400'
-    : '';
-    
-  const playingStyle = isPlaying
-    ? 'ring-2 ring-offset-2 dark:ring-offset-gray-900 ring-blue-500' // Ensure ring is visible
-    : '';
-  
-  const textStyle = isConfigured
-    ? 'text-gray-800 dark:text-gray-200'
-    : 'text-gray-500 dark:text-gray-400';
-
-  // Dropzone visual feedback styles
-  const dropzoneActiveStyle = isDragActive 
-    ? 'border-blue-500 border-dashed' 
-    : isEditMode 
-      ? '' // Edit mode already has a border style
-      : 'border-gray-300 dark:border-gray-600';
-  const dropzoneAcceptStyle = isDragAccept ? 'bg-green-100 dark:bg-green-900 border-green-500' : '';
-  const dropzoneRejectStyle = isDragReject ? 'bg-red-100 dark:bg-red-900 border-red-500' : '';
 
   return (
     // Spread dropzone props onto the root div
     <div
       {...getRootProps()}
       id={id} // Use the passed unique ID
-      className={`${baseStyle} ${configuredStyle} ${editModeStyle} ${playingStyle} ${textStyle} ${dropzoneActiveStyle} ${dropzoneAcceptStyle} ${dropzoneRejectStyle}`}
+      className={padClasses} // Use clsx generated classes
       // Make clickable area separate from dropzone root if needed, but here it's combined
       // The single onClick handler below manages both playback and prevents dropzone default click
       onClick={(e) => {
           // Prevent dropzone's default click behavior if necessary, though noClick should handle it
           e.stopPropagation();
           
-          // console.log(`[Pad ${padIndex} Click] e.shiftKey=${e.shiftKey}, props.isEditMode=${isEditMode}`); // <-- REMOVED LOG
           // Rely solely on isEditMode prop from the store
           if (isEditMode) { 
             onShiftClick();
@@ -145,21 +145,12 @@ const Pad: React.FC<PadProps> = ({
         </span>
       )}
 
-      {/* Progress bar with timer (only shown when playing) */}
-      {isPlaying && (
-        <div className="absolute bottom-0 left-0 right-0 h-4 bg-gray-200 dark:bg-gray-700 z-50 flex items-center justify-center">
-          {/* Background progress */}
-          <div
-            className="absolute left-0 top-0 bottom-0 bg-green-500 transition-all duration-100" // Use absolute positioning for background fill
-            style={{ width: `${playProgress * 100}%` }}
-          />
-          {/* Timer text - centered on top */}
-          {remainingSeconds !== null && (
-            <span className="relative z-10 text-xs font-semibold text-white mix-blend-difference">
-              {remainingSeconds}s
-            </span>
-          )}
-        </div>
+      {/* Use the extracted PadProgressBar component */}
+      {(isPlaying || isFading) && ( // Show progress bar if playing or fading
+        <PadProgressBar
+          progress={playProgress}
+          remainingTime={remainingSeconds} // Pass the calculated rounded seconds
+        />
       )}
 
       {/* Dropzone overlay message */}

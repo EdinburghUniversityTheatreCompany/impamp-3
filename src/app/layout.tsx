@@ -4,6 +4,7 @@ import "./globals.css";
 import { KeyboardListenerWrapper } from "@/components/KeyboardListenerWrapper";
 import ProfileManager from "@/components/profiles/ProfileManager";
 import ModalRenderer from "@/components/ModalRenderer";
+import ClientSideInitializer from "@/components/ClientSideInitializer"; // Import the initializer
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,7 +50,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <KeyboardListenerWrapper>
-          {children}
+          <ClientSideInitializer>
+            {children}
+          </ClientSideInitializer>
           <ProfileManager />
           <ModalRenderer />
         </KeyboardListenerWrapper>

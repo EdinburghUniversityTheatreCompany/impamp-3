@@ -25,8 +25,6 @@ export function SearchModalProvider({ children }: { children: React.ReactNode })
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   const openSearchModal = () => {
-    console.log("heya heya, in openSearchModal")
-
     setIsSearchModalOpen(true);
   };
 

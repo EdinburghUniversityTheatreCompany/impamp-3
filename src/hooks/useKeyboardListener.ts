@@ -123,7 +123,6 @@ export function useKeyboardListener() {
   const setCurrentPageIndex = useProfileStore((state) => state.setCurrentPageIndex);
   // Get edit mode states and setters from store
   const setEditMode = useProfileStore((state) => state.setEditMode);
-  const isEditing = useProfileStore((state) => state.isEditing);
   // Get emergency sounds version to detect changes
   const emergencySoundsVersion = useProfileStore((state) => state.emergencySoundsVersion);
   // Get search modal context
@@ -209,7 +208,6 @@ export function useKeyboardListener() {
     if (pressedKey === 'f' && event.ctrlKey) {
       event.preventDefault();
       openSearchModal();
-      console.log("heya heya, in ctrl+f")
       return;
     }
     
@@ -415,13 +413,9 @@ export function useKeyboardListener() {
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback((event: KeyboardEvent) => {
     if (event.key === 'Shift') {
-      // Only exit edit mode if we're not currently editing something
-      if (!isEditing) {
-        setEditMode(false);
-      } else {
-      }
+      setEditMode(false);
     }
-  }, [setEditMode, isEditing]);
+  }, [setEditMode]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
