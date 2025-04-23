@@ -1,11 +1,14 @@
-import React from 'react';
+import React from "react";
 
 interface PadProgressBarProps {
   progress: number; // 0.0 to 1.0
   remainingTime: number | null; // Seconds, or null if not available/applicable
 }
 
-const PadProgressBar: React.FC<PadProgressBarProps> = ({ progress, remainingTime }) => {
+const PadProgressBar: React.FC<PadProgressBarProps> = ({
+  progress,
+  remainingTime,
+}) => {
   // Ensure progress is within bounds
   const clampedProgress = Math.max(0, Math.min(1, progress));
 

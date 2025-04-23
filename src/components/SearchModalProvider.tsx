@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState } from 'react';
-import SearchModal from './SearchModal';
+import React, { createContext, useContext, useState } from "react";
+import SearchModal from "./SearchModal";
 
 // Define the context type
 interface SearchModalContextType {
@@ -21,7 +21,11 @@ const SearchModalContext = createContext<SearchModalContextType>({
 export const useSearchModal = () => useContext(SearchModalContext);
 
 // Provider component
-export function SearchModalProvider({ children }: { children: React.ReactNode }) {
+export function SearchModalProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   const openSearchModal = () => {

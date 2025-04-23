@@ -1,5 +1,5 @@
-import { create } from 'zustand';
-import React from 'react';
+import { create } from "zustand";
+import React from "react";
 
 interface ModalConfig {
   title?: string;

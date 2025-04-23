@@ -18,11 +18,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ImpAmp3 Soundboard",
-  description: "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
+  description:
+    "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
   icons: {
-    icon: [
-      { url: '/favicon.ico', sizes: 'any' },
-    ],
+    icon: [{ url: "/favicon.ico", sizes: "any" }],
   },
   appleWebApp: {
     capable: true,
@@ -50,9 +49,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <KeyboardListenerWrapper>
-          <ClientSideInitializer>
-            {children}
-          </ClientSideInitializer>
+          <ClientSideInitializer>{children}</ClientSideInitializer>
           <ProfileManager />
           <ModalRenderer />
         </KeyboardListenerWrapper>

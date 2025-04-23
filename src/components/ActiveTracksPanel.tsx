@@ -1,30 +1,37 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { stopAudio, fadeOutAudio } from '@/lib/audio';
-import { useProfileStore } from '@/store/profileStore';
-import { usePlaybackStore, PlaybackState } from '@/store/playbackStore';
+import React, { useState, useEffect, useMemo } from "react";
+import { stopAudio, fadeOutAudio } from "@/lib/audio";
+import { useProfileStore } from "@/store/profileStore";
+import { usePlaybackStore, PlaybackState } from "@/store/playbackStore";
 
 // Format time in seconds to MM:SS format
 const formatTime = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
 };
 
 const ActiveTracksPanel: React.FC = () => {
   // Subscribe to the playback store
   const activePlaybackMap = usePlaybackStore((state) => state.activePlayback);
   // Convert map to array for easier rendering and memoize it
-  const activeTracksArray = useMemo(() => Array.from(activePlaybackMap.values()), [activePlaybackMap]);
+  const activeTracksArray = useMemo(
+    () => Array.from(activePlaybackMap.values()),
+    [activePlaybackMap],
+  );
 
-  const getFadeoutDuration = useProfileStore(state => state.getFadeoutDuration);
-  const setFadeoutDuration = useProfileStore(state => state.setFadeoutDuration);
+  const getFadeoutDuration = useProfileStore(
+    (state) => state.getFadeoutDuration,
+  );
+  const setFadeoutDuration = useProfileStore(
+    (state) => state.setFadeoutDuration,
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [durationInput, setDurationInput] = useState<string>(() => {
     return getFadeoutDuration().toString();
   });
-  
+
   // Update the input field when settings modal opens
   useEffect(() => {
     if (showSettings) {
@@ -46,41 +53,68 @@ const ActiveTracksPanel: React.FC = () => {
   };
 
   return (
-    <div 
+    <div
       className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-4 w-full shadow-lg"
       data-testid="active-tracks-panel" // Added test ID
     >
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Active Tracks</h2>
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+              Active Tracks
+            </h2>
             <button
               onClick={() => setShowSettings(true)}
               className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
               aria-label="Fadeout settings"
               title="Configure fadeout duration"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
               </svg>
             </button>
           </div>
-          
+
           {/* Help text for ESC panic button */}
           <div className="text-xs text-gray-500 dark:text-gray-400">
-            Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">ESC</kbd> to stop all sounds
+            Press{" "}
+            <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">
+              ESC
+            </kbd>{" "}
+            to stop all sounds
           </div>
         </div>
-        
+
         {/* Settings modal for fadeout duration */}
         {showSettings && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Fadeout Settings</h3>
-              
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                Fadeout Settings
+              </h3>
+
               <div className="mb-4">
-                <label htmlFor="fadeout-duration" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label
+                  htmlFor="fadeout-duration"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
                   Fadeout Duration (seconds)
                 </label>
                 <input
@@ -94,10 +128,11 @@ const ActiveTracksPanel: React.FC = () => {
                   className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Set how long it takes for sound to fade out (0.5 to 10 seconds)
+                  Set how long it takes for sound to fade out (0.5 to 10
+                  seconds)
                 </p>
               </div>
-              
+
               <div className="flex justify-end space-x-3">
                 <button
                   onClick={() => setShowSettings(false)}
@@ -112,7 +147,9 @@ const ActiveTracksPanel: React.FC = () => {
                       setFadeoutDuration(duration);
                       setShowSettings(false);
                     } else {
-                      alert('Please enter a valid duration between 0.5 and 10 seconds');
+                      alert(
+                        "Please enter a valid duration between 0.5 and 10 seconds",
+                      );
                     }
                   }}
                   className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-md text-white"
@@ -137,9 +174,11 @@ const ActiveTracksPanel: React.FC = () => {
               <div
                 key={track.key}
                 className={`flex items-center space-x-3 p-3 rounded shadow-sm cursor-pointer
-                  transition-colors ${track.isFading ? 
-                  'bg-blue-50 dark:bg-blue-900/30 animate-pulse' : 
-                  'bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600'}`}
+                  transition-colors ${
+                    track.isFading
+                      ? "bg-blue-50 dark:bg-blue-900/30 animate-pulse"
+                      : "bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
+                  }`}
                 onClick={() => handleStopTrack(track.key)}
                 aria-label={`Stop playing ${track.name}`}
               >
@@ -153,9 +192,9 @@ const ActiveTracksPanel: React.FC = () => {
                     )}
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2 mt-2">
-                    <div 
+                    <div
                       className={`h-2 rounded-full transition-all duration-100 ${
-                        track.isFading ? 'bg-blue-400' : 'bg-blue-500'
+                        track.isFading ? "bg-blue-400" : "bg-blue-500"
                       }`}
                       style={{ width: `${track.progress * 100}%` }}
                     />
@@ -172,19 +211,41 @@ const ActiveTracksPanel: React.FC = () => {
                     }}
                     className="bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded flex-shrink-0"
                     aria-label={`Fade out ${track.name}`}
-                    title={`Fade out over ${getFadeoutDuration()} ${getFadeoutDuration() === 1 ? 'second' : 'seconds'}`}
+                    title={`Fade out over ${getFadeoutDuration()} ${getFadeoutDuration() === 1 ? "second" : "seconds"}`}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3 3L12 15.5m4.5-4.5h-7.5" />
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3 3L12 15.5m4.5-4.5h-7.5"
+                      />
                     </svg>
                   </button>
                 ) : (
-                  <div 
+                  <div
                     className="p-1.5 rounded flex-shrink-0 text-blue-400"
                     title="Fading out..."
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                   </div>
                 )}

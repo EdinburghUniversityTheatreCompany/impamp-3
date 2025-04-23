@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 
 interface PromptModalContentProps {
   label: string;
@@ -8,14 +8,14 @@ interface PromptModalContentProps {
   // Callback to pass the current input value up to the caller
   // This allows the caller to access the value in its onConfirm handler
   onValueChange: (value: string) => void;
-  inputType?: 'text' | 'number' | 'password'; // Add more types if needed
+  inputType?: "text" | "number" | "password"; // Add more types if needed
 }
 
 const PromptModalContent: React.FC<PromptModalContentProps> = ({
   label,
-  initialValue = '',
+  initialValue = "",
   onValueChange,
-  inputType = 'text',
+  inputType = "text",
 }) => {
   const [value, setValue] = useState(initialValue);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +40,10 @@ const PromptModalContent: React.FC<PromptModalContentProps> = ({
 
   return (
     <div className="space-y-2">
-      <label htmlFor="prompt-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+      <label
+        htmlFor="prompt-input"
+        className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+      >
         {label}
       </label>
       <input

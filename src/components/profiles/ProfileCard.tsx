@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useProfileStore } from '@/store/profileStore';
-import { Profile, SyncType } from '@/lib/db';
-import { formatDistanceToNow } from 'date-fns';
+import { useState } from "react";
+import { useProfileStore } from "@/store/profileStore";
+import { Profile, SyncType } from "@/lib/db";
+import { formatDistanceToNow } from "date-fns";
 
 interface ProfileCardProps {
   profile: Profile;
@@ -11,7 +11,8 @@ interface ProfileCardProps {
 }
 
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
-  const { setActiveProfileId, updateProfile, deleteProfile } = useProfileStore();
+  const { setActiveProfileId, updateProfile, deleteProfile } =
+    useProfileStore();
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(profile.name);
   const [syncType, setSyncType] = useState<SyncType>(profile.syncType);
@@ -22,14 +23,16 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       await updateProfile(profile.id!, { name, syncType });
       setIsEditing(false);
     } catch (error) {
-      console.error('Failed to update profile:', error);
-      alert('Failed to update profile. Please try again.');
+      console.error("Failed to update profile:", error);
+      alert("Failed to update profile. Please try again.");
     }
   };
 
   const handleDelete = async () => {
     if (isActive) {
-      alert('Cannot delete the active profile. Please switch to another profile first.');
+      alert(
+        "Cannot delete the active profile. Please switch to another profile first.",
+      );
       return;
     }
 
@@ -38,8 +41,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       await deleteProfile(profile.id!);
       setIsDeleting(false);
     } catch (error) {
-      console.error('Failed to delete profile:', error);
-      alert('Failed to delete profile. Please try again.');
+      console.error("Failed to delete profile:", error);
+      alert("Failed to delete profile. Please try again.");
       setIsDeleting(false);
     }
   };
@@ -51,11 +54,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   };
 
   return (
-    <div className={`border rounded-lg p-4 ${
-      isActive 
-        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' 
-        : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-    }`}>
+    <div
+      className={`border rounded-lg p-4 ${
+        isActive
+          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+          : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+      }`}
+    >
       {isEditing ? (
         // Edit mode
         <div className="space-y-3">
@@ -71,7 +76,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               placeholder="Profile Name"
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Sync Type
@@ -84,13 +89,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               <option value="local">Local Only</option>
               <option value="googleDrive">Google Drive</option>
             </select>
-            {syncType === 'googleDrive' && (
+            {syncType === "googleDrive" && (
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Google Drive integration will be available in a future update.
               </p>
             )}
           </div>
-          
+
           <div className="flex space-x-2 pt-2">
             <button
               onClick={handleSave}
@@ -115,12 +120,19 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         <>
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">{profile.name}</h3>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                {profile.name}
+              </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {profile.syncType === 'googleDrive' ? 'Google Drive Sync' : 'Local Storage Only'}
+                {profile.syncType === "googleDrive"
+                  ? "Google Drive Sync"
+                  : "Local Storage Only"}
               </p>
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                Created {formatDistanceToNow(new Date(profile.createdAt), { addSuffix: true })}
+                Created{" "}
+                {formatDistanceToNow(new Date(profile.createdAt), {
+                  addSuffix: true,
+                })}
               </p>
             </div>
             <div className="flex space-x-1">
@@ -138,7 +150,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               )}
             </div>
           </div>
-          
+
           <div className="flex mt-4 space-x-2">
             <button
               onClick={() => setIsEditing(true)}
@@ -146,8 +158,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
             >
               Edit
             </button>
-            {!isActive && (
-              isDeleting ? (
+            {!isActive &&
+              (isDeleting ? (
                 <button
                   disabled
                   className="px-3 py-1 bg-red-100 text-red-800 rounded-md text-sm opacity-50 dark:bg-red-900/30 dark:text-red-300"
@@ -157,7 +169,11 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               ) : (
                 <button
                   onClick={() => {
-                    if (window.confirm(`Are you sure you want to delete the profile "${profile.name}"? This cannot be undone.`)) {
+                    if (
+                      window.confirm(
+                        `Are you sure you want to delete the profile "${profile.name}"? This cannot be undone.`,
+                      )
+                    ) {
                       handleDelete();
                     }
                   }}
@@ -165,8 +181,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                 >
                   Delete
                 </button>
-              )
-            )}
+              ))}
           </div>
         </>
       )}
