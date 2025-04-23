@@ -160,13 +160,6 @@ const Pad: React.FC<PadProps> = ({
       }}
       role="button"
       tabIndex={0} // Make it focusable
-      onKeyDown={(e) => {
-        // Allow space/enter for playback activation, but not dropzone activation
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault(); // Prevent potential default actions
-          onClick();
-        }
-      }}
       aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}`}
     >
       {/* Input element required by react-dropzone - add data-testid */}
