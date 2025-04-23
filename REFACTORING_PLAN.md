@@ -30,8 +30,8 @@
 - **Rationale:** Streamlines the store, improves performance, enhances robustness (persistence middleware), fixes incorrect DOM dependency, reduces state complexity, and improves code organization.
 
 ### Prevent Server-Side DB Access:
-- **Action:** Identify where `ensureDefaultProfile()` is currently called (likely at the bottom of `profileStore.ts`). Remove this call.
-- **Action:** In a top-level client component (e.g., wrap the content of `src/app/layout.tsx` or `src/app/page.tsx` with a new client component), use a `useEffect` hook that runs only once on mount (`[]` dependency array) to call `ensureDefaultProfile()` and potentially `getDb()` to initialize the database connection client-side.
+- **Action:** Identify where `ensureDefaultProfile()` is currently called (likely at the bottom of `profileStore.ts`). Remove this call. [DONE]
+- **Action:** In a top-level client component (e.g., wrap the content of `src/app/layout.tsx` or `src/app/page.tsx` with a new client component), use a `useEffect` hook that runs only once on mount (`[]` dependency array) to call `ensureDefaultProfile()` and potentially `getDb()` to initialize the database connection client-side. [DONE]
 - **Rationale:** Resolves the build/SSR warning about server-side IndexedDB access. Ensures DB logic runs only in the browser environment.
 
 ## II. Audio Engine & Playback State (`src/lib/audio.ts`, `src/components/PadGrid.tsx`, `src/store/playbackStore.ts` [New])
