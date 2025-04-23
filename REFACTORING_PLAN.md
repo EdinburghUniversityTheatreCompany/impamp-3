@@ -72,18 +72,6 @@
 - **Action:** Optionally, extract the progress bar display (including the timer logic) into a separate functional component (`PadProgressBar.tsx`?) used within `Pad.tsx`.
 - **Rationale:** Improves code readability and maintainability of the styling logic.
 
-### Address UI Flicker (`src/app/page.tsx`):
-- **Action:** Investigate the cause of the profile selector flicker mentioned in the spec. This is often due to unnecessary re-renders or state changes causing component remounting. The use of `React.memo` or `useCallback` (as already partially done with `renderProfileSelector`) might help, but ensure the dependencies are correct. Fixing state management issues (like avoiding DOM queries in `setCurrentPageIndex`) might also resolve this. Ensure bank metadata loading (`useEffect` in `page.tsx`) is efficient and doesn't trigger excessive re-renders. Consider loading all profile bank metadata once when the profile changes, not on every bank switch.
-- **Rationale:** Improves user experience by providing a stable UI during interactions.
-
-## IV. Keyboard Input Handling (`src/hooks/useKeyboardListener.ts`, `src/lib/keyboardUtils.ts`, `src/components/PadGrid.tsx`)
-
-### Centralize Delete Key State:
-- **Action:** Remove the `isDeleteKeyDown` state and its corresponding `useEffect` listeners from `PadGrid.tsx`.
-- **Action:** Modify the global `useKeyboardListener` hook/provider to also track the state of the Delete key, similar to how it likely tracks Shift.
-- **Action:** Update `PadGrid.tsx` (specifically `handlePadClick`) to get the `isDeleteKeyDown` status from the global context/store provided by the keyboard listener system.
-- **Rationale:** Consolidates keyboard state management into one place, removing redundancy and potential inconsistencies.
-
 ## V. General Quality Improvements
 
 - **Consistent Error Handling:** Review `try...catch` blocks, especially in `db.ts`, `audio.ts`, and store actions. Implement a more consistent strategy, potentially using a shared notification system/toast library accessible via the `uiStore` or a dedicated hook to provide user feedback on failures.
