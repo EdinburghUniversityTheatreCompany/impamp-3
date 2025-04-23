@@ -235,10 +235,12 @@ export function useKeyboardListener() {
       // --- Ctrl+S to Confirm/Close Modal ---
       // IMPORTANT: This must come BEFORE the input/textarea check
       // so it works even when the prompt input is focused.
-      if (event.key === 's' && event.ctrlKey) {
+      if (event.key === "s" && event.ctrlKey) {
         if (isModalOpen) {
           event.preventDefault();
-          console.log("Ctrl+S detected: Modal open. Attempting confirm and close.");
+          console.log(
+            "Ctrl+S detected: Modal open. Attempting confirm and close.",
+          );
           try {
             // Await the confirm action if it's async
             await modalConfig?.onConfirm?.();
