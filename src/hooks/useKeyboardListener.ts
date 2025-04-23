@@ -226,6 +226,12 @@ export function useKeyboardListener() {
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
+      // Prevent default browser tabbing behavior
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        return; // Stop further processing for Tab key
+      }
+
       // Ignore if typing in an input field, textarea, etc.
       const targetElement = event.target as HTMLElement;
       if (
