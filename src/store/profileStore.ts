@@ -204,9 +204,16 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       // Profile management actions
-      createProfile: async (profileData) => {
+      createProfile: async (profileData: {
+        name: string;
+        syncType: SyncType;
+      }) => {
+        // Keep input type simple
         try {
-          const newProfileId = await addProfile(profileData);
+          // Assert the type when calling addProfile, as it handles defaults
+          const newProfileId = await addProfile(
+            profileData as Omit<Profile, "id" | "createdAt" | "updatedAt">,
+          );
           // Fetch the newly created profile to add it to the state
           const newProfile = await getProfile(newProfileId); // Use statically imported getProfile
           if (newProfile) {
@@ -311,6 +318,36 @@ export const useProfileStore = create<ProfileState>()(
           // Clean up
           document.body.removeChild(a);
           setTimeout(() => URL.revokeObjectURL(url), 100);
+
+          // --- Update lastBackedUpAt timestamp ---
+          const nowMs = Date.now();
+          console.log(
+            `Profile ${profileId} exported successfully. Updating lastBackedUpAt to ${nowMs}`,
+          );
+          try {
+            await updateProfile(profileId, { lastBackedUpAt: nowMs });
+            // Update state as well
+            set((state) => ({
+              profiles: state.profiles.map((p) =>
+                p.id === profileId
+                  ? { ...p, lastBackedUpAt: nowMs, updatedAt: new Date(nowMs) }
+                  : p,
+              ),
+            }));
+            console.log(
+              `Successfully updated lastBackedUpAt for profile ${profileId} in DB and state.`,
+            );
+          } catch (updateError) {
+            console.error(
+              `Failed to update lastBackedUpAt for profile ${profileId} after successful export:`,
+              updateError,
+            );
+            // Don't throw here, the export itself was successful
+            set({
+              error: `Profile exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
+            });
+          }
+          // --- End update ---
 
           return true;
         } catch (error) {

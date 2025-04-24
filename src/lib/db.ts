@@ -21,6 +21,8 @@ export interface Profile {
   googleDriveFolderId?: string;
   lastSyncedEtag?: string; // ETag for profile.json in Drive
   activePadBehavior?: ActivePadBehavior; // How to handle activating an already active pad
+  lastBackedUpAt: number; // Timestamp (ms) of the last successful backup/export
+  backupReminderPeriod: number; // Duration (ms) after which to remind, -1 for never
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,6 +81,9 @@ export interface ImpAmpDBSchema extends DBSchema {
 // Detect if we're running on the client side (browser) or server side
 const isClient =
   typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
+
+// Default backup reminder period (30 days in milliseconds)
+export const DEFAULT_BACKUP_REMINDER_PERIOD_MS = 30 * 24 * 60 * 60 * 1000; // Export this constant
 
 // Singleton promise for the database connection
 let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
@@ -164,14 +169,19 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             .then((count) => {
               if (count === 0) {
                 console.log("Adding default local profile...");
+                // Define timestamp variables *before* adding
+                const now = new Date();
+                const nowMs = now.getTime();
                 profileStore
                   .add({
                     name: "Default Local Profile",
                     syncType: "local",
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
+                    lastBackedUpAt: nowMs, // Initialize to creation time
+                    backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Default reminder period
+                    createdAt: now,
+                    updatedAt: now,
                   })
-                  .catch((err) =>
+                  .catch((err: Error) =>
                     console.error("Error adding default profile:", err),
                   );
               }
@@ -227,10 +237,20 @@ export async function addProfile(
   const tx = db.transaction("profiles", "readwrite");
   const store = tx.objectStore("profiles");
   const now = new Date();
+  const nowMs = now.getTime();
   try {
-    const id = await store.add({ ...profile, createdAt: now, updatedAt: now });
+    const id = await store.add({
+      ...profile,
+      lastBackedUpAt: nowMs, // Initialize to creation time
+      backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Default reminder period
+      createdAt: now,
+      updatedAt: now,
+    });
     await tx.done;
-    console.log(`Added profile with id: ${id}`);
+    // Log the newly added profile details including backup fields
+    console.log(
+      `[DB] Added profile: ID=${id}, Name="${profile.name}", SyncType=${profile.syncType}, LastBackedUpAt=${nowMs}, BackupReminderPeriod=${DEFAULT_BACKUP_REMINDER_PERIOD_MS}`,
+    );
     return id;
   } catch (error) {
     console.error("Failed to add profile:", error);
@@ -271,11 +291,22 @@ export async function updateProfile(
       updatedAt: new Date(),
     };
 
+    // Log which specific fields are being updated, especially backup-related ones
+    console.log(
+      `[DB] Updating profile ID=${id}. Changes: ${Object.keys(updates).join(", ")}.`,
+      updates.lastBackedUpAt !== undefined
+        ? `New lastBackedUpAt: ${updates.lastBackedUpAt}`
+        : "",
+      updates.backupReminderPeriod !== undefined
+        ? `New backupReminderPeriod: ${updates.backupReminderPeriod}`
+        : "",
+    );
+
     await store.put(updatedProfile);
     await tx.done;
-    console.log(`Updated profile with id: ${id}`);
+    console.log(`[DB] Successfully updated profile with id: ${id}`);
   } catch (error) {
-    console.error(`Failed to update profile ${id}:`, error);
+    console.error(`[DB] Failed to update profile ${id}:`, error);
     throw error;
   }
 }
@@ -384,9 +415,15 @@ export async function ensureDefaultProfile() {
     const profiles = await getAllProfiles();
     if (profiles.length === 0) {
       console.log("No profiles found, attempting to add default...");
+      console.log("Adding default profile with backup fields...");
+      const now = new Date();
+      const nowMs = now.getTime();
       await addProfile({
         name: "Default Local Profile",
         syncType: "local",
+        // Explicitly set backup fields for clarity, though addProfile handles defaults
+        lastBackedUpAt: nowMs,
+        backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS,
       });
       console.log("Default profile added successfully.");
     } else {

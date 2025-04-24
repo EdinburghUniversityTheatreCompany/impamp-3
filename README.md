@@ -14,6 +14,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
+- **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
 - **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
 - **Containerization**: Deployed as a Docker container for easy deployment
 
@@ -143,9 +144,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Click "Manage Profiles" to open the full profile manager
    - Create new profiles with custom names
    - Edit or delete existing profiles
+   - Configure backup reminder frequency per profile by setting the number of days, or disable reminders entirely.
    - Each profile has its own set of sounds and bank configurations
 6. **Importing/Exporting Profiles**: 
-   - Export profiles to JSON files for backup or transfer to other devices
+   - Export profiles to JSON files for backup or transfer to other devices. Exporting a profile also updates its "last backed up" timestamp.
    - Import profiles from previously exported JSON files
    - Google Drive integration for syncing across devices will be added in a future update
 

@@ -58,10 +58,11 @@ export interface Impamp2Export {
 // --- Export/Import Interfaces and Functions moved from db.ts ---
 
 // Export profile data structure
+// Note: The profile object here should EXCLUDE lastBackedUpAt
 export interface ProfileExport {
   exportVersion: number;
   exportDate: string;
-  profile: Profile;
+  profile: Omit<Profile, "lastBackedUpAt"> & { id?: number }; // Ensure lastBackedUpAt is excluded, but keep others
   padConfigurations: PadConfiguration[];
   pageMetadata: PageMetadata[];
   audioFiles: {
@@ -178,11 +179,14 @@ export async function exportProfile(profileId: number): Promise<ProfileExport> {
       }
     }
 
-    // Create the export object
+    // Create the export object, explicitly excluding lastBackedUpAt
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { lastBackedUpAt, ...profileToExport } = profile; // Destructure to omit lastBackedUpAt
+
     const exportData: ProfileExport = {
       exportVersion: 1, // Initial version
       exportDate: new Date().toISOString(),
-      profile: { ...profile }, // Clone profile data
+      profile: profileToExport, // Use the cloned profile data without lastBackedUpAt
       padConfigurations,
       pageMetadata,
       audioFiles,
@@ -203,6 +207,9 @@ async function createImportedProfile(
   exportData: ProfileExport | { profile: Partial<Profile> & { name: string } }, // Allow partial for impamp2
   now: Date,
 ): Promise<number> {
+  // Import DEFAULT_BACKUP_REMINDER_PERIOD_MS for default value during import
+  const { DEFAULT_BACKUP_REMINDER_PERIOD_MS } = await import("./db");
+
   // Find a unique name for the profile
   const originalName = exportData.profile.name || "Imported Profile"; // Default name if missing
   let profileName = originalName;
@@ -240,10 +247,14 @@ async function createImportedProfile(
     name: profileName,
     // Use syncType from export if available, otherwise default to 'local'
     syncType: (exportData.profile as Profile).syncType || "local",
-    // Add other fields if they exist in the export, otherwise they remain undefined
     googleDriveFolderId: (exportData.profile as Profile).googleDriveFolderId,
     lastSyncedEtag: (exportData.profile as Profile).lastSyncedEtag,
     activePadBehavior: (exportData.profile as Profile).activePadBehavior,
+    // Handle backup fields on import
+    lastBackedUpAt: now.getTime(), // Set lastBackedUpAt to import time
+    backupReminderPeriod:
+      (exportData.profile as Profile).backupReminderPeriod ?? // Use imported value if present
+      DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Otherwise use default
     createdAt: now,
     updatedAt: now,
   };

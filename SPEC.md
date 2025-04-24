@@ -139,15 +139,28 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     4.  Stopping individual sounds (click active track entry).
     5.  Entering Edit Mode (hold Shift) and editing a pad (Shift+click to rename, X/Delete+click to remove).
     6.  Accessing the search feature (`Ctrl+F` / icon).
+    7.  Configuring backup reminders (Profile Manager -> Edit Profile).
+
+#### 3.8. Backup Reminder Notification
+
+* **Trigger:** Appears if one or more profiles have a `backupReminderPeriod` set (not -1) and the time since their `lastBackedUpAt` exceeds that period.
+* **UI:** A non-intrusive banner displayed at the top-center of the application.
+    * Shows a warning icon and text "Backup Recommended".
+    * Lists the names of the profiles needing backup.
+    * Includes a "Manage Profiles" button that opens the Profile Manager modal.
+* **Dismissal:** The banner is purely informational and does not need explicit dismissal. It disappears automatically if the underlying conditions (profiles needing backup) are no longer met (e.g., after exporting the profile or changing the reminder setting).
 
 ### 4. Data Management
 
 #### 4.1. Profiles
 
 * **Storage:** Profiles are stored in the `profiles` IndexedDB object store.
-* **Structure:** Defined by the `Profile` interface (id, name, syncType, googleDriveFolderId?, lastSyncedEtag?, activePadBehavior?, fadeoutDuration?, createdAt, updatedAt).
+* **Structure:** Defined by the `Profile` interface (id, name, syncType, googleDriveFolderId?, lastSyncedEtag?, activePadBehavior?, fadeoutDuration?, `lastBackedUpAt`, `backupReminderPeriod`, createdAt, updatedAt).
+    * `lastBackedUpAt`: Timestamp (milliseconds) of the last successful profile export. Initialized to `createdAt`.
+    * `backupReminderPeriod`: Duration (milliseconds) after `lastBackedUpAt` when a backup reminder should be shown. Defaults to 30 days. A value of `-1` disables reminders for the profile.
 * **Management:**
     * Users can create, rename, and delete profiles via the Profile Manager UI.
+    * Users can configure the `backupReminderPeriod` for each profile via a number input (specifying days) and a checkbox to disable reminders in the Profile Manager's edit view.
     * The active profile cannot be deleted.
     * A default local profile is created automatically if no profiles exist.
 * **Activation:** The active profile ID is stored in `localStorage` for persistence across sessions.
@@ -163,9 +176,9 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 
 #### 4.3. Import / Export
 
-* **Format:** Export uses a JSON structure (`ProfileExport`) containing profile details (including `fadeoutDuration` and `activePadBehavior`), all associated pad configurations, all associated page metadata, and base64-encoded audio file data.
-* **Export:** Users select a profile to export, generating a downloadable JSON file named `impamp-<profile-name>-<date>.json`.
-* **Import:** Users select an exported JSON file. The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`), imports audio blobs, page metadata, pad configurations, and profile settings (`fadeoutDuration`, `activePadBehavior`), mapping original audio IDs to newly created ones.
+* **Format:** Export uses a JSON structure (`ProfileExport`) containing profile details (including `fadeoutDuration`, `activePadBehavior`, and `backupReminderPeriod`, but *excluding* `lastBackedUpAt`), all associated pad configurations, all associated page metadata, and base64-encoded audio file data.
+* **Export:** Users select a profile to export, generating a downloadable JSON file named `impamp-<profile-name>-<date>.json`. Upon successful export file generation, the profile's `lastBackedUpAt` timestamp is updated to the current time in the database.
+* **Import:** Users select an exported JSON file. The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`), imports audio blobs, page metadata, pad configurations, and profile settings (`fadeoutDuration`, `activePadBehavior`, `backupReminderPeriod`), mapping original audio IDs to newly created ones. The imported profile's `lastBackedUpAt` is set to the time of import.
 
 #### 4.4. Sync (Future - Google Drive)
 

@@ -17,6 +17,7 @@ import {
   PageMetadata,
 } from "@/lib/db";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
+import BackupReminderNotification from "@/components/BackupReminderNotification"; // Import the new component
 
 // Pre-load ProfileSelector component to avoid remounting during bank switches
 const ProfileSelector = dynamic(
@@ -203,6 +204,9 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* Backup Reminder Notification */}
+      <BackupReminderNotification />
 
       {/* Content container */}
       <div className="w-full flex-1 flex flex-col mb-24">
