@@ -10,12 +10,18 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
-- **Edit Mode**: Shift key activates edit mode for renaming pads and banks, and removing sounds (via an "X" button or Delete+click)
+- **Multi-Sound Pads**: Assign multiple sounds to a single pad with different playback modes:
+    - *Sequential*: Plays sounds in order.
+    - *Random*: Plays a random sound each time.
+    - *Round-Robin*: Plays sounds randomly without repeating until all have played.
+- **Edit Mode**: Shift key activates edit mode for renaming pads and banks.
+    - *Single Sound Pads*: Remove sound via "X" button or Delete+click.
+    - *Multi-Sound Pads*: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
 - **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
-- **Sync Options**: Local profiles, manual export/import, and Google Drive sync (coming soon)
+- **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), and Google Drive sync (coming soon)
 - **Containerization**: Deployed as a Docker container for easy deployment
 
 ## Getting Started
@@ -135,11 +141,12 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 2. **Playing Sounds**: Click on a pad or use the assigned keyboard shortcut.
 3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Ctrl+1 through Ctrl+0 for banks 11-20.
 4. **Edit Mode**: Hold Shift to enter edit mode
-   - Shift+click on pads or banks to rename them
-   - Click the red "X" button on configured pads to remove sounds
-   - Or hold Delete key and click a pad to remove its sound
-   - Removing a sound will reset the pad's name to "Empty Pad"
-5. **Managing Profiles**: 
+   - Shift+click on banks to rename them or toggle emergency status.
+   - Shift+click on pads to edit them:
+     - *Empty/Single Sound Pads*: Opens a simple rename prompt (or the full editor if preferred).
+     - *Multi-Sound Pads*: Opens the full pad editor to manage sounds (add, remove, reorder) and playback mode.
+   - Click the red "X" button or use Delete+click on *single-sound* pads to remove the sound (resets name). For multi-sound pads, this action opens the editor.
+5. **Managing Profiles**:
    - Use the profile selector in the top-right corner to switch between profiles
    - Click "Manage Profiles" to open the full profile manager
    - Create new profiles with custom names

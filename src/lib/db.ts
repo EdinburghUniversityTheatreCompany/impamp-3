@@ -1,7 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase } from "idb";
 
 const DB_NAME = "impamp3DB";
-const DB_VERSION = 2; // Bump version for schema upgrade
+const DB_VERSION = 3;
 
 // Define the structure of audio file data
 export interface AudioFile {
@@ -30,6 +30,9 @@ export interface Profile {
 // Define the possible behaviors for activating an already active pad
 export type ActivePadBehavior = "continue" | "stop" | "restart";
 
+// Define the playback types for multi-sound pads
+export type PlaybackType = "sequential" | "random" | "round-robin";
+
 // Define the structure of pad configuration data
 export interface PadConfiguration {
   id?: number; // Auto-incrementing primary key
@@ -38,7 +41,9 @@ export interface PadConfiguration {
   pageIndex: number; // 0-based index for the page within the profile
   keyBinding?: string;
   name?: string;
-  audioFileId?: number; // Foreign key to AudioFiles store
+  // audioFileId?: number; // DEPRECATED: Replaced by audioFileIds
+  audioFileIds: number[]; // Array of foreign keys to AudioFiles store
+  playbackType: PlaybackType; // How to play multiple sounds
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,8 +108,10 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<ImpAmpDBSchema>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion, newVersion, transaction) {
+        // Removed unused event param
         console.log(`Upgrading DB from version ${oldVersion} to ${newVersion}`);
 
+        // --- Version 1 Stores ---
         // Create audioFiles store
         if (!db.objectStoreNames.contains("audioFiles")) {
           const audioStore = db.createObjectStore("audioFiles", {
@@ -142,27 +149,97 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
           console.log("Created padConfigurations object store");
         }
 
-        // Create pageMetadata store (in version 2)
-        if (oldVersion < 2 && !db.objectStoreNames.contains("pageMetadata")) {
-          const pageMetadataStore = db.createObjectStore("pageMetadata", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          // Index to quickly find all pages for a specific profile
-          pageMetadataStore.createIndex("profileId", "profileId");
-          // Compound index to quickly find metadata for a specific page in a profile
-          pageMetadataStore.createIndex(
-            "profilePage",
-            ["profileId", "pageIndex"],
-            { unique: true },
+        // --- Version 2 Store ---
+        if (oldVersion < 2) {
+          if (!db.objectStoreNames.contains("pageMetadata")) {
+            const pageMetadataStore = db.createObjectStore("pageMetadata", {
+              keyPath: "id",
+              autoIncrement: true,
+            });
+            // Index to quickly find all pages for a specific profile
+            pageMetadataStore.createIndex("profileId", "profileId");
+            // Compound index to quickly find metadata for a specific page in a profile
+            pageMetadataStore.createIndex(
+              "profilePage",
+              ["profileId", "pageIndex"],
+              { unique: true },
+            );
+            console.log("Created pageMetadata object store");
+          }
+        }
+
+        // --- Version 3 Migration (Multi-Sound Pads) ---
+        if (oldVersion < 3) {
+          console.log(
+            "Applying V3 migration: Updating padConfigurations for multi-sound...",
           );
-          console.log("Created pageMetadata object store");
+          if (!transaction) {
+            console.error("V3 Migration Error: Transaction object is null!");
+            // Attempt to get a new transaction if possible, though this is unusual in upgrade
+            // transaction = db.transaction('padConfigurations', 'readwrite');
+            // If still null, we might have to abort or throw
+            throw new Error(
+              "Cannot perform V3 migration without a transaction.",
+            );
+          }
+          const store = transaction.objectStore("padConfigurations");
+          // Use cursor to iterate and update each object
+          store
+            .openCursor()
+            .then(function iterateCursor(cursor) {
+              if (!cursor) {
+                console.log(
+                  "V3 Migration: Finished iterating padConfigurations.",
+                );
+                return;
+              }
+              // Access potentially old field dynamically to avoid strict type errors
+              const oldConfigValue = cursor.value as PadConfiguration & {
+                audioFileId?: number;
+              };
+              const audioFileIds: number[] = [];
+              if (
+                oldConfigValue.audioFileId !== undefined &&
+                oldConfigValue.audioFileId !== null &&
+                typeof oldConfigValue.audioFileId === "number"
+              ) {
+                audioFileIds.push(oldConfigValue.audioFileId);
+              }
+
+              // Construct the new config object carefully, excluding the old field
+              const newConfig: PadConfiguration = {
+                id: oldConfigValue.id,
+                profileId: oldConfigValue.profileId,
+                padIndex: oldConfigValue.padIndex,
+                pageIndex: oldConfigValue.pageIndex,
+                keyBinding: oldConfigValue.keyBinding,
+                name: oldConfigValue.name,
+                audioFileIds: audioFileIds, // Set new array
+                playbackType: "round-robin", // Default playback type for migrated pads
+                createdAt: oldConfigValue.createdAt,
+                updatedAt: oldConfigValue.updatedAt, // Keep original updatedAt during migration
+              };
+
+              // Update the record in the store
+              cursor.update(newConfig);
+
+              cursor.continue().then(iterateCursor); // Use .then for async iteration
+            })
+            .catch((err) => {
+              console.error("V3 Migration Error during cursor iteration:", err);
+              // Abort the transaction on error
+              if (transaction) {
+                transaction.abort();
+              }
+            });
         }
 
         // --- Data seeding/migration can happen here ---
         // Example: Ensure a default profile exists after initial creation
         if (oldVersion < 1) {
           // Use transaction from upgrade callback
+          // Note: The duplicated pageMetadataStore creation was removed.
+          // The default profile seeding logic remains.
           const profileStore = transaction.objectStore("profiles");
           profileStore
             .count()
@@ -357,38 +434,87 @@ export async function getAllProfiles(): Promise<Profile[]> {
   return db.getAll("profiles");
 }
 
-// Example: Add or update a pad configuration
+// Add or update a pad configuration
 export async function upsertPadConfiguration(
   padConfig: Omit<PadConfiguration, "id" | "createdAt" | "updatedAt">,
 ): Promise<number> {
+  // Ensure required fields for the new structure are present
+  if (!padConfig.audioFileIds || !padConfig.playbackType) {
+    console.error(
+      "Attempted to upsert PadConfiguration without audioFileIds or playbackType",
+      padConfig,
+    );
+    throw new Error(
+      "PadConfiguration must include audioFileIds and playbackType.",
+    );
+  }
+
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readwrite");
   const store = tx.objectStore("padConfigurations");
   const index = store.index("profilePagePad");
   const now = new Date();
 
-  // Check if a configuration already exists for this profile/page/pad combination
-  const existing = await index.get([
-    padConfig.profileId,
-    padConfig.pageIndex,
-    padConfig.padIndex,
-  ]);
+  try {
+    // Check if a configuration already exists for this profile/page/pad combination
+    const existing = await index.get([
+      padConfig.profileId,
+      padConfig.pageIndex,
+      padConfig.padIndex, // Corrected: Use the correct compound key structure
+    ]);
 
-  let id: number;
-  if (existing?.id) {
-    // Update existing
-    id = existing.id;
-    await store.put({ ...existing, ...padConfig, updatedAt: now });
-    console.log(`Updated pad configuration with id: ${id}`);
-  } else {
-    // Add new
-    id = await store.add({ ...padConfig, createdAt: now, updatedAt: now });
-    console.log(`Added pad configuration with id: ${id}`);
+    let id: number; // Declare id outside the if/else block
+
+    if (existing?.id) {
+      // Update existing
+      id = existing.id;
+      // Construct update data ensuring correct type and no old field
+      const updateData: PadConfiguration = {
+        ...existing,
+        ...padConfig,
+        id: existing.id, // Ensure id is explicitly carried over
+        updatedAt: now,
+      };
+      // No need to delete audioFileId as padConfig shouldn't have it, and spread overwrites
+      await store.put(updateData);
+      console.log(`Updated pad configuration with id: ${id}`, updateData);
+    } else {
+      // Add new
+      // Construct add data ensuring correct type and no old field
+      const addData: Omit<PadConfiguration, "id"> = {
+        ...padConfig,
+        createdAt: now,
+        updatedAt: now,
+      };
+      // No need to delete audioFileId as padConfig shouldn't have it
+      id = await store.add(addData);
+      console.log(`Added pad configuration with id: ${id}`, addData);
+    }
+
+    await tx.done;
+    return id; // Now id is accessible here
+  } catch (error) {
+    console.error("Error in upsertPadConfiguration:", error);
+    if (tx.error) {
+      console.error("Transaction error:", tx.error);
+    }
+    // Attempt to abort the transaction on error
+    try {
+      if (!tx.done) {
+        // Check if transaction is already finished
+        tx.abort();
+        console.log(
+          "Transaction aborted due to error in upsertPadConfiguration.",
+        );
+      }
+    } catch (abortError) {
+      console.error("Error aborting transaction:", abortError);
+    }
+    throw error; // Re-throw the original error
   }
-
-  await tx.done;
-
-  return id;
+  // This part is unreachable due to try/catch but kept for structure if needed later
+  // await tx.done;
+  // return id; // This return is now handled within the try block
 }
 
 // Example: Get all pad configurations for a specific profile and page

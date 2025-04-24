@@ -4,8 +4,10 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import Pad from "./Pad";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
-import PromptModalContent from "./modals/PromptModalContent";
 import ConfirmModalContent from "./modals/ConfirmModalContent";
+import EditPadModalContent, {
+  EditPadModalContentRef,
+} from "./modals/EditPadModalContent";
 import { usePadConfigurations } from "@/hooks/usePadConfigurations";
 import {
   PadConfiguration,
@@ -50,6 +52,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   );
   const { openModal, closeModal } = useUIStore();
   const hasInteracted = useRef(false);
+  const editModalRef = useRef<EditPadModalContentRef>(null); // Ref for the edit modal content
 
   // Use the hook to get pad configurations
   const {
@@ -78,15 +81,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   // Preload audio effect
   useEffect(() => {
     if (activeProfileId === null || padConfigs.size === 0) return;
-    const audioIdsToLoad: number[] = [];
-    padConfigs.forEach((config) => {
-      if (config.audioFileId) audioIdsToLoad.push(config.audioFileId);
-    });
-    if (audioIdsToLoad.length > 0) {
+    // Pass the actual configurations to the updated preload function
+    const configsArray = Array.from(padConfigs.values());
+    if (configsArray.length > 0) {
       console.log(
-        `[PadGrid Preload] Triggering preload for ${audioIdsToLoad.length} audio IDs on page ${currentPageIndex}`,
+        `[PadGrid Preload] Triggering preload for page ${currentPageIndex}`,
       );
-      preloadAudioForPage(audioIdsToLoad);
+      preloadAudioForPage(configsArray);
     }
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
@@ -109,14 +110,35 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
   // --- Refactored Interaction Handlers ---
 
-  // Handles removing sound via modal confirmation
+  // Handles removing sound(s) or opening edit modal if multiple sounds exist
   const handleRemoveInteraction = (padIndex: number) => {
     const config = padConfigs.get(padIndex);
-    if (!config || !config.audioFileId || activeProfileId === null) return;
-    const soundName = config.name || `Pad ${padIndex + 1}`;
+    // Check if config exists and has sounds
+    if (
+      !config ||
+      !config.audioFileIds ||
+      config.audioFileIds.length === 0 ||
+      activeProfileId === null
+    ) {
+      console.warn(
+        `[handleRemoveInteraction] No config or sounds found for pad ${padIndex}`,
+      );
+      return;
+    }
 
+    // If more than one sound, open the edit modal instead of direct removal
+    if (config.audioFileIds.length > 1) {
+      console.log(
+        `[handleRemoveInteraction] Multiple sounds found for pad ${padIndex}, opening edit modal.`,
+      );
+      handleEditInteraction(config, padIndex); // Delegate to edit handler
+      return;
+    }
+
+    // --- Proceed with single sound removal ---
+    const soundName = config.name || `Pad ${padIndex + 1}`;
     openModal({
-      title: "Remove Sound",
+      title: "Remove Sound", // Keep title generic
       content: (
         <ConfirmModalContent
           message={`Remove sound "${soundName}" from this pad?`}
@@ -126,19 +148,22 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       onConfirm: async () => {
         try {
           const numericProfileId = activeProfileId;
-          if (numericProfileId === null)
+          if (numericProfileId === null) {
             throw new Error("Invalid Profile ID for removal");
+          }
 
+          // Update config to have empty audioFileIds and default playbackType
           await upsertPadConfiguration({
             profileId: numericProfileId,
             pageIndex: currentPageIndex,
             padIndex: padIndex,
-            name: undefined,
-            audioFileId: undefined,
-            keyBinding: config.keyBinding,
+            name: undefined, // Reset name to default
+            audioFileIds: [], // Clear the sounds
+            playbackType: "round-robin", // Reset playback type
+            keyBinding: config.keyBinding, // Keep existing keybinding
           });
           refreshPadConfigs();
-          console.log(`Removed sound from pad ${padIndex}`);
+          console.log(`Removed single sound from pad ${padIndex}`);
 
           const isEmergency = await isEmergencyPage(
             numericProfileId,
@@ -160,9 +185,9 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     });
   };
 
-  // Handles opening the edit/rename modal
+  // Handles opening the edit modal for multi-sound configuration
   const handleEditInteraction = (
-    padConfig: PadConfiguration | null,
+    padConfig: PadConfiguration | null, // Can be null if editing an empty pad
     padIndex: number,
   ) => {
     if (activeProfileId === null) {
@@ -170,60 +195,71 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       alert("Cannot edit pad, no active profile selected.");
       return;
     }
-    const currentName = padConfig?.name || `Pad ${padIndex + 1}`;
-    let modalDataValue = currentName;
+    const numericProfileId = activeProfileId; // Use validated ID
+
+    // Create a default config if editing an empty pad
+    const initialConfig = padConfig ?? {
+      profileId: numericProfileId,
+      pageIndex: currentPageIndex,
+      padIndex: padIndex,
+      audioFileIds: [],
+      playbackType: "round-robin",
+      createdAt: new Date(), // Temporary, won't be saved like this
+      updatedAt: new Date(), // Temporary
+      // name and keyBinding will be handled by EditPadModalContent defaults/state
+    };
 
     openModal({
-      title: "Rename Pad", // Will change later
+      title: "Edit Pad", // Updated title
       content: (
-        <PromptModalContent // Will change later
-          label="Enter new name for pad:"
-          initialValue={currentName}
-          onValueChange={(value) => {
-            modalDataValue = value;
-          }}
+        // Use the new modal content component
+        <EditPadModalContent
+          ref={editModalRef} // Assign the ref
+          initialPadConfig={initialConfig}
+          profileId={numericProfileId}
+          pageIndex={currentPageIndex}
+          padIndex={padIndex}
         />
       ),
-      confirmText: "Rename", // Will change later
+      confirmText: "Save Changes", // Updated button text
       onConfirm: async () => {
-        const newName = modalDataValue;
-        const finalName = newName.trim() || currentName;
+        if (!editModalRef.current) {
+          console.error("Edit modal ref not available on confirm.");
+          closeModal(); // Close modal even on error
+          return;
+        }
+        // Get the latest state from the modal content via the ref
+        const updatedPadConfigData = editModalRef.current.getCurrentState();
 
-        if (finalName !== currentName || !padConfig?.name) {
-          try {
-            const numericProfileId = activeProfileId;
-            if (numericProfileId === null)
-              throw new Error("Invalid Profile ID for rename");
+        // Basic validation: Ensure at least one sound exists if name is not default? (Optional)
+        // Or ensure name is set if sounds exist?
 
-            await upsertPadConfiguration({
-              profileId: numericProfileId,
-              pageIndex: currentPageIndex,
-              padIndex: padIndex,
-              name: finalName,
-              audioFileId: padConfig?.audioFileId,
-              keyBinding: padConfig?.keyBinding,
-            });
-            refreshPadConfigs();
-            console.log(`Renamed pad ${padIndex} to "${finalName}"`);
+        try {
+          // Upsert the configuration with the data from the modal state
+          await upsertPadConfiguration(updatedPadConfigData);
+          refreshPadConfigs(); // Refresh the grid display
+          console.log(
+            `Saved changes for pad ${padIndex}`,
+            updatedPadConfigData,
+          );
 
-            const isEmergency = await isEmergencyPage(
-              numericProfileId,
-              currentPageIndex,
+          const isEmergency = await isEmergencyPage(
+            numericProfileId,
+            currentPageIndex,
+          );
+          if (isEmergency) {
+            incrementEmergencySoundsVersion();
+            console.log(
+              `Pad renamed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`,
             );
-            if (isEmergency) {
-              incrementEmergencySoundsVersion();
-              console.log(
-                `Pad renamed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`,
-              );
-            }
-          } catch (error) {
-            console.error(`Failed to rename pad ${padIndex}:`, error);
-            alert(`Failed to rename pad ${padIndex}. Please try again.`);
-          } finally {
-            closeModal();
           }
-        } else {
-          closeModal();
+        } catch (error) {
+          console.error(`Failed to save changes for pad ${padIndex}:`, error);
+          alert(
+            `Failed to save changes for pad ${padIndex}. Please try again.`,
+          );
+        } finally {
+          closeModal(); // Close the modal regardless of success/error
         }
       },
     });
@@ -246,13 +282,20 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     const config = padConfigs.get(padIndex);
 
     if (isEditMode) {
-      if (isDeleteKeyDown && config?.audioFileId) {
+      // If delete key is down AND the pad has *any* sounds, trigger remove/edit logic
+      if (
+        isDeleteKeyDown &&
+        config?.audioFileIds &&
+        config.audioFileIds.length > 0
+      ) {
         handleRemoveInteraction(padIndex);
       } else {
+        // Otherwise, always open the edit modal (even for empty pads)
         handleEditInteraction(config ?? null, padIndex);
       }
     } else {
-      if (config) {
+      // Playback logic (only if configured)
+      if (config && config.audioFileIds && config.audioFileIds.length > 0) {
         handlePlaybackInteraction(config);
       } else {
         console.log(`Pad index ${padIndex} has no config, cannot play.`);
@@ -291,8 +334,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           profileId: numericProfileId,
           pageIndex: currentPageIndex,
           padIndex: padIndex,
-          audioFileId: audioFileId,
-          name: file.name.replace(/\.[^/.]+$/, ""),
+          audioFileIds: [audioFileId], // Use the new field as an array
+          playbackType: "round-robin", // Default playback type for single drop
+          name: file.name.replace(/\.[^/.]+$/, ""), // Set default name
+          // keyBinding remains undefined initially
         };
         await upsertPadConfiguration(newPadConfig);
         refreshPadConfigs();
@@ -350,13 +395,14 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           pageIndex={currentPageIndex}
           keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
           name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
-          isConfigured={true}
+          isConfigured={true} // Special pads are always "configured"
+          soundCount={2} // Treat special pads as having multiple sounds to disable drop logic.
           isPlaying={false}
           isEditMode={isEditMode}
           onClick={handleStopAllClick}
-          onShiftClick={() => {}}
-          onDropAudio={async () => {}}
-          onRemoveSound={undefined}
+          onShiftClick={() => {}} // No edit action
+          onDropAudio={async () => {}} // No drop action
+          onRemoveSound={undefined} // Cannot remove
         />
       );
     }
@@ -370,13 +416,14 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           pageIndex={currentPageIndex}
           keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
           name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
-          isConfigured={true}
+          isConfigured={true} // Special pads are always "configured"
+          soundCount={2} // Treat special pads as having multiple sounds to disable drop logic.
           isPlaying={false}
           isEditMode={isEditMode}
           onClick={handleFadeOutAllClick}
-          onShiftClick={() => {}}
-          onDropAudio={async () => {}}
-          onRemoveSound={undefined}
+          onShiftClick={() => {}} // No edit action
+          onDropAudio={async () => {}} // No drop action
+          onRemoveSound={undefined} // Cannot remove
         />
       );
     }
@@ -391,7 +438,11 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         pageIndex={currentPageIndex}
         keyBinding={config?.keyBinding}
         name={config?.name}
-        isConfigured={!!config?.audioFileId}
+        // Check if audioFileIds exists and has length > 0
+        isConfigured={
+          !!(config?.audioFileIds && config.audioFileIds.length > 0)
+        }
+        soundCount={config?.audioFileIds?.length ?? 0} // Pass the actual sound count
         isPlaying={isPlaying}
         isFading={isFading}
         playProgress={progress}
@@ -401,7 +452,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         onShiftClick={() => handlePadClick(padIndex)} // Shift click now also goes through handlePadClick
         onDropAudio={handleDropAudio}
         onRemoveSound={
-          config?.audioFileId
+          // Enable remove interaction if sounds exist
+          config?.audioFileIds && config.audioFileIds.length > 0
             ? () => handleRemoveInteraction(padIndex)
             : undefined
         }

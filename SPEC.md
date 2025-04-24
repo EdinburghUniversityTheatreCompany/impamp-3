@@ -29,15 +29,22 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
         * `"restart"`: The sound stops and then immediately starts playing again from the beginning.
         * This setting is configurable in the Playback Settings modal.
         * **Note:** Clicking the track entry in the "Active Tracks" panel *always* stops the sound immediately, regardless of this setting.
-* **Multiple Sounds:** The application should support playing multiple sounds concurrently.
+* **Multiple Sounds per Pad:**
+    * **Requirement:** Pads can be configured with multiple audio files (`audioFileIds: number[]`).
+    * **Playback Modes (`playbackType`):** A pad with multiple sounds must have one of the following modes:
+        * `"sequential"` (Default): On trigger, always plays the first sound (`audioFileIds[0]`). *Future enhancement: Could play next sound in sequence on subsequent triggers or after completion.*
+        * `"random"`: On trigger, plays a randomly selected sound from the `audioFileIds` list.
+        * `"round-robin"`: On trigger, plays a randomly selected sound from the list *that hasn't been played yet* in the current cycle. Once all sounds have played, the cycle resets. State is maintained per pad.
+* **Concurrent Playback:** The application supports playing multiple sounds concurrently, including multiple instances from the same or different pads.
 
 #### 2.2. Pad Configuration
 
 * **Layout:** A grid of pads, configurable by rows and columns (default: 4 rows, 8 columns).
 * **Sound Assignment:**
-    * Users can drag and drop audio files (`audio/*`) onto a pad to assign a sound.
-    * On drop, the audio file blob is added to the `audioFiles` store in IndexedDB, and a `padConfiguration` entry is created/updated linking the profile, page, pad index, and the new `audioFileId`.
-    * The pad name defaults to the filename without the extension.
+    * **Drag and Drop:**
+        * If a pad has 0 or 1 sound (`audioFileIds.length <= 1`), dragging an audio file onto it *replaces* the existing sound(s) and updates the `padConfiguration` (`audioFileIds = [newId]`, `playbackType = 'sequential'`). The pad name defaults to the new filename without the extension.
+        * If a pad has more than 1 sound (`audioFileIds.length > 1`), dragging an audio file onto it is *disabled*. Visual feedback should indicate this (e.g., different overlay).
+    * **Edit Modal:** Sounds can be added, removed, and reordered via the Pad Edit Modal (see 3.3).
 * **Visual State:**
     * **Empty:** Visually distinct style, displays "Empty Pad".
     * **Configured:** Different visual style indicating a sound is assigned, displays the pad name.
@@ -90,11 +97,19 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     * Top banner indicating "EDIT MODE".
     * Editable elements (pads, banks) should have a distinct style (e.g., dashed amber border).
 * **Pad Actions:**
-    * **Rename:** `Shift+Click` on a pad opens a prompt to rename it.
-    * **Remove Sound:**
-        * A visible "X" button appears on configured pads. Clicking it removes the sound assignment (after confirmation).
-        * Alternatively, holding the `Delete` key and clicking a configured pad removes the sound assignment (after confirmation).
-        * Removing a sound resets the pad name to default ("Empty Pad") and clears the `audioFileId`.
+    * **Edit Pad:** `Shift+Click` on any pad (empty or configured) opens the Pad Edit Modal.
+        * **Modal Content:**
+            * Input field for Pad Name.
+            * Radio buttons/Select for Playback Mode (`sequential`, `random`, `round-robin`), only enabled if >1 sound is assigned.
+            * A list of currently assigned sounds, displaying filenames.
+            * Drag-and-drop functionality (`@hello-pangea/dnd`) to reorder sounds in the list.
+            * A remove ('X') button next to each sound in the list.
+            * An "Add Sound(s)..." button that opens a file input allowing multiple `audio/*` file selection. Uploaded files are added to the DB and the list. If the pad name was default ("Empty Pad"), it updates to the first uploaded file's name.
+        * **Saving:** Clicking "Save Changes" in the modal updates the `padConfiguration` in the DB with the current name, playback mode, and ordered list of `audioFileIds`.
+    * **Remove Sound (Direct Action):**
+        * The visible "X" button and the `Delete`+click action *only* function for pads with exactly *one* sound (`audioFileIds.length === 1`).
+        * When triggered on a single-sound pad, it shows a confirmation modal. On confirm, it clears the `audioFileIds` array, resets the `playbackType` to `sequential`, and resets the pad name to default ("Empty Pad").
+        * If a pad has multiple sounds, clicking the "X" button or using `Delete`+click *opens the Pad Edit Modal* instead of showing the confirmation.
 * **Bank Actions:**
     * `Shift+Click` on a bank tab opens a dialog to:
         * Rename the bank.
@@ -137,9 +152,11 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     2.  How to assign a sound (drag-and-drop).
     3.  The `Escape` key panic button.
     4.  Stopping individual sounds (click active track entry).
-    5.  Entering Edit Mode (hold Shift) and editing a pad (Shift+click to rename, X/Delete+click to remove).
-    6.  Accessing the search feature (`Ctrl+F` / icon).
-    7.  Configuring backup reminders (Profile Manager -> Edit Profile).
+    5.  Entering Edit Mode (hold Shift).
+    6.  Editing a pad (Shift+click): Renaming, adding/removing/reordering sounds, changing playback mode via the modal.
+    7.  Removing a single sound (X / Delete+click).
+    8.  Accessing the search feature (`Ctrl+F` / icon).
+    9.  Configuring backup reminders (Profile Manager -> Edit Profile).
 
 #### 3.8. Backup Reminder Notification
 
@@ -168,17 +185,24 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 #### 4.2. Pad & Page Data
 
 * **Storage:**
-    * Pad configurations are stored in `padConfigurations` (profileId, pageIndex, padIndex, audioFileId?, name?, keyBinding?, etc.). Indexed by `profilePagePad`.
+    * Pad configurations are stored in `padConfigurations` (profileId, pageIndex, padIndex, `audioFileIds: number[]`, `playbackType: PlaybackType`, name?, keyBinding?, etc.). Indexed by `profilePagePad`.
     * Page/Bank metadata (name, emergency status) is stored in `pageMetadata` (profileId, pageIndex, name, isEmergency, etc.). Indexed by `profilePage`.
     * Audio file blobs are stored in `audioFiles` (id, blob, name, type, etc.).
-* **Relationships:** `padConfigurations` links to `profiles` and `audioFiles`. `pageMetadata` links to `profiles`.
-* **Updates:** Changes (rename, sound assignment/removal, emergency status) trigger updates in IndexedDB via `upsertPadConfiguration` or `upsertPageMetadata`.
+* **Relationships:** `padConfigurations` links to `profiles` and `audioFiles` (via `audioFileIds`). `pageMetadata` links to `profiles`.
+* **Updates:** Changes (rename, sound assignment/removal/reorder, playback mode change, emergency status) trigger updates in IndexedDB via `upsertPadConfiguration` or `upsertPageMetadata`.
 
 #### 4.3. Import / Export
 
-* **Format:** Export uses a JSON structure (`ProfileExport`) containing profile details (including `fadeoutDuration`, `activePadBehavior`, and `backupReminderPeriod`, but *excluding* `lastBackedUpAt`), all associated pad configurations, all associated page metadata, and base64-encoded audio file data.
+* **Format:** Export uses a JSON structure (`ProfileExport`) with `exportVersion: 2`. It contains profile details (excluding `lastBackedUpAt`), all associated pad configurations (now including `audioFileIds` and `playbackType`), all associated page metadata, and base64-encoded audio file data for all referenced unique audio files.
 * **Export:** Users select a profile to export, generating a downloadable JSON file named `impamp-<profile-name>-<date>.json`. Upon successful export file generation, the profile's `lastBackedUpAt` timestamp is updated to the current time in the database.
-* **Import:** Users select an exported JSON file. The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`), imports audio blobs, page metadata, pad configurations, and profile settings (`fadeoutDuration`, `activePadBehavior`, `backupReminderPeriod`), mapping original audio IDs to newly created ones. The imported profile's `lastBackedUpAt` is set to the time of import.
+* **Import:** Users select an exported JSON file.
+    * The system parses it, creates a *new* profile (handling potential name conflicts by appending `(n)`).
+    * Imports audio blobs, page metadata, and profile settings.
+    * **Pad Configuration Import:**
+        * If the imported file `exportVersion` is 2 (or missing but contains `audioFileIds`), it imports `padConfigurations` using the `audioFileIds` and `playbackType` fields.
+        * If the imported file `exportVersion` is 1 (or missing and contains `audioFileId`), it migrates the old `audioFileId` field to `audioFileIds: [audioFileId]` and sets `playbackType: 'sequential'` before saving.
+    * Original audio IDs are mapped to newly created ones during import.
+    * The imported profile's `lastBackedUpAt` is set to the time of import.
 
 #### 4.4. Sync (Future - Google Drive)
 

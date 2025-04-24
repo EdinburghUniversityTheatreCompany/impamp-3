@@ -71,6 +71,20 @@ export async function createTestAudioFilePath(fileName: string): Promise<string>
 }
 
 /**
+ * Helper function to create multiple test audio files.
+ * Calls createTestAudioFilePath for each name in the provided array.
+ */
+export async function createMultipleTestAudioFiles(fileNames: string[]): Promise<string[]> {
+  const filePaths: string[] = [];
+  for (const fileName of fileNames) {
+    const filePath = await createTestAudioFilePath(fileName);
+    filePaths.push(filePath);
+  }
+  console.log(`Created ${filePaths.length} temporary test audio files.`);
+  return filePaths;
+}
+
+/**
  * Helper function to activate a pad (tries both click and keyboard)
  * and verify it's playing
  */
@@ -146,4 +160,82 @@ export async function prepareAudioContext(page: Page) {
       return buffer;
     };
   });
+}
+
+/**
+ * Helper function to get the names of currently playing tracks from the Active Tracks Panel.
+ */
+export async function getPlayingSoundNames(page: Page): Promise<string[]> {
+    const activeTracksPanel = page.locator('[data-testid="active-tracks-panel"]');
+    // Wait for the panel to potentially update after an action
+    await activeTracksPanel.waitFor({ state: 'visible', timeout: 1000 }); // Short wait
+
+    // Check if "Nothing playing" is visible
+    const nothingPlayingVisible = await page.locator('text=Nothing playing').isVisible();
+    if (nothingPlayingVisible) {
+        return []; // Return empty array if nothing is playing
+    }
+
+    // Get all list items within the panel
+    const trackItems = activeTracksPanel.locator('li'); // Assuming each track is an <li>
+    const count = await trackItems.count();
+    const names: string[] = [];
+    for (let i = 0; i < count; i++) {
+        // Extract the text content, which should be the sound name
+        // Adjust locator if the name is within a specific child element
+        const name = await trackItems.nth(i).locator('span').first().textContent(); // Assuming name is in the first span
+        if (name) {
+            names.push(name.trim());
+        }
+    }
+    return names;
+}
+
+// --- Helpers for Edit Pad Modal ---
+
+// Helper to open the edit modal for a specific pad
+export async function openEditPadModal(page: Page, padIndex: number) {
+  await page.keyboard.down('Shift');
+  await page.waitForTimeout(200); // Short delay for shift state
+  await page.locator(`[id^="pad-"][id$="-${padIndex}"]`).click(); // Click the specific pad
+  await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
+  await expect(page.locator('[data-testid="modal-title"]')).toContainText('Edit Pad');
+  console.log(`[Test Helper] Opened edit modal for pad index ${padIndex}`);
+}
+
+// Helper to add sounds via the modal's file input
+export async function addSoundsToPadModal(page: Page, filePaths: string[]) {
+  const fileInput = page.locator('#addSoundsInput'); // Use the ID we added
+  await fileInput.setInputFiles(filePaths);
+  // Wait for sounds to potentially appear in the list (adjust selector/timeout if needed)
+  await page.waitForSelector(`[data-testid^="edit-pad-sound-item-"]`, { timeout: 5000 });
+  console.log(`[Test Helper] Added ${filePaths.length} sounds via modal`);
+}
+
+// Helper to set playback mode in the modal
+// Note: Requires PlaybackType to be imported in the test file using this helper
+export async function setPlaybackModeInModal(page: Page, mode: string) { // Use string here, rely on caller for type
+  await page.locator(`[data-testid="edit-pad-playback-mode-${mode}"]`).click();
+  console.log(`[Test Helper] Set playback mode to ${mode} in modal`);
+}
+
+// Helper to remove a specific sound from the modal list
+export async function removeSoundFromModal(page: Page, soundName: string) {
+  // Locate the remove button directly using its aria-label which includes the sound name
+  const removeButton = page.locator(`button[aria-label="Remove ${soundName}"]`);
+  await expect(removeButton).toBeVisible();
+  await removeButton.click();
+  console.log(`[Test Helper] Clicked remove for sound "${soundName}" in modal`);
+  // Verify the button (and thus the list item) is gone
+  await expect(removeButton).not.toBeVisible();
+}
+
+// Helper to save changes in the edit modal
+export async function savePadEditModal(page: Page) {
+  await page.locator('[data-testid="modal-confirm-button"]').click();
+  await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
+  console.log(`[Test Helper] Saved pad edit modal`);
+  // Release shift if needed after modal closes
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(200);
 }

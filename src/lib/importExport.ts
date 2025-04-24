@@ -3,6 +3,7 @@ import {
   AudioFile,
   Profile,
   PadConfiguration,
+  // PlaybackType, // Removed unused import (it's part of PadConfiguration)
   PageMetadata,
   SyncType,
   ImpAmpDBSchema,
@@ -57,13 +58,13 @@ export interface Impamp2Export {
 
 // --- Export/Import Interfaces and Functions moved from db.ts ---
 
-// Export profile data structure
+// Export profile data structure V2 (includes multi-sound fields)
 // Note: The profile object here should EXCLUDE lastBackedUpAt
 export interface ProfileExport {
-  exportVersion: number;
+  exportVersion: number; // Increment to 2 for new format
   exportDate: string;
   profile: Omit<Profile, "lastBackedUpAt"> & { id?: number }; // Ensure lastBackedUpAt is excluded, but keep others
-  padConfigurations: PadConfiguration[];
+  padConfigurations: PadConfiguration[]; // This now uses the updated PadConfiguration type
   pageMetadata: PageMetadata[];
   audioFiles: {
     id: number;
@@ -151,12 +152,11 @@ export async function exportProfile(profileId: number): Promise<ProfileExport> {
     // Get all page metadata for this profile
     const pageMetadata = await getAllPageMetadataForProfile(profileId);
 
-    // Get all audio files referenced by this profile's pads
+    // Get all unique audio file IDs referenced by this profile's pads
     const audioFileIds = new Set<number>();
-    padConfigurations.forEach((pad: PadConfiguration) => {
-      // Added type annotation
-      if (pad.audioFileId !== undefined) {
-        audioFileIds.add(pad.audioFileId);
+    padConfigurations.forEach((pad) => {
+      if (pad.audioFileIds && pad.audioFileIds.length > 0) {
+        pad.audioFileIds.forEach((id) => audioFileIds.add(id));
       }
     });
 
@@ -184,10 +184,10 @@ export async function exportProfile(profileId: number): Promise<ProfileExport> {
     const { lastBackedUpAt, ...profileToExport } = profile; // Destructure to omit lastBackedUpAt
 
     const exportData: ProfileExport = {
-      exportVersion: 1, // Initial version
+      exportVersion: 2, // Mark as new version
       exportDate: new Date().toISOString(),
       profile: profileToExport, // Use the cloned profile data without lastBackedUpAt
-      padConfigurations,
+      padConfigurations, // Already contains the new structure
       pageMetadata,
       audioFiles,
     };
@@ -389,9 +389,9 @@ async function importPageMetadata(
 // Helper function to import pad configurations (Refactored for single transaction)
 async function importPadConfigurations(
   db: IDBPDatabase<ImpAmpDBSchema>,
-  padConfigurations: PadConfiguration[],
+  padConfigurations: PadConfiguration[], // Expects array with new structure
   profileId: number,
-  audioIdMap: Map<number, number>,
+  audioIdMap: Map<number, number>, // Maps original ID from export to new DB ID
   now: Date,
 ): Promise<void> {
   if (padConfigurations.length === 0) {
@@ -407,28 +407,34 @@ async function importPadConfigurations(
   const padStore = padTx.objectStore("padConfigurations");
 
   const padPromises = padConfigurations.map((pad) => {
-    let mappedAudioId = undefined;
-    if (pad.audioFileId !== undefined) {
-      mappedAudioId = audioIdMap.get(pad.audioFileId);
-      if (mappedAudioId === undefined) {
-        console.warn(
-          `No mapping found for audio ID ${pad.audioFileId} in pad at pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}. Pad will have no audio.`,
-        );
-      }
+    // Map the array of audioFileIds
+    const mappedAudioFileIds = (pad.audioFileIds || [])
+      .map((originalId) => audioIdMap.get(originalId))
+      .filter((newId): newId is number => newId !== undefined); // Filter out undefined results
+
+    if (
+      (pad.audioFileIds || []).length > 0 &&
+      mappedAudioFileIds.length !== (pad.audioFileIds || []).length
+    ) {
+      console.warn(
+        `Could not map all audio IDs for pad at pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}. Original: ${pad.audioFileIds}, Mapped: ${mappedAudioFileIds}`,
+      );
     }
 
-    const newPad = {
+    // Construct the new pad configuration using the updated structure
+    const newPadData: Omit<PadConfiguration, "id"> = {
       profileId,
       padIndex: pad.padIndex,
       pageIndex: pad.pageIndex,
       keyBinding: pad.keyBinding,
       name: pad.name,
-      audioFileId: mappedAudioId, // Use the mapped ID or undefined
+      audioFileIds: mappedAudioFileIds, // Use the mapped array
+      playbackType: pad.playbackType || "sequential", // Use imported type or default
       createdAt: now,
       updatedAt: now,
     };
 
-    return padStore.add(newPad).catch((err) => {
+    return padStore.add(newPadData).catch((err) => {
       console.error(
         `Failed to add pad configuration for pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}:`,
         err,
@@ -458,15 +464,60 @@ export async function importProfile(
 ): Promise<number> {
   let profileId: number | undefined = undefined;
   const now = new Date();
+  let padConfigsToImport: PadConfiguration[] = exportData.padConfigurations; // Start with potentially new format
+
+  // Define a type for the old format for cleaner casting
+  type OldPadConfigFormat = Omit<
+    PadConfiguration,
+    "audioFileIds" | "playbackType"
+  > & { audioFileId?: number };
 
   try {
-    // Validate export version if needed
-    if (exportData.exportVersion !== 1) {
-      console.warn(
-        `Importing profile with unsupported version: ${exportData.exportVersion}`,
+    // --- Backward Compatibility Check ---
+    // Check if the first pad config uses the old format (has audioFileId)
+    const isOldFormat =
+      exportData.padConfigurations.length > 0 &&
+      exportData.padConfigurations[0].hasOwnProperty("audioFileId");
+
+    if (isOldFormat) {
+      console.log(
+        "Importing old format (V1) profile export. Migrating pad configurations...",
       );
-      // Potentially throw an error or handle differently based on version
+      // Use the defined type for mapping and casting
+      padConfigsToImport = (
+        exportData.padConfigurations as OldPadConfigFormat[]
+      ).map((oldPad): PadConfiguration => {
+        const audioFileIds: number[] = [];
+        if (
+          oldPad.audioFileId !== undefined &&
+          typeof oldPad.audioFileId === "number"
+        ) {
+          audioFileIds.push(oldPad.audioFileId);
+        }
+        // Create a new object conforming to the current PadConfiguration interface
+        const migratedPad: PadConfiguration = {
+          id: oldPad.id, // Keep original ID if present (though it's usually omitted in export)
+          profileId: oldPad.profileId, // Will be overwritten later
+          pageIndex: oldPad.pageIndex,
+          padIndex: oldPad.padIndex,
+          keyBinding: oldPad.keyBinding,
+          name: oldPad.name,
+          audioFileIds: audioFileIds,
+          playbackType: "sequential", // Default for old format
+          createdAt: oldPad.createdAt || now, // Use existing or new date
+          updatedAt: oldPad.updatedAt || now, // Use existing or new date
+        };
+        // delete (migratedPad as any).audioFileId; // Ensure old field is gone (optional, spread below handles it)
+        return migratedPad;
+      });
+    } else if (exportData.exportVersion !== 2) {
+      // If not old format and not V2, it's an unknown/unsupported version
+      console.warn(
+        `Importing profile with unknown or unsupported version: ${exportData.exportVersion ?? "undefined"}. Proceeding with caution.`,
+      );
+      // Allow import but log warning
     }
+    // --- End Backward Compatibility Check ---
 
     // Step 1: Create the new profile entry (handles name conflicts)
     profileId = await createImportedProfile(db, exportData, now);
@@ -480,10 +531,10 @@ export async function importProfile(
     await importPageMetadata(db, exportData.pageMetadata, profileId, now);
     console.log(`Imported page metadata`);
 
-    // Step 4: Import pad configurations (single transaction)
+    // Step 4: Import pad configurations (single transaction) - Use potentially migrated data
     await importPadConfigurations(
       db,
-      exportData.padConfigurations,
+      padConfigsToImport, // Use the processed array
       profileId,
       audioIdMap,
       now,
@@ -686,7 +737,8 @@ export async function importImpamp2Profile(
             padIndex,
             keyBinding: key,
             name: padData.name || padData.filename || `Pad ${padIndex}`,
-            // audioFileId will be added after audio import
+            audioFileIds: [], // Initialize with empty array
+            playbackType: "sequential", // Initialize with default
           },
           audioOriginalKey, // Link pad to prepared audio
         });
@@ -750,8 +802,16 @@ export async function importImpamp2Profile(
             `Could not find imported audio ID for original key ${item.audioOriginalKey} (Pad key: ${item.originalKey}, Page: ${item.pageIndex})`,
           );
         }
+        // Construct the final pad data with the new structure
+        const finalPadData: Omit<PadConfiguration, "id"> = {
+          ...item.data,
+          audioFileIds: audioFileId !== undefined ? [audioFileId] : [], // Set as array
+          playbackType: "sequential", // Default for impamp2 import
+          createdAt: now,
+          updatedAt: now,
+        };
         return padStore
-          .add({ ...item.data, audioFileId, createdAt: now, updatedAt: now })
+          .add(finalPadData)
           .catch((err) =>
             console.error(
               `Failed to add pad config for key ${item.originalKey}, pageIndex ${item.pageIndex}:`,

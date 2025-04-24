@@ -1,5 +1,18 @@
-import { test, expect } from '@playwright/test';
-import { prepareAudioContext } from './test-helpers';
+import { test, expect, Page } from '@playwright/test'; // Added Page type
+import {
+  prepareAudioContext,
+  createTestAudioFilePath,
+  createMultipleTestAudioFiles,
+  // Import the moved helpers
+  openEditPadModal,
+  addSoundsToPadModal,
+  setPlaybackModeInModal,
+  removeSoundFromModal,
+  savePadEditModal,
+} from './test-helpers';
+import { PlaybackType } from '../src/lib/db'; // Added PlaybackType
+
+// Helper definitions moved to test-helpers.ts
 
 test.describe('ImpAmp3 Edit Mode', () => {
   test.beforeEach(async ({ page }) => {
@@ -57,14 +70,15 @@ test.describe('ImpAmp3 Edit Mode', () => {
     const originalText = await firstPad.textContent() ?? '';
 
     // Click the pad to trigger rename (Shift is already down)
+    // Click the pad to trigger the EDIT modal (Shift is already down)
     await firstPad.click();
 
-    // Wait for the modal to appear
+    // Wait for the EDIT modal to appear
     await page.waitForSelector('[data-testid="custom-modal"]');
-    await expect(page.locator('[data-testid="modal-title"]')).toContainText('Rename Pad');
+    await expect(page.locator('[data-testid="modal-title"]')).toContainText('Edit Pad'); // Expect Edit Pad modal now
 
-    // Fill the input and confirm
-    const inputField = page.locator('[data-testid="prompt-input"]');
+    // Fill the name input in the EDIT modal and confirm
+    const inputField = page.locator('[data-testid="edit-pad-name-input"]'); // Use the correct test ID
     await inputField.fill('Custom Pad Name');
     await page.locator('[data-testid="modal-confirm-button"]').click();
 
@@ -193,4 +207,178 @@ test.describe('ImpAmp3 Edit Mode', () => {
     // Verify title attribute also indicates emergency
     await expect(updatedFirstBankTab).toHaveAttribute('title', expect.stringContaining('(Emergency)'));
   });
+
+  // --- Tests for Multi-Sound Pad Editing ---
+
+  test('opens edit modal on Shift+click (empty pad)', async ({ page }) => {
+    await openEditPadModal(page, 0); // Open modal for first pad
+    // Verify some elements inside the modal to confirm it's the right one
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toBeVisible();
+    await expect(page.locator('[data-testid="edit-pad-sounds-list"]')).not.toBeVisible(); // List shouldn't exist if empty
+    await expect(page.getByText('No sounds assigned.')).toBeVisible();
+    await expect(page.locator('[data-testid="edit-pad-add-sounds-button"]')).toBeVisible();
+  });
+
+  test('opens edit modal on Shift+click (single sound pad)', async ({ page }) => {
+    const fileName = 'single-sound-edit';
+    const filePath = await createTestAudioFilePath(fileName);
+    const padInput = page.locator('[data-testid="pad-drop-input-1"]'); // Use second pad
+    await padInput.setInputFiles(filePath);
+    await expect(page.locator('[id^="pad-"][id$="-1"]')).toContainText(fileName, { timeout: 5000 });
+
+    await openEditPadModal(page, 1); // Open modal for second pad
+
+    // Verify elements, including the single sound in the list
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toHaveValue(fileName);
+    await expect(page.locator('[data-testid="edit-pad-sounds-list"]')).toBeVisible();
+    await expect(page.locator(`[data-testid^="edit-pad-sound-item-"]:has-text("${fileName}")`)).toBeVisible();
+    await expect(page.locator('[data-testid^="edit-pad-sound-item-"]')).toHaveCount(1); // Ensure only one item
+  });
+
+   test('adds multiple sounds via modal', async ({ page }) => {
+    const fileNames = ['soundA', 'soundB'];
+    const filePaths = await createMultipleTestAudioFiles(fileNames);
+
+    await openEditPadModal(page, 2); // Use third pad
+    await addSoundsToPadModal(page, filePaths);
+
+    // Verify sounds appear in the modal list
+    await expect(page.locator(`[data-testid^="edit-pad-sound-item-"]:has-text("${fileNames[0]}")`)).toBeVisible();
+    await expect(page.locator(`[data-testid^="edit-pad-sound-item-"]:has-text("${fileNames[1]}")`)).toBeVisible();
+    await expect(page.locator('[data-testid^="edit-pad-sound-item-"]')).toHaveCount(2);
+
+    await savePadEditModal(page);
+
+    // Verify pad is configured (check name updated to first sound)
+    const pad = page.locator('[id^="pad-"][id$="-2"]');
+    await expect(pad).toContainText(fileNames[0]); // Name should update
+  });
+
+  test('updates pad name correctly when adding first sounds', async ({ page }) => {
+    const fileNames = ['firstSoundName'];
+    const filePaths = await createMultipleTestAudioFiles(fileNames);
+
+    await openEditPadModal(page, 3); // Use fourth pad
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toHaveValue('Empty Pad'); // Verify initial state
+
+    await addSoundsToPadModal(page, filePaths);
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toHaveValue(fileNames[0]); // Verify name updated in modal
+
+    await savePadEditModal(page);
+
+    // Verify pad name is updated on the grid
+    const pad = page.locator('[id^="pad-"][id$="-3"]');
+    await expect(pad).toContainText(fileNames[0]);
+  });
+
+  test('preserves existing pad name when adding more sounds', async ({ page }) => {
+    const initialName = 'initial-sound';
+    const customName = 'My Custom Pad';
+    const additionalSound = 'additional-sound';
+    const initialFilePath = await createTestAudioFilePath(initialName);
+    const additionalFilePath = await createTestAudioFilePath(additionalSound);
+
+    // Configure pad 4 with one sound
+    const padInput = page.locator('[data-testid="pad-drop-input-4"]');
+    await padInput.setInputFiles(initialFilePath);
+    await expect(page.locator('[id^="pad-"][id$="-4"]')).toContainText(initialName, { timeout: 5000 });
+
+    // Rename it
+    await page.keyboard.down('Shift');
+    await page.locator('[id^="pad-"][id$="-4"]').click();
+    await page.waitForSelector('[data-testid="custom-modal"]'); // Wait for rename modal
+    await page.locator('[data-testid="prompt-input"]').fill(customName);
+    await page.locator('[data-testid="modal-confirm-button"]').click();
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
+    await expect(page.locator('[id^="pad-"][id$="-4"]')).toContainText(customName);
+    await page.keyboard.up('Shift'); // Release shift after rename
+
+    // Open edit modal again
+    await openEditPadModal(page, 4);
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toHaveValue(customName); // Verify custom name loaded
+
+    // Add another sound
+    await addSoundsToPadModal(page, [additionalFilePath]);
+    await expect(page.locator('[data-testid="edit-pad-name-input"]')).toHaveValue(customName); // Verify name NOT changed
+
+    await savePadEditModal(page);
+
+    // Verify pad name is still the custom name
+    const pad = page.locator('[id^="pad-"][id$="-4"]');
+    await expect(pad).toContainText(customName);
+  });
+
+  test('removes a sound via modal', async ({ page }) => {
+    const fileNames = ['soundToRemove', 'soundToKeep'];
+    const filePaths = await createMultipleTestAudioFiles(fileNames);
+
+    // Add two sounds via modal
+    await openEditPadModal(page, 5); // Use pad 5
+    await addSoundsToPadModal(page, filePaths);
+    await expect(page.locator('[data-testid^="edit-pad-sound-item-"]')).toHaveCount(2);
+
+    // Remove the first sound
+    await removeSoundFromModal(page, fileNames[0]);
+    await expect(page.locator('[data-testid^="edit-pad-sound-item-"]')).toHaveCount(1);
+    await expect(page.locator(`[data-testid^="edit-pad-sound-item-"]:has-text("${fileNames[1]}")`)).toBeVisible();
+
+    await savePadEditModal(page);
+
+    // Re-open modal to verify persistence (or use playback test)
+    await openEditPadModal(page, 5);
+    await expect(page.locator('[data-testid^="edit-pad-sound-item-"]')).toHaveCount(1);
+    await expect(page.locator(`[data-testid^="edit-pad-sound-item-"]:has-text("${fileNames[1]}")`)).toBeVisible();
+  });
+
+  test('changes playback mode via modal', async ({ page }) => {
+    const fileNames = ['modeTestA', 'modeTestB'];
+    const filePaths = await createMultipleTestAudioFiles(fileNames);
+
+    // Add sounds
+    await openEditPadModal(page, 6); // Use pad 6
+    await addSoundsToPadModal(page, filePaths);
+
+    // Check default mode (should be round-robin now)
+    await expect(page.locator('[data-testid="edit-pad-playback-mode-round-robin"]')).toBeChecked();
+
+    // Change to sequential
+    await setPlaybackModeInModal(page, 'sequential');
+    await expect(page.locator('[data-testid="edit-pad-playback-mode-sequential"]')).toBeChecked();
+
+    await savePadEditModal(page);
+
+    // Re-open and verify mode persisted
+    await openEditPadModal(page, 6);
+    await expect(page.locator('[data-testid="edit-pad-playback-mode-sequential"]')).toBeChecked();
+  });
+
+  test('X button / Delete+click opens modal for multi-sound pad', async ({ page }) => {
+    const fileNames = ['multiSoundX1', 'multiSoundX2'];
+    const filePaths = await createMultipleTestAudioFiles(fileNames);
+
+    // Add two sounds via modal to pad 7
+    await openEditPadModal(page, 7);
+    await addSoundsToPadModal(page, filePaths);
+    await savePadEditModal(page);
+
+    // Enter edit mode
+    await page.keyboard.down('Shift');
+    await page.waitForTimeout(200);
+
+    // Click the 'X' button on the pad itself
+    const pad = page.locator('[id^="pad-"][id$="-7"]');
+    const xButton = pad.locator('button[aria-label="Remove sound"]');
+    await expect(xButton).toBeVisible();
+    await xButton.click();
+
+    // Verify the EDIT modal opened, not the confirmation modal
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="modal-title"]')).toContainText('Edit Pad'); // Not "Remove Sound"
+    await expect(page.locator('[data-testid="edit-pad-sounds-list"]')).toBeVisible(); // Check for edit content
+
+    // Close modal and release shift
+    await page.locator('[data-testid="modal-cancel-button"]').click(); // Assuming cancel exists
+    await page.keyboard.up('Shift');
+  });
+
 });

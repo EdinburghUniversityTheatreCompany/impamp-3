@@ -71,7 +71,29 @@ This document outlines the visual and interaction design guidelines for the ImpA
     *   `closeModal()` closes the currently open modal.
 *   **Styling:** Uses Tailwind CSS for styling. Key elements have `data-testid` attributes for testing.
 
-### 4.4 Profile Management
+### 4.4 Edit Pad Modal Content (`src/components/modals/EditPadModalContent.tsx`)
+
+*   **Purpose:** Allows editing pad name, playback mode, and managing multiple sounds.
+*   **Trigger:** Shift+click on any pad in Edit Mode.
+*   **Layout:** Vertical stack (`flex flex-col space-y-4`).
+*   **Components:**
+    *   **Pad Name:** Standard labeled text input (`<input type="text">`).
+    *   **Playback Mode:** Labeled radio button group (`<input type="radio">`) for "Sequential", "Random", "Round Robin". Disabled if sound count is <= 1.
+    *   **Sounds List:**
+        *   Label: "Sounds (Drag to Reorder)".
+        *   Displays "Loading sounds..." or "No sounds assigned..." messages appropriately.
+        *   Uses `@hello-pangea/dnd` (`DragDropContext`, `Droppable`, `Draggable`) for the list (`<ul>`).
+        *   Each list item (`<li>`) shows the sound filename (truncated if necessary) and a small '✕' remove button.
+        *   Styled with borders, dividers, and hover effects. Max height with vertical scroll.
+    *   **Add Sound(s) Button:** Standard button styled prominently (e.g., Indigo background). Triggers a hidden file input (`<input type="file" multiple>`).
+*   **Interaction:**
+    *   Drag handles on list items for reordering.
+    *   Remove button deletes the sound from the list state.
+    *   Add button opens file dialog; selected audio files are added to the DB and the list state.
+    *   Pad name updates automatically to the first added sound's name *only if* the name was previously "Empty Pad".
+*   **Saving:** The main modal's "Save Changes" button reads the state from this component (via a ref) and calls `upsertPadConfiguration`.
+
+### 4.5 Profile Management
 
 *   **Profile Selector:**
     *   Location: Top-right of the main interface

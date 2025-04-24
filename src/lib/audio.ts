@@ -1,4 +1,4 @@
-import { getAudioFile, PadConfiguration } from "./db";
+import { getAudioFile, PadConfiguration, PlaybackType } from "./db"; // Added PlaybackType
 import { playbackStoreActions } from "@/store/playbackStore";
 import type { PlaybackState } from "@/store/playbackStore";
 import { useProfileStore } from "@/store/profileStore";
@@ -74,7 +74,7 @@ function stopPlaybackLoop() {
   }
 }
 
-// Define interface for active track information
+// Define interface for active track information, including multi-sound state
 export interface ActiveTrack {
   source: AudioBufferSourceNode;
   name: string;
@@ -85,12 +85,22 @@ export interface ActiveTrack {
     pageIndex: number;
     padIndex: number;
   };
-  isFading: boolean; // Added for integrated fade state
+  isFading: boolean;
+  // --- Multi-sound state ---
+  playbackType: PlaybackType;
+  allAudioFileIds: number[]; // The full list for this pad
+  currentAudioFileId: number; // The specific ID currently playing
+  currentAudioIndex?: number; // Index within allAudioFileIds for sequential/round-robin state
+  availableAudioIndices?: number[]; // Remaining indices for round-robin
 }
 
 let audioContext: AudioContext | null = null;
 const activeTracks: Map<string, ActiveTrack> = new Map(); // Enhanced tracking with metadata
-// const fadingTracks: Map<string, boolean> = new Map(); // REMOVED - Integrated into ActiveTrack
+
+// State map for round-robin playback (Key: pad playbackKey, Value: remaining audioFileIds indices)
+const roundRobinState = new Map<string, number[]>();
+// State map for sequential playback (Key: pad playbackKey, Value: next index to play)
+const sequentialState = new Map<string, number>();
 
 // Internal cache for decoded audio buffers
 const audioBufferCache = new Map<number, AudioBuffer | null>(); // Allow null for failed decodes
@@ -187,16 +197,18 @@ export async function loadAndDecodeAudio(
 
 /**
  * Handles the user interaction to play a pad's audio.
- * Checks activePadBehavior, loads audio if needed, and calls _playBuffer.
+ * Checks activePadBehavior, selects the correct audio file based on playbackType,
+ * loads audio if needed, and calls _playBuffer.
  */
 export async function triggerAudioForPad(
   padConfig: PadConfiguration,
   activeProfileId: number,
   currentPageIndex: number,
 ): Promise<void> {
-  if (!padConfig.audioFileId) {
+  // Check if there are any audio files configured
+  if (!padConfig.audioFileIds || padConfig.audioFileIds.length === 0) {
     console.log(
-      `[triggerAudioForPad] Pad index ${padConfig.padIndex} has no audio configured.`,
+      `[triggerAudioForPad] Pad index ${padConfig.padIndex} has no audio files configured.`,
     );
     return;
   }
@@ -222,6 +234,13 @@ export async function triggerAudioForPad(
           `[Audio Trigger Action] Behavior=stop. Stopping key: ${playbackKey}`,
         );
         stopAudio(playbackKey); // Stop the existing sound
+        // Reset round-robin state for this pad if it was stopped
+        if (padConfig.playbackType === "round-robin") {
+          roundRobinState.delete(playbackKey);
+          console.log(
+            `[Audio Trigger Action] Reset round-robin state for key: ${playbackKey}`,
+          );
+        }
         return; // Don't proceed to play again
       case "restart": {
         // Use block scope for clarity
@@ -233,6 +252,7 @@ export async function triggerAudioForPad(
           console.log(
             `[Audio Trigger Action] Nullifying onended and stopping existing source for key: ${playbackKey}`,
           );
+
           existingTrack.source.onended = null; // Prevent old onended from firing later
           try {
             existingTrack.source.stop(0); // Stop only the Web Audio source
@@ -262,31 +282,115 @@ export async function triggerAudioForPad(
     }
   }
 
-  // --- Proceed to load and play the sound (either it wasn't playing, or behavior is 'restart') ---
+  // --- Select Audio File ID based on Playback Type ---
+  let audioFileIdToPlay: number | undefined;
+  let currentAudioIndex: number | undefined;
+  let availableAudioIndices: number[] | undefined;
+
+  switch (padConfig.playbackType) {
+    case "sequential":
+      // Get the next index for this pad, default to 0 if not found
+      currentAudioIndex = sequentialState.get(playbackKey) ?? 0;
+      if (currentAudioIndex >= padConfig.audioFileIds.length) {
+        currentAudioIndex = 0; // Wrap around if index is out of bounds
+      }
+      audioFileIdToPlay = padConfig.audioFileIds[currentAudioIndex];
+      // Calculate and store the *next* index for the subsequent trigger
+      const nextIndex = (currentAudioIndex + 1) % padConfig.audioFileIds.length;
+      sequentialState.set(playbackKey, nextIndex);
+      console.log(
+        `[Audio Select] Sequential: Playing ID ${audioFileIdToPlay} (index ${currentAudioIndex}). Next index: ${nextIndex}`,
+      );
+      break;
+    case "random":
+      const randomIndex = Math.floor(
+        Math.random() * padConfig.audioFileIds.length,
+      );
+      audioFileIdToPlay = padConfig.audioFileIds[randomIndex];
+      currentAudioIndex = randomIndex; // Store the chosen index
+      console.log(
+        `[Audio Select] Random: Playing ID ${audioFileIdToPlay} (index ${randomIndex})`,
+      );
+      break;
+    case "round-robin":
+      let remainingIndices = roundRobinState.get(playbackKey);
+      // If no state or state is empty, reset from full list
+      if (!remainingIndices || remainingIndices.length === 0) {
+        remainingIndices = padConfig.audioFileIds.map((_, index) => index); // Get indices 0, 1, 2...
+        console.log(
+          `[Audio Select] Round-Robin: Resetting available indices for key ${playbackKey}:`,
+          remainingIndices,
+        );
+      }
+      // Pick a random index *from the remaining indices*
+      const randomRemainingIndexPos = Math.floor(
+        Math.random() * remainingIndices.length,
+      );
+      currentAudioIndex = remainingIndices[randomRemainingIndexPos]; // Get the actual audioFileIds index
+      audioFileIdToPlay = padConfig.audioFileIds[currentAudioIndex];
+      // Update the state by removing the chosen index
+      remainingIndices.splice(randomRemainingIndexPos, 1);
+      roundRobinState.set(playbackKey, remainingIndices);
+      availableAudioIndices = [...remainingIndices]; // Store copy for ActiveTrack state
+      console.log(
+        `[Audio Select] Round-Robin: Playing ID ${audioFileIdToPlay} (index ${currentAudioIndex}). Remaining indices for key ${playbackKey}:`,
+        remainingIndices,
+      );
+      break;
+    default:
+      console.warn(
+        `[Audio Select] Unknown playbackType: ${padConfig.playbackType}. Defaulting to sequential.`,
+      );
+      audioFileIdToPlay = padConfig.audioFileIds[0];
+      currentAudioIndex = 0;
+  }
+
+  if (audioFileIdToPlay === undefined) {
+    console.error(
+      `[Audio Trigger] Could not determine audioFileId to play for key ${playbackKey}. Config:`,
+      padConfig,
+    );
+    return;
+  }
+
+  // --- Proceed to load and play the selected sound ---
   console.log(
-    `[Audio Trigger Action] Proceeding to load/play for key: ${playbackKey}, File ID: ${padConfig.audioFileId}`,
+    `[Audio Trigger Action] Proceeding to load/play for key: ${playbackKey}, Selected File ID: ${audioFileIdToPlay}`,
   );
   try {
-    // Load and decode the audio buffer
-    const buffer = await loadAndDecodeAudio(padConfig.audioFileId);
+    // Load and decode the audio buffer for the selected ID
+    const buffer = await loadAndDecodeAudio(audioFileIdToPlay);
 
     // If buffer loaded successfully, play it
     if (buffer) {
       console.log(
-        `[Audio Trigger Action] Buffer obtained for File ID: ${padConfig.audioFileId}. Calling _playBuffer...`,
+        `[Audio Trigger Action] Buffer obtained for File ID: ${audioFileIdToPlay}. Calling _playBuffer...`,
       );
-      _playBuffer(buffer, playbackKey, {
-        // Call the internal play function
-        name: padConfig.name || `Pad ${padConfig.padIndex + 1}`,
-        padInfo: {
-          profileId: activeProfileId,
-          pageIndex: currentPageIndex,
-          padIndex: padConfig.padIndex,
+      _playBuffer(
+        buffer,
+        playbackKey,
+        {
+          // Metadata for display/identification
+          name: padConfig.name || `Pad ${padConfig.padIndex + 1}`,
+          padInfo: {
+            profileId: activeProfileId,
+            pageIndex: currentPageIndex,
+            padIndex: padConfig.padIndex,
+          },
         },
-      });
+        1.0, // Default volume
+        {
+          // Multi-sound state for ActiveTrack
+          playbackType: padConfig.playbackType,
+          allAudioFileIds: padConfig.audioFileIds,
+          currentAudioFileId: audioFileIdToPlay,
+          currentAudioIndex: currentAudioIndex,
+          availableAudioIndices: availableAudioIndices,
+        },
+      );
     } else {
       console.error(
-        `[Audio Trigger] Failed to load or decode audio for File ID: ${padConfig.audioFileId}`,
+        `[Audio Trigger] Failed to load or decode audio for File ID: ${audioFileIdToPlay}`,
       );
       // Optionally show an error to the user
     }
@@ -301,11 +405,12 @@ export async function triggerAudioForPad(
 
 // --- Internal Playback Logic ---
 
-// Internal function to play a pre-loaded buffer and update state
+// Internal function to play a pre-loaded buffer and update state, now includes multi-sound state
 function _playBuffer(
   buffer: AudioBuffer,
   playbackKey: string,
   metadata: {
+    // Basic display/ID info
     name: string;
     padInfo: {
       profileId: number;
@@ -314,6 +419,14 @@ function _playBuffer(
     };
   },
   volume: number = 1.0,
+  multiSoundState: Pick<
+    ActiveTrack, // State specific to multi-sound playback
+    | "playbackType"
+    | "allAudioFileIds"
+    | "currentAudioFileId"
+    | "currentAudioIndex"
+    | "availableAudioIndices"
+  >,
 ): AudioBufferSourceNode | null {
   try {
     const context = getAudioContext();
@@ -350,10 +463,16 @@ function _playBuffer(
       startTime: context.currentTime,
       duration: buffer.duration,
       padInfo: metadata.padInfo,
-      isFading: false, // Initialize isFading state
+      isFading: false,
+      // --- Include multi-sound state ---
+      playbackType: multiSoundState.playbackType,
+      allAudioFileIds: multiSoundState.allAudioFileIds,
+      currentAudioFileId: multiSoundState.currentAudioFileId,
+      currentAudioIndex: multiSoundState.currentAudioIndex,
+      availableAudioIndices: multiSoundState.availableAudioIndices,
     });
 
-    // Add to playback store
+    // Add to playback store (UI state) - doesn't need the internal multi-sound state
     const initialState: PlaybackState = {
       key: playbackKey,
       name: metadata.name,
@@ -387,24 +506,23 @@ export function stopAudio(playbackKey: string): void {
   if (track) {
     try {
       track.source.stop(0);
-      // Explicitly delete from activeTracks immediately - don't wait for onended
-      activeTracks.delete(playbackKey);
-      playbackStoreActions.removeTrack(playbackKey); // Remove from store
-      stopPlaybackLoop(); // Check if loop should stop
-      // No need to clear from fadingTracks anymore
-      console.log(
-        `[Audio] Playback stopped and removed for key: ${playbackKey}`,
-      );
     } catch (error) {
       // Ignore errors if the source was already stopped or in an invalid state
       if ((error as DOMException).name !== "InvalidStateError") {
-        console.error(`Error stopping audio for key ${playbackKey}:`, error);
+        console.error(
+          `Error stopping audio source for key ${playbackKey}:`,
+          error,
+        );
       }
-      // Manually clean up if stop fails
+    } finally {
+      // Always clean up state regardless of stop() success/failure
       activeTracks.delete(playbackKey);
-      playbackStoreActions.removeTrack(playbackKey); // Ensure removal from store on error too
+      playbackStoreActions.removeTrack(playbackKey);
+
       stopPlaybackLoop(); // Check if loop should stop
-      // No need to clear from fadingTracks anymore
+      console.log(
+        `[Audio] Playback stopped for key: ${playbackKey} (State preserved)`,
+      );
     }
   }
 }
@@ -490,14 +608,12 @@ export function stopAllAudio(): void {
   // Get all keys from activeTracks Map
   const keys = Array.from(activeTracks.keys());
 
-  // Stop each track
+  // Stop each track (stopAudio handles individual state clearing)
   keys.forEach((key) => {
-    stopAudio(key); // stopAudio now handles store removal and loop check
+    stopAudio(key);
   });
-
-  // Explicitly clear store state after stopping all
   playbackStoreActions.clearAllTracks();
-  // Ensure loop is stopped
+  // Ensure loop is stopped (already handled by stopAudio calls)
   stopPlaybackLoop();
 
   console.log(`[Audio] Stopped all active tracks (${keys.length} tracks)`);
@@ -525,22 +641,28 @@ export function fadeOutAllAudio(durationInSeconds: number = 3): void {
 // --- Preloading ---
 
 /**
- * Preloads audio files for a given set of IDs by fetching and decoding them into the cache.
+ * Preloads audio files for a given set of PadConfigurations by fetching and decoding them into the cache.
  * Does not fail on individual errors, allowing other files to load.
- * @param audioFileIds Array of audio file IDs to preload.
+ * @param padConfigs Array of PadConfiguration objects for the current page.
  */
 export async function preloadAudioForPage(
-  audioFileIds: number[],
+  padConfigs: PadConfiguration[],
 ): Promise<void> {
   if (!isClient) return; // Only run on client
 
-  const uniqueIds = [...new Set(audioFileIds)].filter(
-    (id) => typeof id === "number" && !isNaN(id),
-  ); // Ensure unique, valid numbers
-  if (uniqueIds.length === 0) return;
+  // Extract all unique audio file IDs from all configurations
+  const allIds = padConfigs.flatMap((config) => config.audioFileIds || []);
+  const uniqueIds = [...new Set(allIds)].filter(
+    (id): id is number => typeof id === "number" && !isNaN(id), // Type guard for filtering
+  );
+
+  if (uniqueIds.length === 0) {
+    console.log("[Audio Preload] No valid audio file IDs found to preload.");
+    return;
+  }
 
   console.log(
-    `[Audio Preload] Starting preload for ${uniqueIds.length} unique audio file IDs...`,
+    `[Audio Preload] Starting preload for ${uniqueIds.length} unique audio file IDs from ${padConfigs.length} pads...`,
   );
   const startTime = performance.now();
 

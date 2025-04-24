@@ -11,7 +11,8 @@ interface PadProps {
   pageIndex: number; // Index of the current page
   keyBinding?: string;
   name?: string;
-  isConfigured: boolean;
+  isConfigured: boolean; // Still useful for basic styling/remove button
+  soundCount: number; // Number of sounds configured for this pad
   isPlaying: boolean;
   isFading?: boolean; // Prop to indicate if the sound is fading out
   playProgress?: number; // Prop to show play progress (0 to 1)
@@ -38,6 +39,7 @@ const Pad: React.FC<PadProps> = ({
   onShiftClick,
   onDropAudio,
   onRemoveSound,
+  soundCount, // Destructure the new prop
   // profileId and pageIndex are passed but not used directly in this component
 }) => {
   // Calculate remaining seconds (rounded) if playing and time is available
@@ -51,14 +53,28 @@ const Pad: React.FC<PadProps> = ({
     // Pass cols to the key mapping function
     return keyBinding || getDefaultKeyForPadIndex(padIndex);
   }, [keyBinding, padIndex]);
+
+  // Updated drop handler: Check sound count before calling parent handler
   const handleDrop = React.useCallback(
     (acceptedFiles: File[]) => {
+      // Prevent drop if more than one sound is already configured
+      if (soundCount > 1) {
+        console.log(
+          `Drop prevented on pad ${padIndex}: Already has ${soundCount} sounds.`,
+        );
+        // Optionally show a user notification here
+        return;
+      }
+      // Proceed with drop if 0 or 1 sound exists
       if (acceptedFiles.length > 0) {
         onDropAudio(acceptedFiles, padIndex);
       }
     },
-    [onDropAudio, padIndex],
+    [onDropAudio, padIndex, soundCount], // Add soundCount to dependencies
   );
+
+  // Disable dropzone if soundCount > 1
+  const isDropDisabled = soundCount > 1;
 
   const {
     getRootProps,
@@ -72,6 +88,7 @@ const Pad: React.FC<PadProps> = ({
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
+    disabled: isDropDisabled, // Disable dropzone based on sound count
   });
 
   // --- Styling with clsx ---
@@ -117,10 +134,13 @@ const Pad: React.FC<PadProps> = ({
             isPlaying && !isFading,
         },
         {
-          // Dropzone active state border (overrides default/edit border if active)
-          "border-blue-500 border-dashed": isDragActive,
-          "border-gray-300 dark:border-gray-600": !isDragActive && !isEditMode, // Default border if not dragging and not editing
-          // No explicit border needed for !isDragActive && isEditMode, as editModeStyle handles it
+          // Dropzone active state border (only if not disabled)
+          "border-blue-500 border-dashed": isDragActive && !isDropDisabled,
+          "border-gray-300 dark:border-gray-600":
+            !isDragActive && !isEditMode && !isDropDisabled, // Default border
+          // Edit mode border takes precedence if dropzone is disabled
+          "border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400":
+            isEditMode && isDropDisabled,
         },
         {
           // Dropzone accept/reject background/border
@@ -190,13 +210,23 @@ const Pad: React.FC<PadProps> = ({
         />
       )}
 
-      {/* Dropzone overlay message */}
-      {isDragActive && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
+      {/* Dropzone overlay message (only show if drop is not disabled) */}
+      {isDragActive && !isDropDisabled && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20 rounded-md">
+          {" "}
+          {/* Added rounded-md */}
           <span className="text-white text-lg font-semibold">
-            {isDragAccept && "Drop audio here"}
+            {isDragAccept && "Drop to replace sound"}
             {isDragReject && "Invalid file type"}
             {!isDragAccept && !isDragReject && "Drop audio file"}
+          </span>
+        </div>
+      )}
+      {/* Message indicating drop is disabled */}
+      {isDragActive && isDropDisabled && (
+        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-20 rounded-md">
+          <span className="text-white text-center text-sm font-semibold px-2">
+            Cannot drop here. Edit pad to manage multiple sounds.
           </span>
         </div>
       )}
