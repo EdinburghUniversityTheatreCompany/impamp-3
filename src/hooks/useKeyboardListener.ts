@@ -13,7 +13,7 @@ import {
 } from "@/lib/audio";
 import { useSearchModal } from "@/components/SearchModalProvider";
 import { useUIStore } from "@/store/uiStore";
-import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils"; // Import the shared function
+import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
 
 // Interface for emergency sound configuration
@@ -63,13 +63,17 @@ async function loadEmergencySounds(
       );
 
       // Only include pads with audio files
-      const configuredPads = padConfigs.filter((pad) => pad.audioFileId);
+      const configuredPads = padConfigs.filter(
+        (pad) => pad.audioFileIds && pad.audioFileIds.length > 0,
+      );
 
+      // TODO: Support multiple audio files per pad for emergency sounds.
       const emergencySoundsForPage = configuredPads.map((pad) => ({
         profileId,
         pageIndex: page.pageIndex,
         padIndex: pad.padIndex,
-        audioFileId: pad.audioFileId as number,
+        // Use the first audio file ID for the emergency sound
+        audioFileId: pad.audioFileIds![0] as number,
         name: pad.name,
       }));
 
@@ -87,25 +91,36 @@ async function loadEmergencySounds(
 // Function to play an emergency sound
 async function playEmergencySound(sound: EmergencySound): Promise<void> {
   if (!sound || !sound.audioFileId) {
-    console.error("Invalid emergency sound configuration");
+    console.error(
+      "[KeyboardListener] Invalid emergency sound configuration:",
+      sound,
+    );
     return;
   }
 
-  // Create a PadConfiguration-like object from the emergency sound data
-  const padConfig: PadConfiguration = {
+  // Re-fetch the specific pad config to ensure we have the latest full data if needed,
+  // or construct a minimal one if triggerAudioForPad only needs IDs.
+  // For now, construct minimally, assuming triggerAudioForPad handles fetching if necessary.
+  const padConfig: Partial<PadConfiguration> &
+    Pick<PadConfiguration, "profileId" | "pageIndex" | "padIndex"> = {
     profileId: sound.profileId,
     pageIndex: sound.pageIndex,
     padIndex: sound.padIndex,
     name: sound.name,
-    audioFileId: sound.audioFileId,
-    // createdAt and updatedAt are not strictly needed for triggering
-    createdAt: new Date(), // Placeholder
-    updatedAt: new Date(), // Placeholder
+    audioFileIds: [sound.audioFileId],
   };
 
+  console.log(
+    `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioID: ${sound.audioFileId}`,
+  );
   // Call the centralized trigger function
-  // Note: We don't need error handling here as triggerAudioForPad handles its own errors
-  await triggerAudioForPad(padConfig, sound.profileId, sound.pageIndex);
+  // Note: We need to pass the full config if triggerAudioForPad requires it.
+  // Assuming it can work with the partial config for now.
+  await triggerAudioForPad(
+    padConfig as PadConfiguration, // Cast needed due to partial construction
+    sound.profileId,
+    sound.pageIndex,
+  );
 }
 
 export function useKeyboardListener() {
@@ -185,13 +200,10 @@ export function useKeyboardListener() {
           activeProfileId,
           currentPageIndex,
         );
-        const configMap = new Map<number, PadConfiguration>();
-        configs.forEach((config) => {
-          if (config.keyBinding) {
-            // Only store configs with keybindings relevant to the listener
-            configMap.set(config.padIndex, config);
-          }
-        });
+        // Store ALL configurations for the page, mapping padIndex to config
+        const configMap = new Map<number, PadConfiguration>(
+          configs.map((config) => [config.padIndex, config]),
+        );
         padConfigsRef.current = configMap;
         console.log(
           `Keyboard listener loaded ${configMap.size} configs with keybindings for page ${currentPageIndex}`,
@@ -248,10 +260,10 @@ export function useKeyboardListener() {
         return;
       }
 
-      const pressedKey = event.key; // e.g., "F1", "a", "1", "Enter"
+      // --- Specific Shortcut Handling ---
 
       // Handle Ctrl+F to open search modal
-      if (pressedKey === "f" && event.ctrlKey) {
+      if (event.key === "f" && event.ctrlKey) {
         event.preventDefault();
         openSearchModal();
         return;
@@ -264,12 +276,17 @@ export function useKeyboardListener() {
         openHelpModal(); // Use the centralized utility function
         return;
       }
+
+      // If search modal is open, only allow Escape (handled within modal component)
       if (isSearchModalOpen) {
+        console.log(
+          "[KeyboardListener] Ignoring key press while search modal is open.",
+        );
         return;
       }
 
       // Handle Enter key to play emergency sound
-      if (pressedKey === "Enter") {
+      if (event.key === "Enter") {
         event.preventDefault();
 
         // Resume AudioContext on first interaction
@@ -321,59 +338,62 @@ export function useKeyboardListener() {
             }
           }
         }
-
-        return;
+        return; // Stop further processing
       }
 
-      // Handle Shift key press to toggle edit mode
-      if (pressedKey === "Shift") {
+      // Handle Shift key press to toggle edit mode (Press)
+      if (event.key === "Shift") {
+        // Check if Shift is the *only* key being pressed (or with standard modifiers)
+        // This prevents triggering edit mode when typing Shift+A, etc.
+        // Note: This check might be overly simplistic depending on exact needs.
+        console.log(
+          "[KeyboardListener] Shift key pressed, entering edit mode.",
+        );
         setEditMode(true);
-        return;
+        return; // Don't process Shift for pad activation
       }
 
-      // Handle Escape key as "panic button" to stop all audio (only if search modal is closed)
-      if (pressedKey === "Escape" && !isSearchModalOpen) {
+      // Handle Escape key as "panic button" to stop all audio
+      if (event.key === "Escape") {
         event.preventDefault();
-        console.log("Escape key pressed - stopping all audio playback");
-        stopAllAudio();
+        console.log(
+          "[KeyboardListener] Escape key pressed - stopping all audio playback.",
+        );
+        stopAllAudio(); // Use the imported function
         return;
       }
 
-      // Handle Space key to fade out all audio (only if search modal is closed)
-      if (pressedKey === " " && !isSearchModalOpen) {
+      // Handle Space key to fade out all audio
+      if (event.key === " ") {
         event.preventDefault(); // Prevent default space action (e.g., scrolling)
-        console.log("Space key pressed - fading out all audio playback");
+        console.log(
+          "[KeyboardListener] Space key pressed - fading out all audio playback.",
+        );
         fadeOutAllAudio(); // Use the imported function
         return; // Don't process further for pad matching
       }
 
       // Bank switching with number keys 1-9 and 0
       const numbersRegex = /^[0-9]$/;
-      if (numbersRegex.test(pressedKey)) {
-        // If the Ctrl key is pressed, handle banks 11-20
+      if (numbersRegex.test(event.key)) {
         if (event.ctrlKey) {
+          // Ctrl+Number for banks 11-20
           event.preventDefault();
-          // Ctrl+1 maps to bank 11, Ctrl+2 to bank 12, etc. Ctrl+0 maps to bank 20
           const altBankNumber =
-            pressedKey === "0" ? 20 : 10 + parseInt(pressedKey, 10);
-
-          // Update the bank index in the store
-          setCurrentPageIndex(altBankNumber);
-
-          // Return early to prevent pad triggering with the same key
-          return;
-        } else {
-          event.preventDefault();
-          // Regular number keys 1-9 map to banks 1-9, 0 maps to bank 10
-          const bankNumber = parseInt(pressedKey, 10);
-
-          // Update the bank index in the store
+            event.key === "0" ? 20 : 10 + parseInt(event.key, 10);
           console.log(
-            `Number key ${pressedKey} pressed, switching to bank ${bankNumber === 0 ? 10 : bankNumber}`,
+            `[KeyboardListener] Ctrl+${event.key} detected, switching to bank ${altBankNumber}`,
+          );
+          setCurrentPageIndex(altBankNumber);
+          return;
+        } else if (!event.shiftKey && !event.altKey && !event.metaKey) {
+          // Just Number key for banks 1-10
+          event.preventDefault();
+          const bankNumber = event.key === "0" ? 10 : parseInt(event.key, 10);
+          console.log(
+            `[KeyboardListener] Number key ${event.key} detected, switching to bank ${bankNumber}`,
           );
           setCurrentPageIndex(bankNumber);
-
-          // Return early to prevent pad triggering with the same key
           return;
         }
       }
@@ -388,16 +408,16 @@ export function useKeyboardListener() {
         return;
       }
 
-      // First try to find a pad with a custom key binding that matches
       let matchedConfig: PadConfiguration | null = null;
       let matchedPadIndex: number = -1;
+      const pressedKeyLower = event.key.toLowerCase();
 
       // Check for custom key bindings first
+      // 1. Check for custom key bindings in the pre-loaded map
       for (const [padIndex, config] of padConfigsRef.current.entries()) {
-        // Case-insensitive comparison might be desirable depending on requirements
         if (
           config.keyBinding &&
-          config.keyBinding.toLowerCase() === pressedKey.toLowerCase()
+          config.keyBinding.toLowerCase() === pressedKeyLower
         ) {
           matchedConfig = config;
           matchedPadIndex = padIndex;
@@ -405,36 +425,57 @@ export function useKeyboardListener() {
         }
       }
 
-      // If no custom key binding found, check for default key bindings
+      // 2. If no custom binding, check for default key bindings
       if (!matchedConfig) {
-        // Get all pad configurations for the current page
-        const allPadConfigs = await getPadConfigurationsForProfilePage(
-          activeProfileId as number,
-          currentPageIndex,
+        console.log(
+          `[KeyboardListener] No custom binding found. Checking default bindings for key: ${event.key}`,
         );
+        const defaultPadIndex = getPadIndexForKey(event.key); // Handles ' ', 'Escape' etc.
 
-        // Find pad index that would have this default key
-        for (let i = 0; i < allPadConfigs.length; i++) {
-          const config = allPadConfigs[i];
-          const defaultKey = getDefaultKeyForPadIndex(config.padIndex);
-
-          if (
-            defaultKey &&
-            defaultKey.toLowerCase() === pressedKey.toLowerCase()
-          ) {
-            matchedConfig = config;
-            matchedPadIndex = config.padIndex;
-            break;
+        if (defaultPadIndex !== undefined) {
+          console.log(
+            `[KeyboardListener] Key ${event.key} maps to default pad index: ${defaultPadIndex}`,
+          );
+          const config = padConfigsRef.current.get(defaultPadIndex);
+          if (config) {
+            if (!config.keyBinding) {
+              // Ensure it doesn't have a custom binding
+              matchedConfig = config;
+              matchedPadIndex = defaultPadIndex;
+              console.log(
+                `[KeyboardListener] Default binding found: Pad ${defaultPadIndex} for key ${event.key}`,
+              );
+            } else {
+              console.log(
+                `[KeyboardListener] Default index ${defaultPadIndex} has custom binding "${config.keyBinding}", ignoring default activation for key ${event.key}.`,
+              );
+            }
+          } else {
+            console.log(
+              `[KeyboardListener] No configuration found for default pad index: ${defaultPadIndex}`,
+            );
           }
+        } else {
+          console.log(
+            `[KeyboardListener] No default mapping found for key: ${event.key}`,
+          );
         }
       }
 
-      if (matchedConfig && matchedConfig.audioFileId) {
-        event.preventDefault(); // Prevent default browser action for the key (e.g., F1 help)
+      // 3. Trigger audio if a match was found and it has audio file(s)
+      if (
+        matchedConfig &&
+        matchedConfig.audioFileIds &&
+        matchedConfig.audioFileIds.length > 0
+      ) {
+        console.log(
+          `[KeyboardListener] Match found: Pad ${matchedPadIndex}, Name: ${matchedConfig.name || "Unnamed"}, Audio IDs: ${matchedConfig.audioFileIds.join(", ")}`,
+        );
+        event.preventDefault(); // Prevent default browser action
 
         // Set debounce flag
-        keyDebounceMap.set(pressedKey, true);
-        setTimeout(() => keyDebounceMap.delete(pressedKey), DEBOUNCE_TIME_MS);
+        keyDebounceMap.set(event.key, true);
+        setTimeout(() => keyDebounceMap.delete(event.key), DEBOUNCE_TIME_MS);
 
         // Resume AudioContext on first interaction via keyboard
         if (!hasInteracted.current) {

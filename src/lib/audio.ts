@@ -1,4 +1,4 @@
-import { getAudioFile, PadConfiguration, PlaybackType } from "./db"; // Added PlaybackType
+import { getAudioFile, PadConfiguration, PlaybackType } from "./db";
 import { playbackStoreActions } from "@/store/playbackStore";
 import type { PlaybackState } from "@/store/playbackStore";
 import { useProfileStore } from "@/store/profileStore";
@@ -495,43 +495,13 @@ function _playBuffer(
   }
 }
 
-// Check if a track is currently fading out by checking the activeTracks map
-export function isTrackFading(playbackKey: string): boolean {
-  return activeTracks.get(playbackKey)?.isFading === true;
-}
+// --- Internal Fade Logic ---
 
-// Stop audio playback associated with a specific key
-export function stopAudio(playbackKey: string): void {
-  const track = activeTracks.get(playbackKey);
-  if (track) {
-    try {
-      track.source.stop(0);
-    } catch (error) {
-      // Ignore errors if the source was already stopped or in an invalid state
-      if ((error as DOMException).name !== "InvalidStateError") {
-        console.error(
-          `Error stopping audio source for key ${playbackKey}:`,
-          error,
-        );
-      }
-    } finally {
-      // Always clean up state regardless of stop() success/failure
-      activeTracks.delete(playbackKey);
-      playbackStoreActions.removeTrack(playbackKey);
-
-      stopPlaybackLoop(); // Check if loop should stop
-      console.log(
-        `[Audio] Playback stopped for key: ${playbackKey} (State preserved)`,
-      );
-    }
-  }
-}
-
-// Fade out audio over a specified duration
-export function fadeOutAudio(
-  playbackKey: string,
-  durationInSeconds: number = 3,
-): void {
+/**
+ * Internal helper to initiate a fade-out for a track.
+ * Handles gain node creation, ramp, state updates, and cleanup scheduling.
+ */
+function _initiateFade(playbackKey: string, durationInSeconds: number): void {
   const track = activeTracks.get(playbackKey);
   // If track doesn't exist or is already fading, do nothing
   if (!track || track.isFading) return;
@@ -540,12 +510,13 @@ export function fadeOutAudio(
     const context = getAudioContext();
     const source = track.source;
 
-    // Disconnect the source from its current destination
+    // Disconnect the source from its current destination to insert the gain node
     source.disconnect();
 
-    // Create a gain node
+    // Create a gain node for the fade
     const gainNode = context.createGain();
-    // Start at current volume (1)
+    // Assume current volume is 1 (or get current gain if more complex volume handling exists)
+    // Note: If volume control is implemented elsewhere, this might need adjustment
     gainNode.gain.setValueAtTime(1, context.currentTime);
     // Fade to 0 over the specified duration
     gainNode.gain.linearRampToValueAtTime(
@@ -557,35 +528,103 @@ export function fadeOutAudio(
     source.connect(gainNode);
     gainNode.connect(context.destination);
 
-    // Mark track as fading directly in the activeTracks map
+    // Mark track as fading
     track.isFading = true;
     playbackStoreActions.setTrackFading(playbackKey, true); // Update store
 
     console.log(
-      `[Audio] Starting fadeout for key: ${playbackKey} over ${durationInSeconds} seconds`,
+      `[Audio] Starting ${durationInSeconds}s fade for key: ${playbackKey}`,
     );
 
-    // Remove the track from activeTracks and store after the fade completes
+    // Clean up after the fade completes
     setTimeout(() => {
-      // Only try to stop if it's still active
-      if (activeTracks.has(playbackKey)) {
+      // Only clean up if the track is still the one we started fading
+      // (Handles potential race conditions if stop/play happens rapidly)
+      const currentTrack = activeTracks.get(playbackKey);
+      if (currentTrack === track) {
         try {
+          // Stop the source node after the fade
           source.stop(0);
-        } catch {
-          // Ignore errors if already stopped
+        } catch (error) {
+          // Ignore errors if already stopped (e.g., due to natural end)
+          if ((error as DOMException).name !== "InvalidStateError") {
+            console.warn(
+              `[Audio] Error stopping source during fade cleanup for key ${playbackKey}:`,
+              error,
+            );
+          }
+        } finally {
+          // Always remove state after fade attempt
+          activeTracks.delete(playbackKey);
+          playbackStoreActions.removeTrack(playbackKey); // Remove from store
+          stopPlaybackLoop(); // Check if loop should stop
+          console.log(`[Audio] Fade completed for key: ${playbackKey}`);
         }
-        activeTracks.delete(playbackKey);
-        playbackStoreActions.removeTrack(playbackKey); // Remove from store
-        stopPlaybackLoop(); // Check if loop should stop
-        // No need to clear from fadingTracks anymore
-        console.log(`[Audio] Fadeout completed for key: ${playbackKey}`);
+      } else {
+        console.log(
+          `[Audio] Fade cleanup skipped for key ${playbackKey} as track changed or was removed.`,
+        );
       }
     }, durationInSeconds * 1000);
   } catch (error) {
-    console.error(`Error fading out audio for key ${playbackKey}:`, error);
-    // Fallback to immediate stop if fadeout fails
-    stopAudio(playbackKey);
+    console.error(
+      `Error initiating ${durationInSeconds}s fade for key ${playbackKey}:`,
+      error,
+    );
+    // Fallback: If fade setup fails, attempt immediate stop and cleanup
+    // This ensures the track is eventually removed even if fading fails.
+    if (track) {
+      // Re-check track existence inside catch
+      console.warn(
+        `[Audio] Fade initiation failed for key ${playbackKey}. Attempting fallback immediate stop.`,
+      );
+      try {
+        // Ensure source is stopped if possible
+        track.source.stop(0);
+      } catch (stopError) {
+        if ((stopError as DOMException).name !== "InvalidStateError") {
+          console.error(
+            `[Audio] Error during fallback stop for key ${playbackKey}:`,
+            stopError,
+          );
+        }
+      } finally {
+        // Ensure cleanup happens
+        activeTracks.delete(playbackKey);
+        playbackStoreActions.removeTrack(playbackKey);
+        stopPlaybackLoop();
+        console.log(
+          `[Audio] Fallback immediate stop/cleanup executed for key: ${playbackKey}`,
+        );
+      }
+    }
   }
+}
+
+// --- Public Audio Control Functions ---
+
+// Check if a track is currently fading out by checking the activeTracks map
+export function isTrackFading(playbackKey: string): boolean {
+  return activeTracks.get(playbackKey)?.isFading === true;
+}
+
+// Stop audio playback associated with a specific key, applying a short fade-out
+export function stopAudio(playbackKey: string): void {
+  console.log(
+    `[Audio] Requesting stop (with short fade) for key: ${playbackKey}`,
+  );
+  _initiateFade(playbackKey, 0.1);
+}
+
+// Fade out audio over a specified duration
+export function fadeOutAudio(
+  playbackKey: string,
+  durationInSeconds: number = 3,
+): void {
+  console.log(
+    `[Audio] Requesting fade out over ${durationInSeconds}s for key: ${playbackKey}`,
+  );
+  _initiateFade(playbackKey, durationInSeconds);
 }
 
 // Function to resume AudioContext on user interaction (call this from a UI event handler)
