@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import PadGrid from "@/components/PadGrid";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import SearchButton from "@/components/SearchButton";
+import HelpButton from "@/components/HelpButton";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
 import EditBankModalContent from "@/components/modals/EditBankModalContent";
@@ -194,10 +195,13 @@ export default function Home() {
             ImpAmp3 Soundboard
           </h1>
 
-          {/* Profile Selector and Search Icon */}
+          {/* Profile Selector, Help and Search Icons */}
           <div className="flex items-center space-x-4">
             {/* Search Icon */}
             <SearchButton />
+
+            {/* Help Icon */}
+            <HelpButton />
 
             {/* Using the memoized ProfileSelector render function */}
             {renderProfileSelector()}
@@ -219,7 +223,7 @@ export default function Home() {
               <span className="text-sm ml-4 text-gray-500">
                 {isEditMode
                   ? "Shift+click to rename banks and pads."
-                  : "Press 1-9, 0 to switch banks 1-9, 10. Press Ctrl+1 through Ctrl+0 for banks 11-20. Hold SHIFT for edit mode. "}
+                  : "Press 1-9, 0 to switch banks 1-9, 10. Press Ctrl+1 through Ctrl+0 for banks 11-20. Hold SHIFT for edit mode. Press Shift+? for help."}
               </span>
             </div>
           </div>

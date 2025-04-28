@@ -14,6 +14,7 @@ import {
 import { useSearchModal } from "@/components/SearchModalProvider";
 import { useUIStore } from "@/store/uiStore";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils"; // Import the shared function
+import { openHelpModal } from "@/lib/uiUtils";
 
 // Interface for emergency sound configuration
 interface EmergencySound {
@@ -256,7 +257,13 @@ export function useKeyboardListener() {
         return;
       }
 
-      // If search modal is open, don't process other keyboard shortcuts except Escape (handled in modal)
+      // Handle Shift+? to open help modal
+      if (event.key === "?" && event.shiftKey) {
+        event.preventDefault();
+        console.log("[KeyboardListener] Shift+? detected, opening help modal.");
+        openHelpModal(); // Use the centralized utility function
+        return;
+      }
       if (isSearchModalOpen) {
         return;
       }
