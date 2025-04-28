@@ -149,7 +149,8 @@ export function useKeyboardListener() {
   // We need access to the current pad configurations for the active page
   // Fetching them here might be inefficient if PadGrid already has them.
   // Consider passing configs down or using a shared state/context.
-  // For now, fetch directly within the hook for simplicity.
+  // For now, fetch directly within the hook.
+  // This map will store ALL configurations for the current page, keyed by padIndex.
   const padConfigsRef = useRef<Map<number, PadConfiguration>>(new Map());
 
   // Reference to track if we've loaded emergency sounds
@@ -206,11 +207,11 @@ export function useKeyboardListener() {
         );
         padConfigsRef.current = configMap;
         console.log(
-          `Keyboard listener loaded ${configMap.size} configs with keybindings for page ${currentPageIndex}`,
+          `[KeyboardListener] Loaded ${configMap.size} pad configurations for profile ${activeProfileId}, page ${currentPageIndex}`,
         );
       } catch (error) {
         console.error(
-          "Keyboard listener failed to load pad configurations:",
+          `[KeyboardListener] Failed to load pad configurations for profile ${activeProfileId}, page ${currentPageIndex}:`,
           error,
         );
       }
@@ -220,27 +221,30 @@ export function useKeyboardListener() {
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
+      console.log(
+        `[KeyboardListener] KeyDown: ${event.key}, Ctrl: ${event.ctrlKey}, Shift: ${event.shiftKey}, Meta: ${event.metaKey}`,
+      ); // Base log for any key press
+
       // --- Ctrl+S to Confirm/Close Modal ---
       // IMPORTANT: This must come BEFORE the input/textarea check
-      // so it works even when the prompt input is focused.
       if (event.key === "s" && event.ctrlKey) {
         if (isModalOpen) {
           event.preventDefault();
           console.log(
-            "Ctrl+S detected: Modal open. Attempting confirm and close.",
+            "[KeyboardListener] Ctrl+S detected: Modal open. Attempting confirm and close.",
           );
           try {
-            // Await the confirm action if it's async
-            await modalConfig?.onConfirm?.();
+            await modalConfig?.onConfirm?.(); // Await the confirm action
           } catch (error) {
-            console.error("Error during modal confirm on Ctrl+S:", error);
+            console.error(
+              "[KeyboardListener] Error during modal confirm on Ctrl+S:",
+              error,
+            );
           } finally {
-            // Always close the modal afterwards
-            closeModal();
+            closeModal(); // Always close
           }
           return; // Stop further processing
         }
-        // If modal is not open, allow default browser save or other handlers
       }
 
       // Prevent default browser tabbing behavior
@@ -257,6 +261,7 @@ export function useKeyboardListener() {
         targetElement.tagName === "TEXTAREA" ||
         targetElement.isContentEditable
       ) {
+        console.log("[KeyboardListener] Ignoring key press in input/textarea.");
         return;
       }
 
@@ -265,6 +270,9 @@ export function useKeyboardListener() {
       // Handle Ctrl+F to open search modal
       if (event.key === "f" && event.ctrlKey) {
         event.preventDefault();
+        console.log(
+          "[KeyboardListener] Ctrl+F detected, opening search modal.",
+        );
         openSearchModal();
         return;
       }
@@ -288,34 +296,29 @@ export function useKeyboardListener() {
       // Handle Enter key to play emergency sound
       if (event.key === "Enter") {
         event.preventDefault();
+        console.log("[KeyboardListener] Enter key detected.");
 
         // Resume AudioContext on first interaction
         if (!hasInteracted.current) {
+          console.log(
+            "[KeyboardListener] Resuming AudioContext due to Enter key.",
+          );
           resumeAudioContext();
           hasInteracted.current = true;
         }
 
-        // Check if we have any emergency sounds loaded
         if (emergencySoundsRef.current.length > 0) {
-          // Get the current emergency sound (round-robin)
           const index = currentEmergencyIndexRef.current;
           const sound = emergencySoundsRef.current[index];
-
-          // Update index for next time (round-robin)
           currentEmergencyIndexRef.current =
-            (index + 1) % emergencySoundsRef.current.length;
-
-          // Play the sound
+            (index + 1) % emergencySoundsRef.current.length; // Update index
           console.log(
-            `Enter key pressed - playing emergency sound ${index + 1}/${emergencySoundsRef.current.length}`,
+            `[KeyboardListener] Playing emergency sound ${index + 1}/${emergencySoundsRef.current.length}: Pad ${sound.padIndex}`,
           );
-          console.log(
-            `Emergency sound details: ${sound.name || "Unnamed"} from page ${sound.pageIndex}, pad ${sound.padIndex}`,
-          );
-          await playEmergencySound(sound);
+          await playEmergencySound(sound); // Await playback
         } else {
           console.warn(
-            "Enter key pressed but no emergency sounds are configured",
+            "[KeyboardListener] Enter pressed but no emergency sounds loaded.",
           );
 
           // If we haven't loaded emergency sounds yet, try loading them now
@@ -398,13 +401,22 @@ export function useKeyboardListener() {
         }
       }
 
-      // Ignore if Ctrl or Meta keys are pressed (but still allow Ctrl for bank switching)
-      if (event.metaKey || event.ctrlKey) {
+      // --- Start of Pad Activation Logic ---
+
+      // Ignore if modifier keys are pressed (allow Shift for default keys, but handled above for edit mode)
+      // Ctrl/Meta/Alt should prevent pad activation here.
+      if (event.metaKey || event.altKey || event.ctrlKey) {
+        console.log(
+          "[KeyboardListener] Ignoring key press for pad activation due to modifier key.",
+        );
         return;
       }
 
-      // Check debounce
-      if (keyDebounceMap.has(pressedKey)) {
+      // Check debounce (moved after specific shortcuts)
+      if (keyDebounceMap.has(event.key)) {
+        console.log(
+          `[KeyboardListener] Debouncing key for pad activation: ${event.key}`,
+        );
         return;
       }
 
@@ -412,7 +424,9 @@ export function useKeyboardListener() {
       let matchedPadIndex: number = -1;
       const pressedKeyLower = event.key.toLowerCase();
 
-      // Check for custom key bindings first
+      console.log(
+        `[KeyboardListener] Checking custom bindings for key: ${event.key}`,
+      );
       // 1. Check for custom key bindings in the pre-loaded map
       for (const [padIndex, config] of padConfigsRef.current.entries()) {
         if (
@@ -421,6 +435,9 @@ export function useKeyboardListener() {
         ) {
           matchedConfig = config;
           matchedPadIndex = padIndex;
+          console.log(
+            `[KeyboardListener] Custom binding found: Pad ${padIndex} for key ${event.key}`,
+          );
           break;
         }
       }
@@ -477,23 +494,30 @@ export function useKeyboardListener() {
         keyDebounceMap.set(event.key, true);
         setTimeout(() => keyDebounceMap.delete(event.key), DEBOUNCE_TIME_MS);
 
-        // Resume AudioContext on first interaction via keyboard
+        // Resume AudioContext on first interaction (if not already done)
         if (!hasInteracted.current) {
+          console.log(
+            "[KeyboardListener] Resuming AudioContext due to pad activation key.",
+          );
           resumeAudioContext();
           hasInteracted.current = true;
         }
 
-        const audioFileId = matchedConfig.audioFileId;
-
         console.log(
-          `Key "${pressedKey}" matched pad index ${matchedPadIndex}, audio ID ${audioFileId}`,
+          `[KeyboardListener] Calling triggerAudioForPad for pad index ${matchedPadIndex}`,
         );
-
         triggerAudioForPad(
           matchedConfig,
           activeProfileId as number,
           currentPageIndex,
         );
+      } else if (matchedConfig) {
+        console.log(
+          `[KeyboardListener] Matched pad ${matchedPadIndex} for key ${event.key}, but it has no audio files.`,
+        );
+      } else {
+        // This log might be redundant given previous logs, but can be useful
+        // console.log(`[KeyboardListener] No matching pad with audio found for key: ${event.key}`);
       }
     },
     [
@@ -504,12 +528,11 @@ export function useKeyboardListener() {
       reloadEmergencySounds,
       openSearchModal,
       isSearchModalOpen,
-      // Add modal state and actions as dependencies
       isModalOpen,
       modalConfig,
       closeModal,
     ],
-  ); // Dependencies for the callback
+  );
 
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback(
@@ -522,17 +545,17 @@ export function useKeyboardListener() {
   );
 
   useEffect(() => {
+    console.log("[KeyboardListener] Adding event listeners.");
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
-    console.log("Keyboard listeners added.");
 
     // Cleanup listeners on unmount
     return () => {
+      console.log("[KeyboardListener] Removing event listeners.");
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       // Ensure edit mode is turned off when component unmounts
       setEditMode(false);
-      console.log("Keyboard listeners removed.");
     };
-  }, [handleKeyDown, handleKeyUp, setEditMode]); // Re-attach listeners if callbacks change
+  }, [handleKeyDown, handleKeyUp, setEditMode]); // Re-attach listeners if callbacks or setEditMode change
 }
