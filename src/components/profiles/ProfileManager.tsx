@@ -12,9 +12,10 @@ export default function ProfileManager() {
     isProfileManagerOpen,
     closeProfileManager,
     createProfile,
-    exportProfileToJSON,
+    exportMultipleProfilesToJSON,
     importProfileFromJSON,
     importProfileFromImpamp2JSON,
+    importMultipleProfilesFromJSON,
   } = useProfileStore();
 
   const [newProfileName, setNewProfileName] = useState("");
@@ -24,13 +25,29 @@ export default function ProfileManager() {
   const [activeTab, setActiveTab] = useState<"profiles" | "import-export">(
     "profiles",
   );
-  const [exportProfileId, setExportProfileId] = useState<number | null>(null);
+
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(
+    new Set(),
+  ); // New state for export tab selection
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Handler for export selection changes in the Import/Export tab
+  const handleExportSelectChange = (profileId: number, isSelected: boolean) => {
+    setExportSelectionIds((prevSelected) => {
+      const newSelected = new Set(prevSelected);
+      if (isSelected) {
+        newSelected.add(profileId);
+      } else {
+        newSelected.delete(profileId);
+      }
+      return newSelected;
+    });
+  };
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,82 +227,107 @@ export default function ProfileManager() {
 
           {activeTab === "import-export" && (
             <div>
-              {/* Export Section */}
+              {/* Export Section - Revised for Multi-Select */}
               <section className="mb-8">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
-                  Export Profile
+                  Export Profiles
                 </h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                  Export your profiles and their configurations to a file that
-                  you can use for backup or transfer.
+                  Select one or more profiles below to export their
+                  configurations to a single file.
                 </p>
 
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <div className="mb-4">
-                    <label
-                      htmlFor="exportProfile"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    >
-                      Select Profile to Export
-                    </label>
-                    <select
-                      id="exportProfile"
-                      value={exportProfileId || ""}
-                      onChange={(e) =>
-                        setExportProfileId(
-                          e.target.value ? Number(e.target.value) : null,
-                        )
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
-                    >
-                      <option value="">Select a profile</option>
+                {/* New Multi-Select List */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto mb-4">
+                  <h4 className="text-md font-medium text-gray-800 dark:text-gray-200 mb-3">
+                    Select Profiles to Export:
+                  </h4>
+                  {profiles.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                      No profiles available to export.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
                       {profiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name}{" "}
-                          {profile.id === activeProfileId ? "(Active)" : ""}
-                        </option>
+                        <div key={profile.id} className="flex items-center">
+                          <input
+                            id={`export-profile-${profile.id}`}
+                            type="checkbox"
+                            checked={exportSelectionIds.has(profile.id!)}
+                            onChange={(e) =>
+                              handleExportSelectChange(
+                                profile.id!,
+                                e.target.checked,
+                              )
+                            }
+                            className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <label
+                            htmlFor={`export-profile-${profile.id}`}
+                            className="ml-2 block text-sm text-gray-900 dark:text-gray-300"
+                          >
+                            {profile.name}{" "}
+                            {profile.id === activeProfileId ? "(Active)" : ""}
+                          </label>
+                        </div>
                       ))}
-                    </select>
-                  </div>
-
-                  <button
-                    onClick={async () => {
-                      if (!exportProfileId) {
-                        alert("Please select a profile to export");
-                        return;
-                      }
-
-                      try {
-                        setIsExporting(true);
-                        await exportProfileToJSON(exportProfileId);
-                        setIsExporting(false);
-                      } catch (error) {
-                        console.error("Failed to export profile:", error);
-                        setIsExporting(false);
-                        alert("Failed to export profile. Please try again.");
-                      }
-                    }}
-                    disabled={isExporting || !exportProfileId}
-                    className={`px-4 py-2 ${
-                      exportProfileId
-                        ? "bg-blue-500 text-white hover:bg-blue-600"
-                        : "bg-gray-200 text-gray-500"
-                    } rounded-md transition-colors ${
-                      isExporting || !exportProfileId
-                        ? "cursor-not-allowed"
-                        : ""
-                    }`}
-                  >
-                    {isExporting ? "Exporting..." : "Export Profile"}
-                  </button>
-                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                    Exported files will include all bank configurations and
-                    sounds.
-                  </p>
+                    </div>
+                  )}
                 </div>
+
+                {/* Updated Export Selected Button */}
+                <button
+                  onClick={async () => {
+                    if (exportSelectionIds.size === 0) {
+                      // Use new state
+                      alert("Please select at least one profile to export.");
+                      return;
+                    }
+                    // Check if the function exists before calling
+                    if (!exportMultipleProfilesToJSON) {
+                      console.error(
+                        "exportMultipleProfilesToJSON function is not available in the profile store.",
+                      );
+                      alert("Multi-export functionality is not available.");
+                      return;
+                    }
+                    try {
+                      setIsExporting(true);
+                      // Call the multi-export function from the store using new state
+                      await exportMultipleProfilesToJSON(
+                        Array.from(exportSelectionIds),
+                      );
+                      setIsExporting(false);
+                      setExportSelectionIds(new Set()); // Clear selection after export
+                    } catch (error) {
+                      console.error(
+                        "Failed to export selected profiles:",
+                        error,
+                      );
+                      setIsExporting(false);
+                      alert(
+                        "Failed to export selected profiles. Please try again.",
+                      );
+                    }
+                  }}
+                  disabled={isExporting || exportSelectionIds.size === 0} // Use new state
+                  className={`px-4 py-2 ${
+                    exportSelectionIds.size > 0 // Use new state
+                      ? "bg-green-500 text-white hover:bg-green-600"
+                      : "bg-gray-200 text-gray-500"
+                  } rounded-md transition-colors ${
+                    isExporting || exportSelectionIds.size === 0 // Use new state
+                      ? "cursor-not-allowed"
+                      : ""
+                  }`}
+                >
+                  {isExporting
+                    ? "Exporting..."
+                    : `Export Selected (${exportSelectionIds.size})`}
+                </button>
               </section>
 
-              {/* Import Section */}
+              {/* Import Section (Remains the same) */}
               <section className="mb-8">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                   Import Profile
@@ -323,25 +365,63 @@ export default function ProfileManager() {
                           }
 
                           try {
-                            // --- Try importing as impamp2 format first ---
-                            console.log(
-                              "Attempting import as impamp2 format...",
-                            );
-                            const impamp2ProfileId =
-                              await importProfileFromImpamp2JSON(content);
-                            setImportSuccess(
-                              `Impamp2 profile imported successfully! (New ID: ${impamp2ProfileId})`,
-                            );
-                            setIsImporting(false);
-                          } catch (impamp2Error) {
-                            console.warn(
-                              "Import as impamp2 format failed:",
-                              impamp2Error,
-                            );
-                            // --- If impamp2 fails, try importing as current format ---
-                            try {
+                            const parsedData = JSON.parse(content);
+
+                            // --- Check for Multi-Profile Format (Version 1) ---
+                            if (
+                              parsedData &&
+                              parsedData.exportVersion === 1 &&
+                              Array.isArray(parsedData.profiles)
+                            ) {
                               console.log(
-                                "Attempting import as current format...",
+                                "Attempting import as multi-profile format (v1)...",
+                              );
+                              // Check if the function exists before calling (Uncommented)
+                              if (!importMultipleProfilesFromJSON) {
+                                console.error(
+                                  "importMultipleProfilesFromJSON function is not available in the profile store.",
+                                );
+                                throw new Error(
+                                  "Multi-import functionality is not available.",
+                                );
+                              }
+                              // Use store function
+                              const results =
+                                await importMultipleProfilesFromJSON(content);
+                              // Add explicit types for filter/map parameters
+                              const successes = results.filter(
+                                (r: { result: number | Error }) =>
+                                  typeof r.result === "number",
+                              ).length;
+                              const failures = results.length - successes;
+                              let message = `Multi-profile import complete: ${successes} succeeded`;
+                              if (failures > 0) {
+                                message += `, ${failures} failed.`;
+                                const failedNames = results
+                                  .filter(
+                                    (r: { result: number | Error }) =>
+                                      r.result instanceof Error,
+                                  )
+                                  .map(
+                                    (r: { profileName: string }) =>
+                                      r.profileName,
+                                  ) // Add type here too
+                                  .join(", ");
+                                message += ` Failed profiles: ${failedNames}`;
+                                setImportError(message); // Show summary as error if any failed
+                              } else {
+                                setImportSuccess(message); // Show as success only if all succeeded
+                              }
+                              setIsImporting(false);
+
+                              // --- Check for Single Profile Format (Version 2) ---
+                            } else if (
+                              parsedData &&
+                              parsedData.exportVersion === 2 &&
+                              parsedData.profile
+                            ) {
+                              console.log(
+                                "Attempting import as current single profile format (v2)...",
                               );
                               const currentProfileId =
                                 await importProfileFromJSON(content);
@@ -349,52 +429,53 @@ export default function ProfileManager() {
                                 `Profile imported successfully! (New ID: ${currentProfileId})`,
                               );
                               setIsImporting(false);
-                            } catch (currentError) {
-                              console.error(
-                                "Import as current format also failed:",
-                                currentError,
+
+                              // --- Check for Legacy Impamp2 Format (heuristic check) ---
+                            } else if (
+                              parsedData &&
+                              parsedData.pages &&
+                              typeof parsedData.pages === "object" &&
+                              !parsedData.exportVersion
+                            ) {
+                              // Heuristic: has 'pages' object, no 'exportVersion'
+                              console.log(
+                                "Attempting import as impamp2 format...",
                               );
-                              // Determine the most likely error to show
-                              let finalErrorMessage =
-                                "Failed to import profile: ";
-                              if (
-                                impamp2Error instanceof Error &&
-                                currentError instanceof Error
-                              ) {
-                                if (
-                                  impamp2Error.message.includes(
-                                    "Invalid impamp2 JSON format",
-                                  )
-                                ) {
-                                  finalErrorMessage +=
-                                    "File is not a valid impamp2 export. ";
-                                }
-                                if (
-                                  currentError.message.includes(
-                                    "Invalid profile export format",
-                                  )
-                                ) {
-                                  finalErrorMessage +=
-                                    "File is not a valid current profile export.";
-                                } else if (
-                                  currentError.message.includes(
-                                    "Invalid JSON format",
-                                  )
-                                ) {
-                                  finalErrorMessage +=
-                                    "File contains invalid JSON.";
-                                } else {
-                                  // Generic fallback if specific errors aren't matched
-                                  finalErrorMessage +=
-                                    "Unsupported format or invalid file content.";
-                                }
-                              } else {
-                                finalErrorMessage +=
-                                  "Unsupported format or invalid file content.";
-                              }
-                              setImportError(finalErrorMessage);
+                              const impamp2ProfileId =
+                                await importProfileFromImpamp2JSON(content);
+                              setImportSuccess(
+                                `Impamp2 profile imported successfully! (New ID: ${impamp2ProfileId})`,
+                              );
+                              setIsImporting(false);
+                            } else {
+                              // --- Unrecognized format ---
+                              console.error(
+                                "Unrecognized file format.",
+                                parsedData,
+                              );
+                              setImportError(
+                                "Failed to import: Unrecognized or invalid file format.",
+                              );
                               setIsImporting(false);
                             }
+                          } catch (error) {
+                            console.error(
+                              "Error during import processing:",
+                              error,
+                            );
+                            let finalErrorMessage =
+                              "Failed to import profile: ";
+                            if (error instanceof SyntaxError) {
+                              finalErrorMessage +=
+                                "Invalid JSON format in file.";
+                            } else if (error instanceof Error) {
+                              finalErrorMessage += error.message; // Use the specific error message
+                            } else {
+                              finalErrorMessage +=
+                                "An unknown error occurred during import.";
+                            }
+                            setImportError(finalErrorMessage);
+                            setIsImporting(false);
                           } finally {
                             // Reset the file input regardless of success or failure
                             if (fileInputRef.current) {

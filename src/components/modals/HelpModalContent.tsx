@@ -140,16 +140,15 @@ const HelpModalContent: React.FC = () => {
                 Select &quot;Manage Profiles&quot; to open the Profile Manager
               </li>
               <li>Switch to the &quot;Import/Export&quot; tab</li>
-              <li>Select the profile you want to export from the dropdown</li>
               <li>
-                Click &quot;Export Profile&quot; to download a JSON file
-                containing your profile data
+                In the &quot;Export Profiles&quot; section, check the boxes next
+                to the profiles you want to export.
+              </li>
+              <li>
+                Click the &quot;Export Selected (...)&quot; button to download a
+                single JSON file containing all selected profiles.
               </li>
             </ol>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Note: Exporting a profile also updates its &quot;last backed
-              up&quot; timestamp, which resets the backup reminder.
-            </p>
           </div>
 
           <div className="space-y-2 mt-4">
@@ -166,13 +165,13 @@ const HelpModalContent: React.FC = () => {
                 exported JSON file
               </li>
               <li>
-                The system will create a new profile with all the imported
-                sounds and configurations
+                The system will create new profiles with all the imported sounds
+                and configurations (handling name conflicts automatically).
               </li>
             </ol>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Note: ImpAmp3 supports importing both ImpAmp3 and ImpAmp2 format
-              files.
+              Note: ImpAmp3 supports importing multi-profile files,
+              single-profile files (V2 format), and legacy ImpAmp2 format files.
             </p>
           </div>
 

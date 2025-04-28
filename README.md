@@ -153,9 +153,10 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Edit or delete existing profiles
    - Configure backup reminder frequency per profile by setting the number of days, or disable reminders entirely.
    - Each profile has its own set of sounds and bank configurations
-6. **Importing/Exporting Profiles**: 
-   - Export profiles to JSON files for backup or transfer to other devices. Exporting a profile also updates its "last backed up" timestamp.
-   - Import profiles from previously exported JSON files
+6. **Importing/Exporting Profiles**:
+   - Open the Profile Manager and go to the "Import / Export" tab.
+   - **Export:** Select one or more profiles from the list using the checkboxes, then click "Export Selected". A single JSON file containing all selected profiles will be downloaded. Exporting profiles updates their "last backed up" timestamp.
+   - **Import:** Click "Select File to Import" and choose a previously exported JSON file (supports single, multi-profile, and legacy ImpAmp2 formats).
    - Google Drive integration for syncing across devices will be added in a future update
 
 ## Project Structure

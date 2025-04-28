@@ -74,6 +74,13 @@ export interface ProfileExport {
   }[];
 }
 
+// --- Multi-Profile Export/Import ---
+export interface MultiProfileExport {
+  exportVersion: number; // e.g., 1 for this multi-export format
+  exportDate: string;
+  profiles: ProfileExport[]; // An array of individual profile exports
+}
+
 // Helper function to convert Blob to Base64 string
 export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -197,6 +204,53 @@ export async function exportProfile(profileId: number): Promise<ProfileExport> {
     console.error("Failed to export profile:", error);
     throw error;
   }
+}
+
+/**
+ * Exports multiple profiles into a single structure.
+ * @param profileIds An array of profile IDs to export.
+ * @returns A Promise resolving to the MultiProfileExport object.
+ */
+export async function exportMultipleProfiles(
+  profileIds: number[],
+): Promise<MultiProfileExport> {
+  console.log(`Starting export for ${profileIds.length} profiles...`);
+  const profileExports: ProfileExport[] = [];
+  const errors: { profileId: number; error: Error }[] = []; // Use Error type instead of any
+
+  for (const profileId of profileIds) {
+    try {
+      console.log(`Exporting profile ID: ${profileId}`);
+      const singleExport = await exportProfile(profileId); // Reuse existing function
+      profileExports.push(singleExport);
+      console.log(`Successfully exported profile ID: ${profileId}`);
+    } catch (error) {
+      console.error(`Failed to export profile ID ${profileId}:`, error);
+      // Ensure the caught object is an Error before pushing
+      errors.push({
+        profileId,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      // Continue exporting other profiles even if one fails
+    }
+  }
+
+  if (errors.length > 0) {
+    // Log a warning if some profiles failed to export
+    console.warn(
+      `Export completed with ${errors.length} errors for profile IDs: ${errors.map((e) => e.profileId).join(", ")}`,
+    );
+    // Depending on requirements, we might want to throw here or return partial data with error info
+  }
+
+  const multiExportData: MultiProfileExport = {
+    exportVersion: 1, // Version for the multi-export format
+    exportDate: new Date().toISOString(),
+    profiles: profileExports,
+  };
+
+  console.log(`Finished exporting ${profileExports.length} profiles.`);
+  return multiExportData;
 }
 
 // --- Profile Import Logic ---
@@ -563,6 +617,76 @@ export async function importProfile(
     }
     throw error; // Re-throw the original import error
   }
+}
+
+/**
+ * Imports multiple profiles from a MultiProfileExport object.
+ * @param db The IDBPDatabase instance.
+ * @param multiExportData The data containing multiple profile exports.
+ * @returns A Promise resolving to an array of results (new profile ID or error).
+ */
+export async function importMultipleProfiles(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  multiExportData: MultiProfileExport,
+): Promise<{ profileName: string; result: number | Error }[]> {
+  console.log(
+    `Starting import of ${multiExportData.profiles.length} profiles from multi-export...`,
+  );
+
+  // Basic validation of the multi-export format
+  if (
+    multiExportData.exportVersion !== 1 ||
+    !Array.isArray(multiExportData.profiles)
+  ) {
+    console.error(
+      "Invalid or unsupported multi-profile export format detected.",
+      multiExportData,
+    );
+    throw new Error("Invalid or unsupported multi-profile export format.");
+  }
+
+  const importResults: { profileName: string; result: number | Error }[] = [];
+
+  for (const singleExportData of multiExportData.profiles) {
+    // Attempt to get a meaningful name for logging/reporting, default if missing
+    const profileName = singleExportData?.profile?.name || "Unnamed Profile";
+    try {
+      console.log(
+        `Attempting to import profile: "${profileName}" from multi-export.`,
+      );
+      // Reuse the existing single import function
+      const newProfileId = await importProfile(db, singleExportData);
+      importResults.push({ profileName, result: newProfileId });
+      console.log(
+        `Successfully imported profile "${profileName}" as new ID: ${newProfileId}`,
+      );
+    } catch (error) {
+      console.error(
+        `Failed to import profile "${profileName}" from multi-export:`,
+        error,
+      );
+      // Store the error object itself for better debugging downstream
+      importResults.push({
+        profileName,
+        result: error instanceof Error ? error : new Error(String(error)),
+      });
+      // Continue with the next profile import
+    }
+  }
+
+  console.log(
+    `Finished importing profiles from multi-export. Results count: ${importResults.length}`,
+  );
+  // Log summary of successes/failures
+  const successes = importResults.filter(
+    (r) => typeof r.result === "number",
+  ).length;
+  const failures = importResults.length - successes;
+  console.log(
+    `Multi-import summary: ${successes} succeeded, ${failures} failed.`,
+  );
+
+  return importResults;
 }
 
 // --- Impamp2 Import Functionality ---

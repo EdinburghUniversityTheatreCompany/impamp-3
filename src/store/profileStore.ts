@@ -12,10 +12,12 @@ import {
   ActivePadBehavior,
 } from "@/lib/db";
 import {
-  exportProfile,
   importProfile,
   importImpamp2Profile,
   ProfileExport,
+  exportMultipleProfiles,
+  importMultipleProfiles,
+  MultiProfileExport,
 } from "../lib/importExport";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
@@ -51,14 +53,41 @@ interface ProfileState {
   deleteProfile: (id: number) => Promise<void>;
 
   // Import/Export functionality
-  exportProfileToJSON: (profileId: number) => Promise<boolean>;
+  exportMultipleProfilesToJSON: (profileIds: number[]) => Promise<boolean>;
   importProfileFromJSON: (jsonData: string) => Promise<number>; // For current format
   importProfileFromImpamp2JSON: (jsonData: string) => Promise<number>; // For impamp2 format
+  importMultipleProfilesFromJSON: (
+    jsonData: string,
+  ) => Promise<{ profileName: string; result: number | Error }[]>;
 
   // Profile manager UI state
   openProfileManager: () => void;
   closeProfileManager: () => void;
 }
+
+// --- Private Helper Function ---
+// Encapsulates the logic for creating a blob and triggering a download
+const _triggerDownload = (
+  jsonDataString: string,
+  filename: string,
+): boolean => {
+  try {
+    const blob = new Blob([jsonDataString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100); // Clean up URL object
+    return true;
+  } catch (error) {
+    console.error("Error triggering download:", error);
+    return false;
+  }
+};
+// --- End Helper Function ---
 
 export const useProfileStore = create<ProfileState>()(
   persist(
@@ -287,77 +316,132 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       // Import/Export functionality
-      exportProfileToJSON: async (profileId: number) => {
+      exportMultipleProfilesToJSON: async (profileIds: number[]) => {
+        if (!profileIds || profileIds.length === 0) {
+          console.warn("No profile IDs provided for multi-export.");
+          return false;
+        }
         try {
-          const exportData = await exportProfile(profileId);
+          const exportData = await exportMultipleProfiles(profileIds);
 
           // Convert to JSON string
           const jsonString = JSON.stringify(exportData, null, 2);
 
-          // Get profile name for filename
-          const profile = get().profiles.find(
-            (p: Profile) => p.id === profileId,
-          ); // Added type
-          const profileName = profile?.name || "profile";
-          const sanitizedName = profileName
-            .replace(/[^a-z0-9]/gi, "-")
-            .toLowerCase();
+          // Create filename
           const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
-          // Create download
-          const blob = new Blob([jsonString], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-
-          // Create a link and trigger download
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `impamp-${sanitizedName}-${date}.json`;
-          document.body.appendChild(a);
-          a.click();
-
-          // Clean up
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 100);
-
-          // --- Update lastBackedUpAt timestamp ---
-          const nowMs = Date.now();
-          console.log(
-            `Profile ${profileId} exported successfully. Updating lastBackedUpAt to ${nowMs}`,
-          );
-          try {
-            await updateProfile(profileId, { lastBackedUpAt: nowMs });
-            // Update state as well
-            set((state) => ({
-              profiles: state.profiles.map((p) =>
-                p.id === profileId
-                  ? { ...p, lastBackedUpAt: nowMs, updatedAt: new Date(nowMs) }
-                  : p,
-              ),
-            }));
-            console.log(
-              `Successfully updated lastBackedUpAt for profile ${profileId} in DB and state.`,
-            );
-          } catch (updateError) {
-            console.error(
-              `Failed to update lastBackedUpAt for profile ${profileId} after successful export:`,
-              updateError,
-            );
-            // Don't throw here, the export itself was successful
-            set({
-              error: `Profile exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-            });
+          let filename: string;
+          if (profileIds.length === 1) {
+            // Try to get the single profile name for a more specific filename
+            const profile = get().profiles.find((p) => p.id === profileIds[0]);
+            const profileName = profile?.name || "profile";
+            const sanitizedName = profileName
+              .replace(/[^a-z0-9]/gi, "-")
+              .toLowerCase();
+            filename = `impamp-${sanitizedName}-${date}.json`;
+          } else {
+            filename = `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.json`;
           }
-          // --- End update ---
 
-          return true;
+          // Use helper to trigger download
+          const success = _triggerDownload(jsonString, filename);
+
+          // --- Update lastBackedUpAt timestamp for all exported profiles ---
+          if (success) {
+            console.log(
+              `Successfully triggered download for ${profileIds.length} profiles. Now updating timestamps...`,
+            );
+            const nowMs = Date.now();
+            try {
+              // Update DB for all profiles
+              const updateDbPromises = profileIds.map((id) =>
+                updateProfile(id, { lastBackedUpAt: nowMs }),
+              );
+              await Promise.all(updateDbPromises);
+
+              // Update state for all profiles
+              set((state) => ({
+                profiles: state.profiles.map((p) =>
+                  profileIds.includes(p.id!) // Check if this profile was exported
+                    ? {
+                        ...p,
+                        lastBackedUpAt: nowMs,
+                        updatedAt: new Date(nowMs),
+                      }
+                    : p,
+                ),
+              }));
+              console.log(
+                `Successfully updated lastBackedUpAt for ${profileIds.length} profiles in DB and state.`,
+              );
+            } catch (updateError) {
+              console.error(
+                `Failed to update lastBackedUpAt for one or more profiles (${profileIds.join(", ")}) after successful export:`,
+                updateError,
+              );
+              // Set error state, but don't throw, as download succeeded
+              set({
+                error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
+              });
+            }
+          } else {
+            console.error(
+              `Failed to trigger download for ${profileIds.length} profiles.`,
+            );
+            set({ error: `Failed to trigger download for profile export.` });
+          }
+          // --- End timestamp update ---
+
+          return success;
         } catch (error) {
-          console.error("Failed to export profile:", error);
+          console.error("Failed to export multiple profiles:", error);
           const errorMessage =
             error instanceof Error
               ? error.message
               : "An unknown error occurred";
-          set({ error: `Failed to export profile: ${errorMessage}` });
-          throw error;
+          set({ error: `Failed to export profiles: ${errorMessage}` });
+          throw error; // Re-throw for UI handling
+        }
+      },
+
+      importMultipleProfilesFromJSON: async (jsonData: string) => {
+        try {
+          // Parse the JSON data
+          let importData: MultiProfileExport;
+          try {
+            importData = JSON.parse(jsonData) as MultiProfileExport;
+          } catch (parseError) {
+            console.error("Failed to parse multi-import JSON:", parseError);
+            throw new Error("Invalid JSON format");
+          }
+
+          // Basic validation
+          if (
+            importData.exportVersion !== 1 ||
+            !Array.isArray(importData.profiles)
+          ) {
+            throw new Error(
+              "Invalid or unsupported multi-profile export format.",
+            );
+          }
+
+          // Import the profiles using the function from importExport.ts
+          const { getDb } = await import("@/lib/db"); // Import getDb dynamically
+          const db = await getDb();
+          const results = await importMultipleProfiles(db, importData);
+
+          // Refresh the profiles list in the store after import attempt
+          await get().fetchProfiles();
+
+          // Return the detailed results array
+          return results;
+        } catch (error) {
+          console.error("Failed to import multiple profiles:", error);
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "An unknown error occurred";
+          set({ error: `Failed to import profiles: ${errorMessage}` });
+          throw error; // Re-throw for UI handling
         }
       },
 

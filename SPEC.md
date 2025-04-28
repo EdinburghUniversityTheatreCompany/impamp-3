@@ -203,6 +203,11 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
         * If the imported file `exportVersion` is 1 (or missing and contains `audioFileId`), it migrates the old `audioFileId` field to `audioFileIds: [audioFileId]` and sets `playbackType: 'sequential'` before saving.
     * Original audio IDs are mapped to newly created ones during import.
     * The imported profile's `lastBackedUpAt` is set to the time of import.
+* **Export:**
+    * Users select one or more profiles via checkboxes in the "Import/Export" tab of the Profile Manager.
+    * Clicking "Export Selected" triggers the generation of a single JSON file using the `MultiProfileExport` format (even if only one profile is selected).
+    * The filename follows the pattern `impamp-multi-profile-export-X-profiles-YYYY-MM-DD.json` or `impamp-<profile-name>-YYYY-MM-DD.json` if only one profile is selected.
+    * Exporting profiles updates their respective `lastBackedUpAt` timestamps in the database and application state.
 
 #### 4.4. Sync (Future - Google Drive)
 
