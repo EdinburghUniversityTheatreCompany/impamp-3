@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { getAudioFile, PadConfiguration } from "@/lib/db";
+import { getAudioFile, PlaybackType } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { triggerAudioForPad, resumeAudioContext } from "@/lib/audio";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
@@ -12,7 +12,8 @@ interface SearchResult {
   pageIndex: number;
   padIndex: number;
   name: string;
-  audioFileId: number;
+  audioFileIds: number[];
+  playbackType: PlaybackType;
   originalFileName: string;
   bankName: string;
 }
@@ -74,7 +75,8 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
         // Process each pad
         for (const pad of allPads) {
-          if (!pad.audioFileId) continue;
+          // Ensure audioFileIds exists and is not empty
+          if (!pad.audioFileIds || pad.audioFileIds.length === 0) continue;
 
           // Try to get bank name if we haven't loaded it yet
           if (!bankNames.has(pad.pageIndex)) {
@@ -97,36 +99,46 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             }
           }
 
-          // Get pad name and file name
+          // Get pad name
           const padName = pad.name || `Pad ${pad.padIndex + 1}`;
-          let originalFileName = "";
+          const originalFileNames: string[] = [];
+          let displayFileName = ""; // Store the first filename for display
 
-          // Try to get original file name
+          // Try to get all original file names
           try {
-            const audioFile = await getAudioFile(pad.audioFileId);
-            if (audioFile) {
-              originalFileName = audioFile.name;
+            for (const audioId of pad.audioFileIds) {
+              const audioFile = await getAudioFile(audioId);
+              if (audioFile) {
+                originalFileNames.push(audioFile.name);
+                if (!displayFileName) {
+                  // Store the first valid name for display
+                  displayFileName = audioFile.name;
+                }
+              }
             }
           } catch (error) {
             console.error(
-              `Error getting audio file ${pad.audioFileId}:`,
+              `Error getting audio files for pad ${pad.padIndex}:`,
               error,
             );
           }
 
-          // Check if pad matches search term
+          // Check if pad matches search term (pad name OR any original file name)
           const searchTermLower = searchTerm.toLowerCase();
-          if (
-            padName.toLowerCase().includes(searchTermLower) ||
-            originalFileName.toLowerCase().includes(searchTermLower)
-          ) {
+          const nameMatches = padName.toLowerCase().includes(searchTermLower);
+          const fileNameMatches = originalFileNames.some((name) =>
+            name.toLowerCase().includes(searchTermLower),
+          );
+
+          if (nameMatches || fileNameMatches) {
             searchResults.push({
               profileId: activeProfileId,
               pageIndex: pad.pageIndex,
               padIndex: pad.padIndex,
               name: padName,
-              audioFileId: pad.audioFileId,
-              originalFileName,
+              audioFileIds: pad.audioFileIds,
+              playbackType: pad.playbackType,
+              originalFileName: displayFileName,
               bankName:
                 bankNames.get(pad.pageIndex) ||
                 `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
@@ -175,21 +187,15 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       // Resume audio context first
       resumeAudioContext();
 
-      // Create a PadConfiguration-like object from the search result
-      // Note: We might not have keyBinding here, but triggerAudioForPad doesn't need it
-      const padConfig: PadConfiguration = {
-        profileId: result.profileId,
-        pageIndex: result.pageIndex,
+      // Call the centralized trigger function with the new signature
+      await triggerAudioForPad({
         padIndex: result.padIndex,
+        audioFileIds: result.audioFileIds,
+        playbackType: result.playbackType,
+        activeProfileId: result.profileId,
+        currentPageIndex: result.pageIndex,
         name: result.name,
-        audioFileId: result.audioFileId,
-        // createdAt and updatedAt are not strictly needed for triggering
-        createdAt: new Date(), // Placeholder
-        updatedAt: new Date(), // Placeholder
-      };
-
-      // Call the centralized trigger function
-      await triggerAudioForPad(padConfig, result.profileId, result.pageIndex);
+      });
 
       // Close the modal after initiating playback attempt
       onClose();

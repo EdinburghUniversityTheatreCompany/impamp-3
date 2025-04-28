@@ -274,7 +274,15 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       hasInteracted.current = true;
     }
 
-    triggerAudioForPad(padConfig, activeProfileId, currentPageIndex);
+    // Call triggerAudioForPad with the new signature, destructuring the config
+    triggerAudioForPad({
+      padIndex: padConfig.padIndex,
+      audioFileIds: padConfig.audioFileIds,
+      playbackType: padConfig.playbackType,
+      activeProfileId: activeProfileId,
+      currentPageIndex: currentPageIndex,
+      name: padConfig.name,
+    });
   };
 
   // Main click handler - delegates to other handlers

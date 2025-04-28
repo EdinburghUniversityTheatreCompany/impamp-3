@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import {
   PadConfiguration,
+  PlaybackType,
   getPadConfigurationsForProfilePage,
   getAllPageMetadataForProfile,
 } from "@/lib/db";
@@ -21,7 +22,8 @@ interface EmergencySound {
   profileId: number;
   pageIndex: number;
   padIndex: number;
-  audioFileId: number;
+  audioFileIds: number[];
+  playbackType: PlaybackType;
   name?: string;
 }
 
@@ -67,13 +69,13 @@ async function loadEmergencySounds(
         (pad) => pad.audioFileIds && pad.audioFileIds.length > 0,
       );
 
-      // TODO: Support multiple audio files per pad for emergency sounds.
+      // Map configured pads to EmergencySound objects
       const emergencySoundsForPage = configuredPads.map((pad) => ({
         profileId,
         pageIndex: page.pageIndex,
         padIndex: pad.padIndex,
-        // Use the first audio file ID for the emergency sound
-        audioFileId: pad.audioFileIds![0] as number,
+        audioFileIds: pad.audioFileIds!,
+        playbackType: pad.playbackType,
         name: pad.name,
       }));
 
@@ -90,37 +92,28 @@ async function loadEmergencySounds(
 
 // Function to play an emergency sound
 async function playEmergencySound(sound: EmergencySound): Promise<void> {
-  if (!sound || !sound.audioFileId) {
+  // Check for valid audioFileIds array
+  if (!sound || !sound.audioFileIds || sound.audioFileIds.length === 0) {
     console.error(
-      "[KeyboardListener] Invalid emergency sound configuration:",
+      "[KeyboardListener] Invalid or empty emergency sound configuration:",
       sound,
     );
     return;
   }
 
-  // Re-fetch the specific pad config to ensure we have the latest full data if needed,
-  // or construct a minimal one if triggerAudioForPad only needs IDs.
-  // For now, construct minimally, assuming triggerAudioForPad handles fetching if necessary.
-  const padConfig: Partial<PadConfiguration> &
-    Pick<PadConfiguration, "profileId" | "pageIndex" | "padIndex"> = {
-    profileId: sound.profileId,
-    pageIndex: sound.pageIndex,
-    padIndex: sound.padIndex,
-    name: sound.name,
-    audioFileIds: [sound.audioFileId],
-  };
-
   console.log(
-    `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioID: ${sound.audioFileId}`,
+    `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioIDs: ${sound.audioFileIds.join(",")}`,
   );
-  // Call the centralized trigger function
-  // Note: We need to pass the full config if triggerAudioForPad requires it.
-  // Assuming it can work with the partial config for now.
-  await triggerAudioForPad(
-    padConfig as PadConfiguration, // Cast needed due to partial construction
-    sound.profileId,
-    sound.pageIndex,
-  );
+
+  // Call the centralized trigger function with the new signature
+  await triggerAudioForPad({
+    padIndex: sound.padIndex,
+    audioFileIds: sound.audioFileIds,
+    playbackType: sound.playbackType,
+    activeProfileId: sound.profileId,
+    currentPageIndex: sound.pageIndex, // Use the pageIndex from the sound object
+    name: sound.name,
+  });
 }
 
 export function useKeyboardListener() {
@@ -506,11 +499,15 @@ export function useKeyboardListener() {
         console.log(
           `[KeyboardListener] Calling triggerAudioForPad for pad index ${matchedPadIndex}`,
         );
-        triggerAudioForPad(
-          matchedConfig,
-          activeProfileId as number,
-          currentPageIndex,
-        );
+        // Call triggerAudioForPad with the new signature, destructuring the config
+        triggerAudioForPad({
+          padIndex: matchedConfig.padIndex,
+          audioFileIds: matchedConfig.audioFileIds,
+          playbackType: matchedConfig.playbackType,
+          activeProfileId: activeProfileId as number,
+          currentPageIndex: currentPageIndex,
+          name: matchedConfig.name,
+        });
       } else if (matchedConfig) {
         console.log(
           `[KeyboardListener] Matched pad ${matchedPadIndex} for key ${event.key}, but it has no audio files.`,

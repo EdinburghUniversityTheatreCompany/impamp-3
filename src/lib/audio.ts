@@ -200,20 +200,33 @@ export async function loadAndDecodeAudio(
  * Checks activePadBehavior, selects the correct audio file based on playbackType,
  * loads audio if needed, and calls _playBuffer.
  */
-export async function triggerAudioForPad(
-  padConfig: PadConfiguration,
-  activeProfileId: number,
-  currentPageIndex: number,
-): Promise<void> {
+export async function triggerAudioForPad(args: {
+  padIndex: number;
+  audioFileIds: number[];
+  playbackType: PlaybackType;
+  activeProfileId: number;
+  currentPageIndex: number;
+  name?: string; // Optional name for metadata
+}): Promise<void> {
+  // Destructure args for easier access
+  const {
+    padIndex,
+    audioFileIds,
+    playbackType,
+    activeProfileId,
+    currentPageIndex,
+    name,
+  } = args;
+
   // Check if there are any audio files configured
-  if (!padConfig.audioFileIds || padConfig.audioFileIds.length === 0) {
+  if (!audioFileIds || audioFileIds.length === 0) {
     console.log(
-      `[triggerAudioForPad] Pad index ${padConfig.padIndex} has no audio files configured.`,
+      `[triggerAudioForPad] Pad index ${padIndex} has no audio files configured.`,
     );
     return;
   }
 
-  const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padConfig.padIndex}`;
+  const playbackKey = `pad-${activeProfileId}-${currentPageIndex}-${padIndex}`;
   const isAlreadyPlaying = activeTracks.has(playbackKey);
   const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
 
@@ -235,7 +248,7 @@ export async function triggerAudioForPad(
         );
         stopAudio(playbackKey); // Stop the existing sound
         // Reset round-robin state for this pad if it was stopped
-        if (padConfig.playbackType === "round-robin") {
+        if (playbackType === "round-robin") {
           roundRobinState.delete(playbackKey);
           console.log(
             `[Audio Trigger Action] Reset round-robin state for key: ${playbackKey}`,
@@ -287,26 +300,24 @@ export async function triggerAudioForPad(
   let currentAudioIndex: number | undefined;
   let availableAudioIndices: number[] | undefined;
 
-  switch (padConfig.playbackType) {
+  switch (playbackType) {
     case "sequential":
       // Get the next index for this pad, default to 0 if not found
       currentAudioIndex = sequentialState.get(playbackKey) ?? 0;
-      if (currentAudioIndex >= padConfig.audioFileIds.length) {
+      if (currentAudioIndex >= audioFileIds.length) {
         currentAudioIndex = 0; // Wrap around if index is out of bounds
       }
-      audioFileIdToPlay = padConfig.audioFileIds[currentAudioIndex];
+      audioFileIdToPlay = audioFileIds[currentAudioIndex];
       // Calculate and store the *next* index for the subsequent trigger
-      const nextIndex = (currentAudioIndex + 1) % padConfig.audioFileIds.length;
+      const nextIndex = (currentAudioIndex + 1) % audioFileIds.length;
       sequentialState.set(playbackKey, nextIndex);
       console.log(
         `[Audio Select] Sequential: Playing ID ${audioFileIdToPlay} (index ${currentAudioIndex}). Next index: ${nextIndex}`,
       );
       break;
     case "random":
-      const randomIndex = Math.floor(
-        Math.random() * padConfig.audioFileIds.length,
-      );
-      audioFileIdToPlay = padConfig.audioFileIds[randomIndex];
+      const randomIndex = Math.floor(Math.random() * audioFileIds.length);
+      audioFileIdToPlay = audioFileIds[randomIndex];
       currentAudioIndex = randomIndex; // Store the chosen index
       console.log(
         `[Audio Select] Random: Playing ID ${audioFileIdToPlay} (index ${randomIndex})`,
@@ -316,7 +327,7 @@ export async function triggerAudioForPad(
       let remainingIndices = roundRobinState.get(playbackKey);
       // If no state or state is empty, reset from full list
       if (!remainingIndices || remainingIndices.length === 0) {
-        remainingIndices = padConfig.audioFileIds.map((_, index) => index); // Get indices 0, 1, 2...
+        remainingIndices = audioFileIds.map((_, index) => index); // Get indices 0, 1, 2...
         console.log(
           `[Audio Select] Round-Robin: Resetting available indices for key ${playbackKey}:`,
           remainingIndices,
@@ -327,7 +338,7 @@ export async function triggerAudioForPad(
         Math.random() * remainingIndices.length,
       );
       currentAudioIndex = remainingIndices[randomRemainingIndexPos]; // Get the actual audioFileIds index
-      audioFileIdToPlay = padConfig.audioFileIds[currentAudioIndex];
+      audioFileIdToPlay = audioFileIds[currentAudioIndex];
       // Update the state by removing the chosen index
       remainingIndices.splice(randomRemainingIndexPos, 1);
       roundRobinState.set(playbackKey, remainingIndices);
@@ -339,16 +350,16 @@ export async function triggerAudioForPad(
       break;
     default:
       console.warn(
-        `[Audio Select] Unknown playbackType: ${padConfig.playbackType}. Defaulting to sequential.`,
+        `[Audio Select] Unknown playbackType: ${playbackType}. Defaulting to sequential.`,
       );
-      audioFileIdToPlay = padConfig.audioFileIds[0];
+      audioFileIdToPlay = audioFileIds[0];
       currentAudioIndex = 0;
   }
 
   if (audioFileIdToPlay === undefined) {
     console.error(
-      `[Audio Trigger] Could not determine audioFileId to play for key ${playbackKey}. Config:`,
-      padConfig,
+      `[Audio Trigger] Could not determine audioFileId to play for key ${playbackKey}. Args:`,
+      args,
     );
     return;
   }
@@ -371,18 +382,18 @@ export async function triggerAudioForPad(
         playbackKey,
         {
           // Metadata for display/identification
-          name: padConfig.name || `Pad ${padConfig.padIndex + 1}`,
+          name: name || `Pad ${padIndex + 1}`, // Use provided name or fallback
           padInfo: {
             profileId: activeProfileId,
             pageIndex: currentPageIndex,
-            padIndex: padConfig.padIndex,
+            padIndex: padIndex,
           },
         },
         1.0, // Default volume
         {
           // Multi-sound state for ActiveTrack
-          playbackType: padConfig.playbackType,
-          allAudioFileIds: padConfig.audioFileIds,
+          playbackType: playbackType,
+          allAudioFileIds: audioFileIds,
           currentAudioFileId: audioFileIdToPlay,
           currentAudioIndex: currentAudioIndex,
           availableAudioIndices: availableAudioIndices,
