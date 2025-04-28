@@ -8,8 +8,8 @@ export default function manifest(): MetadataRoute.Manifest {
       "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
     start_url: "/",
     display: "standalone",
-    background_color: "#ffffff",
-    theme_color: "#000000",
+    background_color: "#000000",
+    theme_color: "#f2801f",
     orientation: "any",
     icons: [
       {
@@ -27,18 +27,6 @@ export default function manifest(): MetadataRoute.Manifest {
       {
         src: "/icons/icon-128x128.png",
         sizes: "128x128",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-144x144.png",
-        sizes: "144x144",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-152x152.png",
-        sizes: "152x152",
         type: "image/png",
         purpose: "any",
       },
