@@ -1,14 +1,14 @@
 {
   "name": "impamp-3",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/generate-favicon.js && node scripts/generate-build-info.js",
+    "build": "next build",
     "dev": "next dev --turbopack",
-    "build": "node scripts/generate-favicon.js && next build",
     "start": "next start",
     "lint": "next lint",
-    "pwa-build": "node scripts/generate-favicon.js && next build",
     "generate-favicon": "node scripts/generate-favicon.js",
     "test:e2e": "playwright test",
     "test:e2e:audio": "playwright test audio-playback.spec.ts",

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import buildInfo from "@/generated/build-info.json";
 
 // Define the tab interface
 interface HelpTab {
@@ -135,17 +136,19 @@ const HelpModalContent: React.FC = () => {
             </p>
             <ol className="list-decimal pl-5 space-y-1">
               <li>Click on the profile selector in the top-right corner</li>
-              <li>Select "Manage Profiles" to open the Profile Manager</li>
-              <li>Switch to the "Import/Export" tab</li>
+              <li>
+                Select &quot;Manage Profiles&quot; to open the Profile Manager
+              </li>
+              <li>Switch to the &quot;Import/Export&quot; tab</li>
               <li>Select the profile you want to export from the dropdown</li>
               <li>
-                Click "Export Profile" to download a JSON file containing your
-                profile data
+                Click &quot;Export Profile&quot; to download a JSON file
+                containing your profile data
               </li>
             </ol>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Note: Exporting a profile also updates its "last backed up"
-              timestamp, which resets the backup reminder.
+              Note: Exporting a profile also updates its &quot;last backed
+              up&quot; timestamp, which resets the backup reminder.
             </p>
           </div>
 
@@ -154,11 +157,13 @@ const HelpModalContent: React.FC = () => {
             <p>Import profiles from previously exported files:</p>
             <ol className="list-decimal pl-5 space-y-1">
               <li>Click on the profile selector in the top-right corner</li>
-              <li>Select "Manage Profiles" to open the Profile Manager</li>
-              <li>Switch to the "Import/Export" tab</li>
               <li>
-                Click "Select File to Import" and choose a previously exported
-                JSON file
+                Select &quot;Manage Profiles&quot; to open the Profile Manager
+              </li>
+              <li>Switch to the &quot;Import/Export&quot; tab</li>
+              <li>
+                Click &quot;Select File to Import&quot; and choose a previously
+                exported JSON file
               </li>
               <li>
                 The system will create a new profile with all the imported
@@ -174,7 +179,7 @@ const HelpModalContent: React.FC = () => {
           <div className="space-y-2 mt-4">
             <h4 className="font-medium">Backup Reminders</h4>
             <p>
-              ImpAmp3 can remind you when profiles haven't been backed up
+              ImpAmp3 can remind you when profiles haven&apos;t been backed up
               recently:
             </p>
             <ul className="list-disc pl-5 space-y-1">
@@ -183,8 +188,8 @@ const HelpModalContent: React.FC = () => {
                 30 days)
               </li>
               <li>
-                When a profile hasn't been backed up for the specified period, a
-                notification will appear
+                When a profile hasn&apos;t been backed up for the specified
+                period, a notification will appear
               </li>
               <li>
                 To configure the reminder period, edit the profile in the
@@ -269,11 +274,18 @@ const HelpModalContent: React.FC = () => {
                 </kbd>
               </li>
               <li>Shift+click on a pad to open the Edit Pad modal</li>
-              <li>Click "Add Sound(s)..." to select additional audio files</li>
+              <li>
+                Click &quot;Add Sound(s)...&quot; to select additional audio
+                files
+              </li>
               <li>Use drag-and-drop to reorder sounds in the list</li>
-              <li>Click the 'X' button next to a sound to remove it</li>
+              <li>
+                Click the &apos;X&apos; button next to a sound to remove it
+              </li>
               <li>Select a playback mode (see below)</li>
-              <li>Click "Save Changes" to apply your configuration</li>
+              <li>
+                Click &quot;Save Changes&quot; to apply your configuration
+              </li>
             </ol>
           </div>
 
@@ -299,7 +311,7 @@ const HelpModalContent: React.FC = () => {
               </li>
               <li>
                 <span className="font-medium">Round-Robin:</span> Plays a
-                randomly selected sound that hasn't been played yet in the
+                randomly selected sound that hasn&apos;t been played yet in the
                 current cycle. Once all sounds have played, the cycle resets.
                 <span className="text-sm text-gray-500 dark:text-gray-400 block mt-1">
                   Ideal for ensuring variety without repetition, such as
@@ -326,10 +338,6 @@ const HelpModalContent: React.FC = () => {
               <li>
                 Consider using descriptive pad names that indicate the type of
                 sounds contained
-              </li>
-              <li>
-                For round-robin mode, try to use sounds of similar length and
-                style for consistency
               </li>
             </ul>
           </div>
@@ -370,6 +378,9 @@ const HelpModalContent: React.FC = () => {
             Shift+?
           </kbd>{" "}
           at any time to open this help page.
+        </p>
+        <p className="mt-2">
+          Version: {buildInfo.version}-{buildInfo.commitHash}
         </p>
       </div>
     </div>
