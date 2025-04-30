@@ -6,6 +6,7 @@ import PadGrid from "@/components/PadGrid";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import SearchButton from "@/components/SearchButton";
 import HelpButton from "@/components/HelpButton";
+import DeleteMoveModeButton from "@/components/DeleteMoveModeButton";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
 import EditBankModalContent from "@/components/modals/EditBankModalContent";
@@ -36,6 +37,7 @@ export default function Home() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
   const isEditMode = useProfileStore((state) => state.isEditMode);
+  const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   ); // Get the action
@@ -181,11 +183,17 @@ export default function Home() {
     <main
       className={`flex min-h-screen flex-col items-center p-8 pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? "edit-mode" : ""}`}
     >
-      {/* Edit mode indicator */}
+      {/* Mode indicators */}
       {isEditMode && (
         <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-1 z-50">
           <span className="font-bold">EDIT MODE</span>{" "}
           <span className="text-sm">(Release SHIFT to exit)</span>
+        </div>
+      )}
+      {isDeleteMoveMode && (
+        <div className="fixed top-0 left-0 right-0 bg-red-500 text-white text-center py-1 z-50">
+          <span className="font-bold">DELETE AND MOVE MODE</span>{" "}
+          <span className="text-sm">(Click the button again to exit)</span>
         </div>
       )}
       {/* Fixed position header to prevent layout shifts */}
@@ -202,6 +210,9 @@ export default function Home() {
 
             {/* Help Icon */}
             <HelpButton />
+
+            {/* Delete/Move Mode Button */}
+            <DeleteMoveModeButton />
 
             {/* Using the memoized ProfileSelector render function */}
             {renderProfileSelector()}
@@ -223,7 +234,9 @@ export default function Home() {
               <span className="text-sm ml-4 text-gray-500">
                 {isEditMode
                   ? "Shift+click to rename banks and pads."
-                  : "Press 1-9, 0 to switch banks 1-9, 10. Press Ctrl+1 through Ctrl+0 for banks 11-20. Hold SHIFT for edit mode. Press Shift+? for help."}
+                  : isDeleteMoveMode
+                    ? "Click pads to delete them. Drag pads to swap their positions."
+                    : "Press 1-9, 0 to switch banks 1-9, 10. Press Ctrl+1 through Ctrl+0 for banks 11-20. Hold SHIFT for edit mode. Press Shift+? for help."}
               </span>
             </div>
           </div>

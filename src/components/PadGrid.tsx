@@ -47,6 +47,7 @@ interface PadGridProps {
 const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode);
+  const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
@@ -285,12 +286,142 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     });
   };
 
+  // Handler for swapping pads in delete/move mode - COMPLETELY REWRITTEN TO FIX THE CONSTRAINT ERROR
+  const handleSwapPads = useCallback(
+    async (fromIndex: number, toIndex: number) => {
+      if (activeProfileId === null) {
+        console.error("Cannot swap pads, no active profile selected.");
+        return;
+      }
+
+      const fromConfig = padConfigs.get(fromIndex);
+      const toConfig = padConfigs.get(toIndex);
+
+      // Cannot swap if either pad is a special control pad
+      if (
+        fromIndex === SPECIAL_PAD_CONFIG.STOP_ALL.index ||
+        fromIndex === SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index ||
+        toIndex === SPECIAL_PAD_CONFIG.STOP_ALL.index ||
+        toIndex === SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index
+      ) {
+        console.log("Cannot swap special control pads");
+        return;
+      }
+
+      // If source pad is empty, nothing to move
+      if (
+        !fromConfig ||
+        !fromConfig.audioFileIds ||
+        fromConfig.audioFileIds.length === 0
+      ) {
+        console.log("Source pad is empty, nothing to move");
+        return;
+      }
+
+      try {
+        // Create temporary copies of the configurations to avoid reference issues
+        const fromConfigCopy = fromConfig ? { ...fromConfig } : null;
+        const toConfigCopy = toConfig ? { ...toConfig } : null;
+
+        // STEP 1: First, clear both pads to avoid unique constraint errors
+        // Clear the source pad (always has a configuration)
+        await upsertPadConfiguration({
+          profileId: activeProfileId,
+          pageIndex: currentPageIndex,
+          padIndex: fromIndex,
+          audioFileIds: [], // Empty
+          playbackType: "round-robin",
+          name: undefined,
+          keyBinding: undefined,
+        });
+
+        // Only clear the target pad if it has a configuration
+        if (
+          toConfigCopy &&
+          toConfigCopy.audioFileIds &&
+          toConfigCopy.audioFileIds.length > 0
+        ) {
+          await upsertPadConfiguration({
+            profileId: activeProfileId,
+            pageIndex: currentPageIndex,
+            padIndex: toIndex,
+            audioFileIds: [], // Empty
+            playbackType: "round-robin",
+            name: undefined,
+            keyBinding: undefined,
+          });
+        }
+
+        // STEP 2: Now that both are empty, set up the new configurations
+        // Move the from pad configuration to the target position, ensuring required fields are present
+        await upsertPadConfiguration({
+          profileId: activeProfileId,
+          pageIndex: currentPageIndex,
+          padIndex: toIndex,
+          audioFileIds: fromConfigCopy?.audioFileIds || [],
+          playbackType: fromConfigCopy?.playbackType || "round-robin",
+          name: fromConfigCopy?.name,
+          keyBinding: fromConfigCopy?.keyBinding,
+        });
+
+        // If the target had a configuration, move it to the source position
+        if (
+          toConfigCopy &&
+          toConfigCopy.audioFileIds &&
+          toConfigCopy.audioFileIds.length > 0
+        ) {
+          await upsertPadConfiguration({
+            profileId: activeProfileId,
+            pageIndex: currentPageIndex,
+            padIndex: fromIndex,
+            audioFileIds: toConfigCopy.audioFileIds,
+            playbackType: toConfigCopy.playbackType || "round-robin",
+            name: toConfigCopy.name,
+            keyBinding: toConfigCopy.keyBinding,
+          });
+        }
+
+        // Success - refresh grid and update emergency sounds if needed
+        refreshPadConfigs();
+        console.log(`Successfully swapped pads ${fromIndex} and ${toIndex}`);
+
+        // Check if we're on an emergency page and refresh if needed
+        const isEmergency = await isEmergencyPage(
+          activeProfileId,
+          currentPageIndex,
+        );
+        if (isEmergency) {
+          incrementEmergencySoundsVersion();
+        }
+      } catch (error) {
+        console.error(
+          `Failed to swap pads ${fromIndex} and ${toIndex}:`,
+          error,
+        );
+        alert(`Failed to swap pads. Please try again.`);
+      }
+    },
+    [
+      activeProfileId,
+      currentPageIndex,
+      padConfigs,
+      refreshPadConfigs,
+      incrementEmergencySoundsVersion,
+    ],
+  );
+
   // Main click handler - delegates to other handlers
   const handlePadClick = (padIndex: number) => {
     const config = padConfigs.get(padIndex);
 
-    if (isEditMode) {
-      // If delete key is down AND the pad has *any* sounds, trigger remove/edit logic
+    // Different behavior based on mode
+    if (isDeleteMoveMode) {
+      // In delete mode, clicking directly removes the sound
+      if (config?.audioFileIds && config.audioFileIds.length > 0) {
+        handleRemoveInteraction(padIndex);
+      }
+    } else if (isEditMode) {
+      // In edit mode
       if (
         isDeleteKeyDown &&
         config?.audioFileIds &&
@@ -302,7 +433,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         handleEditInteraction(config ?? null, padIndex);
       }
     } else {
-      // Playback logic (only if configured)
+      // Normal mode - playback logic
       if (config && config.audioFileIds && config.audioFileIds.length > 0) {
         handlePlaybackInteraction(config);
       } else {
@@ -407,6 +538,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           soundCount={2} // Treat special pads as having multiple sounds to disable drop logic.
           isPlaying={false}
           isEditMode={isEditMode}
+          isDeleteMoveMode={isDeleteMoveMode} // Pass delete/move mode state
+          isSpecialPad={true} // Mark as special pad - can't be deleted or moved
           onClick={handleStopAllClick}
           onShiftClick={() => {}} // No edit action
           onDropAudio={async () => {}} // No drop action
@@ -428,6 +561,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           soundCount={2} // Treat special pads as having multiple sounds to disable drop logic.
           isPlaying={false}
           isEditMode={isEditMode}
+          isDeleteMoveMode={isDeleteMoveMode} // Pass delete/move mode state
+          isSpecialPad={true} // Mark as special pad - can't be deleted or moved
           onClick={handleFadeOutAllClick}
           onShiftClick={() => {}} // No edit action
           onDropAudio={async () => {}} // No drop action
@@ -456,6 +591,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         playProgress={progress}
         remainingTime={remainingTime}
         isEditMode={isEditMode}
+        isDeleteMoveMode={isDeleteMoveMode}
         onClick={() => handlePadClick(padIndex)}
         onShiftClick={() => handlePadClick(padIndex)} // Shift click now also goes through handlePadClick
         onDropAudio={handleDropAudio}
@@ -465,6 +601,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
             ? () => handleRemoveInteraction(padIndex)
             : undefined
         }
+        onSwapWith={handleSwapPads}
       />
     );
   });

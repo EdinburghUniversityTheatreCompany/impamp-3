@@ -35,6 +35,7 @@ interface ProfileState {
   activeProfileId: number | null;
   currentPageIndex: number; // Track the current bank/page (internal index 0-19)
   isEditMode: boolean; // Track if we're in edit mode (shift key)
+  isDeleteMoveMode: boolean; // Track if we're in delete and move mode
   isLoading: boolean;
   error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
@@ -43,7 +44,9 @@ interface ProfileState {
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
   setCurrentPageIndex: (bankNumber: number) => void; // Changed param name to bankNumber for clarity
-  setEditMode: (isActive: boolean) => void; // Toggle edit mode
+  setEditMode: (isActive: boolean) => void; // Set edit mode
+  setDeleteMoveMode: (isActive: boolean) => void; // Set delete/move mode
+  toggleDeleteMoveMode: () => void; // Toggle delete/move mode
   incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
@@ -120,6 +123,7 @@ export const useProfileStore = create<ProfileState>()(
       activeProfileId: null,
       currentPageIndex: 0, // Default to first bank (displayed as bank 1)
       isEditMode: false, // Default to not in edit mode
+      isDeleteMoveMode: false, // Default to not in delete and move mode
       isLoading: true,
       error: null,
       isProfileManagerOpen: false, // Profile manager modal is closed by default
@@ -247,7 +251,37 @@ export const useProfileStore = create<ProfileState>()(
 
       setEditMode: (isActive: boolean) => {
         console.log(`Setting edit mode to: ${isActive}`);
-        set({ isEditMode: isActive });
+        // If enabling edit mode, disable delete/move mode
+        if (isActive && get().isDeleteMoveMode) {
+          set({ isEditMode: isActive, isDeleteMoveMode: false });
+        } else {
+          set({ isEditMode: isActive });
+        }
+      },
+
+      setDeleteMoveMode: (isActive: boolean) => {
+        console.log(`Setting delete/move mode to: ${isActive}`);
+        // If enabling delete/move mode, disable edit mode
+        if (isActive && get().isEditMode) {
+          set({ isDeleteMoveMode: isActive, isEditMode: false });
+        } else {
+          set({ isDeleteMoveMode: isActive });
+        }
+      },
+
+      toggleDeleteMoveMode: () => {
+        const currentMode = get().isDeleteMoveMode;
+        console.log(
+          `Toggling delete/move mode from ${currentMode} to ${!currentMode}`,
+        );
+        const newMode = !currentMode;
+
+        // If enabling delete/move mode, disable edit mode if it's on
+        if (newMode && get().isEditMode) {
+          set({ isDeleteMoveMode: newMode, isEditMode: false });
+        } else {
+          set({ isDeleteMoveMode: newMode });
+        }
       },
 
       incrementEmergencySoundsVersion: () => {
