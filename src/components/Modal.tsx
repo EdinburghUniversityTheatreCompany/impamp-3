@@ -2,6 +2,8 @@
 
 import React from "react";
 
+type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
+
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -13,6 +15,7 @@ interface ModalProps {
   onCancel?: () => void | Promise<void>; // Optional specific cancel handler
   showConfirmButton?: boolean;
   showCancelButton?: boolean;
+  size?: ModalSize; // Controls the modal width
 }
 
 const Modal: React.FC<ModalProps> = ({
@@ -26,6 +29,7 @@ const Modal: React.FC<ModalProps> = ({
   onCancel,
   showConfirmButton = true,
   showCancelButton = true,
+  size = "sm",
 }) => {
   if (!isOpen) return null;
 
@@ -50,15 +54,24 @@ const Modal: React.FC<ModalProps> = ({
     e.stopPropagation();
   };
 
+  // Define size classes for modal width
+  const sizeClasses = {
+    sm: "max-w-md",
+    md: "max-w-lg",
+    lg: "max-w-2xl",
+    xl: "max-w-4xl",
+    full: "max-w-full w-[95vw]",
+  };
+
   return (
     <div
       data-testid="custom-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300 overflow-y-auto py-6"
       onClick={onClose} // Close when clicking the overlay
     >
       <div
         data-testid="custom-modal"
-        className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4 transition-transform duration-300 transform scale-100"
+        className={`relative bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full mx-4 transition-transform duration-300 transform scale-100 ${sizeClasses[size]}`}
         onClick={stopPropagation} // Stop propagation for clicks inside the modal
       >
         {/* Close Button */}

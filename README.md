@@ -17,6 +17,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Edit Mode**: Shift key activates edit mode for renaming pads and banks.
     - *Single Sound Pads*: Remove sound via "X" button or Delete+click.
     - *Multi-Sound Pads*: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
+- **Bulk Import**: In delete/swap mode, use the bulk import feature to assign multiple audio files to empty pads at once with a visual mapping interface.
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).

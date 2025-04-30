@@ -110,6 +110,20 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
         * The visible "X" button and the `Delete`+click action *only* function for pads with exactly *one* sound (`audioFileIds.length === 1`).
         * When triggered on a single-sound pad, it shows a confirmation modal. On confirm, it clears the `audioFileIds` array, resets the `playbackType` to `sequential`, and resets the pad name to default ("Empty Pad").
         * If a pad has multiple sounds, clicking the "X" button or using `Delete`+click *opens the Pad Edit Modal* instead of showing the confirmation.
+    * **Bulk Import (Delete/Move Mode):**
+        * When in delete/swap mode, a "Bulk Import" button appears above the pad grid.
+        * Clicking this button opens a modal allowing users to import multiple audio files at once.
+        * **Modal Interface:**
+            * Left panel for selecting/adding audio files.
+            * Right panel showing a visual representation of the pad grid.
+            * Files can be dragged from the left panel onto available pads in the grid.
+            * An "Auto-Assign" button automatically maps files to available pads.
+            * Files can be rearranged within the grid via drag-and-drop.
+            * Only empty pads and non-special pads (not Stop All/Fade Out All) can receive assignments.
+        * **Actions:**
+            * Users can add multiple files at once or incrementally add files to the queue.
+            * The interface visually highlights pads that already have sounds assigned and prevents assignments to them.
+            * The "Save Assignments" button saves all mappings at once, creating appropriate pad configurations in the database.
 * **Bank Actions:**
     * `Shift+Click` on a bank tab opens a dialog to:
         * Rename the bank.

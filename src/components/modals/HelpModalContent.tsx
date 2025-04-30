@@ -394,6 +394,50 @@ const HelpModalContent: React.FC = () => {
               </li>
             </ul>
           </div>
+
+          <div className="space-y-2 mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 rounded-md">
+            <h4 className="font-medium">Bulk Import Feature</h4>
+            <p className="mt-2">
+              Need to import many sound files at once? The Bulk Import feature
+              allows you to assign multiple audio files to empty pads in a
+              single operation.
+            </p>
+            <ol className="list-decimal pl-5 space-y-2 mt-3">
+              <li>
+                Toggle <strong>Delete/Swap Mode</strong> using the trash/move
+                icon in the toolbar
+              </li>
+              <li>
+                Click the <strong>Bulk Import</strong> button that appears above
+                the pad grid
+              </li>
+              <li>
+                In the modal that opens:
+                <ul className="list-disc pl-5 space-y-1 mt-1">
+                  <li>
+                    Add audio files using the &quot;Add Files&quot; button
+                  </li>
+                  <li>
+                    Drag files from the left panel onto empty pads in the right
+                    panel
+                  </li>
+                  <li>
+                    Use &quot;Auto-Assign&quot; to automatically place files on
+                    available pads
+                  </li>
+                  <li>Rearrange assignments by dragging between pads</li>
+                  <li>
+                    Click &quot;Save Assignments&quot; when you&apos;re done
+                  </li>
+                </ul>
+              </li>
+            </ol>
+            <p className="mt-2 text-sm">
+              <strong>Note:</strong> You can only assign to empty pads. Pads
+              that already have sounds (shown in gray) or special pads like
+              &quot;Stop All&quot; cannot receive bulk assignments.
+            </p>
+          </div>
         </div>
       ),
     },

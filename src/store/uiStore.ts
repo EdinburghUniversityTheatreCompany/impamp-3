@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import React from "react";
 
+type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
+
 interface ModalConfig {
   title?: string;
   content: React.ReactNode; // The component to render inside the modal
@@ -10,7 +12,7 @@ interface ModalConfig {
   onCancel?: () => void | Promise<void>; // Callback for cancel/close action
   showConfirmButton?: boolean;
   showCancelButton?: boolean;
-  // Add any other props needed by the Modal component itself
+  size?: ModalSize; // Controls the modal width
 }
 
 interface UIState {

@@ -8,6 +8,7 @@ import ConfirmModalContent from "./modals/ConfirmModalContent";
 import EditPadModalContent, {
   EditPadModalContentRef,
 } from "./modals/EditPadModalContent";
+import BulkImportModalContent from "./modals/BulkImportModalContent";
 import { usePadConfigurations } from "@/hooks/usePadConfigurations";
 import {
   PadConfiguration,
@@ -606,15 +607,98 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     );
   });
 
+  // Open the bulk import modal
+  const handleOpenBulkImport = useCallback(() => {
+    if (activeProfileId === null) {
+      console.error("Cannot bulk import, no active profile selected.");
+      return;
+    }
+
+    // Create a simplified map of existing configurations to pass to the modal
+    const existingConfigMap = new Map<
+      number,
+      { name?: string; soundCount: number }
+    >();
+    padConfigs.forEach((config, index) => {
+      existingConfigMap.set(index, {
+        name: config.name,
+        soundCount: config.audioFileIds?.length || 0,
+      });
+    });
+
+    openModal({
+      title: "Bulk Import Audio Files",
+      content: (
+        <BulkImportModalContent
+          profileId={activeProfileId}
+          pageIndex={currentPageIndex}
+          existingPadConfigs={existingConfigMap}
+          onAssignmentComplete={() => {
+            closeModal();
+            refreshPadConfigs();
+            // Check if we're on an emergency page and refresh if needed
+            isEmergencyPage(activeProfileId, currentPageIndex).then(
+              (isEmergency) => {
+                if (isEmergency) {
+                  incrementEmergencySoundsVersion();
+                  console.log("Emergency page updated after bulk import");
+                }
+              },
+            );
+          }}
+        />
+      ),
+      confirmText: "",
+      showConfirmButton: false,
+      size: "full",
+    });
+  }, [
+    activeProfileId,
+    currentPageIndex,
+    padConfigs,
+    openModal,
+    closeModal,
+    refreshPadConfigs,
+    incrementEmergencySoundsVersion,
+  ]);
+
   return (
-    <div
-      className="grid gap-2 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg shadow"
-      style={{
-        gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 1fr))`,
-      }}
-    >
-      {padElements}
+    <div className="flex flex-col gap-4">
+      {/* Show Bulk Import button only in delete/move mode */}
+      {isDeleteMoveMode && activeProfileId !== null && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={handleOpenBulkImport}
+            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md flex items-center"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5 mr-2"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Bulk Import
+          </button>
+        </div>
+      )}
+
+      <div
+        className="grid gap-2 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg shadow"
+        style={{
+          gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 1fr))`,
+        }}
+      >
+        {padElements}
+      </div>
     </div>
   );
 };

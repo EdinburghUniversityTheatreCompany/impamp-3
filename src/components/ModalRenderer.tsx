@@ -38,6 +38,7 @@ const ModalRenderer: React.FC = () => {
       onCancel={modalConfig.onCancel} // Pass the specific onCancel from config if any
       showConfirmButton={modalConfig.showConfirmButton}
       showCancelButton={modalConfig.showCancelButton}
+      size={modalConfig.size} // Pass the size prop
     >
       {/* Render the content node provided in the config */}
       {modalConfig.content}
