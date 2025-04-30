@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, ChangeEvent, useEffect } from "react"; // Added useEffect back
+import { useState, useRef, useEffect } from "react"; // Removed unused ChangeEvent
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { SyncType } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
@@ -86,8 +86,15 @@ export default function ProfileManager() {
         const userInfo: GoogleUserInfo = await userInfoResponse.json();
         console.log("Fetched Google User Info:", userInfo);
 
-        // Store Google auth details
-        setGoogleAuthDetails(userInfo, accessToken);
+        // Calculate token expiration time (usually 1 hour from now for Google)
+        const expiresAt = Date.now() + 3600 * 1000; // 1 hour in milliseconds
+
+        // Get refresh token if available - accessing through the any type since it's not in the type definitions
+        // but might be present in some authorization flows
+        const refreshToken = (tokenResponse as any).refresh_token || null;
+
+        // Store Google auth details with refresh token and expiration
+        setGoogleAuthDetails(userInfo, accessToken, refreshToken, expiresAt);
 
         // Log authentication success to help with testing
         console.log(

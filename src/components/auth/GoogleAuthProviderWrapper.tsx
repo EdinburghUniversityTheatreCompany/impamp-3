@@ -11,22 +11,25 @@ interface GoogleAuthProviderWrapperProps {
 const GoogleAuthProviderWrapper: React.FC<GoogleAuthProviderWrapperProps> = ({
   children,
 }) => {
-  // Get Google auth state from the store
-  const { isGoogleSignedIn, googleUser, googleAccessToken } = useProfileStore();
-
-  // Log auth state on component mount to verify persistence
+  // Access the store only on client side with useEffect
   useEffect(() => {
+    // Get the initial state from the store
+    const store = useProfileStore.getState();
+
+    // Log auth state on component mount to verify persistence
     console.log("GoogleAuthProviderWrapper mounted");
-    console.log("Auth State - isGoogleSignedIn:", isGoogleSignedIn);
+    console.log("Auth State - isGoogleSignedIn:", store.isGoogleSignedIn);
     console.log(
       "Auth State - googleUser:",
-      googleUser ? "Present" : "Not present",
+      store.googleUser ? "Present" : "Not present",
     );
     console.log(
       "Auth State - googleAccessToken:",
-      googleAccessToken ? "Present" : "Not present",
+      store.googleAccessToken ? "Present" : "Not present",
     );
-  }, [isGoogleSignedIn, googleUser, googleAccessToken]);
+
+    // No need to subscribe to store changes here as this is just for logging
+  }, []);
 
   // Ensure the environment variable is set, otherwise throw an error during development
   // In production, it might be better to handle this gracefully, but for setup, an error is clear.

@@ -21,6 +21,8 @@ import {
 } from "../lib/importExport";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
+import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
+
 // Define a type for the decoded Google user info (adjust as needed)
 // Export this type so it can be used elsewhere (like in ProfileManager)
 export interface GoogleUserInfo {
@@ -85,9 +87,19 @@ interface ProfileState {
   // Google Drive Sync State & Actions
   googleUser: GoogleUserInfo | null;
   googleAccessToken: string | null;
+  googleRefreshToken: string | null;
+  tokenExpiresAt: number | null;
   isGoogleSignedIn: boolean;
-  setGoogleAuthDetails: (userInfo: GoogleUserInfo, accessToken: string) => void;
+  needsReauth: boolean;
+  setGoogleAuthDetails: (
+    userInfo: GoogleUserInfo,
+    accessToken: string,
+    refreshToken: string | null,
+    expiresAt: number | null,
+  ) => void;
   clearGoogleAuthDetails: () => void;
+  validateGoogleAuthState: () => Promise<boolean>;
+  checkTokenValidity: () => boolean;
 }
 
 // --- Private Helper Function ---
@@ -133,7 +145,10 @@ export const useProfileStore = create<ProfileState>()(
       // Google Auth State
       googleUser: null,
       googleAccessToken: null,
+      googleRefreshToken: null,
+      tokenExpiresAt: null,
       isGoogleSignedIn: false,
+      needsReauth: false,
 
       fetchProfiles: async () => {
         set({ isLoading: true, error: null });
@@ -673,12 +688,20 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       // Google Auth Actions
-      setGoogleAuthDetails: (userInfo, accessToken) => {
+      setGoogleAuthDetails: (
+        userInfo,
+        accessToken,
+        refreshToken = null,
+        expiresAt = null,
+      ) => {
         console.log("Setting Google Auth Details:", userInfo);
         set({
           googleUser: userInfo,
           googleAccessToken: accessToken,
+          googleRefreshToken: refreshToken,
+          tokenExpiresAt: expiresAt,
           isGoogleSignedIn: true,
+          needsReauth: false,
           error: null, // Clear any previous auth errors
         });
       },
@@ -688,8 +711,51 @@ export const useProfileStore = create<ProfileState>()(
         set({
           googleUser: null,
           googleAccessToken: null,
+          googleRefreshToken: null,
+          tokenExpiresAt: null,
           isGoogleSignedIn: false,
+          needsReauth: false,
         });
+      },
+
+      // Check if the current token is valid (not expired)
+      checkTokenValidity: () => {
+        const { tokenExpiresAt } = get();
+        return !isTokenExpiredOrExpiring(tokenExpiresAt);
+      },
+
+      // Validate Google auth state and attempt refresh if needed
+      validateGoogleAuthState: async () => {
+        const { googleAccessToken, googleRefreshToken, tokenExpiresAt } = get();
+
+        try {
+          const result = await validateAuthState(
+            googleAccessToken,
+            tokenExpiresAt,
+            googleRefreshToken,
+          );
+
+          if (result.needsReauth) {
+            // Token is expired and can't be refreshed - user needs to sign in again
+            set({ needsReauth: true });
+            return false;
+          }
+
+          if (result.newAccessToken && result.newExpiresAt) {
+            // Update with the refreshed token
+            set({
+              googleAccessToken: result.newAccessToken,
+              tokenExpiresAt: result.newExpiresAt,
+              needsReauth: false,
+            });
+          }
+
+          return result.isValid;
+        } catch (error) {
+          console.error("Error validating Google auth state:", error);
+          set({ needsReauth: true });
+          return false;
+        }
       },
 
       // Sync pausing methods implementation
@@ -776,7 +842,10 @@ export const useProfileStore = create<ProfileState>()(
         fadeoutDuration: state.fadeoutDuration,
         googleUser: state.googleUser,
         googleAccessToken: state.googleAccessToken,
+        googleRefreshToken: state.googleRefreshToken,
+        tokenExpiresAt: state.tokenExpiresAt,
         isGoogleSignedIn: state.isGoogleSignedIn,
+        needsReauth: state.needsReauth,
       }),
     },
   ),

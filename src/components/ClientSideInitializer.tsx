@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { getAllProfiles } from "@/lib/db";
@@ -13,8 +13,40 @@ import { getAllProfiles } from "@/lib/db";
 const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  // Get syncProfile from the hook but avoid direct store access in render
   const { syncProfile } = useGoogleDriveSync();
-  const isGoogleSignedIn = useProfileStore((state) => state.isGoogleSignedIn);
+
+  // Use local state to store auth values from the Zustand store
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
+
+  // Define a type for the store state that only includes what we need
+  interface StoreState {
+    isGoogleSignedIn: boolean;
+  }
+
+  // Memoize the selector to prevent unnecessary re-renders
+  const selectAuthState = useCallback(
+    (state: StoreState) => ({
+      isGoogleSignedIn: state.isGoogleSignedIn,
+    }),
+    [],
+  );
+
+  // Subscribe to store changes for Google sign-in state
+  useEffect(() => {
+    // Get initial state
+    const storeState = useProfileStore.getState();
+    setIsGoogleSignedIn(storeState.isGoogleSignedIn);
+
+    // Subscribe to store changes
+    const unsubscribe = useProfileStore.subscribe((state) => {
+      const newState = selectAuthState(state);
+      setIsGoogleSignedIn(newState.isGoogleSignedIn);
+    });
+
+    // Cleanup subscription
+    return () => unsubscribe();
+  }, [selectAuthState]);
 
   useEffect(() => {
     // Fetch profiles only once when the component mounts on the client

@@ -47,6 +47,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     deleteProfile,
     isGoogleSignedIn, // Get Google sign-in status
     googleAccessToken, // Get access token for Picker API
+    needsReauth, // Add this to check if re-authentication is needed
+    openProfileManager, // Add this to open profile manager for re-auth
   } = useProfileStore();
 
   // Sync Hook (needed for actions and status)
@@ -406,6 +408,15 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   // Determine what status to show based on global hook status and local interaction
   const displayStatus = useMemo(() => {
+    // Authentication expired - show re-auth message
+    if (needsReauth) {
+      return {
+        text: "Authentication expired",
+        color: "text-red-600 dark:text-red-400",
+        needsAuth: true,
+      };
+    }
+
     if (driveHookStatus === "syncing" && isSyncingNow)
       return { text: "Syncing...", color: "text-blue-600 dark:text-blue-400" };
     if (driveHookStatus === "conflict" && lastSyncInitiatedByThisCard)
@@ -575,11 +586,20 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               {profile.syncType === "googleDrive" &&
                 isGoogleSignedIn &&
                 displayStatus && (
-                  <p
-                    className={`text-xs mt-1 font-medium ${displayStatus.color}`}
-                  >
-                    Sync Status: {displayStatus.text}
-                  </p>
+                  <div className="mt-1">
+                    <p className={`text-xs font-medium ${displayStatus.color}`}>
+                      Sync Status: {displayStatus.text}
+                    </p>
+                    {/* Add sign in again button if auth is expired */}
+                    {displayStatus.needsAuth && (
+                      <button
+                        onClick={() => openProfileManager()}
+                        className="mt-1 px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
+                      >
+                        Sign in again
+                      </button>
+                    )}
+                  </div>
                 )}
             </div>
             <div className="flex space-x-1">
