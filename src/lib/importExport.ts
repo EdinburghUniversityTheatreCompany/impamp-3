@@ -301,8 +301,9 @@ async function createImportedProfile(
     name: profileName,
     // Use syncType from export if available, otherwise default to 'local'
     syncType: (exportData.profile as Profile).syncType || "local",
-    googleDriveFolderId: (exportData.profile as Profile).googleDriveFolderId,
-    lastSyncedEtag: (exportData.profile as Profile).lastSyncedEtag,
+    googleDriveFileId:
+      (exportData.profile as Profile).googleDriveFileId ?? null,
+    // googleDriveFolderId and lastSyncedEtag are removed from Profile interface
     activePadBehavior: (exportData.profile as Profile).activePadBehavior,
     // Handle backup fields on import
     lastBackedUpAt: now.getTime(), // Set lastBackedUpAt to import time

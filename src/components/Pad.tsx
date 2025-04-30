@@ -156,6 +156,7 @@ const Pad: React.FC<PadProps> = ({
       isDragActive,
       isDragAccept,
       isDragReject,
+      isDropDisabled,
     ],
   );
 

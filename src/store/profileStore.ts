@@ -21,6 +21,15 @@ import {
 } from "../lib/importExport";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
+// Define a type for the decoded Google user info (adjust as needed)
+// Export this type so it can be used elsewhere (like in ProfileManager)
+export interface GoogleUserInfo {
+  email?: string;
+  name?: string;
+  picture?: string;
+  // Add other fields you might need from the decoded token
+}
+
 interface ProfileState {
   profiles: Profile[];
   activeProfileId: number | null;
@@ -63,6 +72,13 @@ interface ProfileState {
   // Profile manager UI state
   openProfileManager: () => void;
   closeProfileManager: () => void;
+
+  // Google Drive Sync State & Actions
+  googleUser: GoogleUserInfo | null;
+  googleAccessToken: string | null;
+  isGoogleSignedIn: boolean;
+  setGoogleAuthDetails: (userInfo: GoogleUserInfo, accessToken: string) => void;
+  clearGoogleAuthDetails: () => void;
 }
 
 // --- Private Helper Function ---
@@ -103,6 +119,11 @@ export const useProfileStore = create<ProfileState>()(
       isProfileManagerOpen: false, // Profile manager modal is closed by default
       emergencySoundsVersion: 0, // Initial version for emergency sounds tracking
       fadeoutDuration: 3, // Default fadeout duration in seconds
+
+      // Google Auth State
+      googleUser: null,
+      googleAccessToken: null,
+      isGoogleSignedIn: false,
 
       fetchProfiles: async () => {
         set({ isLoading: true, error: null });
@@ -610,16 +631,36 @@ export const useProfileStore = create<ProfileState>()(
           // throw error;
         }
       },
+
+      // Google Auth Actions
+      setGoogleAuthDetails: (userInfo, accessToken) => {
+        console.log("Setting Google Auth Details:", userInfo);
+        set({
+          googleUser: userInfo,
+          googleAccessToken: accessToken,
+          isGoogleSignedIn: true,
+          error: null, // Clear any previous auth errors
+        });
+      },
+
+      clearGoogleAuthDetails: () => {
+        console.log("Clearing Google Auth Details");
+        set({
+          googleUser: null,
+          googleAccessToken: null,
+          isGoogleSignedIn: false,
+        });
+      },
     }),
     {
       name: "impamp-profile-storage", // Name for localStorage key
       partialize: (state) => ({
         activeProfileId: state.activeProfileId,
         fadeoutDuration: state.fadeoutDuration,
-      }), // Only persist these parts of the state
+        googleUser: state.googleUser,
+        googleAccessToken: state.googleAccessToken,
+        isGoogleSignedIn: state.isGoogleSignedIn,
+      }),
     },
   ),
 );
-
-// REMOVED: Initial fetch of profiles. This will be handled by ClientSideInitializer.
-// useProfileStore.getState().fetchProfiles();

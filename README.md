@@ -21,7 +21,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
 - **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
-- **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), and Google Drive sync (coming soon)
+- **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), and automatic [Google Drive Import/Export](docs/google-drive-sync.md).
 - **Containerization**: Deployed as a Docker container for easy deployment
 
 ## Getting Started
@@ -157,7 +157,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
    - Open the Profile Manager and go to the "Import / Export" tab.
    - **Export:** Select one or more profiles from the list using the checkboxes, then click "Export Selected". A single JSON file containing all selected profiles will be downloaded. Exporting profiles updates their "last backed up" timestamp.
    - **Import:** Click "Select File to Import" and choose a previously exported JSON file (supports single, multi-profile, and legacy ImpAmp2 formats).
-   - Google Drive integration for syncing across devices will be added in a future update
+   - **Google Drive:** Use the "Import from Drive..." and "Export Active Profile to Drive" buttons within the Profile Manager (Import/Export tab) after signing in. See the [Google Drive Integration Guide](docs/google-drive-sync.md) for setup and usage details.
 
 ## Project Structure
 

@@ -1,6 +1,6 @@
 {
   "name": "impamp-3",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,22 +18,28 @@
     "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
+    "@googleworkspace/drive-picker-element": "^0.4.1",
     "@hello-pangea/dnd": "^18.0.1",
-    "@types/gapi": "^0.0.47",
+    "@react-oauth/google": "^0.12.1",
+    "@types/uuid": "^10.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "google-api-javascript-client": "^0.1.0",
     "idb": "^8.0.2",
+    "jwt-decode": "^4.0.0",
     "next": "15.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-dropzone": "^14.3.8",
+    "uuid": "^11.1.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.42.1",
     "@tailwindcss/postcss": "^4",
+    "@types/gapi": "^0.0.47",
+    "@types/google.picker": "^0.0.50",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

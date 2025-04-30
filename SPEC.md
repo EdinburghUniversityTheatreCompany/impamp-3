@@ -208,15 +208,35 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     * Clicking "Export Selected" triggers the generation of a single JSON file using the `MultiProfileExport` format (even if only one profile is selected).
     * The filename follows the pattern `impamp-multi-profile-export-X-profiles-YYYY-MM-DD.json` or `impamp-<profile-name>-YYYY-MM-DD.json` if only one profile is selected.
     * Exporting profiles updates their respective `lastBackedUpAt` timestamps in the database and application state.
+    * **Google Drive Import/Export:** Users can manually import/export profiles to/from their Google Drive AppData folder via the Profile Manager (Import/Export tab) after signing in with their Google account. See [Google Drive Integration Guide](docs/google-drive-sync.md).
 
-#### 4.4. Sync (Future - Google Drive)
+#### 4.4. Sync (Google Drive - Automatic Sync Implemented)
 
-* **Goal:** Allow profiles (configurations and potentially audio files) to be synced via Google Drive.
-* **Offline Merging Strategy (TBD):** Define how conflicts are handled if a profile is edited offline on multiple devices and then synced. Options:
-    * Last Write Wins (based on timestamp).
-    * User Prompt: Notify user(s) of conflict and provide options to merge or choose a version.
-    * Automatic Merge: Attempt to merge changes intelligently where possible (e.g., changes to different pads/banks).
-* **Communication:** Clear communication to the user about sync status, conflicts, and merge results is required.
+* **Current Implementation (Automatic):**
+    * Users can link a profile to a new or existing Google Drive file.
+    * Linked profiles are automatically synced:
+        * When the application loads
+        * When network connectivity is restored after being offline
+        * Every 15 minutes
+        * Manually when the user clicks "Sync Now" on a profile card
+    * This uses the `drive.appdata` scope, meaning files are hidden from the main Drive UI and don't count towards storage quota.
+    * Conflict detection and resolution is implemented, allowing users to choose between local and remote versions.
+* **Profile Linking:**
+    * From the Profile Manager, users can link profiles to Google Drive
+    * Options for linking include creating a new Drive file or connecting to an existing one
+    * The Google Picker API is used to allow users to select files in their Drive
+    * Linked profiles display their current sync status (Syncing, Synced, Error, Conflict)
+* **Conflict Resolution:**
+    * Field-level conflicts are detected based on timestamps (`_fieldsModified`)
+    * When conflicts occur, users are shown a modal to choose between local and remote versions for each field
+    * Local-only and remote-only data is automatically preserved
+    * Once resolved, the merged data is uploaded back to Google Drive
+* **Collaboration:**
+    * Users can share their profile files with others via standard Google Drive sharing
+    * Multiple users can link their local profiles to the same Drive file
+    * Each user can make changes, and conflicts are resolved when detected
+    * Note: Audio files must be available locally on each device as they are not synced
+* **Communication:** Clear communication to the user about sync status, conflicts, and merge results is provided through visual indicators and the conflict resolution UI.
 
 ### 5. Progressive Web App (PWA) & Offline Support
 

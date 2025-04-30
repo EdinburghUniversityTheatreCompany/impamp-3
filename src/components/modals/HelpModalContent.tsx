@@ -208,46 +208,100 @@ const HelpModalContent: React.FC = () => {
       label: "Google Drive Sync",
       content: (
         <div className="space-y-4">
-          <h3 className="text-lg font-medium">Google Drive Sync</h3>
+          <h3 className="text-lg font-medium">Google Drive Synchronization</h3>
 
           <div className="p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 rounded-md">
-            <p className="font-medium">Coming Soon</p>
+            <p className="font-medium">
+              Collaborative Profile Sync via Google Drive
+            </p>
             <p className="mt-2">
-              Google Drive integration will be available in a future update.
-              This feature will allow you to:
+              You can synchronize your profiles across devices and share them
+              with others using Google Drive. ImpAmp3 uses Google Drive&apos;s
+              hidden AppData folder for storing files, which doesn&apos;t count
+              toward your storage quota and keeps your main Drive organized.
             </p>
-            <ul className="list-disc pl-5 mt-2 space-y-1">
-              <li>Sync your profiles across multiple devices</li>
-              <li>Automatically back up your configurations</li>
-              <li>Access your sounds from anywhere</li>
-            </ul>
           </div>
 
           <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Planned Features</h4>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>Create Google Drive-synced profiles</li>
-              <li>Automatic background syncing</li>
-              <li>Conflict resolution for changes made on multiple devices</li>
-              <li>Sync status indicators</li>
-              <li>Selective sync options for large profiles</li>
-            </ul>
-          </div>
-
-          <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Current Alternatives</h4>
+            <h4 className="font-medium">Linking a Profile to Google Drive</h4>
             <p>
-              Until Google Drive sync is available, you can use these methods to
-              sync your profiles:
+              Each profile can be linked to a Google Drive file, enabling
+              automatic synchronization:
             </p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>Export profiles to JSON files and manually transfer them</li>
+            <ol className="list-decimal pl-5 space-y-1">
+              <li>Sign in with your Google account in the Profile Manager</li>
+              <li>On any profile card, click:</li>
+              <ul className="list-disc pl-5 space-y-1 mt-1">
+                <li>
+                  <strong>Link to new Drive file</strong> - Create a new sync
+                  file in Drive
+                </li>
+                <li>
+                  <strong>Link to existing file</strong> - Connect to a file
+                  already in Drive
+                </li>
+              </ul>
               <li>
-                Use a third-party file sync service to sync the exported JSON
-                files
+                Once linked, you&apos;ll see the sync status displayed on the
+                profile card
               </li>
-              <li>Back up your profiles regularly using the export feature</li>
+            </ol>
+          </div>
+
+          <div className="space-y-2 mt-4">
+            <h4 className="font-medium">Automatic Synchronization</h4>
+            <p>For linked profiles, synchronization happens automatically:</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>When the application loads</li>
+              <li>
+                When your internet connection is restored after being offline
+              </li>
+              <li>Every 15 minutes while the application is open</li>
+              <li>
+                You can also manually sync anytime by clicking &quot;Sync
+                Now&quot; on the profile card
+              </li>
             </ul>
+          </div>
+
+          <div className="space-y-2 mt-4">
+            <h4 className="font-medium">Conflict Resolution</h4>
+            <p>If changes are made to the same profile on different devices:</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                ImpAmp3 will detect conflicts and display a resolution modal
+              </li>
+              <li>
+                You can choose which version to keep for each changed field
+              </li>
+              <li>
+                The system preserves both local-only and remote-only data
+                automatically
+              </li>
+              <li>
+                Once resolved, changes are synchronized back to Google Drive
+              </li>
+            </ul>
+          </div>
+
+          <div className="space-y-2 mt-4">
+            <h4 className="font-medium">Collaboration with Others</h4>
+            <p>
+              Share your profiles with others for collaborative soundboards:
+            </p>
+            <ol className="list-decimal pl-5 space-y-1">
+              <li>Link a profile to Google Drive</li>
+              <li>Open Google Drive in your browser</li>
+              <li>
+                Find the linked file (format:{" "}
+                <code>impamp-profile-profilename.json</code>)
+              </li>
+              <li>Right-click and select &quot;Share&quot;</li>
+              <li>Add email addresses of people you want to share with</li>
+              <li>
+                They can then link their local profiles to this shared file
+              </li>
+            </ol>
           </div>
         </div>
       ),

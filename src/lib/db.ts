@@ -1,11 +1,11 @@
-import { openDB, DBSchema, IDBPDatabase } from "idb";
+import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
 
 const DB_NAME = "impamp3DB";
-const DB_VERSION = 3;
+const DB_VERSION = 4; // DB version for sync fields
 
 // Define the structure of audio file data
 export interface AudioFile {
-  id?: number; // Auto-incrementing primary key
+  id?: number;
   blob: Blob;
   name: string;
   type: string;
@@ -15,248 +15,255 @@ export interface AudioFile {
 // Define the structure of profile data
 export type SyncType = "local" | "googleDrive";
 export interface Profile {
-  id?: number; // Auto-incrementing primary key
+  id?: number;
   name: string;
   syncType: SyncType;
-  googleDriveFolderId?: string;
-  lastSyncedEtag?: string; // ETag for profile.json in Drive
-  activePadBehavior?: ActivePadBehavior; // How to handle activating an already active pad
-  lastBackedUpAt: number; // Timestamp (ms) of the last successful backup/export
-  backupReminderPeriod: number; // Duration (ms) after which to remind, -1 for never
+  googleDriveFileId?: string | null; // Link to the specific file in user's Drive
+  activePadBehavior?: ActivePadBehavior;
+  lastBackedUpAt: number;
+  backupReminderPeriod: number;
   createdAt: Date;
   updatedAt: Date;
+  // Sync Timestamps
+  _created?: number;
+  _modified?: number;
+  _fieldsModified?: Record<string, number>;
 }
 
-// Define the possible behaviors for activating an already active pad
 export type ActivePadBehavior = "continue" | "stop" | "restart";
-
-// Define the playback types for multi-sound pads
 export type PlaybackType = "sequential" | "random" | "round-robin";
 
 // Define the structure of pad configuration data
 export interface PadConfiguration {
-  id?: number; // Auto-incrementing primary key
-  profileId: number; // Foreign key to Profiles store
-  padIndex: number; // 0-based index on the grid page (e.g., 0-31 for 4x8 grid)
-  pageIndex: number; // 0-based index for the page within the profile
+  id?: number;
+  profileId: number;
+  padIndex: number;
+  pageIndex: number;
   keyBinding?: string;
   name?: string;
-  // audioFileId?: number; // DEPRECATED: Replaced by audioFileIds
-  audioFileIds: number[]; // Array of foreign keys to AudioFiles store
-  playbackType: PlaybackType; // How to play multiple sounds
+  audioFileIds: number[];
+  playbackType: PlaybackType;
   createdAt: Date;
   updatedAt: Date;
+  // Sync Timestamps
+  _created?: number;
+  _modified?: number;
+  _fieldsModified?: Record<string, number>;
 }
 
 // Define the structure of page/bank metadata
 export interface PageMetadata {
-  id?: number; // Auto-incrementing primary key
-  profileId: number; // Foreign key to Profiles store
-  pageIndex: number; // 0-based index for the page
-  name: string; // Name of the bank/page
-  isEmergency: boolean; // Whether this is an emergency bank
+  id?: number;
+  profileId: number;
+  pageIndex: number;
+  name: string;
+  isEmergency: boolean;
   createdAt: Date;
   updatedAt: Date;
+  // Sync Timestamps
+  _created?: number;
+  _modified?: number;
+  _fieldsModified?: Record<string, number>;
 }
 
-// Define the database schema using DBSchema
+// Define the database schema
 export interface ImpAmpDBSchema extends DBSchema {
-  audioFiles: {
-    key: number;
-    value: AudioFile;
-    indexes: { name: string };
-  };
-  profiles: {
-    key: number;
-    value: Profile;
-    indexes: { name: string };
-  };
+  audioFiles: { key: number; value: AudioFile; indexes: { name: string } };
+  profiles: { key: number; value: Profile; indexes: { name: string } };
   padConfigurations: {
     key: number;
     value: PadConfiguration;
-    indexes: { profileId: number; profilePagePad: [number, number, number] }; // Index for profileId, and compound index for profile/page/pad
+    indexes: { profileId: number; profilePagePad: [number, number, number] };
   };
   pageMetadata: {
     key: number;
     value: PageMetadata;
-    indexes: { profileId: number; profilePage: [number, number] }; // Index for profileId, and compound index for profile+page
+    indexes: { profileId: number; profilePage: [number, number] };
   };
 }
 
-// Detect if we're running on the client side (browser) or server side
 const isClient =
   typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
-
-// Default backup reminder period (30 days in milliseconds)
-export const DEFAULT_BACKUP_REMINDER_PERIOD_MS = 30 * 24 * 60 * 60 * 1000; // Export this constant
-
-// Singleton promise for the database connection
+export const DEFAULT_BACKUP_REMINDER_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
 
-export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
-  // Added export
-  // Return a fake promise if we're on the server to prevent errors
-  if (!isClient) {
-    console.warn(
-      "Attempted to access IndexedDB on the server. This is not supported.",
-    );
-    return Promise.reject(
-      new Error("IndexedDB is not available in this environment"),
-    );
-  }
+// Helper function to iterate and update records within an upgrade transaction
+const migrateStoreV4 = (
+  transaction: IDBPTransaction<ImpAmpDBSchema, any, "versionchange">, // Use broader type for transaction
+  storeName: "profiles" | "padConfigurations" | "pageMetadata",
+) => {
+  console.log(`V4 Migration: Starting update for store "${storeName}"...`);
+  const store = transaction.objectStore(storeName);
+  return store.openCursor().then(function iterateCursor(cursor): Promise<void> {
+    if (!cursor) {
+      console.log(`V4 Migration: Finished iterating ${storeName}.`);
+      return Promise.resolve();
+    }
+    const record = cursor.value;
+    const now = Date.now();
+    const createdAtMs =
+      record.createdAt instanceof Date ? record.createdAt.getTime() : now;
+    const updatedAtMs =
+      record.updatedAt instanceof Date ? record.updatedAt.getTime() : now;
 
+    const updateData: any = {
+      // Use 'any' during migration for flexibility
+      ...record,
+      _created: record._created ?? createdAtMs,
+      _modified: record._modified ?? updatedAtMs,
+      _fieldsModified: record._fieldsModified ?? {},
+    };
+
+    if (storeName === "profiles") {
+      updateData.googleDriveFileId =
+        (record as Profile).googleDriveFileId ?? null;
+      delete updateData.googleDriveFolderId;
+      delete updateData.lastSyncedEtag;
+    }
+
+    // Use type assertion for the final update
+    const finalUpdateData =
+      updateData as ImpAmpDBSchema[typeof storeName]["value"];
+
+    return cursor
+      .update(finalUpdateData)
+      .then(() => cursor.continue())
+      .then(iterateCursor)
+      .catch((updateError) => {
+        console.error(
+          `V4 Migration: Error updating record in ${storeName} with key ${cursor.key}:`,
+          updateError,
+        );
+        return cursor.continue().then(iterateCursor); // Attempt to continue
+      });
+  });
+};
+
+export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
+  if (!isClient) {
+    console.warn("Attempted to access IndexedDB on the server.");
+    return Promise.reject(new Error("IndexedDB is not available"));
+  }
   if (!dbPromise) {
     dbPromise = openDB<ImpAmpDBSchema>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion, newVersion, transaction) {
-        // Removed unused event param
+        // Removed unused event
         console.log(`Upgrading DB from version ${oldVersion} to ${newVersion}`);
 
-        // --- Version 1 Stores ---
-        // Create audioFiles store
-        if (!db.objectStoreNames.contains("audioFiles")) {
-          const audioStore = db.createObjectStore("audioFiles", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          audioStore.createIndex("name", "name");
-          console.log("Created audioFiles object store");
-        }
-
-        // Create profiles store
-        if (!db.objectStoreNames.contains("profiles")) {
-          const profileStore = db.createObjectStore("profiles", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          profileStore.createIndex("name", "name", { unique: true });
-          console.log("Created profiles object store");
-        }
-
-        // Create padConfigurations store
-        if (!db.objectStoreNames.contains("padConfigurations")) {
-          const padConfigStore = db.createObjectStore("padConfigurations", {
-            keyPath: "id",
-            autoIncrement: true,
-          });
-          // Index to quickly find all pads for a specific profile
-          padConfigStore.createIndex("profileId", "profileId");
-          // Compound index to quickly find a specific pad on a specific page for a profile
-          padConfigStore.createIndex(
-            "profilePagePad",
-            ["profileId", "pageIndex", "padIndex"],
-            { unique: true },
-          );
-          console.log("Created padConfigurations object store");
-        }
-
-        // --- Version 2 Store ---
-        if (oldVersion < 2) {
-          if (!db.objectStoreNames.contains("pageMetadata")) {
-            const pageMetadataStore = db.createObjectStore("pageMetadata", {
+        // V1 Stores
+        if (oldVersion < 1) {
+          if (!db.objectStoreNames.contains("audioFiles")) {
+            db.createObjectStore("audioFiles", {
+              keyPath: "id",
+              autoIncrement: true,
+            }).createIndex("name", "name");
+          }
+          if (!db.objectStoreNames.contains("profiles")) {
+            db.createObjectStore("profiles", {
+              keyPath: "id",
+              autoIncrement: true,
+            }).createIndex("name", "name", { unique: true });
+          }
+          if (!db.objectStoreNames.contains("padConfigurations")) {
+            const store = db.createObjectStore("padConfigurations", {
               keyPath: "id",
               autoIncrement: true,
             });
-            // Index to quickly find all pages for a specific profile
-            pageMetadataStore.createIndex("profileId", "profileId");
-            // Compound index to quickly find metadata for a specific page in a profile
-            pageMetadataStore.createIndex(
-              "profilePage",
-              ["profileId", "pageIndex"],
+            store.createIndex("profileId", "profileId");
+            store.createIndex(
+              "profilePagePad",
+              ["profileId", "pageIndex", "padIndex"],
               { unique: true },
             );
-            console.log("Created pageMetadata object store");
           }
         }
-
-        // --- Version 3 Migration (Multi-Sound Pads) ---
+        // V2 Store
+        if (oldVersion < 2) {
+          if (!db.objectStoreNames.contains("pageMetadata")) {
+            const store = db.createObjectStore("pageMetadata", {
+              keyPath: "id",
+              autoIncrement: true,
+            });
+            store.createIndex("profileId", "profileId");
+            store.createIndex("profilePage", ["profileId", "pageIndex"], {
+              unique: true,
+            });
+          }
+        }
+        // V3 Migration
         if (oldVersion < 3) {
-          console.log(
-            "Applying V3 migration: Updating padConfigurations for multi-sound...",
-          );
+          console.log("Applying V3 migration...");
           if (!transaction) {
-            console.error("V3 Migration Error: Transaction object is null!");
-            // Attempt to get a new transaction if possible, though this is unusual in upgrade
-            // transaction = db.transaction('padConfigurations', 'readwrite');
-            // If still null, we might have to abort or throw
-            throw new Error(
-              "Cannot perform V3 migration without a transaction.",
-            );
+            throw new Error("V3 Migration: No transaction");
           }
           const store = transaction.objectStore("padConfigurations");
-          // Use cursor to iterate and update each object
           store
             .openCursor()
-            .then(function iterateCursor(cursor) {
+            .then(function iterateV3(cursor) {
               if (!cursor) {
-                console.log(
-                  "V3 Migration: Finished iterating padConfigurations.",
-                );
+                console.log("V3 Migration complete.");
                 return;
               }
-              // Access potentially old field dynamically to avoid strict type errors
-              const oldConfigValue = cursor.value as PadConfiguration & {
-                audioFileId?: number;
+              const oldVal = cursor.value as any;
+              const audioFileIds =
+                oldVal.audioFileId !== undefined && oldVal.audioFileId !== null
+                  ? [oldVal.audioFileId]
+                  : [];
+              const newVal: PadConfiguration = {
+                ...oldVal,
+                audioFileIds,
+                playbackType: "round-robin",
               };
-              const audioFileIds: number[] = [];
-              if (
-                oldConfigValue.audioFileId !== undefined &&
-                oldConfigValue.audioFileId !== null &&
-                typeof oldConfigValue.audioFileId === "number"
-              ) {
-                audioFileIds.push(oldConfigValue.audioFileId);
-              }
-
-              // Construct the new config object carefully, excluding the old field
-              const newConfig: PadConfiguration = {
-                id: oldConfigValue.id,
-                profileId: oldConfigValue.profileId,
-                padIndex: oldConfigValue.padIndex,
-                pageIndex: oldConfigValue.pageIndex,
-                keyBinding: oldConfigValue.keyBinding,
-                name: oldConfigValue.name,
-                audioFileIds: audioFileIds, // Set new array
-                playbackType: "round-robin", // Default playback type for migrated pads
-                createdAt: oldConfigValue.createdAt,
-                updatedAt: oldConfigValue.updatedAt, // Keep original updatedAt during migration
-              };
-
-              // Update the record in the store
-              cursor.update(newConfig);
-
-              cursor.continue().then(iterateCursor); // Use .then for async iteration
+              delete (newVal as any).audioFileId;
+              cursor.update(newVal);
+              cursor.continue().then(iterateV3);
             })
             .catch((err) => {
-              console.error("V3 Migration Error during cursor iteration:", err);
-              // Abort the transaction on error
-              if (transaction) {
-                transaction.abort();
-              }
+              console.error("V3 Migration Error:", err);
+              transaction.abort();
             });
         }
+        // V4 Migration
+        if (oldVersion < 4) {
+          console.log("Applying V4 migration...");
+          if (!transaction) {
+            throw new Error("V4 Migration: No transaction");
+          }
+          transaction.done.catch((err) => {
+            console.error("Transaction failed during V4 migration:", err);
+          });
+          // Queue migrations (don't await directly in upgrade)
+          migrateStoreV4(transaction, "profiles").catch(console.error);
+          migrateStoreV4(transaction, "padConfigurations").catch(console.error);
+          migrateStoreV4(transaction, "pageMetadata").catch(console.error);
+          console.log("V4 Migration queued.");
+        }
 
-        // --- Data seeding/migration can happen here ---
-        // Example: Ensure a default profile exists after initial creation
+        // V1 Seeding (Default Profile)
         if (oldVersion < 1) {
-          // Use transaction from upgrade callback
-          // Note: The duplicated pageMetadataStore creation was removed.
-          // The default profile seeding logic remains.
+          if (!transaction) {
+            throw new Error("Cannot seed default profile without transaction.");
+          }
           const profileStore = transaction.objectStore("profiles");
           profileStore
             .count()
             .then((count) => {
               if (count === 0) {
                 console.log("Adding default local profile...");
-                // Define timestamp variables *before* adding
                 const now = new Date();
                 const nowMs = now.getTime();
                 profileStore
                   .add({
                     name: "Default Local Profile",
                     syncType: "local",
-                    lastBackedUpAt: nowMs, // Initialize to creation time
-                    backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Default reminder period
+                    lastBackedUpAt: nowMs,
+                    backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS,
                     createdAt: now,
                     updatedAt: now,
+                    _created: nowMs,
+                    _modified: nowMs,
+                    _fieldsModified: {},
+                    googleDriveFileId: null,
                   })
                   .catch((err: Error) =>
                     console.error("Error adding default profile:", err),
@@ -267,75 +274,133 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
         }
       },
       blocked() {
-        console.error(
-          "IndexedDB blocked. Please close other tabs using this database.",
-        );
-        // Potentially show a notification to the user
+        console.error("IndexedDB blocked.");
       },
       blocking() {
-        console.warn("IndexedDB blocking. Database version change pending.");
-        // db.close(); // Close the connection if necessary
+        console.warn("IndexedDB blocking.");
       },
       terminated() {
-        console.error("IndexedDB connection terminated unexpectedly.");
-        dbPromise = null; // Reset promise to allow reconnection attempt
+        console.error("IndexedDB terminated.");
+        dbPromise = null;
       },
     });
   }
   return dbPromise;
 }
 
-// --- Basic CRUD Operations ---
+// --- Basic CRUD Operations (Updated for Sync Fields) ---
 
-// Example: Add an audio file
+// Helper to generate sync fields for new/updated records
+const generateSyncFields = (existingRecord?: {
+  _created?: number;
+}): { _created: number; _modified: number } => {
+  const now = Date.now();
+  return { _created: existingRecord?._created ?? now, _modified: now };
+};
+
+// Helper to update _fieldsModified based on changes
+const updateFieldsModified = <T extends Record<string, any>>( // Use any for broader compatibility
+  newData: Partial<T>,
+  existingRecord: T,
+  fieldsModified: Record<string, number> | undefined,
+): Record<string, number> => {
+  const now = Date.now();
+  const updatedFields = { ...(fieldsModified ?? {}) };
+  for (const key in newData) {
+    if (Object.prototype.hasOwnProperty.call(newData, key)) {
+      if (
+        !key.startsWith("_") &&
+        key !== "id" &&
+        key !== "createdAt" &&
+        key !== "updatedAt"
+      ) {
+        if (
+          JSON.stringify(newData[key as keyof T]) !==
+          JSON.stringify(existingRecord[key as keyof T])
+        ) {
+          updatedFields[key] = now;
+        }
+      }
+    }
+  }
+  return updatedFields;
+};
+
+// Add an audio file
 export async function addAudioFile(
   audioFile: Omit<AudioFile, "id" | "createdAt">,
 ): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("audioFiles", "readwrite");
-  const store = tx.objectStore("audioFiles");
-  const id = await store.add({ ...audioFile, createdAt: new Date() });
+  const id = await tx.store.add({ ...audioFile, createdAt: new Date() });
   await tx.done;
   console.log(`Added audio file with id: ${id}`);
   return id;
 }
 
-// Example: Get an audio file by ID
+// Get an audio file by ID
 export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   const db = await getDb();
   return db.get("audioFiles", id);
 }
 
-// Add a profile
+// Add a profile (Updated)
 export async function addProfile(
-  profile: Omit<Profile, "id" | "createdAt" | "updatedAt">,
+  profileData: Omit<
+    Profile,
+    | "id"
+    | "createdAt"
+    | "updatedAt"
+    | "_created"
+    | "_modified"
+    | "_fieldsModified"
+    | "lastBackedUpAt"
+    | "backupReminderPeriod"
+  > & { backupReminderPeriod?: number },
 ): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("profiles", "readwrite");
-  const store = tx.objectStore("profiles");
   const now = new Date();
   const nowMs = now.getTime();
+  const syncFields = generateSyncFields();
+  const initialFieldsModified: Record<string, number> = {};
+  Object.keys(profileData).forEach((key) => {
+    if (
+      !key.startsWith("_") &&
+      key !== "id" &&
+      key !== "createdAt" &&
+      key !== "updatedAt"
+    ) {
+      initialFieldsModified[key as keyof typeof profileData] = nowMs;
+    }
+  });
+
+  const profileToAdd: Omit<Profile, "id"> = {
+    ...profileData,
+    lastBackedUpAt: nowMs,
+    backupReminderPeriod:
+      profileData.backupReminderPeriod ?? DEFAULT_BACKUP_REMINDER_PERIOD_MS,
+    googleDriveFileId: profileData.googleDriveFileId ?? null,
+    createdAt: now,
+    updatedAt: now,
+    _created: syncFields._created,
+    _modified: syncFields._modified,
+    _fieldsModified: initialFieldsModified,
+  };
+
   try {
-    const id = await store.add({
-      ...profile,
-      lastBackedUpAt: nowMs, // Initialize to creation time
-      backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Default reminder period
-      createdAt: now,
-      updatedAt: now,
-    });
+    const id = await tx.store.add(profileToAdd);
     await tx.done;
-    // Log the newly added profile details including backup fields
     console.log(
-      `[DB] Added profile: ID=${id}, Name="${profile.name}", SyncType=${profile.syncType}, LastBackedUpAt=${nowMs}, BackupReminderPeriod=${DEFAULT_BACKUP_REMINDER_PERIOD_MS}`,
+      `[DB] Added profile: ID=${id}, Name="${profileToAdd.name}" with sync fields.`,
     );
     return id;
   } catch (error) {
     console.error("Failed to add profile:", error);
-    // Handle specific errors like constraint errors if needed
     if (tx.error) {
       console.error("Transaction error:", tx.error);
     }
-    throw error; // Re-throw the error
+    throw error;
   }
 }
 
@@ -345,45 +410,59 @@ export async function getProfile(id: number): Promise<Profile | undefined> {
   return db.get("profiles", id);
 }
 
-// Update a profile
+// Update a profile (Updated)
 export async function updateProfile(
   id: number,
-  updates: Partial<Omit<Profile, "id" | "createdAt" | "updatedAt">>,
+  updates: Partial<
+    Omit<
+      Profile,
+      | "id"
+      | "createdAt"
+      | "updatedAt"
+      | "_created"
+      | "_modified"
+      | "_fieldsModified"
+    >
+  >,
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("profiles", "readwrite");
-  const store = tx.objectStore("profiles");
-
   try {
-    // Get the existing profile
-    const existingProfile = await store.get(id);
+    const existingProfile = await tx.store.get(id);
     if (!existingProfile) {
       throw new Error(`Profile with id ${id} not found`);
     }
 
-    // Update the profile
-    const updatedProfile = {
+    const syncFields = generateSyncFields(existingProfile);
+    const updatedFieldsModified = updateFieldsModified(
+      updates,
+      existingProfile,
+      existingProfile._fieldsModified,
+    );
+
+    const updatedProfile: Profile = {
       ...existingProfile,
       ...updates,
       updatedAt: new Date(),
+      _modified: syncFields._modified,
+      _fieldsModified: updatedFieldsModified,
     };
 
-    // Log which specific fields are being updated, especially backup-related ones
     console.log(
       `[DB] Updating profile ID=${id}. Changes: ${Object.keys(updates).join(", ")}.`,
-      updates.lastBackedUpAt !== undefined
-        ? `New lastBackedUpAt: ${updates.lastBackedUpAt}`
-        : "",
-      updates.backupReminderPeriod !== undefined
-        ? `New backupReminderPeriod: ${updates.backupReminderPeriod}`
-        : "",
     );
-
-    await store.put(updatedProfile);
+    await tx.store.put(updatedProfile);
     await tx.done;
     console.log(`[DB] Successfully updated profile with id: ${id}`);
   } catch (error) {
     console.error(`[DB] Failed to update profile ${id}:`, error);
+    if (tx.error && !tx.done) {
+      try {
+        tx.abort();
+      } catch (e) {
+        console.error("Error aborting transaction:", e);
+      }
+    }
     throw error;
   }
 }
@@ -395,35 +474,33 @@ export async function deleteProfile(id: number): Promise<void> {
     ["profiles", "padConfigurations", "pageMetadata"],
     "readwrite",
   );
-
   try {
-    // Delete the profile
     await tx.objectStore("profiles").delete(id);
-
-    // Delete associated pad configurations
     const padStore = tx.objectStore("padConfigurations");
     const padIndex = padStore.index("profileId");
     let padCursor = await padIndex.openCursor(id);
-
     while (padCursor) {
       await padCursor.delete();
       padCursor = await padCursor.continue();
     }
-
-    // Delete associated page metadata
     const pageStore = tx.objectStore("pageMetadata");
     const pageIndex = pageStore.index("profileId");
     let pageCursor = await pageIndex.openCursor(id);
-
     while (pageCursor) {
       await pageCursor.delete();
       pageCursor = await pageCursor.continue();
     }
-
     await tx.done;
     console.log(`Deleted profile with id: ${id} and all associated data`);
   } catch (error) {
     console.error(`Failed to delete profile ${id}:`, error);
+    if (tx.error && !tx.done) {
+      try {
+        tx.abort();
+      } catch (e) {
+        console.error("Error aborting transaction:", e);
+      }
+    }
     throw error;
   }
 }
@@ -434,90 +511,99 @@ export async function getAllProfiles(): Promise<Profile[]> {
   return db.getAll("profiles");
 }
 
-// Add or update a pad configuration
+// Add or update a pad configuration (Updated)
 export async function upsertPadConfiguration(
-  padConfig: Omit<PadConfiguration, "id" | "createdAt" | "updatedAt">,
+  padConfig: Omit<
+    PadConfiguration,
+    | "id"
+    | "createdAt"
+    | "updatedAt"
+    | "_created"
+    | "_modified"
+    | "_fieldsModified"
+  >,
 ): Promise<number> {
-  // Ensure required fields for the new structure are present
   if (!padConfig.audioFileIds || !padConfig.playbackType) {
-    console.error(
-      "Attempted to upsert PadConfiguration without audioFileIds or playbackType",
-      padConfig,
-    );
     throw new Error(
       "PadConfiguration must include audioFileIds and playbackType.",
     );
   }
-
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readwrite");
   const store = tx.objectStore("padConfigurations");
   const index = store.index("profilePagePad");
   const now = new Date();
+  const nowMs = now.getTime();
 
   try {
-    // Check if a configuration already exists for this profile/page/pad combination
     const existing = await index.get([
       padConfig.profileId,
       padConfig.pageIndex,
-      padConfig.padIndex, // Corrected: Use the correct compound key structure
+      padConfig.padIndex,
     ]);
-
-    let id: number; // Declare id outside the if/else block
+    let id: number;
+    let finalData: PadConfiguration;
 
     if (existing?.id) {
-      // Update existing
+      // Update
       id = existing.id;
-      // Construct update data ensuring correct type and no old field
-      const updateData: PadConfiguration = {
+      const syncFields = generateSyncFields(existing);
+      const updatedFieldsModified = updateFieldsModified(
+        padConfig,
+        existing,
+        existing._fieldsModified,
+      );
+      finalData = {
         ...existing,
         ...padConfig,
-        id: existing.id, // Ensure id is explicitly carried over
+        id: existing.id,
         updatedAt: now,
+        _modified: syncFields._modified,
+        _fieldsModified: updatedFieldsModified,
       };
-      // No need to delete audioFileId as padConfig shouldn't have it, and spread overwrites
-      await store.put(updateData);
-      console.log(`Updated pad configuration with id: ${id}`, updateData);
+      await store.put(finalData);
+      console.log(`Updated pad configuration with id: ${id}`);
     } else {
       // Add new
-      // Construct add data ensuring correct type and no old field
+      const syncFields = generateSyncFields();
+      const initialFieldsModified: Record<string, number> = {};
+      Object.keys(padConfig).forEach((key) => {
+        if (
+          !key.startsWith("_") &&
+          key !== "id" &&
+          key !== "createdAt" &&
+          key !== "updatedAt"
+        ) {
+          initialFieldsModified[key as keyof typeof padConfig] = nowMs; // Use type assertion
+        }
+      });
       const addData: Omit<PadConfiguration, "id"> = {
         ...padConfig,
         createdAt: now,
         updatedAt: now,
+        _created: syncFields._created,
+        _modified: syncFields._modified,
+        _fieldsModified: initialFieldsModified,
       };
-      // No need to delete audioFileId as padConfig shouldn't have it
       id = await store.add(addData);
-      console.log(`Added pad configuration with id: ${id}`, addData);
+      console.log(`Added pad configuration with id: ${id}`);
     }
-
     await tx.done;
-    return id; // Now id is accessible here
+    return id;
   } catch (error) {
     console.error("Error in upsertPadConfiguration:", error);
-    if (tx.error) {
-      console.error("Transaction error:", tx.error);
-    }
-    // Attempt to abort the transaction on error
-    try {
-      if (!tx.done) {
-        // Check if transaction is already finished
+    if (tx.error && !tx.done) {
+      try {
         tx.abort();
-        console.log(
-          "Transaction aborted due to error in upsertPadConfiguration.",
-        );
+      } catch (e) {
+        console.error("Error aborting transaction:", e);
       }
-    } catch (abortError) {
-      console.error("Error aborting transaction:", abortError);
     }
-    throw error; // Re-throw the original error
+    throw error;
   }
-  // This part is unreachable due to try/catch but kept for structure if needed later
-  // await tx.done;
-  // return id; // This return is now handled within the try block
 }
 
-// Example: Get all pad configurations for a specific profile and page
+// Get all pad configurations for a specific profile and page
 export async function getPadConfigurationsForProfilePage(
   profileId: number,
   pageIndex: number,
@@ -526,31 +612,21 @@ export async function getPadConfigurationsForProfilePage(
   const tx = db.transaction("padConfigurations", "readonly");
   const store = tx.objectStore("padConfigurations");
   const index = store.index("profilePagePad");
-  // Use a range query on the compound index
   const range = IDBKeyRange.bound(
-    [profileId, pageIndex, -Infinity], // Lower bound (start of the page)
-    [profileId, pageIndex, Infinity], // Upper bound (end of the page)
+    [profileId, pageIndex, -Infinity],
+    [profileId, pageIndex, Infinity],
   );
   return index.getAll(range);
 }
 
-// Ensure the default profile exists on app load (call this somewhere central)
+// Ensure the default profile exists on app load (Updated)
 export async function ensureDefaultProfile() {
   try {
     await getDb(); // Ensure DB is open and upgraded
     const profiles = await getAllProfiles();
     if (profiles.length === 0) {
       console.log("No profiles found, attempting to add default...");
-      console.log("Adding default profile with backup fields...");
-      const now = new Date();
-      const nowMs = now.getTime();
-      await addProfile({
-        name: "Default Local Profile",
-        syncType: "local",
-        // Explicitly set backup fields for clarity, though addProfile handles defaults
-        lastBackedUpAt: nowMs,
-        backupReminderPeriod: DEFAULT_BACKUP_REMINDER_PERIOD_MS,
-      });
+      await addProfile({ name: "Default Local Profile", syncType: "local" }); // Use updated addProfile
       console.log("Default profile added successfully.");
     } else {
       console.log("Profiles already exist.");
@@ -560,17 +636,13 @@ export async function ensureDefaultProfile() {
   }
 }
 
-// Function to get page metadata for a specific profile and page
+// Get page metadata for a specific profile and page
 export async function getPageMetadata(
   profileId: number,
   pageIndex: number,
 ): Promise<PageMetadata | undefined> {
   const db = await getDb();
-  const tx = db.transaction("pageMetadata", "readonly");
-  const store = tx.objectStore("pageMetadata");
-  const index = store.index("profilePage");
-  // Use get with the compound index
-  return index.get([profileId, pageIndex]);
+  return db.getFromIndex("pageMetadata", "profilePage", [profileId, pageIndex]);
 }
 
 // Function to get all page metadata for a specific profile
@@ -578,42 +650,92 @@ export async function getAllPageMetadataForProfile(
   profileId: number,
 ): Promise<PageMetadata[]> {
   const db = await getDb();
-  const tx = db.transaction("pageMetadata", "readonly");
-  const store = tx.objectStore("pageMetadata");
-  const index = store.index("profileId");
-  return index.getAll(profileId);
+  return db.getAllFromIndex("pageMetadata", "profileId", profileId);
 }
 
-// Function to add or update page metadata
+// Function to add or update page metadata (Updated)
 export async function upsertPageMetadata(
-  pageMetadata: Omit<PageMetadata, "id" | "createdAt" | "updatedAt">,
+  pageMetadata: Omit<
+    PageMetadata,
+    | "id"
+    | "createdAt"
+    | "updatedAt"
+    | "_created"
+    | "_modified"
+    | "_fieldsModified"
+  >,
 ): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("pageMetadata", "readwrite");
   const store = tx.objectStore("pageMetadata");
   const index = store.index("profilePage");
   const now = new Date();
+  const nowMs = now.getTime();
 
-  // Check if metadata already exists for this profile/page combination
-  const existing = await index.get([
-    pageMetadata.profileId,
-    pageMetadata.pageIndex,
-  ]);
+  try {
+    const existing = await index.get([
+      pageMetadata.profileId,
+      pageMetadata.pageIndex,
+    ]);
+    let id: number;
+    let finalData: PageMetadata;
 
-  let id: number;
-  if (existing?.id) {
-    // Update existing
-    id = existing.id;
-    await store.put({ ...existing, ...pageMetadata, updatedAt: now });
-    console.log(`Updated page metadata with id: ${id}`);
-  } else {
-    // Add new
-    id = await store.add({ ...pageMetadata, createdAt: now, updatedAt: now });
-    console.log(`Added page metadata with id: ${id}`);
+    if (existing?.id) {
+      // Update
+      id = existing.id;
+      const syncFields = generateSyncFields(existing);
+      const updatedFieldsModified = updateFieldsModified(
+        pageMetadata,
+        existing,
+        existing._fieldsModified,
+      );
+      finalData = {
+        ...existing,
+        ...pageMetadata,
+        updatedAt: now,
+        _modified: syncFields._modified,
+        _fieldsModified: updatedFieldsModified,
+      };
+      await store.put(finalData);
+      console.log(`Updated page metadata with id: ${id}`);
+    } else {
+      // Add new
+      const syncFields = generateSyncFields();
+      const initialFieldsModified: Record<string, number> = {};
+      Object.keys(pageMetadata).forEach((key) => {
+        if (
+          !key.startsWith("_") &&
+          key !== "id" &&
+          key !== "createdAt" &&
+          key !== "updatedAt"
+        ) {
+          initialFieldsModified[key as keyof typeof pageMetadata] = nowMs; // Use type assertion
+        }
+      });
+      const addData: Omit<PageMetadata, "id"> = {
+        ...pageMetadata,
+        createdAt: now,
+        updatedAt: now,
+        _created: syncFields._created,
+        _modified: syncFields._modified,
+        _fieldsModified: initialFieldsModified,
+      };
+      id = await store.add(addData);
+      console.log(`Added page metadata with id: ${id}`);
+    }
+    await tx.done;
+    return id;
+  } catch (error) {
+    console.error("Error in upsertPageMetadata:", error);
+    if (tx.error && !tx.done) {
+      try {
+        tx.abort();
+      } catch (e) {
+        console.error("Error aborting transaction:", e);
+      }
+    }
+    throw error;
   }
-
-  await tx.done;
-  return id;
 }
 
 // Helper function to check if a page is marked as emergency
@@ -630,7 +752,7 @@ export async function isEmergencyPage(
   }
 }
 
-// Helper function to rename a page
+// Helper function to rename a page (Updated)
 export async function renamePage(
   profileId: number,
   pageIndex: number,
@@ -638,14 +760,13 @@ export async function renamePage(
 ): Promise<void> {
   try {
     const metadata = await getPageMetadata(profileId, pageIndex);
-
     await upsertPageMetadata({
+      // upsert handles sync fields
       profileId,
       pageIndex,
       name: newName,
       isEmergency: metadata?.isEmergency || false,
     });
-
     console.log(`Renamed page ${pageIndex} to "${newName}"`);
   } catch (error) {
     console.error(`Error renaming page ${pageIndex}:`, error);
@@ -653,7 +774,7 @@ export async function renamePage(
   }
 }
 
-// Helper function to set emergency state for a page
+// Helper function to set emergency state for a page (Updated)
 export async function setPageEmergencyState(
   profileId: number,
   pageIndex: number,
@@ -661,15 +782,13 @@ export async function setPageEmergencyState(
 ): Promise<void> {
   try {
     const metadata = await getPageMetadata(profileId, pageIndex);
-
-    // Check the current state to see if it's actually changing
     await upsertPageMetadata({
+      // upsert handles sync fields
       profileId,
       pageIndex,
       name: metadata?.name || `Bank ${pageIndex}`,
       isEmergency,
     });
-
     console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
   } catch (error) {
     console.error(
@@ -682,6 +801,5 @@ export async function setPageEmergencyState(
 
 // Only initialize the database on the client side
 if (isClient) {
-  // Call getDb() early to initiate the connection and upgrade process
   getDb().catch(console.error);
 }
