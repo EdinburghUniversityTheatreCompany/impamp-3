@@ -8,42 +8,14 @@ import {
   useMemo,
   useRef,
 } from "react";
+import { format, formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
 import { Profile, SyncType, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
-import { formatDistanceToNow } from "date-fns";
 import {
   useGoogleDriveSync,
   getLocalProfileSyncData,
   getProfileSyncFilename,
 } from "@/hooks/useGoogleDriveSync"; // Import sync hook and helpers
-
-// Google Drive Picker component will be loaded dynamically client-side only
-// DO NOT import it statically as it causes server-side rendering errors
-
-// Define TypeScript interface for Drive Picker web component
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      "drive-picker": React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & {
-          "client-id"?: string;
-          "app-id"?: string;
-          "oauth-token"?: string;
-          visible?: boolean;
-          multiselect?: boolean;
-          "nav-hidden"?: boolean;
-        },
-        HTMLElement
-      >;
-      "drive-picker-docs-view": React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & {
-          "mime-types"?: string;
-        },
-        HTMLElement
-      >;
-    }
-  }
-}
 
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -85,6 +57,9 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     error: driveHookError, // Get global sync error
   } = useGoogleDriveSync();
 
+  const { pauseSync, resumeSync, isSyncPaused, getSyncResumeTime } =
+    useProfileStore();
+
   // Component State
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(profile.name);
@@ -97,6 +72,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [isPickerLoading, setIsPickerLoading] = useState(false); // State for picker loading
   const [lastSyncInitiatedByThisCard, setLastSyncInitiatedByThisCard] =
     useState(false); // Track if this card triggered the last sync
+
+  // Sync pause states
+  const [isPausing, setIsPausing] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
+  const [selectedPauseDuration, setSelectedPauseDuration] =
+    useState<string>("1h");
+  const [showPauseOptions, setShowPauseOptions] = useState(false);
 
   // State for the reminder input (days as string) and checkbox
   const [reminderDays, setReminderDays] = useState<string>(() => {
@@ -661,6 +643,37 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                   Error: {cardError}
                 </p>
               )}
+
+              {/* Pause Sync Status */}
+              {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
+                <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
+                  <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
+                    Sync Paused until{" "}
+                    {format(
+                      new Date(getSyncResumeTime(profile.id!) || Date.now()),
+                      "h:mm a, MMM d",
+                    )}
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setIsResuming(true);
+                      try {
+                        await resumeSync(profile.id!);
+                      } catch (error) {
+                        console.error("Error resuming sync:", error);
+                        setCardError("Failed to resume sync");
+                      } finally {
+                        setIsResuming(false);
+                      }
+                    }}
+                    disabled={isResuming}
+                    className="mt-1 px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors dark:bg-purple-800/30 dark:text-purple-300 dark:hover:bg-purple-700/40 disabled:opacity-50"
+                  >
+                    {isResuming ? "Resuming..." : "Resume Now"}
+                  </button>
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2">
                 {!profile.googleDriveFileId ? (
                   // Not Linked - Show two buttons side by side
@@ -681,15 +694,107 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                     </button>
                   </>
                 ) : (
-                  // Linked - Show two buttons side by side
+                  // Linked - Show sync controls
                   <>
                     <button
                       onClick={handleManualSync}
-                      disabled={isSyncingNow}
+                      disabled={isSyncingNow || isSyncPaused(profile.id!)}
                       className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
                     >
                       {isSyncingNow ? "Syncing..." : "Sync Now"}
                     </button>
+
+                    {/* Pause Sync Button and Dropdown */}
+                    {!isSyncPaused(profile.id!) ? (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowPauseOptions(!showPauseOptions)}
+                          className="px-3 py-1 text-xs bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200 transition-colors dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/40"
+                        >
+                          Pause Sync
+                        </button>
+
+                        {showPauseOptions && (
+                          <div className="absolute z-10 mt-1 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 w-48 py-1">
+                            <div className="px-3 py-2">
+                              <select
+                                value={selectedPauseDuration}
+                                onChange={(e) =>
+                                  setSelectedPauseDuration(e.target.value)
+                                }
+                                className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
+                              >
+                                <option value="1h">1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="8h">8 hours</option>
+                                <option value="1d">Until tomorrow</option>
+                                <option value="custom">Custom...</option>
+                              </select>
+
+                              <div className="flex space-x-1 mt-2">
+                                <button
+                                  onClick={async () => {
+                                    setShowPauseOptions(false);
+                                    setIsPausing(true);
+
+                                    try {
+                                      // Calculate duration in milliseconds
+                                      let durationMs = 0;
+                                      switch (selectedPauseDuration) {
+                                        case "1h":
+                                          durationMs = 60 * 60 * 1000; // 1 hour
+                                          break;
+                                        case "4h":
+                                          durationMs = 4 * 60 * 60 * 1000; // 4 hours
+                                          break;
+                                        case "8h":
+                                          durationMs = 8 * 60 * 60 * 1000; // 8 hours
+                                          break;
+                                        case "1d":
+                                          // Until tomorrow (8am)
+                                          const tomorrow = new Date();
+                                          tomorrow.setDate(
+                                            tomorrow.getDate() + 1,
+                                          );
+                                          tomorrow.setHours(8, 0, 0, 0);
+                                          durationMs =
+                                            tomorrow.getTime() - Date.now();
+                                          break;
+                                        case "custom":
+                                          // Could open a modal or prompt here
+                                          durationMs = 4 * 60 * 60 * 1000; // Default to 4 hours if not specified
+                                          break;
+                                      }
+
+                                      await pauseSync(profile.id!, durationMs);
+                                    } catch (error) {
+                                      console.error(
+                                        "Error pausing sync:",
+                                        error,
+                                      );
+                                      setCardError("Failed to pause sync");
+                                    } finally {
+                                      setIsPausing(false);
+                                    }
+                                  }}
+                                  disabled={isPausing}
+                                  className="px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex-1"
+                                >
+                                  {isPausing ? "Pausing..." : "Pause"}
+                                </button>
+                                <button
+                                  onClick={() => setShowPauseOptions(false)}
+                                  className="px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+
                     <button
                       onClick={handleUnlinkDriveFile}
                       disabled={isUnlinking}

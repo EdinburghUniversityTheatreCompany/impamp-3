@@ -50,6 +50,12 @@ interface ProfileState {
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
   setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
 
+  // Sync pausing methods
+  pauseSync: (profileId: number, durationMs: number) => Promise<void>; // Pause sync for a profile
+  resumeSync: (profileId: number) => Promise<void>; // Resume sync for a profile
+  isSyncPaused: (profileId: number) => boolean; // Check if sync is paused
+  getSyncResumeTime: (profileId: number) => number | null; // Get the timestamp when sync will resume
+
   // Profile management actions
   createProfile: (profile: {
     name: string;
@@ -650,6 +656,83 @@ export const useProfileStore = create<ProfileState>()(
           googleAccessToken: null,
           isGoogleSignedIn: false,
         });
+      },
+
+      // Sync pausing methods implementation
+      pauseSync: async (profileId: number, durationMs: number) => {
+        try {
+          const resumeTime = Date.now() + durationMs;
+          await updateProfile(profileId, { syncPausedUntil: resumeTime });
+
+          // Update state
+          set((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === profileId
+                ? { ...p, syncPausedUntil: resumeTime, updatedAt: new Date() }
+                : p,
+            ),
+          }));
+
+          console.log(
+            `Paused sync for profile ${profileId} until ${new Date(resumeTime).toLocaleString()}`,
+          );
+        } catch (error) {
+          console.error(
+            `Failed to pause sync for profile ${profileId}:`,
+            error,
+          );
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "An unknown error occurred";
+          set({ error: `Failed to pause sync: ${errorMessage}` });
+          throw error;
+        }
+      },
+
+      resumeSync: async (profileId: number) => {
+        try {
+          await updateProfile(profileId, { syncPausedUntil: undefined });
+
+          // Update state
+          set((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === profileId
+                ? { ...p, syncPausedUntil: undefined, updatedAt: new Date() }
+                : p,
+            ),
+          }));
+
+          console.log(`Resumed sync for profile ${profileId}`);
+        } catch (error) {
+          console.error(
+            `Failed to resume sync for profile ${profileId}:`,
+            error,
+          );
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "An unknown error occurred";
+          set({ error: `Failed to resume sync: ${errorMessage}` });
+          throw error;
+        }
+      },
+
+      isSyncPaused: (profileId: number) => {
+        const profile = get().profiles.find((p) => p.id === profileId);
+        if (!profile) return false;
+
+        return (
+          profile.syncPausedUntil !== undefined &&
+          Date.now() < profile.syncPausedUntil
+        );
+      },
+
+      getSyncResumeTime: (profileId: number) => {
+        const profile = get().profiles.find((p) => p.id === profileId);
+        if (!profile || !profile.syncPausedUntil) return null;
+
+        return profile.syncPausedUntil;
       },
     }),
     {

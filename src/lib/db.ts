@@ -20,6 +20,7 @@ export interface Profile {
   syncType: SyncType;
   googleDriveFileId?: string | null; // Link to the specific file in user's Drive
   activePadBehavior?: ActivePadBehavior;
+  syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
   lastBackedUpAt: number;
   backupReminderPeriod: number;
   createdAt: Date;

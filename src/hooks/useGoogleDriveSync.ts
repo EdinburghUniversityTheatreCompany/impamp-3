@@ -509,6 +509,23 @@ export const useGoogleDriveSync = () => {
         const localProfile = await getProfile(profileId);
         if (!localProfile)
           throw new Error(`Profile ${profileId} not found locally.`);
+
+        // Check if sync is paused for this profile
+        if (
+          localProfile.syncPausedUntil &&
+          Date.now() < localProfile.syncPausedUntil
+        ) {
+          const resumeTime = new Date(
+            localProfile.syncPausedUntil,
+          ).toLocaleString();
+          console.log(
+            `Sync paused for profile ${profileId} until ${resumeTime}`,
+          );
+          setSyncStatus("idle");
+          setError(`Sync paused until ${resumeTime}`);
+          return { status: "paused", resumeTime: localProfile.syncPausedUntil };
+        }
+
         if (localProfile.syncType !== "googleDrive") {
           console.log(
             `Profile ${profileId} is not set to Google Drive sync type.`,
