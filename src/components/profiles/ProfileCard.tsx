@@ -445,6 +445,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     cardError,
     isSyncingNow,
     lastSyncInitiatedByThisCard,
+    needsReauth,
   ]);
 
   return (

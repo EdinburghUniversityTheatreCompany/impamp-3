@@ -1,7 +1,6 @@
 /**
  * Utility functions for Google Drive integration
  */
-import { ProfileSyncData } from "@/lib/syncUtils";
 
 /**
  * Constructs a standardized filename for profile sync data

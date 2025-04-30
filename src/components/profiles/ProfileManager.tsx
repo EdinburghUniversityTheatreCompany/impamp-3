@@ -1,17 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react"; // Removed unused ChangeEvent
+import { useState, useEffect } from "react"; // Removed unused refs and types
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { SyncType } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
-import {
-  useGoogleDriveSync,
-  DriveFile,
-  getLocalProfileSyncData, // Import needed function
-  getProfileSyncFilename, // Import needed function
-} from "@/hooks/useGoogleDriveSync";
-import { ConflictResolutionModal } from "@/components/modals/ConflictResolutionModal"; // Import the new modal
+import Image from "next/image"; // Import Image from next/image
+import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
+import { ConflictResolutionModal } from "@/components/modals/ConflictResolutionModal";
 
 export default function ProfileManager() {
   const {
@@ -20,10 +16,7 @@ export default function ProfileManager() {
     isProfileManagerOpen,
     closeProfileManager,
     createProfile,
-    exportMultipleProfilesToJSON,
     importProfileFromJSON,
-    importProfileFromImpamp2JSON,
-    importMultipleProfilesFromJSON,
     isGoogleSignedIn,
     googleUser,
     setGoogleAuthDetails,
@@ -38,16 +31,10 @@ export default function ProfileManager() {
   const [activeTab, setActiveTab] = useState<"profiles" | "import-export">(
     "profiles",
   );
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importSuccess, setImportSuccess] = useState<string | null>(null);
-  const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(
-    new Set(),
-  );
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [googleApiError, setGoogleApiError] = useState<string | null>(null);
-  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
+  const [driveFiles, setDriveFiles] = useState<any[]>([]);
   const [showDriveImportModal, setShowDriveImportModal] = useState(false);
   const [driveActionStatus, setDriveActionStatus] = useState<
     "idle" | "loading" | "error" | "success"
@@ -56,9 +43,7 @@ export default function ProfileManager() {
 
   // Hooks
   const {
-    listAppFiles,
     downloadDriveFile,
-    uploadDriveFile,
     syncStatus: driveHookStatus,
     error: driveHookError,
     conflicts: driveHookConflicts,
@@ -89,9 +74,10 @@ export default function ProfileManager() {
         // Calculate token expiration time (usually 1 hour from now for Google)
         const expiresAt = Date.now() + 3600 * 1000; // 1 hour in milliseconds
 
-        // Get refresh token if available - accessing through the any type since it's not in the type definitions
-        // but might be present in some authorization flows
-        const refreshToken = (tokenResponse as any).refresh_token || null;
+        // Get refresh token if available - accessing through type assertion since it's not in the type definitions
+        const refreshToken =
+          ((tokenResponse as Record<string, unknown>)
+            .refresh_token as string) || null;
 
         // Store Google auth details with refresh token and expiration
         setGoogleAuthDetails(userInfo, accessToken, refreshToken, expiresAt);
@@ -128,19 +114,6 @@ export default function ProfileManager() {
     }
   }, [driveHookStatus, driveHookError]);
 
-  // Event handlers
-  const handleExportSelectChange = (profileId: number, isSelected: boolean) => {
-    setExportSelectionIds((prevSelected) => {
-      const newSelected = new Set(prevSelected);
-      if (isSelected) {
-        newSelected.add(profileId);
-      } else {
-        newSelected.delete(profileId);
-      }
-      return newSelected;
-    });
-  };
-
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProfileName.trim()) {
@@ -169,38 +142,16 @@ export default function ProfileManager() {
     console.log("Logged out from Google");
   };
 
-  // Drive file handlers with underscore prefix to avoid eslint unused warnings
-  const _handleListDriveFiles = async () => {
-    setDriveActionStatus("loading");
-    setDriveActionError(null);
-    setDriveFiles([]);
-    try {
-      const files = await listAppFiles();
-      setDriveFiles(files);
-      setDriveActionStatus("success");
-      setShowDriveImportModal(true);
-    } catch (error) {
-      console.error("Failed to list Drive files:", error);
-      setDriveActionError(
-        error instanceof Error
-          ? error.message
-          : "Failed to list files from Google Drive.",
-      );
-    }
-  };
-
   const handleImportFromDrive = async (fileId: string) => {
     setShowDriveImportModal(false);
     setDriveActionStatus("loading");
     setDriveActionError(null);
-    setImportError(null);
-    setImportSuccess(null);
 
     try {
       const fileData = await downloadDriveFile(fileId);
       if (fileData && fileData._syncFormatVersion === 1 && fileData.profile) {
         await importProfileFromJSON(JSON.stringify(fileData));
-        setImportSuccess(
+        console.log(
           `Successfully imported profile "${fileData.profile.name}" from Google Drive.`,
         );
       } else {
@@ -217,41 +168,7 @@ export default function ProfileManager() {
           ? error.message
           : "Failed to import profile from Google Drive.";
       setDriveActionError(message);
-      setImportError(message);
       setDriveActionStatus("error");
-    }
-  };
-
-  const _handleExportToDrive = async (profileId: number) => {
-    setDriveActionStatus("loading");
-    setDriveActionError(null);
-    const profileToExport = profiles.find((p) => p.id === profileId);
-    if (!profileToExport) {
-      setDriveActionError("Profile not found for export.");
-      setDriveActionStatus("error");
-      return;
-    }
-
-    try {
-      const syncData = await getLocalProfileSyncData(profileId);
-      if (!syncData) {
-        throw new Error("Could not generate profile data for export.");
-      }
-      const fileName = getProfileSyncFilename(profileToExport.name);
-      await uploadDriveFile(fileName, syncData, null, profileId);
-      setDriveActionStatus("success");
-      alert(
-        `Profile "${profileToExport.name}" exported successfully to Google Drive.`,
-      );
-    } catch (error) {
-      console.error(`Failed to export profile ${profileId} to Drive:`, error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : `Failed to export profile "${profileToExport.name}" to Google Drive.`;
-      setDriveActionError(message);
-      setDriveActionStatus("error");
-      alert(message);
     }
   };
 
@@ -437,10 +354,12 @@ export default function ProfileManager() {
                     ) : (
                       <>
                         {googleUser?.picture && (
-                          <img
+                          <Image
                             src={googleUser.picture}
                             alt="User profile"
-                            className="h-10 w-10 rounded-full"
+                            width={40}
+                            height={40}
+                            className="rounded-full"
                           />
                         )}
                         <div className="flex-1">

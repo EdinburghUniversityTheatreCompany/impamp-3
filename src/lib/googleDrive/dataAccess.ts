@@ -7,7 +7,6 @@ import {
   PadConfiguration,
   PageMetadata,
   getProfile,
-  updateProfile,
   getDb,
   getAudioFile,
 } from "@/lib/db";

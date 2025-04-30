@@ -174,16 +174,17 @@ export const ConflictResolutionModal: React.FC<
             let itemModified = false;
             conflict.fieldConflicts?.forEach((fc) => {
               const choice = fieldResolutions[fc.field];
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              // Safe access with type casting through unknown
               const currentValStr = JSON.stringify(
-                (targetItem as any)[fc.field],
-              ); // Use any for dynamic access
+                (targetItem as unknown as Record<string, unknown>)[fc.field],
+              );
 
               if (choice === "local") {
                 const localValStr = JSON.stringify(fc.localValue);
                 if (currentValStr !== localValStr) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (targetItem as any)[fc.field] = fc.localValue; // Use any for dynamic assignment
+                  // Safe assignment with double casting
+                  (targetItem as unknown as Record<string, unknown>)[fc.field] =
+                    fc.localValue;
                   itemModified = true;
                 }
                 if (!targetItem._fieldsModified)
@@ -192,8 +193,9 @@ export const ConflictResolutionModal: React.FC<
               } else if (choice === "remote") {
                 const remoteValStr = JSON.stringify(fc.remoteValue);
                 if (currentValStr !== remoteValStr) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (targetItem as any)[fc.field] = fc.remoteValue; // Use any for dynamic assignment
+                  // Safe assignment with double casting
+                  (targetItem as unknown as Record<string, unknown>)[fc.field] =
+                    fc.remoteValue;
                   itemModified = true;
                 }
                 if (!targetItem._fieldsModified)

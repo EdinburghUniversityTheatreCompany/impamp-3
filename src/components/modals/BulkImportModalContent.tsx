@@ -32,6 +32,11 @@ interface BulkImportModalContentProps {
   onAssignmentComplete: () => void;
 }
 
+interface DragEndResult {
+  source: { droppableId: string; index: number };
+  destination?: { droppableId: string; index: number } | null;
+}
+
 const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   profileId,
   pageIndex,
@@ -41,7 +46,8 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   // State for files to be imported
   const [fileList, setFileList] = useState<AudioFilePreview[]>([]);
   const [padAssignments, setPadAssignments] = useState<PadAssignment[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [isDragging, setIsDragging] = useState(false); // State needed for callbacks
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -170,7 +176,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   };
 
   // Handle drag end event (from file to pad)
-  const handleDragEnd = (result: any) => {
+  const handleDragEnd = (result: DragEndResult) => {
     setIsDragging(false);
 
     // If dropped outside a droppable area
@@ -401,7 +407,8 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
                 >
                   {fileList.length === 0 ? (
                     <div className="text-center py-8 text-gray-500">
-                      No files added. Click "Add Files" to select audio files.
+                      No files added. Click &quot;Add Files&quot; to select
+                      audio files.
                     </div>
                   ) : (
                     <ul className="space-y-2">

@@ -17,11 +17,6 @@ import {
   ProfileSyncData,
   SyncStatus,
   SyncResult,
-  SyncResultSuccess,
-  SyncResultError,
-  SyncResultPaused,
-  SyncResultSkipped,
-  SyncResultConflict,
   TokenInfo,
   ItemConflict,
 } from "./types";
@@ -310,7 +305,10 @@ export const applyConflictResolution = async (
     }
 
     // Update the sync timestamp
-    updateSyncTimestamp(profileId, resolvedData._lastSyncTimestamp);
+    updateSyncTimestamp(
+      profileId,
+      resolvedData._lastSyncTimestamp ?? Date.now(),
+    );
 
     onStatusChange("success");
     console.log(

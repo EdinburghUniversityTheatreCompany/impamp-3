@@ -4,7 +4,7 @@
  */
 
 import { DriveFile, DriveFileList, ProfileSyncData, TokenInfo } from "./types";
-import { checkAndRefreshAuth, shouldAttemptTokenRefresh } from "./auth";
+import { checkAndRefreshAuth } from "./auth";
 
 /**
  * Performs an authenticated request to the Google Drive API
