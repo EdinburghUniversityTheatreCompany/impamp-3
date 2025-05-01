@@ -24,7 +24,11 @@ import {
   fadeOutAllAudio,
   preloadAudioForPage,
 } from "@/lib/audio";
-import { usePlaybackStore } from "@/store/playbackStore";
+import {
+  usePlaybackStore,
+  useArmedTracks,
+  playbackStoreActions,
+} from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 
 // Define configuration for special pads
@@ -67,8 +71,9 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     currentPageIndex,
   );
 
-  // Subscribe to the playback store
+  // Subscribe to the playback and armed tracks stores
   const activePlayback = usePlaybackStore((state) => state.activePlayback);
+  const armedTracks = useArmedTracks();
 
   // Log loading and error states
   useEffect(() => {
@@ -513,16 +518,53 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     fadeOutAllAudio();
   }, []);
 
+  // Handler for arming a track on Ctrl+Click
+  const handleArmTrack = useCallback(
+    (padIndex: number) => {
+      if (activeProfileId === null) {
+        console.error("Cannot arm track, no active profile selected.");
+        return;
+      }
+
+      const config = padConfigs.get(padIndex);
+      if (!config || !config.audioFileIds || config.audioFileIds.length === 0) {
+        console.log(`Pad index ${padIndex} has no sounds to arm.`);
+        return;
+      }
+
+      // Create a unique key for this armed track
+      const armedKey = `armed-${activeProfileId}-${currentPageIndex}-${padIndex}`;
+
+      // Add to armed tracks store
+      playbackStoreActions.armTrack(armedKey, {
+        key: armedKey,
+        name: config.name || `Pad ${padIndex + 1}`,
+        padInfo: {
+          profileId: activeProfileId,
+          pageIndex: currentPageIndex,
+          padIndex: padIndex,
+        },
+        audioFileIds: config.audioFileIds,
+        playbackType: config.playbackType || "round-robin",
+      });
+
+      console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);
+    },
+    [activeProfileId, currentPageIndex, padConfigs],
+  );
+
   // --- Render Logic ---
   const padElements = Array.from({ length: TOTAL_PADS }, (_, i) => {
     const padIndex = i;
     const config = padConfigs.get(padIndex);
     const padId = `pad-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
+    const armedKey = `armed-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
     const currentPlaybackState = activePlayback.get(padId);
     const isPlaying = !!currentPlaybackState;
     const isFading = currentPlaybackState?.isFading ?? false;
     const progress = currentPlaybackState?.progress ?? 0;
     const remainingTime = currentPlaybackState?.remainingTime;
+    const isArmed = armedTracks.has(armedKey);
 
     // --- Special Pad Logic (Using defined config) ---
     if (padIndex === SPECIAL_PAD_CONFIG.STOP_ALL.index) {
@@ -593,8 +635,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         remainingTime={remainingTime}
         isEditMode={isEditMode}
         isDeleteMoveMode={isDeleteMoveMode}
+        isArmed={isArmed}
         onClick={() => handlePadClick(padIndex)}
         onShiftClick={() => handlePadClick(padIndex)} // Shift click now also goes through handlePadClick
+        onCtrlClick={() => handleArmTrack(padIndex)} // Ctrl+Click arms the track
         onDropAudio={handleDropAudio}
         onRemoveSound={
           // Enable remove interaction if sounds exist

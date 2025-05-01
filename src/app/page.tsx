@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from "react"; // Removed useR
 import dynamic from "next/dynamic";
 import PadGrid from "@/components/PadGrid";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
+import ArmedTracksPanel from "@/components/ArmedTracksPanel";
 import SearchButton from "@/components/SearchButton";
 import HelpButton from "@/components/HelpButton";
 import DeleteMoveModeButton from "@/components/DeleteMoveModeButton";
@@ -405,8 +406,9 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Active Tracks panel at the bottom of the screen */}
+      {/* Tracks panels at the bottom of the screen */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
+        <ArmedTracksPanel />
         <ActiveTracksPanel />
       </div>
     </main>

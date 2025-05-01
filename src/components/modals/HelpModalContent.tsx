@@ -54,6 +54,13 @@ const HelpModalContent: React.FC = () => {
                 : Play the next emergency sound (round-robin through all sounds
                 on emergency banks)
               </li>
+              <li>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  F9
+                </kbd>
+                : Play the next armed track (see &quot;Arming Tracks&quot;
+                below)
+              </li>
             </ul>
           </div>
 
@@ -106,6 +113,12 @@ const HelpModalContent: React.FC = () => {
               </li>
               <li>
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  Ctrl
+                </kbd>{" "}
+                + Click on pad: Arm a track to be played later with F9
+              </li>
+              <li>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
                   Ctrl+F
                 </kbd>
                 : Open search modal to find sounds across all banks
@@ -115,6 +128,49 @@ const HelpModalContent: React.FC = () => {
                   Shift+?
                 </kbd>
                 : Open this help modal
+              </li>
+            </ul>
+          </div>
+
+          <div className="space-y-2 mt-4">
+            <h4 className="font-medium">Arming Tracks</h4>
+            <p>
+              You can &quot;arm&quot; tracks to be played later without
+              interrupting your current workflow:
+            </p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Hold{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  Ctrl
+                </kbd>{" "}
+                and click on a pad to arm it for later playback
+              </li>
+              <li>
+                You can also arm tracks from search results with{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  Ctrl
+                </kbd>{" "}
+                + Click
+              </li>
+              <li>
+                Armed tracks appear in the Armed Tracks panel at the bottom of
+                the screen
+              </li>
+              <li>
+                Press{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  F9
+                </kbd>{" "}
+                to play the next armed track
+              </li>
+              <li>
+                You can also click the Play button on any armed track in the
+                panel
+              </li>
+              <li>
+                Armed tracks remain armed even if you continue browsing or
+                playing other sounds directly
               </li>
             </ul>
           </div>

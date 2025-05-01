@@ -20,8 +20,10 @@ interface PadProps {
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   isDeleteMoveMode?: boolean; // Whether we're in delete/move mode
   isSpecialPad?: boolean; // Whether this is a special control pad (Stop All, Fade Out All) that can't be deleted or moved
+  isArmed?: boolean; // Whether this pad is currently armed
   onClick: () => void;
   onShiftClick: () => void; // Callback for shift+click (for renaming)
+  onCtrlClick?: () => void; // Callback for ctrl+click (for arming)
   onDropAudio: (acceptedFiles: File[], padIndex: number) => Promise<void>; // Callback for drop
   onRemoveSound?: () => void; // New callback for removing sound from pad
   onSwapWith?: (fromIndex: number, toIndex: number) => void; // Callback for pad swapping
@@ -40,8 +42,10 @@ const Pad: React.FC<PadProps> = ({
   isEditMode,
   isDeleteMoveMode = false,
   isSpecialPad = false, // Default to false
+  isArmed = false, // Default to false
   onClick,
   onShiftClick,
+  onCtrlClick,
   onDropAudio,
   onRemoveSound,
   onSwapWith,
@@ -239,8 +243,12 @@ const Pad: React.FC<PadProps> = ({
         // Prevent dropzone's default click behavior if necessary, though noClick should handle it
         e.stopPropagation();
 
+        // Handle Ctrl+Click for arming tracks
+        if (e.ctrlKey && isConfigured && onCtrlClick && soundCount > 0) {
+          onCtrlClick();
+        }
         // In Delete/Move mode, clicking deletes the pad (but not for special pads)
-        if (
+        else if (
           isDeleteMoveMode &&
           isConfigured &&
           onRemoveSound &&
@@ -273,6 +281,7 @@ const Pad: React.FC<PadProps> = ({
       {/* Pad Name Display - with better wrapping and edit mode indicator */}
       <span className="text-sm font-medium break-all w-full text-center z-10">
         {name}
+        {isArmed && <span className="ml-1 text-amber-500">★</span>}
       </span>
 
       {/* Key Binding Display at the bottom - show default key binding if no custom binding */}

@@ -6,6 +6,7 @@ import { getAudioFile, PlaybackType } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { triggerAudioForPad, resumeAudioContext } from "@/lib/audio";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
+import { playbackStoreActions } from "@/store/playbackStore";
 
 interface SearchResult {
   profileId: number;
@@ -204,6 +205,34 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  // Function to arm a sound when Ctrl+Clicked
+  const handleArmSound = (result: SearchResult) => {
+    try {
+      // Create a unique key for this armed track
+      const armedKey = `armed-${result.profileId}-${result.pageIndex}-${result.padIndex}`;
+
+      // Add to armed tracks store
+      playbackStoreActions.armTrack(armedKey, {
+        key: armedKey,
+        name: result.name,
+        padInfo: {
+          profileId: result.profileId,
+          pageIndex: result.pageIndex,
+          padIndex: result.padIndex,
+        },
+        audioFileIds: result.audioFileIds,
+        playbackType: result.playbackType,
+      });
+
+      console.log(`Armed track from search: ${result.name}`);
+
+      // Close the modal after arming
+      onClose();
+    } catch (error) {
+      console.error("Error arming sound:", error);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -277,9 +306,16 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
               {results.map((result) => (
                 <div
                   key={`${result.pageIndex}-${result.padIndex}`}
-                  onClick={() => handlePlaySound(result)}
+                  onClick={(e) => {
+                    if (e.ctrlKey) {
+                      handleArmSound(result);
+                    } else {
+                      handlePlaySound(result);
+                    }
+                  }}
                   className="bg-white dark:bg-gray-700 rounded p-3 shadow cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
                   data-testid="search-result-item"
+                  title={`Click to play. Ctrl+Click to arm track.`}
                 >
                   <div className="font-medium text-gray-900 dark:text-white">
                     {result.name}

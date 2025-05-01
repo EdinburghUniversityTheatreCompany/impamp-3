@@ -143,13 +143,19 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
 
 #### 3.5. Arm Next Sound Effect
 
-* **Concept:** Allow the user to select a sound to be played next, without interrupting Browse or current playback.
-* **Arming Mechanism (Option):** `Ctrl+Click` on a pad (either in the grid or search results).
-* **Display (Option):** Show the armed sound(s) in a dedicated area, potentially near/below the Active Tracks panel. Consider how multiple armed sounds would display (e.g., a queue).
-* **Triggering Playback (Options - TBD):**
-    * Option A: A dedicated global key (e.g., `Spacebar` - conflicting with potential future global fadeout, `Enter` - conflicts with emergency).
-    * Option B: A dedicated button in the UI near the armed sound display.
-    * Option C: If implementing a queue, maybe the trigger plays the *next* in the queue.
+* **Concept:** Allow the user to select a sound to be played next, without interrupting browse or current playback.
+* **Arming Mechanism:** `Ctrl+Click` on a pad (either in the grid or search results).
+* **Display:** Show the armed sound(s) in a dedicated "Armed Tracks" panel right above the Active Tracks panel at the bottom of the screen. Armed tracks are displayed in a similar way to active tracks, but with distinct styling.
+* **Triggering Playback:**
+    * The `F9` key plays the next armed track in the queue (first-in, first-out).
+    * Each armed track in the panel also has its own Play button for direct playback.
+* **Queue Management:**
+    * Armed tracks form a queue, where the first track armed is the first to be played when F9 is pressed.
+    * After playing an armed track, it is removed from the queue.
+    * Each armed track has a Remove button to remove it from the queue without playing it.
+* **Visual Indication:**
+    * Armed pads are visually distinguished with a star (★) indicator.
+    * The Armed Tracks panel shows clearly which tracks are currently armed.
 * **Interaction:** Playing a pad directly does *not* affect the armed sound(s); they remain armed.
 
 #### 3.6. Mobile Layout

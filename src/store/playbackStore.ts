@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { PlaybackType } from "@/lib/db"; // Import PlaybackType for armed tracks
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
@@ -16,9 +17,23 @@ export interface PlaybackState {
   };
 }
 
+// Define the state structure for an armed track in the store
+export interface ArmedTrackState {
+  key: string; // Unique armed track key (e.g., `armed-${profileId}-${pageIndex}-${padIndex}`)
+  name: string;
+  padInfo: {
+    profileId: number;
+    pageIndex: number;
+    padIndex: number;
+  };
+  audioFileIds: number[];
+  playbackType: PlaybackType;
+}
+
 // Define the store's state and actions
 interface PlaybackStoreState {
   activePlayback: Map<string, PlaybackState>; // Map playbackKey to its state
+  armedTracks: Map<string, ArmedTrackState>; // Map armedKey to its state
   actions: {
     setPlaybackState: (newState: Map<string, PlaybackState>) => void;
     addTrack: (key: string, initialState: PlaybackState) => void;
@@ -30,12 +45,18 @@ interface PlaybackStoreState {
     ) => void;
     setTrackFading: (key: string, isFading: boolean) => void;
     clearAllTracks: () => void;
+
+    // Armed tracks actions
+    armTrack: (key: string, trackInfo: ArmedTrackState) => void;
+    removeArmedTrack: (key: string) => void;
+    clearAllArmedTracks: () => void;
+    playNextArmedTrack: () => void;
   };
 }
 
-export const usePlaybackStore = create<PlaybackStoreState>((set) => ({
-  // Removed unused 'get' parameter
+export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
   activePlayback: new Map(),
+  armedTracks: new Map(),
   actions: {
     // Action to completely replace the state (used by rAF loop)
     setPlaybackState: (newState) => set({ activePlayback: new Map(newState) }), // Create new map to ensure reactivity
@@ -84,12 +105,66 @@ export const usePlaybackStore = create<PlaybackStoreState>((set) => ({
 
     // Action to clear all tracks (e.g., on profile change)
     clearAllTracks: () => set({ activePlayback: new Map() }),
+
+    // --- Armed Tracks Actions ---
+
+    // Action to arm a track
+    armTrack: (key, trackInfo) =>
+      set((state) => {
+        const newMap = new Map(state.armedTracks);
+        newMap.set(key, trackInfo);
+        return { armedTracks: newMap };
+      }),
+
+    // Action to remove an armed track
+    removeArmedTrack: (key) =>
+      set((state) => {
+        const newMap = new Map(state.armedTracks);
+        if (newMap.delete(key)) {
+          return { armedTracks: newMap };
+        }
+        return state; // Return original state if key wasn't found
+      }),
+
+    // Action to clear all armed tracks
+    clearAllArmedTracks: () => set({ armedTracks: new Map() }),
+
+    // Action to play the next armed track
+    playNextArmedTrack: () => {
+      const state = get();
+      if (state.armedTracks.size === 0) return;
+
+      // Get the first armed track (we'll use FIFO order)
+      const firstKey = Array.from(state.armedTracks.keys())[0];
+      const firstTrack = state.armedTracks.get(firstKey);
+
+      if (firstTrack) {
+        // Import triggerAudioForPad dynamically to avoid circular dependencies
+        import("@/lib/audio").then(({ triggerAudioForPad }) => {
+          // Play the track
+          triggerAudioForPad({
+            padIndex: firstTrack.padInfo.padIndex,
+            audioFileIds: firstTrack.audioFileIds,
+            playbackType: firstTrack.playbackType,
+            activeProfileId: firstTrack.padInfo.profileId,
+            currentPageIndex: firstTrack.padInfo.pageIndex,
+            name: firstTrack.name,
+          });
+
+          // Remove from armed tracks
+          get().actions.removeArmedTrack(firstKey);
+        });
+      }
+    },
   },
 }));
 
 // Export actions directly for easier usage outside of components
 export const playbackStoreActions = usePlaybackStore.getState().actions;
 
-// Selector hook example (can add more specific ones as needed)
+// Selector hooks
 export const useActivePlayback = () =>
   usePlaybackStore((state) => state.activePlayback);
+
+export const useArmedTracks = () =>
+  usePlaybackStore((state) => state.armedTracks);

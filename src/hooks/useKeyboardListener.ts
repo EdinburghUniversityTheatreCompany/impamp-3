@@ -12,6 +12,7 @@ import {
   fadeOutAllAudio,
   triggerAudioForPad,
 } from "@/lib/audio";
+import { playbackStoreActions } from "@/store/playbackStore";
 import { useSearchModal } from "@/components/SearchModalProvider";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
@@ -367,6 +368,26 @@ export function useKeyboardListener() {
         );
         fadeOutAllAudio(); // Use the imported function
         return; // Don't process further for pad matching
+      }
+
+      // Handle F9 key to play the next armed track
+      if (event.key === "F9") {
+        event.preventDefault();
+        console.log(
+          "[KeyboardListener] F9 key pressed - playing next armed track.",
+        );
+        // Resume AudioContext on first interaction (if not already done)
+        if (!hasInteracted.current) {
+          console.log(
+            "[KeyboardListener] Resuming AudioContext due to F9 key.",
+          );
+          resumeAudioContext();
+          hasInteracted.current = true;
+        }
+
+        // Play the next armed track
+        playbackStoreActions.playNextArmedTrack();
+        return;
       }
 
       // Bank switching with number keys 1-9 and 0
