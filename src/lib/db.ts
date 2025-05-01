@@ -89,8 +89,13 @@ export const DEFAULT_BACKUP_REMINDER_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
 
 // Helper function to iterate and update records within an upgrade transaction
+// We need to use a generic transaction type to handle the versionchange transaction
 const migrateStoreV4 = (
-  transaction: IDBPTransaction<ImpAmpDBSchema, any, "versionchange">, // Use broader type for transaction
+  transaction: IDBPTransaction<
+    ImpAmpDBSchema,
+    readonly string[],
+    "versionchange"
+  >,
   storeName: "profiles" | "padConfigurations" | "pageMetadata",
 ) => {
   console.log(`V4 Migration: Starting update for store "${storeName}"...`);
@@ -107,36 +112,63 @@ const migrateStoreV4 = (
     const updatedAtMs =
       record.updatedAt instanceof Date ? record.updatedAt.getTime() : now;
 
-    const updateData: any = {
-      // Use 'any' during migration for flexibility
+    // Create a copy of the record with our basic modifications
+    const updateData = {
       ...record,
       _created: record._created ?? createdAtMs,
       _modified: record._modified ?? updatedAtMs,
       _fieldsModified: record._fieldsModified ?? {},
     };
 
+    // Handle profile-specific fields if this is a profile record
     if (storeName === "profiles") {
       updateData.googleDriveFileId =
         (record as Profile).googleDriveFileId ?? null;
-      delete updateData.googleDriveFolderId;
-      delete updateData.lastSyncedEtag;
+      delete updateData.googleDriveFolderId; // Remove legacy field
+      delete updateData.lastSyncedEtag; // Remove legacy field
     }
 
-    // Use type assertion for the final update
-    const finalUpdateData =
-      updateData as ImpAmpDBSchema[typeof storeName]["value"];
-
-    return cursor
-      .update(finalUpdateData)
-      .then(() => cursor.continue())
-      .then(iterateCursor)
-      .catch((updateError) => {
-        console.error(
-          `V4 Migration: Error updating record in ${storeName} with key ${cursor.key}:`,
-          updateError,
-        );
-        return cursor.continue().then(iterateCursor); // Attempt to continue
-      });
+    // Type assertion for the final update based on the store
+    if (storeName === "profiles") {
+      const finalData = updateData as Profile;
+      return cursor
+        .update(finalData)
+        .then(() => cursor.continue())
+        .then(iterateCursor)
+        .catch((updateError) => {
+          console.error(
+            `V4 Migration: Error updating record in ${storeName} with key ${cursor.key}:`,
+            updateError,
+          );
+          return cursor.continue().then(iterateCursor);
+        });
+    } else if (storeName === "padConfigurations") {
+      const finalData = updateData as PadConfiguration;
+      return cursor
+        .update(finalData)
+        .then(() => cursor.continue())
+        .then(iterateCursor)
+        .catch((updateError) => {
+          console.error(
+            `V4 Migration: Error updating record in ${storeName} with key ${cursor.key}:`,
+            updateError,
+          );
+          return cursor.continue().then(iterateCursor);
+        });
+    } else {
+      const finalData = updateData as PageMetadata;
+      return cursor
+        .update(finalData)
+        .then(() => cursor.continue())
+        .then(iterateCursor)
+        .catch((updateError) => {
+          console.error(
+            `V4 Migration: Error updating record in ${storeName} with key ${cursor.key}:`,
+            updateError,
+          );
+          return cursor.continue().then(iterateCursor);
+        });
+    }
   });
 };
 
@@ -205,16 +237,18 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
                 console.log("V3 Migration complete.");
                 return;
               }
-              const oldVal = cursor.value as any;
+              const oldVal = cursor.value as Record<string, unknown>;
               const audioFileIds =
                 oldVal.audioFileId !== undefined && oldVal.audioFileId !== null
-                  ? [oldVal.audioFileId]
+                  ? [oldVal.audioFileId as number]
                   : [];
               const newVal: PadConfiguration = {
-                ...oldVal,
+                ...(oldVal as unknown as PadConfiguration),
                 audioFileIds,
                 playbackType: "round-robin",
               };
+              // Need to use any for this specific delete operation
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               delete (newVal as any).audioFileId;
               cursor.update(newVal);
               cursor.continue().then(iterateV3);
@@ -300,7 +334,8 @@ const generateSyncFields = (existingRecord?: {
 };
 
 // Helper to update _fieldsModified based on changes
-const updateFieldsModified = <T extends Record<string, any>>( // Use any for broader compatibility
+// Use generic type parameter with no constraints
+const updateFieldsModified = <T>(
   newData: Partial<T>,
   existingRecord: T,
   fieldsModified: Record<string, number> | undefined,
@@ -543,7 +578,6 @@ export async function upsertPadConfiguration(
       padConfig.padIndex,
     ]);
     let id: number;
-    let finalData: PadConfiguration;
 
     if (existing?.id) {
       // Update
@@ -554,7 +588,7 @@ export async function upsertPadConfiguration(
         existing,
         existing._fieldsModified,
       );
-      finalData = {
+      const finalData: PadConfiguration = {
         ...existing,
         ...padConfig,
         id: existing.id,
@@ -575,7 +609,7 @@ export async function upsertPadConfiguration(
           key !== "createdAt" &&
           key !== "updatedAt"
         ) {
-          initialFieldsModified[key as keyof typeof padConfig] = nowMs; // Use type assertion
+          initialFieldsModified[key as keyof typeof padConfig] = nowMs;
         }
       });
       const addData: Omit<PadConfiguration, "id"> = {
@@ -679,7 +713,6 @@ export async function upsertPageMetadata(
       pageMetadata.pageIndex,
     ]);
     let id: number;
-    let finalData: PageMetadata;
 
     if (existing?.id) {
       // Update
@@ -690,7 +723,7 @@ export async function upsertPageMetadata(
         existing,
         existing._fieldsModified,
       );
-      finalData = {
+      const finalData: PageMetadata = {
         ...existing,
         ...pageMetadata,
         updatedAt: now,
@@ -710,7 +743,7 @@ export async function upsertPageMetadata(
           key !== "createdAt" &&
           key !== "updatedAt"
         ) {
-          initialFieldsModified[key as keyof typeof pageMetadata] = nowMs; // Use type assertion
+          initialFieldsModified[key as keyof typeof pageMetadata] = nowMs;
         }
       });
       const addData: Omit<PageMetadata, "id"> = {

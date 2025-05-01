@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react"; // Removed unused refs and types
+import { useState, useEffect } from "react";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { SyncType } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
-import Image from "next/image"; // Import Image from next/image
+import Image from "next/image";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ConflictResolutionModal } from "@/components/modals/ConflictResolutionModal";
 
@@ -33,8 +33,14 @@ export default function ProfileManager() {
   );
 
   const [googleApiError, setGoogleApiError] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
-  const [driveFiles, setDriveFiles] = useState<any[]>([]);
+  // Define interface for drive files
+  interface DriveFile {
+    id: string;
+    name: string;
+  }
+
+  // TODO: This would normally be populated via API, kept for future implementation
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
   const [showDriveImportModal, setShowDriveImportModal] = useState(false);
   const [driveActionStatus, setDriveActionStatus] = useState<
     "idle" | "loading" | "error" | "success"

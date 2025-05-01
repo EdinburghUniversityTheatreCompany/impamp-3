@@ -46,8 +46,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   // State for files to be imported
   const [fileList, setFileList] = useState<AudioFilePreview[]>([]);
   const [padAssignments, setPadAssignments] = useState<PadAssignment[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [isDragging, setIsDragging] = useState(false); // State needed for callbacks
+  const [isDragging, setIsDragging] = useState(false); // State needed for drag/drop callbacks
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -341,7 +340,9 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full max-h-[80vh]">
+    <div
+      className={`flex flex-col h-full max-h-[80vh] ${isDragging ? "bg-blue-50 dark:bg-blue-900/10" : ""}`}
+    >
       {/* Error message */}
       {errorMessage && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">

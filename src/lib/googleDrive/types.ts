@@ -1,3 +1,6 @@
+// Re-export types from other files that we need
+import type { ProfileSyncData, ItemConflict } from "@/lib/syncUtils";
+
 // Google Drive API response types
 export interface DriveFile {
   kind: string;
@@ -17,6 +20,7 @@ export interface DriveFileList {
 // Sync-related types
 export type SyncStatus = "idle" | "syncing" | "conflict" | "error" | "success";
 
+// These interfaces are part of the SyncResult type union
 export interface SyncResultSuccess {
   status: "success";
   data: ProfileSyncData;
