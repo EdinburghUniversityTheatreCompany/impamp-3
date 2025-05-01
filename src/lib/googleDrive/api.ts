@@ -144,7 +144,7 @@ export const findDriveFileByName = async (
 
   try {
     // Search only for files created by this application using appProperties
-    const query = `name='${fileName}' and mimeType='application/json' and 'appIdentifier' in appProperties and appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
+    const query = `name='${fileName}' and mimeType='application/json' and appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
 
     const data = await authenticatedRequest<DriveFileList>(
@@ -177,7 +177,8 @@ export const listAppFiles = async (
   }
 
   try {
-    const query = `'appIdentifier' in appProperties and appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
+    // Using correct Google Drive API property search syntax
+    const query = `appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
 
     const data = await authenticatedRequest<DriveFileList>(

@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
-import { SyncType } from "@/lib/db";
+import { SyncType, Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
-import Image from "next/image";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ConflictResolutionModal } from "@/components/modals/ConflictResolutionModal";
+import { ProfileSyncData } from "@/lib/syncUtils";
 
 export default function ProfileManager() {
   const {
@@ -33,23 +33,29 @@ export default function ProfileManager() {
   );
 
   const [googleApiError, setGoogleApiError] = useState<string | null>(null);
-  // Define interface for drive files
+  // Interface for drive files with additional metadata
   interface DriveFile {
     id: string;
     name: string;
+    modifiedTime?: string;
+    size?: number;
+    iconLink?: string;
+    thumbnailLink?: string;
   }
 
-  // TODO: This would normally be populated via API, kept for future implementation
+  // State for Google Drive file handling
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
   const [showDriveImportModal, setShowDriveImportModal] = useState(false);
   const [driveActionStatus, setDriveActionStatus] = useState<
     "idle" | "loading" | "error" | "success"
   >("idle");
   const [driveActionError, setDriveActionError] = useState<string | null>(null);
+  const [importingFileId, setImportingFileId] = useState<string | null>(null);
 
   // Hooks
   const {
     downloadDriveFile,
+    listAppFiles,
     syncStatus: driveHookStatus,
     error: driveHookError,
     conflicts: driveHookConflicts,
@@ -148,20 +154,107 @@ export default function ProfileManager() {
     console.log("Logged out from Google");
   };
 
-  const handleImportFromDrive = async (fileId: string) => {
-    setShowDriveImportModal(false);
+  // Handle showing the Drive import modal and loading files
+  const handleShowDriveImportModal = async () => {
+    setShowDriveImportModal(true);
     setDriveActionStatus("loading");
     setDriveActionError(null);
 
     try {
-      const fileData = await downloadDriveFile(fileId);
-      if (fileData && fileData._syncFormatVersion === 1 && fileData.profile) {
-        await importProfileFromJSON(JSON.stringify(fileData));
+      // Use the hook's listAppFiles function to fetch ImpAmp profile files
+      const files = await listAppFiles();
+      setDriveFiles(files);
+      setDriveActionStatus("success");
+    } catch (error) {
+      console.error("Failed to load Drive files:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to load files from Google Drive.";
+      setDriveActionError(message);
+      setDriveActionStatus("error");
+    }
+  };
+
+  /**
+   * Interface for audio file data in sync/export formats
+   */
+  interface AudioFileData {
+    id: number;
+    name: string;
+    type: string;
+    data: string; // Base64 encoded audio data
+  }
+
+  /**
+   * Defines the structure for export format data used by importProfileFromJSON
+   */
+  interface ProfileExportData {
+    exportVersion: number;
+    exportDate: string;
+    profile: Profile & { [key: string]: unknown };
+    padConfigurations: PadConfiguration[];
+    pageMetadata: PageMetadata[];
+    audioFiles: AudioFileData[];
+  }
+
+  /**
+   * Converts Google Drive sync format to profile export format
+   * This is necessary because the sync format and export format are different
+   */
+  const convertSyncToExportFormat = (
+    syncData: ProfileSyncData,
+  ): ProfileExportData => {
+    // Create a copy of the profile
+    const profileCopy = { ...syncData.profile };
+
+    // Create a profile object with lastBackedUpAt set to current time
+    // Profile type requires lastBackedUpAt to be a number
+    const profileWithoutBackupDate = {
+      ...profileCopy,
+      // Set lastBackedUpAt to current time instead of undefined
+      lastBackedUpAt: Date.now(),
+    } as Profile & { [key: string]: unknown };
+
+    // Create export format object
+    return {
+      exportVersion: 2, // Use current export version
+      exportDate: new Date().toISOString(),
+      profile: profileWithoutBackupDate,
+      padConfigurations: syncData.padConfigurations || [],
+      pageMetadata: syncData.pageMetadata || [],
+      audioFiles: syncData.audioFiles || [],
+    };
+  };
+
+  const handleImportFromDrive = async (fileId: string) => {
+    setImportingFileId(fileId); // Track which file is being imported
+    setDriveActionStatus("loading");
+    setDriveActionError(null);
+
+    try {
+      const syncData = await downloadDriveFile(fileId);
+
+      if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
+        // Convert the sync format to export format before importing
+        const exportData = convertSyncToExportFormat(syncData);
+
+        // Log the converted data for debugging
+        console.log("Converting sync data to export format:", {
+          syncVersion: syncData._syncFormatVersion,
+          exportVersion: exportData.exportVersion,
+        });
+
+        // Import using the converted format
+        await importProfileFromJSON(JSON.stringify(exportData));
+
         console.log(
-          `Successfully imported profile "${fileData.profile.name}" from Google Drive.`,
+          `Successfully imported profile "${syncData.profile.name}" from Google Drive.`,
         );
+        // Close modal on success
+        setShowDriveImportModal(false);
       } else {
-        console.warn("Downloaded file data:", fileData);
+        console.warn("Downloaded file data:", syncData);
         throw new Error(
           "Downloaded file has unrecognized format or is not a valid profile sync file.",
         );
@@ -175,6 +268,8 @@ export default function ProfileManager() {
           : "Failed to import profile from Google Drive.";
       setDriveActionError(message);
       setDriveActionStatus("error");
+    } finally {
+      setImportingFileId(null); // Clear the loading state
     }
   };
 
@@ -360,7 +455,7 @@ export default function ProfileManager() {
                     ) : (
                       <>
                         {googleUser?.picture && (
-                          <Image
+                          <img
                             src={googleUser.picture}
                             alt="User profile"
                             width={40}
@@ -388,11 +483,39 @@ export default function ProfileManager() {
 
                   {isGoogleSignedIn && (
                     <div className="space-y-3">
-                      <p className="text-sm text-gray-600 dark:text-gray-300">
+                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
                         Profile synchronization actions (like Link, Sync Now,
                         Unlink) are available on individual profile cards when
                         the &apos;Profiles&apos; tab is selected.
                       </p>
+
+                      {/* Google Drive Import Button */}
+                      <div className="mt-4">
+                        <button
+                          onClick={handleShowDriveImportModal}
+                          className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors w-full sm:w-auto"
+                        >
+                          <div className="flex items-center justify-center">
+                            <svg
+                              className="h-5 w-5 mr-2"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M2 9.5A3.5 3.5 0 005.5 13H9v2.586l-1.293-1.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 15.586V13h2.5a4.5 4.5 0 10-.616-8.958 4.002 4.002 0 10-7.753 1.977A3.5 3.5 0 002 9.5zm9 3.5H9V8a1 1 0 012 0v5z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                            Import Profiles from Google Drive
+                          </div>
+                        </button>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                          Choose from previously exported profiles stored in
+                          your Google Drive.
+                        </p>
+                      </div>
+
                       {driveActionStatus === "error" && driveActionError && (
                         <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                           Drive Action Error: {driveActionError}
@@ -425,41 +548,169 @@ export default function ProfileManager() {
               {showDriveImportModal && (
                 <div className="fixed inset-0 z-60 bg-black bg-opacity-60 flex items-center justify-center p-4">
                   <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full">
-                    <h3 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">
-                      Import Profile from Google Drive
-                    </h3>
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                        Import Profile from Google Drive
+                      </h3>
+                      <button
+                        onClick={() => setShowDriveImportModal(false)}
+                        className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+                        aria-label="Close"
+                      >
+                        <svg
+                          className="h-5 w-5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Loading State */}
                     {driveActionStatus === "loading" && (
-                      <p className="text-gray-600 dark:text-gray-400">
-                        Loading files...
-                      </p>
+                      <div className="flex flex-col items-center justify-center py-8">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                        <p className="mt-4 text-gray-600 dark:text-gray-400">
+                          Loading files from Google Drive...
+                        </p>
+                      </div>
                     )}
+
+                    {/* Error State */}
                     {driveActionStatus === "error" && driveActionError && (
-                      <p className="text-red-600 dark:text-red-400">
-                        Error: {driveActionError}
-                      </p>
+                      <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-md mb-4">
+                        <p className="text-red-600 dark:text-red-400">
+                          <span className="font-medium">Error:</span>{" "}
+                          {driveActionError}
+                        </p>
+                        <button
+                          onClick={handleShowDriveImportModal}
+                          className="mt-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          Try Again
+                        </button>
+                      </div>
                     )}
+
+                    {/* Success State with No Files */}
                     {driveActionStatus === "success" &&
                       driveFiles.length === 0 && (
-                        <p className="text-gray-600 dark:text-gray-400">
-                          No ImpAmp profile files found in your Google Drive.
-                        </p>
+                        <div className="text-center py-8">
+                          <svg
+                            className="mx-auto h-12 w-12 text-gray-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
+                            />
+                          </svg>
+                          <p className="mt-2 text-gray-600 dark:text-gray-400">
+                            No ImpAmp profile files found in your Google Drive.
+                          </p>
+                          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                            Export a profile first to create files in your
+                            Google Drive.
+                          </p>
+                        </div>
                       )}
+
+                    {/* File List */}
                     {driveActionStatus === "success" &&
                       driveFiles.length > 0 && (
-                        <ul className="space-y-2 max-h-60 overflow-y-auto mb-4 border rounded p-2 dark:border-gray-600">
-                          {driveFiles.map((file) => (
-                            <li key={file.id}>
-                              <button
-                                onClick={() => handleImportFromDrive(file.id)}
-                                className="w-full text-left px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700 rounded"
-                              >
-                                {file.name}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="mb-4">
+                          <div className="max-h-60 overflow-y-auto border rounded dark:border-gray-600">
+                            <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                              {driveFiles.map((file) => (
+                                <li
+                                  key={file.id}
+                                  className="hover:bg-gray-50 dark:hover:bg-gray-700"
+                                >
+                                  <button
+                                    onClick={() =>
+                                      handleImportFromDrive(file.id)
+                                    }
+                                    disabled={importingFileId === file.id}
+                                    className="w-full text-left p-3 flex items-center space-x-3"
+                                  >
+                                    <div className="flex-shrink-0">
+                                      {importingFileId === file.id ? (
+                                        <div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                                      ) : (
+                                        <svg
+                                          className="h-6 w-6 text-blue-500"
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          stroke="currentColor"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                          />
+                                        </svg>
+                                      )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                                        {file.name}
+                                      </p>
+                                      {file.modifiedTime && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                                          Modified:{" "}
+                                          {new Date(
+                                            file.modifiedTime,
+                                          ).toLocaleString()}
+                                        </p>
+                                      )}
+                                    </div>
+                                    {!importingFileId && (
+                                      <div className="flex-shrink-0">
+                                        <svg
+                                          className="h-5 w-5 text-gray-400"
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          stroke="currentColor"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M9 5l7 7-7 7"
+                                          />
+                                        </svg>
+                                      </div>
+                                    )}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
                       )}
-                    <div className="flex justify-end">
+
+                    {/* Action Buttons */}
+                    <div className="flex justify-end space-x-3">
+                      {driveActionStatus === "success" && (
+                        <button
+                          onClick={handleShowDriveImportModal}
+                          className="px-4 py-2 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
+                        >
+                          Refresh Files
+                        </button>
+                      )}
                       <button
                         onClick={() => setShowDriveImportModal(false)}
                         className="px-4 py-2 text-sm bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500"
