@@ -93,7 +93,7 @@ let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
 const migrateStoreV4 = (
   transaction: IDBPTransaction<
     ImpAmpDBSchema,
-    readonly string[],
+    Array<"profiles" | "audioFiles" | "padConfigurations" | "pageMetadata">,
     "versionchange"
   >,
   storeName: "profiles" | "padConfigurations" | "pageMetadata",
@@ -122,10 +122,20 @@ const migrateStoreV4 = (
 
     // Handle profile-specific fields if this is a profile record
     if (storeName === "profiles") {
-      updateData.googleDriveFileId =
-        (record as Profile).googleDriveFileId ?? null;
-      delete updateData.googleDriveFolderId; // Remove legacy field
-      delete updateData.lastSyncedEtag; // Remove legacy field
+      const profileRecord = record as Profile;
+      const profileUpdateData = updateData as Partial<Profile> &
+        typeof updateData;
+      profileUpdateData.googleDriveFileId =
+        profileRecord.googleDriveFileId ?? null;
+
+      // Use a Record type with index signature instead of any
+      const recordUpdateData = updateData as Record<string, unknown>;
+      if ("googleDriveFolderId" in recordUpdateData) {
+        delete recordUpdateData.googleDriveFolderId;
+      }
+      if ("lastSyncedEtag" in recordUpdateData) {
+        delete recordUpdateData.lastSyncedEtag;
+      }
     }
 
     // Type assertion for the final update based on the store
@@ -237,7 +247,8 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
                 console.log("V3 Migration complete.");
                 return;
               }
-              const oldVal = cursor.value as Record<string, unknown>;
+              // First cast to unknown, then to Record to avoid type errors
+              const oldVal = cursor.value as unknown as Record<string, unknown>;
               const audioFileIds =
                 oldVal.audioFileId !== undefined && oldVal.audioFileId !== null
                   ? [oldVal.audioFileId as number]
@@ -247,9 +258,11 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
                 audioFileIds,
                 playbackType: "round-robin",
               };
-              // Need to use any for this specific delete operation
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              delete (newVal as any).audioFileId;
+              // Use a Record type with index signature instead of any
+              const newValRecord = newVal as unknown as Record<string, unknown>;
+              if ("audioFileId" in newValRecord) {
+                delete newValRecord.audioFileId;
+              }
               cursor.update(newVal);
               cursor.continue().then(iterateV3);
             })

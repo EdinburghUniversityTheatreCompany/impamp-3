@@ -198,10 +198,11 @@ export const syncProfile = async (
       mergedData._lastSyncTimestamp = Date.now();
 
       // 4. Upload Merged Data to Drive (Create or Update)
+      // Ensure fileId is never undefined by explicitly using null if fileId is falsy
       const uploadedFile = await uploadDriveFile(
         driveFileName,
         mergedData,
-        fileId,
+        fileId !== undefined ? fileId : null,
         profileId,
         tokenInfo,
         refreshCallback,
@@ -249,7 +250,7 @@ export const syncProfile = async (
  */
 export const applyConflictResolution = async (
   resolvedData: ProfileSyncData,
-  fileId: string,
+  fileId: string | null, // Allow fileId to be null to match uploadDriveFile parameter type
   profileId: number,
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,
@@ -285,10 +286,12 @@ export const applyConflictResolution = async (
     const driveFileName = getProfileSyncFilename(resolvedData.profile.name);
 
     // Upload the resolved data to Drive
+    // Ensure fileId is explicitly string or null, never undefined
+    const fileIdSafe: string | null = fileId === undefined ? null : fileId;
     const uploadedFile = await uploadDriveFile(
       driveFileName,
       resolvedData,
-      fileId,
+      fileIdSafe,
       profileId,
       tokenInfo,
       refreshCallback,
