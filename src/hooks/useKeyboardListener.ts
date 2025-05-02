@@ -7,7 +7,7 @@ import {
   getAllPageMetadataForProfile,
 } from "@/lib/db";
 import {
-  resumeAudioContext,
+  ensureAudioContextActive,
   stopAllAudio,
   fadeOutAllAudio,
   triggerAudioForPad,
@@ -297,7 +297,7 @@ export function useKeyboardListener() {
           console.log(
             "[KeyboardListener] Resuming AudioContext due to Enter key.",
           );
-          resumeAudioContext();
+          ensureAudioContextActive();
           hasInteracted.current = true;
         }
 
@@ -381,7 +381,7 @@ export function useKeyboardListener() {
           console.log(
             "[KeyboardListener] Resuming AudioContext due to F9 key.",
           );
-          resumeAudioContext();
+          ensureAudioContextActive();
           hasInteracted.current = true;
         }
 
@@ -513,7 +513,7 @@ export function useKeyboardListener() {
           console.log(
             "[KeyboardListener] Resuming AudioContext due to pad activation key.",
           );
-          resumeAudioContext();
+          ensureAudioContextActive();
           hasInteracted.current = true;
         }
 

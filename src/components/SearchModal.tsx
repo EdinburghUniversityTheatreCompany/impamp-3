@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { getAudioFile, PlaybackType } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
-import { triggerAudioForPad, resumeAudioContext } from "@/lib/audio";
+import { triggerAudioForPad, ensureAudioContextActive } from "@/lib/audio";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
 
@@ -186,7 +186,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   const handlePlaySound = async (result: SearchResult) => {
     try {
       // Resume audio context first
-      resumeAudioContext();
+      ensureAudioContextActive();
 
       // Call the centralized trigger function with the new signature
       await triggerAudioForPad({

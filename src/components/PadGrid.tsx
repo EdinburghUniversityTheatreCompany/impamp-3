@@ -17,13 +17,14 @@ import {
   isEmergencyPage,
 } from "@/lib/db";
 import {
-  loadAndDecodeAudio,
   triggerAudioForPad,
-  resumeAudioContext,
+  ensureAudioContextActive,
   stopAllAudio,
   fadeOutAllAudio,
   preloadAudioForPage,
 } from "@/lib/audio";
+import { loadAndDecodeAudio } from "@/lib/audio/decoder";
+
 import {
   usePlaybackStore,
   useArmedTracks,
@@ -277,7 +278,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     if (activeProfileId === null) return;
 
     if (!hasInteracted.current) {
-      resumeAudioContext();
+      ensureAudioContextActive();
       hasInteracted.current = true;
     }
 
