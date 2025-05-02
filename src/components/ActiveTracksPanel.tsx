@@ -1,18 +1,25 @@
+/**
+ * Active Tracks Panel Component
+ *
+ * Displays a panel of tracks that are currently playing.
+ * Offers controls to stop or fade out tracks, and includes playback settings.
+ *
+ * @module components/ActiveTracksPanel
+ */
+
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { stopAudio, fadeOutAudio } from "@/lib/audio";
-import { useProfileStore } from "@/store/profileStore";
 import { ActivePadBehavior } from "@/lib/db";
+import { useProfileStore } from "@/store/profileStore";
 import { usePlaybackStore, PlaybackState } from "@/store/playbackStore";
+import { useTrackControls } from "@/hooks/useTrackControls";
+import PanelHeader from "./shared/PanelHeader";
+import TrackItem from "./shared/TrackItem";
 
-// Format time in seconds to MM:SS format
-const formatTime = (seconds: number): string => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-};
-
+/**
+ * Panel component that displays currently playing tracks
+ */
 const ActiveTracksPanel: React.FC = () => {
   // Subscribe to the playback store
   const activePlaybackMap = usePlaybackStore((state) => state.activePlayback);
@@ -22,6 +29,7 @@ const ActiveTracksPanel: React.FC = () => {
     [activePlaybackMap],
   );
 
+  // Get profile store functions for fadeout duration and pad behavior
   const getFadeoutDuration = useProfileStore(
     (state) => state.getFadeoutDuration,
   );
@@ -35,11 +43,15 @@ const ActiveTracksPanel: React.FC = () => {
     (state) => state.setActivePadBehavior,
   );
 
+  // Settings modal state
   const [showSettings, setShowSettings] = useState(false);
   // State for the modal inputs
   const [durationInput, setDurationInput] = useState<string>("");
   const [behaviorInput, setBehaviorInput] =
     useState<ActivePadBehavior>("continue");
+
+  // We don't need to destructure these as they're used internally by TrackItem
+  const {} = useTrackControls();
 
   // Update the input fields when settings modal opens
   useEffect(() => {
@@ -49,69 +61,60 @@ const ActiveTracksPanel: React.FC = () => {
       setBehaviorInput(getActivePadBehavior());
     }
   }, [showSettings, getFadeoutDuration, getActivePadBehavior]);
-  // Stop function - just calls the audio lib function which handles store updates
-  const handleStopTrack = (key: string) => {
-    stopAudio(key);
-  };
 
-  // Handle fadeout with current fadeout duration
-  const handleFadeoutTrack = (key: string) => {
-    // Get current fadeout duration from profile store
-    const duration = getFadeoutDuration();
-    // Fade out the audio
-    fadeOutAudio(key, duration);
-    // Store updates are handled within fadeOutAudio and the rAF loop
-  };
+  // Settings button for the panel header
+  const settingsButton = (
+    <button
+      onClick={() => setShowSettings(true)}
+      className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+      aria-label="Fadeout settings"
+      title="Configure fadeout duration"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    </button>
+  );
+
+  // Help text for ESC key
+  const helpText = (
+    <>
+      Press{" "}
+      <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">
+        ESC
+      </kbd>{" "}
+      to stop all sounds
+    </>
+  );
 
   return (
     <div
       className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-4 w-full shadow-lg"
-      data-testid="active-tracks-panel" // Added test ID
+      data-testid="active-tracks-panel"
     >
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-              Active Tracks
-            </h2>
-            <button
-              onClick={() => setShowSettings(true)}
-              className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-              aria-label="Fadeout settings"
-              title="Configure fadeout duration"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-              </svg>
-            </button>
-          </div>
-
-          {/* Help text for ESC panic button */}
-          <div className="text-xs text-gray-500 dark:text-gray-400">
-            Press{" "}
-            <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded font-mono">
-              ESC
-            </kbd>{" "}
-            to stop all sounds
-          </div>
-        </div>
+        <PanelHeader
+          title="Active Tracks"
+          helpText={helpText}
+          actions={settingsButton}
+        />
 
         {/* Settings modal for fadeout duration */}
         {showSettings && (
@@ -235,87 +238,17 @@ const ActiveTracksPanel: React.FC = () => {
         ) : (
           // List of active tracks with better overflow handling for bottom panel
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[20vh] overflow-y-auto pr-1 pb-safe">
-            {/* Use the memoized array derived from the store */}
             {activeTracksArray.map((track: PlaybackState) => (
-              <div
+              <TrackItem
                 key={track.key}
-                className={`flex items-center space-x-3 p-3 rounded shadow-sm cursor-pointer
-                  transition-colors ${
-                    track.isFading
-                      ? "bg-blue-50 dark:bg-blue-900/30 animate-pulse"
-                      : "bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
-                  }`}
-                onClick={() => handleStopTrack(track.key)}
-                aria-label={`Stop playing ${track.name}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-800 dark:text-gray-200 truncate">
-                    {track.name}
-                    {track.isFading && (
-                      <span className="ml-2 text-xs text-blue-500 dark:text-blue-400 font-normal">
-                        fading out...
-                      </span>
-                    )}
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2 mt-2">
-                    <div
-                      className={`h-2 rounded-full transition-all duration-100 ${
-                        track.isFading ? "bg-blue-400" : "bg-blue-500"
-                      }`}
-                      style={{ width: `${track.progress * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="text-sm text-gray-600 dark:text-gray-300 min-w-[50px] text-right font-mono">
-                  {formatTime(track.remainingTime)}
-                </div>
-                {!track.isFading ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation(); // Prevent triggering the parent div's onClick
-                      handleFadeoutTrack(track.key);
-                    }}
-                    className="bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded flex-shrink-0"
-                    aria-label={`Fade out ${track.name}`}
-                    title={`Fade out over ${getFadeoutDuration()} ${getFadeoutDuration() === 1 ? "second" : "seconds"}`}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3 3L12 15.5m4.5-4.5h-7.5"
-                      />
-                    </svg>
-                  </button>
-                ) : (
-                  <div
-                    className="p-1.5 rounded flex-shrink-0 text-blue-400"
-                    title="Fading out..."
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  </div>
-                )}
-              </div>
+                trackKey={track.key}
+                name={track.name}
+                remainingTime={track.remainingTime}
+                totalDuration={track.totalDuration}
+                progress={track.progress}
+                isFading={track.isFading}
+                isActive={true}
+              />
             ))}
           </div>
         )}
