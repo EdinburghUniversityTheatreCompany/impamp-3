@@ -1,38 +1,37 @@
+/**
+ * Search Modal
+ *
+ * Modal for searching and playing sounds across the active profile
+ *
+ * @module components/search/SearchModal
+ */
+
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { useProfileStore } from "@/store/profileStore";
-import { getAudioFile, PlaybackType } from "@/lib/db";
-import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
+import React, { useRef, useEffect } from "react";
 import { triggerAudioForPad, ensureAudioContextActive } from "@/lib/audio";
-import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
-
-interface SearchResult {
-  profileId: number;
-  pageIndex: number;
-  padIndex: number;
-  name: string;
-  audioFileIds: number[];
-  playbackType: PlaybackType;
-  originalFileName: string;
-  bankName: string;
-}
+import { useSearch, type SearchResult } from "@/hooks/useSearch";
+import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 
 interface SearchModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+/**
+ * Modal for searching and playing sounds
+ *
+ * @param props - Component props
+ * @returns Modal component
+ */
 const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  // Search functionality
+  const { searchTerm, setSearchTerm, results, isLoading } = useSearch();
+
+  // Refs
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-
-  // Get active profile from store
-  const activeProfileId = useProfileStore((state) => state.activeProfileId);
 
   // Focus input when modal opens
   useEffect(() => {
@@ -43,124 +42,14 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   }, [isOpen]);
 
-  // Handle escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        e.preventDefault(); // Prevent the global Escape handler (panic button)
-        e.stopPropagation(); // Stop event from bubbling up to global listeners
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true); // Use capture phase to ensure this runs before other handlers
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isOpen, onClose]);
-
-  // Handle search
-  useEffect(() => {
-    if (!isOpen || !searchTerm.trim() || !activeProfileId) return;
-
-    const searchPads = async () => {
-      setIsLoading(true);
-      try {
-        // Get all pad configurations for the active profile
-        const allPads =
-          await getAllPadConfigurationsForProfile(activeProfileId);
-
-        // Create a map to store bank names by index
-        const bankNames = new Map<number, string>();
-
-        // Filter pads with audio files and matching names
-        const searchResults: SearchResult[] = [];
-
-        // Process each pad
-        for (const pad of allPads) {
-          // Ensure audioFileIds exists and is not empty
-          if (!pad.audioFileIds || pad.audioFileIds.length === 0) continue;
-
-          // Try to get bank name if we haven't loaded it yet
-          if (!bankNames.has(pad.pageIndex)) {
-            try {
-              // You might need to implement a function to get bank name
-              // For now, we'll use a default format
-              bankNames.set(
-                pad.pageIndex,
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
-              );
-            } catch (error) {
-              console.error(
-                `Error getting bank name for index ${pad.pageIndex}:`,
-                error,
-              );
-              bankNames.set(
-                pad.pageIndex,
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
-              );
-            }
-          }
-
-          // Get pad name
-          const padName = pad.name || `Pad ${pad.padIndex + 1}`;
-          const originalFileNames: string[] = [];
-          let displayFileName = ""; // Store the first filename for display
-
-          // Try to get all original file names
-          try {
-            for (const audioId of pad.audioFileIds) {
-              const audioFile = await getAudioFile(audioId);
-              if (audioFile) {
-                originalFileNames.push(audioFile.name);
-                if (!displayFileName) {
-                  // Store the first valid name for display
-                  displayFileName = audioFile.name;
-                }
-              }
-            }
-          } catch (error) {
-            console.error(
-              `Error getting audio files for pad ${pad.padIndex}:`,
-              error,
-            );
-          }
-
-          // Check if pad matches search term (pad name OR any original file name)
-          const searchTermLower = searchTerm.toLowerCase();
-          const nameMatches = padName.toLowerCase().includes(searchTermLower);
-          const fileNameMatches = originalFileNames.some((name) =>
-            name.toLowerCase().includes(searchTermLower),
-          );
-
-          if (nameMatches || fileNameMatches) {
-            searchResults.push({
-              profileId: activeProfileId,
-              pageIndex: pad.pageIndex,
-              padIndex: pad.padIndex,
-              name: padName,
-              audioFileIds: pad.audioFileIds,
-              playbackType: pad.playbackType,
-              originalFileName: displayFileName,
-              bankName:
-                bankNames.get(pad.pageIndex) ||
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
-            });
-          }
-        }
-
-        setResults(searchResults);
-      } catch (error) {
-        console.error("Error searching pads:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    const debounceTimeout = setTimeout(() => {
-      searchPads();
-    }, 300);
-
-    return () => clearTimeout(debounceTimeout);
-  }, [searchTerm, isOpen, activeProfileId]); // Removed convertIndexToBankNumber from dependency array
+  // Register Escape key handler with high priority
+  useKeyboardShortcut({
+    keys: ["Escape"],
+    callback: () => onClose(),
+    isEnabled: isOpen,
+    preventDefault: true,
+    stopPropagation: true, // Important to prevent the global Escape handler (panic button)
+  });
 
   // Handle clicking outside to close
   useEffect(() => {
@@ -188,7 +77,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       // Resume audio context first
       ensureAudioContextActive();
 
-      // Call the centralized trigger function with the new signature
+      // Call the centralized trigger function
       await triggerAudioForPad({
         padIndex: result.padIndex,
         audioFileIds: result.audioFileIds,
@@ -198,7 +87,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         name: result.name,
       });
 
-      // Close the modal after initiating playback attempt
+      // Close the modal after initiating playback
       onClose();
     } catch (error) {
       console.error("Error playing sound:", error);
@@ -230,6 +119,15 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       onClose();
     } catch (error) {
       console.error("Error arming sound:", error);
+    }
+  };
+
+  // Handle result interaction - play or arm
+  const handleResultClick = (e: React.MouseEvent, result: SearchResult) => {
+    if (e.ctrlKey) {
+      handleArmSound(result);
+    } else {
+      handlePlaySound(result);
     }
   };
 
@@ -270,10 +168,12 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             placeholder="Search sounds..."
             className="w-full p-2 bg-transparent border-0 focus:ring-0 text-gray-900 dark:text-white text-lg"
             autoComplete="off"
+            data-testid="search-input"
           />
           <button
             onClick={onClose}
             className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            aria-label="Close search"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -306,13 +206,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
               {results.map((result) => (
                 <div
                   key={`${result.pageIndex}-${result.padIndex}`}
-                  onClick={(e) => {
-                    if (e.ctrlKey) {
-                      handleArmSound(result);
-                    } else {
-                      handlePlaySound(result);
-                    }
-                  }}
+                  onClick={(e) => handleResultClick(e, result)}
                   className="bg-white dark:bg-gray-700 rounded p-3 shadow cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
                   data-testid="search-result-item"
                   title={`Click to play. Ctrl+Click to arm track.`}

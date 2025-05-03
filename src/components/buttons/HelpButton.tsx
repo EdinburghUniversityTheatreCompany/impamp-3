@@ -1,9 +1,27 @@
+/**
+ * Help Button
+ *
+ * Button that opens the help modal
+ *
+ * @module components/buttons/HelpButton
+ */
+
 "use client";
 
 import React from "react";
 import { openHelpModal } from "@/lib/uiUtils";
 
-const HelpButton: React.FC = () => {
+interface HelpButtonProps {
+  className?: string;
+}
+
+/**
+ * Button that opens the help modal with keyboard shortcut information
+ *
+ * @param props - Component props
+ * @returns Button component
+ */
+const HelpButton: React.FC<HelpButtonProps> = ({ className = "" }) => {
   const handleOpenHelp = () => {
     openHelpModal(); // Use the centralized utility function
   };
@@ -11,7 +29,7 @@ const HelpButton: React.FC = () => {
   return (
     <button
       onClick={handleOpenHelp}
-      className="p-2 text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-700"
+      className={`flex items-center justify-center p-2 w-9 h-9 rounded-full transition-colors duration-200 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 ${className}`}
       aria-label="Help"
       title="Help (Shift+?)"
       data-testid="help-button"

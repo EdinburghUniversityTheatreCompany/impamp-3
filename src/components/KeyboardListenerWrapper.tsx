@@ -2,7 +2,7 @@
 
 import React from "react";
 import { KeyboardListenerProvider } from "./KeyboardListenerProvider";
-import { SearchModalProvider } from "./SearchModalProvider";
+import { SearchProvider } from "@/components/search";
 
 export function KeyboardListenerWrapper({
   children,
@@ -10,8 +10,8 @@ export function KeyboardListenerWrapper({
   children: React.ReactNode;
 }) {
   return (
-    <SearchModalProvider>
+    <SearchProvider>
       <KeyboardListenerProvider>{children}</KeyboardListenerProvider>
-    </SearchModalProvider>
+    </SearchProvider>
   );
 }

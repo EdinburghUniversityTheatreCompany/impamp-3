@@ -5,9 +5,12 @@ import dynamic from "next/dynamic";
 import PadGrid from "@/components/PadGrid";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import ArmedTracksPanel from "@/components/ArmedTracksPanel";
-import SearchButton from "@/components/SearchButton";
-import HelpButton from "@/components/HelpButton";
-import DeleteMoveModeButton from "@/components/DeleteMoveModeButton";
+import {
+  HelpButton,
+  DeleteMoveModeButton,
+  SearchButton,
+  EditModeButton,
+} from "@/components/buttons";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
 import EditBankModalContent from "@/components/modals/EditBankModalContent";
@@ -204,13 +207,16 @@ export default function Home() {
             ImpAmp3 Soundboard
           </h1>
 
-          {/* Profile Selector, Help and Search Icons */}
+          {/* Profile Selector and Action Buttons */}
           <div className="flex items-center space-x-4">
-            {/* Search Icon */}
+            {/* Search Button */}
             <SearchButton />
 
-            {/* Help Icon */}
+            {/* Help Button */}
             <HelpButton />
+
+            {/* Edit Mode Button */}
+            <EditModeButton />
 
             {/* Delete/Move Mode Button */}
             <DeleteMoveModeButton />

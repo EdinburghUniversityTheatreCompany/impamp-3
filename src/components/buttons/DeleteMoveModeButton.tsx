@@ -1,13 +1,30 @@
+/**
+ * Delete/Move Mode Button
+ *
+ * Button that toggles delete/move mode
+ *
+ * @module components/buttons/DeleteMoveModeButton
+ */
+
 "use client";
 
 import React from "react";
-import { useProfileStore } from "@/store/profileStore";
+import { useToggleMode } from "@/hooks/useToggleMode";
 
-const DeleteMoveModeButton: React.FC = () => {
-  const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
-  const toggleDeleteMoveMode = useProfileStore(
-    (state) => state.toggleDeleteMoveMode,
-  );
+interface DeleteMoveModeButtonProps {
+  className?: string;
+}
+
+/**
+ * Button that toggles delete/move mode for rearranging and deleting pads
+ *
+ * @param props - Component props
+ * @returns Button component
+ */
+const DeleteMoveModeButton: React.FC<DeleteMoveModeButtonProps> = ({
+  className = "",
+}) => {
+  const { isDeleteMoveMode, toggleDeleteMoveMode } = useToggleMode();
 
   return (
     <button
@@ -16,7 +33,7 @@ const DeleteMoveModeButton: React.FC = () => {
         isDeleteMoveMode
           ? "bg-red-500 text-white hover:bg-red-600"
           : "bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
-      }`}
+      } ${className}`}
       aria-label="Toggle delete and move mode"
       title="Toggle delete and move mode"
     >

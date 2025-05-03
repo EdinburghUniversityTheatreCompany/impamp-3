@@ -13,7 +13,7 @@ import {
   triggerAudioForPad,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import { useSearchModal } from "@/components/SearchModalProvider";
+import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
@@ -131,8 +131,8 @@ export function useKeyboardListener() {
     (state) => state.emergencySoundsVersion,
   );
 
-  // Get search modal context
-  const { openSearchModal, isSearchModalOpen } = useSearchModal();
+  // Get search context
+  const { openSearchModal, isSearchModalOpen } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
   const modalConfig = useUIStore((state) => state.modalConfig);
