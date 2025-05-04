@@ -13,7 +13,9 @@ import {
 } from "@/components/buttons";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
-import EditBankModalContent from "@/components/modals/EditBankModalContent";
+import { useFormModal } from "@/hooks/modal/useFormModal";
+import EditBankForm from "@/components/modals/EditBankForm";
+import type { BankFormValues, FormErrors } from "@/types/forms";
 import PromptModalContent from "@/components/modals/PromptModalContent";
 import {
   renamePage,
@@ -103,47 +105,45 @@ export default function Home() {
     loadBankMetadata();
   }, [activeProfileId, currentPageIndex]);
 
+  // Get form modal hook
+  const { openFormModal } = useFormModal();
+
   // Handle bank click with shift key in edit mode
   const handleBankClick = (bankIndex: number, isShiftClick: boolean) => {
-    // Removed async as modal handles async internally
     if (!isEditMode || !isShiftClick || activeProfileId === null) {
-      // Regular bank switch (handled by the button's onClick) - This part remains synchronous
+      // Regular bank switch (handled by the button's onClick)
       return;
     }
 
     // In edit mode with shift pressed, show dialog to rename and set emergency flag
-    const bankNumber = convertIndexToBankNumber(bankIndex); // Keep only one declaration
+    const bankNumber = convertIndexToBankNumber(bankIndex);
     const currentName = bankNames[bankIndex] || `Bank ${bankNumber}`;
     const currentIsEmergency = emergencyBanks[bankIndex] || false;
 
-    // Variable to hold the data from the modal content
-    let modalData = { name: currentName, isEmergency: currentIsEmergency };
-
-    openModal({
+    // Open form modal with current values
+    openFormModal<BankFormValues>({
       title: `Edit Bank ${bankNumber}`,
-      content: (
-        <EditBankModalContent
-          initialName={currentName}
-          initialIsEmergency={currentIsEmergency}
-          onDataChange={(data) => {
-            modalData = data; // Update the scoped variable
-          }}
-        />
-      ),
-      confirmText: "Save Changes",
-      onConfirm: async () => {
-        // Read data from the scoped variable
-        const { name: newName, isEmergency: newIsEmergency } = modalData;
+      initialValues: {
+        name: currentName,
+        isEmergency: currentIsEmergency,
+      },
+      renderForm: (props) => <EditBankForm {...props} />,
+      validate: (values) => {
+        const errors: FormErrors<BankFormValues> = {};
+        if (!values.name.trim()) {
+          errors.name = "Bank name is required";
+        }
+        return errors;
+      },
+      onSubmit: async (values) => {
+        const { name: newName, isEmergency: newIsEmergency } = values;
         const finalName = newName.trim() || currentName; // Use current name if trimmed is empty
-        let nameChanged = false;
-        let emergencyChanged = false;
 
         try {
           // Update name if changed
           if (finalName !== currentName) {
             await renamePage(activeProfileId, bankIndex, finalName);
             setBankNames((prev) => ({ ...prev, [bankIndex]: finalName }));
-            nameChanged = true;
             console.log(`Renamed bank ${bankNumber} to "${finalName}"`);
           }
 
@@ -158,28 +158,20 @@ export default function Home() {
               ...prev,
               [bankIndex]: newIsEmergency,
             }));
-            emergencyChanged = true;
             // Increment version only if state actually changed
             incrementEmergencySoundsVersion();
             console.log(
               `Set emergency status for bank ${bankNumber} to ${newIsEmergency}, triggered emergency sounds refresh`,
             );
           }
-
-          if (nameChanged || emergencyChanged) {
-            // Optionally show success feedback
-          }
         } catch (error) {
           console.error(`Failed to update bank ${bankNumber}:`, error);
-          // TODO: Show error feedback in modal or via toast
           alert(`Failed to update bank ${bankNumber}. Please try again.`);
-        } finally {
-          closeModal(); // Close the modal after operation
+          throw error; // Re-throw to prevent modal from closing
         }
       },
-      onCancel: () => {
-        // closeModal is handled by the store automatically
-      },
+      confirmText: "Save Changes",
+      size: "sm",
     });
   };
 
