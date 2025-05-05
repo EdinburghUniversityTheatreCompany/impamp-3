@@ -33,16 +33,25 @@ export interface ProfileFormValues extends Record<string, unknown> {
   name: string;
   backupReminderPeriod: number;
   activePadBehavior: "continue" | "stop" | "restart";
+}
+
+/**
+ * Values for playback settings form
+ */
+export interface PlaybackSettingsFormValues extends Record<string, unknown> {
   fadeoutDuration: number;
+  activePadBehavior: "continue" | "stop" | "restart";
 }
 
 /**
  * Values for global settings form
  */
-export interface SettingsFormValues {
+export interface SettingsFormValues extends Record<string, unknown> {
   // Add global settings as needed
-  // Example: defaultVolume: number;
-  _placeholder?: boolean; // Temporary placeholder to avoid empty interface lint error
+  defaultTheme?: "light" | "dark" | "system";
+  padGridRows?: number;
+  padGridColumns?: number;
+  enableKeyboardShortcuts?: boolean;
 }
 
 /**

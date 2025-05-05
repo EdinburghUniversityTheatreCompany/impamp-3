@@ -18,6 +18,7 @@ interface TextInputProps {
   error?: string;
   selectOnFocus?: boolean;
   className?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   error,
   selectOnFocus = false,
   className = "",
+  disabled = false,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,6 +56,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      disabled={disabled}
       className={`block w-full px-3 py-2 border rounded-md shadow-sm sm:text-sm
         ${
           error

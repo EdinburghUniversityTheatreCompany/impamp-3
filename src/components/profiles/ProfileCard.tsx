@@ -1,16 +1,10 @@
 "use client";
 
-import {
-  useState,
-  ChangeEvent,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-} from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { format, formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
-import { Profile, SyncType, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
+import { Profile, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
 import {
   useGoogleDriveSync,
   getLocalProfileSyncData,
@@ -42,30 +36,30 @@ interface ProfileCardProps {
 
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const {
-    setActiveProfileId, // Keep only one
+    setActiveProfileId,
     updateProfile,
     deleteProfile,
-    isGoogleSignedIn, // Get Google sign-in status
-    googleAccessToken, // Get access token for Picker API
-    needsReauth, // Add this to check if re-authentication is needed
-    openProfileManager, // Add this to open profile manager for re-auth
+    isGoogleSignedIn,
+    googleAccessToken,
+    needsReauth,
+    openProfileManager,
   } = useProfileStore();
+
+  // Get profile edit functionality
+  const { openProfileEditor } = useProfileEdit();
 
   // Sync Hook (needed for actions and status)
   const {
     syncProfile,
     uploadDriveFile,
-    syncStatus: driveHookStatus, // Get global sync status
-    error: driveHookError, // Get global sync error
+    syncStatus: driveHookStatus,
+    error: driveHookError,
   } = useGoogleDriveSync();
 
   const { pauseSync, resumeSync, isSyncPaused, getSyncResumeTime } =
     useProfileStore();
 
   // Component State
-  const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState(profile.name);
-  const [syncType, setSyncType] = useState<SyncType>(profile.syncType);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLinking, setIsLinking] = useState(false);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
@@ -82,20 +76,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     useState<string>("1h");
   const [showPauseOptions, setShowPauseOptions] = useState(false);
 
-  // State for the reminder input (days as string) and checkbox
-  const [reminderDays, setReminderDays] = useState<string>(() => {
-    const period = profile.backupReminderPeriod;
-    if (period === -1 || period === undefined || period <= 0) {
-      return Math.round(
-        DEFAULT_BACKUP_REMINDER_PERIOD_MS / MS_IN_DAY,
-      ).toString(); // Default days if disabled/invalid
-    }
-    return Math.round(period / MS_IN_DAY).toString();
-  });
-  const [isReminderDisabled, setIsReminderDisabled] = useState<boolean>(
-    profile.backupReminderPeriod === -1,
-  );
-
   // Dynamically import the Google Drive Picker component on the client side only
   useEffect(() => {
     // Only import the component in the browser
@@ -105,54 +85,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       });
     }
   }, []);
-
-  // Effect to reset state if the profile prop changes (e.g., after save)
-  useEffect(() => {
-    setName(profile.name);
-    setSyncType(profile.syncType);
-    const period = profile.backupReminderPeriod;
-    setIsReminderDisabled(period === -1);
-    if (period === -1 || period === undefined || period <= 0) {
-      setReminderDays(
-        Math.round(DEFAULT_BACKUP_REMINDER_PERIOD_MS / MS_IN_DAY).toString(),
-      );
-    } else {
-      setReminderDays(Math.round(period / MS_IN_DAY).toString());
-    }
-  }, [profile]);
-
-  const handleSave = async () => {
-    // Validate name
-    if (!name.trim()) {
-      alert("Profile name cannot be empty.");
-      return;
-    }
-    let calculatedPeriodMs: number;
-    if (isReminderDisabled) {
-      calculatedPeriodMs = -1; // -1 means disabled
-    } else {
-      const days = parseInt(reminderDays, 10);
-      if (isNaN(days) || days <= 0) {
-        alert(
-          "Please enter a valid positive number of days for the reminder period.",
-        );
-        return;
-      }
-      calculatedPeriodMs = days * MS_IN_DAY;
-    }
-
-    try {
-      await updateProfile(profile.id!, {
-        name: name.trim(),
-        syncType,
-        backupReminderPeriod: calculatedPeriodMs, // Save calculated value
-      });
-      setIsEditing(false);
-    } catch (error) {
-      console.error("Failed to update profile:", error);
-      alert("Failed to update profile. Please try again.");
-    }
-  };
 
   const handleDelete = async () => {
     if (isActive) {
@@ -456,379 +388,265 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
       }`}
     >
-      {isEditing ? (
-        // Edit mode
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Profile Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
-              placeholder="Profile Name"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Sync Type
-            </label>
-            <select
-              value={syncType}
-              onChange={(e) => setSyncType(e.target.value as SyncType)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
-            >
-              <option value="local">Local Only</option>
-              <option value="googleDrive">Google Drive</option>
-            </select>
-            {syncType === "googleDrive" && (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Google Drive integration will be available in a future update.
-              </p>
-            )}
-          </div>
-
-          {/* Backup Reminder Period Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Remind After (Days)
-            </label>
-            <div className="flex items-center space-x-2">
-              <input
-                id={`backupReminderDays-${profile.id}`}
-                type="number"
-                min="1" // Ensure positive number
-                value={reminderDays}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setReminderDays(e.target.value)
-                }
-                disabled={isReminderDisabled}
-                className={`w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 ${isReminderDisabled ? "opacity-50 bg-gray-100 dark:bg-gray-600" : ""}`}
-                placeholder="e.g., 30"
-              />
-              <div className="flex items-center">
-                <input
-                  id={`backupReminderDisable-${profile.id}`}
-                  type="checkbox"
-                  checked={isReminderDisabled}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setIsReminderDisabled(e.target.checked)
-                  }
-                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                />
-                <label
-                  htmlFor={`backupReminderDisable-${profile.id}`}
-                  className="ml-2 block text-sm text-gray-900 dark:text-gray-300"
-                >
-                  Disable Reminder
-                </label>
+      <div className="flex justify-between items-start">
+        <div>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+            {profile.name}
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {profile.syncType === "googleDrive"
+              ? "Google Drive Sync"
+              : "Local Storage Only"}
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Created{" "}
+            {formatDistanceToNow(new Date(profile.createdAt), {
+              addSuffix: true,
+            })}
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Backup Reminder:{" "}
+            {formatReminderPeriod(profile.backupReminderPeriod)}
+          </p>
+          {/* Sync Status Display */}
+          {profile.syncType === "googleDrive" &&
+            isGoogleSignedIn &&
+            displayStatus && (
+              <div className="mt-1">
+                <p className={`text-xs font-medium ${displayStatus.color}`}>
+                  Sync Status: {displayStatus.text}
+                </p>
+                {/* Add sign in again button if auth is expired */}
+                {displayStatus.needsAuth && (
+                  <button
+                    onClick={() => openProfileManager()}
+                    className="mt-1 px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
+                  >
+                    Sign in again
+                  </button>
+                )}
               </div>
-            </div>
-          </div>
-
-          <div className="flex space-x-2 pt-2">
+            )}
+        </div>
+        <div className="flex space-x-1">
+          {isActive ? (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              Active
+            </span>
+          ) : (
             <button
-              onClick={handleSave}
-              className="px-3 py-1 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 transition-colors"
+              onClick={handleActivate}
+              className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40"
             >
-              Save
+              Activate
             </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex mt-4 space-x-2">
+        {/* Standard Edit/Delete Buttons */}
+        <button
+          onClick={() => openProfileEditor(profile)}
+          className="px-3 py-1 bg-gray-100 text-gray-800 rounded-md text-sm hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+        >
+          Edit Profile
+        </button>
+        {!isActive &&
+          (isDeleting ? (
+            <button
+              disabled
+              className="px-3 py-1 bg-red-100 text-red-800 rounded-md text-sm opacity-50 dark:bg-red-900/30 dark:text-red-300"
+            >
+              Deleting...
+            </button>
+          ) : (
             <button
               onClick={() => {
-                // Reset state on cancel - using new state vars
-                setName(profile.name);
-                setSyncType(profile.syncType);
-                const period = profile.backupReminderPeriod;
-                setIsReminderDisabled(period === -1);
-                if (period === -1 || period === undefined || period <= 0) {
-                  setReminderDays(
-                    Math.round(
-                      DEFAULT_BACKUP_REMINDER_PERIOD_MS / MS_IN_DAY,
-                    ).toString(),
-                  );
-                } else {
-                  setReminderDays(Math.round(period / MS_IN_DAY).toString());
+                if (
+                  window.confirm(
+                    `Are you sure you want to delete the profile "${profile.name}"? This cannot be undone.`,
+                  )
+                ) {
+                  handleDelete();
                 }
-                setIsEditing(false);
               }}
-              className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              className="px-3 py-1 bg-red-100 text-red-800 rounded-md text-sm hover:bg-red-200 transition-colors dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
             >
-              Cancel
+              Delete
             </button>
-          </div>
-        </div>
-      ) : (
-        // View mode
-        <>
-          <div className="flex justify-between items-start">
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                {profile.name}
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {profile.syncType === "googleDrive"
-                  ? "Google Drive Sync"
-                  : "Local Storage Only"}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                Created{" "}
-                {formatDistanceToNow(new Date(profile.createdAt), {
-                  addSuffix: true,
-                })}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                Backup Reminder:{" "}
-                {formatReminderPeriod(profile.backupReminderPeriod)}
-              </p>
-              {/* Sync Status Display */}
-              {profile.syncType === "googleDrive" &&
-                isGoogleSignedIn &&
-                displayStatus && (
-                  <div className="mt-1">
-                    <p className={`text-xs font-medium ${displayStatus.color}`}>
-                      Sync Status: {displayStatus.text}
-                    </p>
-                    {/* Add sign in again button if auth is expired */}
-                    {displayStatus.needsAuth && (
-                      <button
-                        onClick={() => openProfileManager()}
-                        className="mt-1 px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
-                      >
-                        Sign in again
-                      </button>
-                    )}
-                  </div>
+          ))}
+      </div>
+
+      {/* Google Drive Sync Actions (View Mode) */}
+      {profile.syncType === "googleDrive" && isGoogleSignedIn && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+          <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
+            Google Drive Sync
+          </h4>
+          {cardError && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              Error: {cardError}
+            </p>
+          )}
+
+          {/* Pause Sync Status */}
+          {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
+            <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
+              <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
+                Sync Paused until{" "}
+                {format(
+                  new Date(getSyncResumeTime(profile.id!) || Date.now()),
+                  "h:mm a, MMM d",
                 )}
-            </div>
-            <div className="flex space-x-1">
-              {isActive ? (
-                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                  Active
-                </span>
-              ) : (
-                <button
-                  onClick={handleActivate}
-                  className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40"
-                >
-                  Activate
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex mt-4 space-x-2">
-            {/* Standard Edit/Delete Buttons */}
-            <button
-              onClick={() => setIsEditing(true)}
-              className="px-3 py-1 bg-gray-100 text-gray-800 rounded-md text-sm hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-            >
-              Edit
-            </button>
-            {!isActive &&
-              (isDeleting ? (
-                <button
-                  disabled
-                  className="px-3 py-1 bg-red-100 text-red-800 rounded-md text-sm opacity-50 dark:bg-red-900/30 dark:text-red-300"
-                >
-                  Deleting...
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Are you sure you want to delete the profile "${profile.name}"? This cannot be undone.`,
-                      )
-                    ) {
-                      handleDelete();
-                    }
-                  }}
-                  className="px-3 py-1 bg-red-100 text-red-800 rounded-md text-sm hover:bg-red-200 transition-colors dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
-                >
-                  Delete
-                </button>
-              ))}
-          </div>
-
-          {/* Google Drive Sync Actions (View Mode) */}
-          {profile.syncType === "googleDrive" && isGoogleSignedIn && (
-            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
-              <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
-                Google Drive Sync
-              </h4>
-              {cardError && (
-                <p className="text-xs text-red-600 dark:text-red-400">
-                  Error: {cardError}
-                </p>
-              )}
-
-              {/* Pause Sync Status */}
-              {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
-                <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
-                  <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
-                    Sync Paused until{" "}
-                    {format(
-                      new Date(getSyncResumeTime(profile.id!) || Date.now()),
-                      "h:mm a, MMM d",
-                    )}
-                  </p>
-                  <button
-                    onClick={async () => {
-                      setIsResuming(true);
-                      try {
-                        await resumeSync(profile.id!);
-                      } catch (error) {
-                        console.error("Error resuming sync:", error);
-                        setCardError("Failed to resume sync");
-                      } finally {
-                        setIsResuming(false);
-                      }
-                    }}
-                    disabled={isResuming}
-                    className="mt-1 px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors dark:bg-purple-800/30 dark:text-purple-300 dark:hover:bg-purple-700/40 disabled:opacity-50"
-                  >
-                    {isResuming ? "Resuming..." : "Resume Now"}
-                  </button>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-2">
-                {!profile.googleDriveFileId ? (
-                  // Not Linked - Show two buttons side by side
-                  <>
-                    <button
-                      onClick={handleCreateAndLinkDriveFile}
-                      disabled={isLinking}
-                      className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
-                    >
-                      {isLinking ? "Linking..." : "Link to Drive"}
-                    </button>
-                    <button
-                      onClick={() => handleLinkToExisting()}
-                      disabled={isLinking || isPickerLoading}
-                      className="px-3 py-1 text-xs bg-cyan-100 text-cyan-800 rounded-md hover:bg-cyan-200 transition-colors dark:bg-cyan-900/30 dark:text-cyan-300 dark:hover:bg-cyan-800/40 disabled:opacity-50"
-                    >
-                      {isPickerLoading ? "Loading..." : "Link to Existing..."}
-                    </button>
-                  </>
-                ) : (
-                  // Linked - Show sync controls
-                  <>
-                    <button
-                      onClick={handleManualSync}
-                      disabled={isSyncingNow || isSyncPaused(profile.id!)}
-                      className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
-                    >
-                      {isSyncingNow ? "Syncing..." : "Sync Now"}
-                    </button>
-
-                    {/* Pause Sync Button and Dropdown */}
-                    {!isSyncPaused(profile.id!) ? (
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowPauseOptions(!showPauseOptions)}
-                          className="px-3 py-1 text-xs bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200 transition-colors dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/40"
-                        >
-                          Pause Sync
-                        </button>
-
-                        {showPauseOptions && (
-                          <div className="absolute z-10 mt-1 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 w-48 py-1">
-                            <div className="px-3 py-2">
-                              <select
-                                value={selectedPauseDuration}
-                                onChange={(e) =>
-                                  setSelectedPauseDuration(e.target.value)
-                                }
-                                className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
-                              >
-                                <option value="1h">1 hour</option>
-                                <option value="4h">4 hours</option>
-                                <option value="8h">8 hours</option>
-                                <option value="1d">Until tomorrow</option>
-                                <option value="custom">Custom...</option>
-                              </select>
-
-                              <div className="flex space-x-1 mt-2">
-                                <button
-                                  onClick={async () => {
-                                    setShowPauseOptions(false);
-                                    setIsPausing(true);
-
-                                    try {
-                                      // Calculate duration in milliseconds
-                                      let durationMs = 0;
-                                      switch (selectedPauseDuration) {
-                                        case "1h":
-                                          durationMs = 60 * 60 * 1000; // 1 hour
-                                          break;
-                                        case "4h":
-                                          durationMs = 4 * 60 * 60 * 1000; // 4 hours
-                                          break;
-                                        case "8h":
-                                          durationMs = 8 * 60 * 60 * 1000; // 8 hours
-                                          break;
-                                        case "1d":
-                                          // Until tomorrow (8am)
-                                          const tomorrow = new Date();
-                                          tomorrow.setDate(
-                                            tomorrow.getDate() + 1,
-                                          );
-                                          tomorrow.setHours(8, 0, 0, 0);
-                                          durationMs =
-                                            tomorrow.getTime() - Date.now();
-                                          break;
-                                        case "custom":
-                                          // Could open a modal or prompt here
-                                          durationMs = 4 * 60 * 60 * 1000; // Default to 4 hours if not specified
-                                          break;
-                                      }
-
-                                      await pauseSync(profile.id!, durationMs);
-                                    } catch (error) {
-                                      console.error(
-                                        "Error pausing sync:",
-                                        error,
-                                      );
-                                      setCardError("Failed to pause sync");
-                                    } finally {
-                                      setIsPausing(false);
-                                    }
-                                  }}
-                                  disabled={isPausing}
-                                  className="px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex-1"
-                                >
-                                  {isPausing ? "Pausing..." : "Pause"}
-                                </button>
-                                <button
-                                  onClick={() => setShowPauseOptions(false)}
-                                  className="px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-
-                    <button
-                      onClick={handleUnlinkDriveFile}
-                      disabled={isUnlinking}
-                      className="px-3 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-md hover:bg-yellow-200 transition-colors dark:bg-yellow-900/30 dark:text-yellow-300 dark:hover:bg-yellow-800/40 disabled:opacity-50"
-                    >
-                      {isUnlinking ? "Unlinking..." : "Unlink"}
-                    </button>
-                  </>
-                )}
-              </div>
+              </p>
+              <button
+                onClick={async () => {
+                  setIsResuming(true);
+                  try {
+                    await resumeSync(profile.id!);
+                  } catch (error) {
+                    console.error("Error resuming sync:", error);
+                    setCardError("Failed to resume sync");
+                  } finally {
+                    setIsResuming(false);
+                  }
+                }}
+                disabled={isResuming}
+                className="mt-1 px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors dark:bg-purple-800/30 dark:text-purple-300 dark:hover:bg-purple-700/40 disabled:opacity-50"
+              >
+                {isResuming ? "Resuming..." : "Resume Now"}
+              </button>
             </div>
           )}
-        </>
+
+          <div className="flex flex-wrap gap-2">
+            {!profile.googleDriveFileId ? (
+              // Not Linked - Show two buttons side by side
+              <>
+                <button
+                  onClick={handleCreateAndLinkDriveFile}
+                  disabled={isLinking}
+                  className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
+                >
+                  {isLinking ? "Linking..." : "Link to Drive"}
+                </button>
+                <button
+                  onClick={() => handleLinkToExisting()}
+                  disabled={isLinking || isPickerLoading}
+                  className="px-3 py-1 text-xs bg-cyan-100 text-cyan-800 rounded-md hover:bg-cyan-200 transition-colors dark:bg-cyan-900/30 dark:text-cyan-300 dark:hover:bg-cyan-800/40 disabled:opacity-50"
+                >
+                  {isPickerLoading ? "Loading..." : "Link to Existing..."}
+                </button>
+              </>
+            ) : (
+              // Linked - Show sync controls
+              <>
+                <button
+                  onClick={handleManualSync}
+                  disabled={isSyncingNow || isSyncPaused(profile.id!)}
+                  className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
+                >
+                  {isSyncingNow ? "Syncing..." : "Sync Now"}
+                </button>
+
+                {/* Pause Sync Button and Dropdown */}
+                {!isSyncPaused(profile.id!) ? (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowPauseOptions(!showPauseOptions)}
+                      className="px-3 py-1 text-xs bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200 transition-colors dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/40"
+                    >
+                      Pause Sync
+                    </button>
+
+                    {showPauseOptions && (
+                      <div className="absolute z-10 mt-1 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 w-48 py-1">
+                        <div className="px-3 py-2">
+                          <select
+                            value={selectedPauseDuration}
+                            onChange={(e) =>
+                              setSelectedPauseDuration(e.target.value)
+                            }
+                            className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
+                          >
+                            <option value="1h">1 hour</option>
+                            <option value="4h">4 hours</option>
+                            <option value="8h">8 hours</option>
+                            <option value="1d">Until tomorrow</option>
+                            <option value="custom">Custom...</option>
+                          </select>
+
+                          <div className="flex space-x-1 mt-2">
+                            <button
+                              onClick={async () => {
+                                setShowPauseOptions(false);
+                                setIsPausing(true);
+
+                                try {
+                                  // Calculate duration in milliseconds
+                                  let durationMs = 0;
+                                  switch (selectedPauseDuration) {
+                                    case "1h":
+                                      durationMs = 60 * 60 * 1000; // 1 hour
+                                      break;
+                                    case "4h":
+                                      durationMs = 4 * 60 * 60 * 1000; // 4 hours
+                                      break;
+                                    case "8h":
+                                      durationMs = 8 * 60 * 60 * 1000; // 8 hours
+                                      break;
+                                    case "1d":
+                                      // Until tomorrow (8am)
+                                      const tomorrow = new Date();
+                                      tomorrow.setDate(tomorrow.getDate() + 1);
+                                      tomorrow.setHours(8, 0, 0, 0);
+                                      durationMs =
+                                        tomorrow.getTime() - Date.now();
+                                      break;
+                                    case "custom":
+                                      // Could open a modal or prompt here
+                                      durationMs = 4 * 60 * 60 * 1000; // Default to 4 hours if not specified
+                                      break;
+                                  }
+
+                                  await pauseSync(profile.id!, durationMs);
+                                } catch (error) {
+                                  console.error("Error pausing sync:", error);
+                                  setCardError("Failed to pause sync");
+                                } finally {
+                                  setIsPausing(false);
+                                }
+                              }}
+                              disabled={isPausing}
+                              className="px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex-1"
+                            >
+                              {isPausing ? "Pausing..." : "Pause"}
+                            </button>
+                            <button
+                              onClick={() => setShowPauseOptions(false)}
+                              className="px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                <button
+                  onClick={handleUnlinkDriveFile}
+                  disabled={isUnlinking}
+                  className="px-3 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-md hover:bg-yellow-200 transition-colors dark:bg-yellow-900/30 dark:text-yellow-300 dark:hover:bg-yellow-800/40 disabled:opacity-50"
+                >
+                  {isUnlinking ? "Unlinking..." : "Unlink"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
