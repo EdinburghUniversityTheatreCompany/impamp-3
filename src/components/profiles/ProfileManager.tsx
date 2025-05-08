@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, ChangeEvent } from "react";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { SyncType, Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
@@ -17,6 +17,9 @@ export default function ProfileManager() {
     closeProfileManager,
     createProfile,
     importProfileFromJSON,
+    importProfileFromImpamp2JSON,
+    importMultipleProfilesFromJSON,
+    exportMultipleProfilesToJSON,
     isGoogleSignedIn,
     googleUser,
     setGoogleAuthDetails,
@@ -31,6 +34,29 @@ export default function ProfileManager() {
   const [activeTab, setActiveTab] = useState<"profiles" | "import-export">(
     "profiles",
   );
+
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(
+    new Set(),
+  ); // State for export selection
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Handler for export selection changes
+  const handleExportSelectChange = (profileId: number, isSelected: boolean) => {
+    setExportSelectionIds((prevSelected) => {
+      const newSelected = new Set(prevSelected);
+      if (isSelected) {
+        newSelected.add(profileId);
+      } else {
+        newSelected.delete(profileId);
+      }
+      return newSelected;
+    });
+  };
 
   const [googleApiError, setGoogleApiError] = useState<string | null>(null);
   // Interface for drive files with additional metadata
@@ -428,7 +454,310 @@ export default function ProfileManager() {
 
           {activeTab === "import-export" && (
             <div>
-              {/* Simplified Google Drive Integration section */}
+              {/* Export Section - Multi-Select */}
+              <section className="mb-8">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
+                  Export Profiles
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Select one or more profiles below to export their
+                  configurations to a single file.
+                </p>
+
+                {/* Multi-Select List */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto mb-4">
+                  <h4 className="text-md font-medium text-gray-800 dark:text-gray-200 mb-3">
+                    Select Profiles to Export:
+                  </h4>
+                  {profiles.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                      No profiles available to export.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {profiles.map((profile) => (
+                        <div key={profile.id} className="flex items-center">
+                          <input
+                            id={`export-profile-${profile.id}`}
+                            type="checkbox"
+                            checked={exportSelectionIds.has(profile.id!)}
+                            onChange={(e) =>
+                              handleExportSelectChange(
+                                profile.id!,
+                                e.target.checked,
+                              )
+                            }
+                            className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <label
+                            htmlFor={`export-profile-${profile.id}`}
+                            className="ml-2 block text-sm text-gray-900 dark:text-gray-300"
+                          >
+                            {profile.name}{" "}
+                            {profile.id === activeProfileId ? "(Active)" : ""}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Export Selected Button */}
+                <button
+                  onClick={async () => {
+                    if (exportSelectionIds.size === 0) {
+                      alert("Please select at least one profile to export.");
+                      return;
+                    }
+                    if (!exportMultipleProfilesToJSON) {
+                      console.error(
+                        "exportMultipleProfilesToJSON function is not available in the profile store.",
+                      );
+                      alert("Multi-export functionality is not available.");
+                      return;
+                    }
+                    try {
+                      setIsExporting(true);
+                      await exportMultipleProfilesToJSON(
+                        Array.from(exportSelectionIds),
+                      );
+                      setIsExporting(false);
+                      setExportSelectionIds(new Set()); // Clear selection after export
+                    } catch (error) {
+                      console.error(
+                        "Failed to export selected profiles:",
+                        error,
+                      );
+                      setIsExporting(false);
+                      alert(
+                        "Failed to export selected profiles. Please try again.",
+                      );
+                    }
+                  }}
+                  disabled={isExporting || exportSelectionIds.size === 0}
+                  className={`px-4 py-2 ${
+                    exportSelectionIds.size > 0
+                      ? "bg-green-500 text-white hover:bg-green-600"
+                      : "bg-gray-200 text-gray-500"
+                  } rounded-md transition-colors ${
+                    isExporting || exportSelectionIds.size === 0
+                      ? "cursor-not-allowed"
+                      : ""
+                  }`}
+                >
+                  {isExporting
+                    ? "Exporting..."
+                    : `Export Selected (${exportSelectionIds.size})`}
+                </button>
+              </section>
+
+              {/* Import Profile Section */}
+              <section className="mb-8">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
+                  Import Profile
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Import a previously exported profile configuration file.
+                </p>
+
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    data-testid="import-profile-file-input"
+                    className="hidden"
+                    accept=".json,.iajson"
+                    onChange={async (e: ChangeEvent<HTMLInputElement>) => {
+                      // Reset states
+                      setImportError(null);
+                      setImportSuccess(null);
+
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+
+                      try {
+                        setIsImporting(true);
+
+                        // Read the file
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          const content = event.target?.result as string;
+                          if (!content) {
+                            setImportError("Failed to read file content.");
+                            setIsImporting(false);
+                            return;
+                          }
+
+                          try {
+                            const parsedData = JSON.parse(content);
+
+                            // --- Check for Multi-Profile Format (Version 1) ---
+                            if (
+                              parsedData &&
+                              parsedData.exportVersion === 1 &&
+                              Array.isArray(parsedData.profiles)
+                            ) {
+                              console.log(
+                                "Attempting import as multi-profile format (v1)...",
+                              );
+                              // Check if the function exists before calling
+                              if (!importMultipleProfilesFromJSON) {
+                                console.error(
+                                  "importMultipleProfilesFromJSON function is not available in the profile store.",
+                                );
+                                throw new Error(
+                                  "Multi-import functionality is not available.",
+                                );
+                              }
+                              // Use store function
+                              const results =
+                                await importMultipleProfilesFromJSON(content);
+                              // Add explicit types for filter/map parameters
+                              const successes = results.filter(
+                                (r: { result: number | Error }) =>
+                                  typeof r.result === "number",
+                              ).length;
+                              const failures = results.length - successes;
+                              let message = `Multi-profile import complete: ${successes} succeeded`;
+                              if (failures > 0) {
+                                message += `, ${failures} failed.`;
+                                const failedNames = results
+                                  .filter(
+                                    (r: { result: number | Error }) =>
+                                      r.result instanceof Error,
+                                  )
+                                  .map(
+                                    (r: { profileName: string }) =>
+                                      r.profileName,
+                                  )
+                                  .join(", ");
+                                message += ` Failed profiles: ${failedNames}`;
+                                setImportError(message); // Show summary as error if any failed
+                              } else {
+                                setImportSuccess(message); // Show as success only if all succeeded
+                              }
+                              setIsImporting(false);
+
+                              // --- Check for Single Profile Format (Version 2) ---
+                            } else if (
+                              parsedData &&
+                              parsedData.exportVersion === 2 &&
+                              parsedData.profile
+                            ) {
+                              console.log(
+                                "Attempting import as current single profile format (v2)...",
+                              );
+                              const currentProfileId =
+                                await importProfileFromJSON(content);
+                              setImportSuccess(
+                                `Profile imported successfully! (New ID: ${currentProfileId})`,
+                              );
+                              setIsImporting(false);
+
+                              // --- Check for Legacy Impamp2 Format (heuristic check) ---
+                            } else if (
+                              parsedData &&
+                              parsedData.pages &&
+                              typeof parsedData.pages === "object" &&
+                              !parsedData.exportVersion
+                            ) {
+                              // Heuristic: has 'pages' object, no 'exportVersion'
+                              console.log(
+                                "Attempting import as impamp2 format...",
+                              );
+                              const impamp2ProfileId =
+                                await importProfileFromImpamp2JSON(content);
+                              setImportSuccess(
+                                `Impamp2 profile imported successfully! (New ID: ${impamp2ProfileId})`,
+                              );
+                              setIsImporting(false);
+                            } else {
+                              // --- Unrecognized format ---
+                              console.error(
+                                "Unrecognized file format.",
+                                parsedData,
+                              );
+                              setImportError(
+                                "Failed to import: Unrecognized or invalid file format.",
+                              );
+                              setIsImporting(false);
+                            }
+                          } catch (error) {
+                            console.error(
+                              "Error during import processing:",
+                              error,
+                            );
+                            let finalErrorMessage =
+                              "Failed to import profile: ";
+                            if (error instanceof SyntaxError) {
+                              finalErrorMessage +=
+                                "Invalid JSON format in file.";
+                            } else if (error instanceof Error) {
+                              finalErrorMessage += error.message; // Use the specific error message
+                            } else {
+                              finalErrorMessage +=
+                                "An unknown error occurred during import.";
+                            }
+                            setImportError(finalErrorMessage);
+                            setIsImporting(false);
+                          } finally {
+                            // Reset the file input regardless of success or failure
+                            if (fileInputRef.current) {
+                              fileInputRef.current.value = "";
+                            }
+                          }
+                        };
+
+                        reader.onerror = () => {
+                          setImportError("Failed to read file");
+                          setIsImporting(false);
+                        };
+
+                        reader.readAsText(file);
+                      } catch (error) {
+                        const errorMessage =
+                          error instanceof Error
+                            ? error.message
+                            : "An unknown error occurred";
+                        setImportError(
+                          `Failed to import profile: ${errorMessage}`,
+                        );
+                        setIsImporting(false);
+                      }
+                    }}
+                  />
+
+                  {importError && (
+                    <div className="mb-4 p-2 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded border border-red-200 dark:border-red-800">
+                      {importError}
+                    </div>
+                  )}
+
+                  {importSuccess && (
+                    <div className="mb-4 p-2 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300 rounded border border-green-200 dark:border-green-800">
+                      {importSuccess}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className={`px-4 py-2 ${
+                      isImporting
+                        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                        : "bg-blue-500 text-white hover:bg-blue-600"
+                    } rounded-md transition-colors`}
+                  >
+                    {isImporting ? "Importing..." : "Select File to Import"}
+                  </button>
+                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    Only import files that were previously exported from ImpAmp2
+                    or ImpAmp3.
+                  </p>
+                </div>
+              </section>
+
+              {/* Google Drive Integration section */}
               <section>
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                   Google Drive Integration
