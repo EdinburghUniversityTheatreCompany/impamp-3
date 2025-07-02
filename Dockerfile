@@ -11,6 +11,13 @@ RUN npm ci
 # Copy application files
 COPY . .
 
+# Declare build-time arguments that Next.js needs during the build
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+# Make them available as environment variables within this build stage
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+
+RUN echo "CLIENT_ID during build: $NEXT_PUBLIC_GOOGLE_CLIENT_ID"
+
 # Build the application
 RUN npm run build
 
