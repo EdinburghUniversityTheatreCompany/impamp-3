@@ -407,10 +407,13 @@ export function useKeyboardListener() {
           // Just Number key for banks 1-10
           event.preventDefault();
           const bankNumber = event.key === "0" ? 10 : parseInt(event.key, 10);
+          // Convert to the format expected by setCurrentPageIndex (bank 10 should be passed as 0)
+          const storeBankNumber =
+            event.key === "0" ? 0 : parseInt(event.key, 10);
           console.log(
             `[KeyboardListener] Number key ${event.key} detected, switching to bank ${bankNumber}`,
           );
-          setCurrentPageIndex(bankNumber);
+          setCurrentPageIndex(storeBankNumber);
           return;
         }
       }

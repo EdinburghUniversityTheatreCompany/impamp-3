@@ -262,9 +262,13 @@ export default function Home() {
                         if (isEditMode) {
                           handleBankClick(index, true);
                         } else {
+                          // Convert bank number back to the format expected by setCurrentPageIndex
+                          // Bank 10 should be passed as 0, banks 1-9 as 1-9, banks 11-20 as 11-20
+                          const uiBankNumber =
+                            bankNumber === 10 ? 0 : bankNumber;
                           useProfileStore
                             .getState()
-                            .setCurrentPageIndex(bankNumber);
+                            .setCurrentPageIndex(uiBankNumber);
                         }
                       }}
                       className={`relative px-4 py-2 rounded-t-lg flex items-center text-sm font-medium transition-colors
