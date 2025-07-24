@@ -816,13 +816,48 @@ export async function importImpamp2Profile(
         const dataUrl = padData.file;
         let audioOriginalKey: string | undefined = undefined;
 
-        if (dataUrl && dataUrl.startsWith("data:audio/")) {
+        // Process audio data for this pad
+        console.log(
+          `Processing pad "${padData.name}" (key: ${key}, page: ${pageIndex})`,
+        );
+        if (dataUrl) {
+          console.log(
+            `  - Data URL detected (${dataUrl.length} chars), MIME: ${dataUrl.split(";")[0].split(":")[1] || "unknown"}`,
+          );
+        }
+
+        // Accept both proper audio MIME types and generic octet-stream (legacy V1 format)
+        if (
+          dataUrl &&
+          (dataUrl.startsWith("data:audio/") ||
+            dataUrl.startsWith("data:application/octet-stream"))
+        ) {
           try {
             const parts = dataUrl.match(/^data:(.+);base64,(.+)$/);
             if (!parts || parts.length !== 3)
               throw new Error("Could not parse data URL format.");
-            const mimeType = parts[1];
+            let mimeType = parts[1];
             const base64Data = parts[2];
+
+            // Fix legacy V1 MIME type: application/octet-stream should be treated as audio
+            if (mimeType === "application/octet-stream") {
+              // Try to determine actual audio format from filename or default to mp3
+              const filename = padData.filename || padData.name || "";
+              if (filename.toLowerCase().includes(".wav")) {
+                mimeType = "audio/wav";
+              } else if (filename.toLowerCase().includes(".ogg")) {
+                mimeType = "audio/ogg";
+              } else if (filename.toLowerCase().includes(".m4a")) {
+                mimeType = "audio/mp4";
+              } else {
+                // Default to mp3 for unknown legacy formats
+                mimeType = "audio/mpeg";
+              }
+              console.log(
+                `Fixed legacy MIME type for "${padData.name}": application/octet-stream -> ${mimeType}`,
+              );
+            }
+
             const blob = await base64ToBlob(base64Data, mimeType); // Convert outside transaction
 
             audioOriginalKey = `${profileId}_${pageIndex}_${padIndex}`; // Unique key for mapping later
@@ -850,6 +885,15 @@ export async function importImpamp2Profile(
           console.warn(
             `Skipping audio for pad "${padData.name}" (key: ${key}, page: ${pageIndex}): Invalid or missing audio data URL.`,
           );
+          if (
+            dataUrl &&
+            typeof dataUrl === "string" &&
+            dataUrl.startsWith("data:")
+          ) {
+            console.warn(
+              `  - Unsupported data URL format: ${dataUrl.substring(0, 50)}...`,
+            );
+          }
         }
 
         padsToImport.push({
