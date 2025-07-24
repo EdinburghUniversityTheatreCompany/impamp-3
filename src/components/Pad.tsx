@@ -307,7 +307,7 @@ const Pad: React.FC<PadProps> = ({
 
       {/* Dropzone overlay message (only show if drop is not disabled and not in delete/move mode) */}
       {isDragActive && !isDropDisabled && !isDeleteMoveMode && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20 rounded-md">
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-20 rounded-md">
           <span className="text-white text-lg font-semibold">
             {isDragAccept && "Drop to replace sound"}
             {isDragReject && "Invalid file type"}
@@ -318,7 +318,7 @@ const Pad: React.FC<PadProps> = ({
 
       {/* Message indicating drop is disabled */}
       {isDragActive && isDropDisabled && !isDeleteMoveMode && (
-        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-20 rounded-md">
+        <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20 rounded-md">
           <span className="text-white text-center text-sm font-semibold px-2">
             Cannot drop here. Edit pad to manage multiple sounds.
           </span>

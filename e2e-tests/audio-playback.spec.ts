@@ -16,7 +16,7 @@ async function setActivePadBehaviorSetting(page: Page, behavior: ActivePadBehavi
   const settingsButton = page.locator('[data-testid="active-tracks-panel"] button[aria-label="Fadeout settings"]');
   await settingsButton.click();
 
-  const modal = page.locator('.fixed.inset-0.bg-black.bg-opacity-50');
+  const modal = page.locator('.fixed.inset-0.bg-black\\/50');
   await expect(modal).toBeVisible();
 
   const behaviorRadioButton = modal.locator(`input[name="activePadBehavior"][value="${behavior}"]`);

@@ -66,7 +66,7 @@ const Modal: React.FC<ModalProps> = ({
   return (
     <div
       data-testid="custom-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300 overflow-y-auto py-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 transition-opacity duration-300 overflow-y-auto py-6"
       onClick={onClose} // Close when clicking the overlay
     >
       <div

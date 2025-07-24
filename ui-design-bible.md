@@ -53,7 +53,7 @@ This document outlines the visual and interaction design guidelines for the ImpA
 
 *   **Purpose:** Provides a consistent way to display confirmations, prompts, or custom forms, replacing native browser dialogs.
 *   **Structure:**
-    *   Fixed overlay (`bg-black bg-opacity-50`).
+    *   Fixed overlay (`bg-black/50`).
     *   Centered content container (`bg-white dark:bg-gray-800`, rounded, shadow, padding).
     *   Optional title area.
     *   Main content area (renders custom `children`).
