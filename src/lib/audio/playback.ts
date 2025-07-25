@@ -28,21 +28,6 @@ let previousPlaybackState = new Map<
 >();
 
 // Reusable objects to reduce garbage collection pressure
-const reusableStateObject = {
-  key: "",
-  name: "",
-  remainingTime: 0,
-  totalDuration: 0,
-  progress: 0,
-  isFading: false,
-  padInfo: { profileId: 0, pageIndex: 0, padIndex: 0 },
-};
-
-const reusablePreviousState = {
-  progress: 0,
-  remainingTime: 0,
-  isFading: false,
-};
 
 /**
  * Creates an audio source node for playback

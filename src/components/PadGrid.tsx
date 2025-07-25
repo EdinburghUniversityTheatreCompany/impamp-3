@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useMemo } from "react";
+import React, { useRef, useMemo, useCallback } from "react";
 import Pad from "./Pad";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
@@ -151,36 +151,47 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const handleFadeOutAllClick = () => fadeOutAllAudio();
 
   // Main click handler - delegates to appropriate handlers
-  const handlePadClick = (padIndex: number) => {
-    const config = padConfigs.get(padIndex);
+  const handlePadClick = useCallback(
+    (padIndex: number) => {
+      const config = padConfigs.get(padIndex);
 
-    // Different behavior based on mode
-    if (isDeleteMoveMode) {
-      // In delete mode, clicking directly removes the sound
-      if (config?.audioFileIds && config.audioFileIds.length > 0) {
-        handleRemoveInteraction(padIndex);
-      }
-    } else if (isEditMode) {
-      // In edit mode
-      if (
-        isDeleteKeyDown &&
-        config?.audioFileIds &&
-        config.audioFileIds.length > 0
-      ) {
-        handleRemoveInteraction(padIndex);
+      // Different behavior based on mode
+      if (isDeleteMoveMode) {
+        // In delete mode, clicking directly removes the sound
+        if (config?.audioFileIds && config.audioFileIds.length > 0) {
+          handleRemoveInteraction(padIndex);
+        }
+      } else if (isEditMode) {
+        // In edit mode
+        if (
+          isDeleteKeyDown &&
+          config?.audioFileIds &&
+          config.audioFileIds.length > 0
+        ) {
+          handleRemoveInteraction(padIndex);
+        } else {
+          // Otherwise, always open the edit modal (even for empty pads)
+          handleEditInteraction(padIndex);
+        }
       } else {
-        // Otherwise, always open the edit modal (even for empty pads)
-        handleEditInteraction(padIndex);
+        // Normal mode - playback logic
+        if (config && config.audioFileIds && config.audioFileIds.length > 0) {
+          handlePlaybackInteraction(config);
+        } else {
+          console.log(`Pad index ${padIndex} has no config, cannot play.`);
+        }
       }
-    } else {
-      // Normal mode - playback logic
-      if (config && config.audioFileIds && config.audioFileIds.length > 0) {
-        handlePlaybackInteraction(config);
-      } else {
-        console.log(`Pad index ${padIndex} has no config, cannot play.`);
-      }
-    }
-  };
+    },
+    [
+      padConfigs,
+      isDeleteMoveMode,
+      isEditMode,
+      isDeleteKeyDown,
+      handleRemoveInteraction,
+      handleEditInteraction,
+      handlePlaybackInteraction,
+    ],
+  );
 
   // Open the bulk import modal
   const handleOpenBulkImport = () => {

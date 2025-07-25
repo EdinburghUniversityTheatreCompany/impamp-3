@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, ChangeEvent } from "react";
+import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { SyncType, Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
@@ -784,7 +785,7 @@ export default function ProfileManager() {
                     ) : (
                       <>
                         {googleUser?.picture && (
-                          <img
+                          <Image
                             src={googleUser.picture}
                             alt="User profile"
                             width={40}
