@@ -17,8 +17,15 @@ export {
   isAudioPlaying,
   isAudioFading,
   ensureAudioContextActive,
-  preloadAudioForPage,
+  preloadAudioForPage, // Legacy - deprecated
+  preloadCurrentPageIntelligent,
+  preloadOnHover,
+  preloadAllConfiguredFiles,
+  getPreloadingStats,
 } from "./controls";
+
+// Re-export preloader for direct access
+export { audioPreloader } from "./preloader";
 
 // Re-export type definitions that are needed by other modules
 export { generatePlaybackKey } from "./types";

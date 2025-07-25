@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { useDropzone, Accept } from "react-dropzone";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
+import { preloadOnHover } from "@/lib/audio";
 import PadProgressBar from "./PadProgressBar"; // Import the new component
 
 interface PadProps {
@@ -13,6 +14,7 @@ interface PadProps {
   name?: string;
   isConfigured: boolean; // Still useful for basic styling/remove button
   soundCount: number; // Number of sounds configured for this pad
+  audioFileIds?: number[]; // Audio file IDs for intelligent preloading
   isPlaying: boolean;
   isFading?: boolean; // Prop to indicate if the sound is fading out
   playProgress?: number; // Prop to show play progress (0 to 1)
@@ -50,7 +52,9 @@ const Pad: React.FC<PadProps> = ({
   onRemoveSound,
   onSwapWith,
   soundCount, // Destructure the new prop
-  // profileId and pageIndex are passed but not used directly in this component
+  audioFileIds, // Destructure for hover preloading
+  profileId,
+  pageIndex,
 }) => {
   // State for drag and drop operations
   const [isDragging, setIsDragging] = useState(false);
@@ -86,6 +90,23 @@ const Pad: React.FC<PadProps> = ({
     },
     [onDropAudio, padIndex, soundCount], // Add soundCount to dependencies
   );
+
+  // Hover handler for intelligent preloading
+  const handleMouseEnter = React.useCallback(() => {
+    // Only preload if pad is configured and we have audio file IDs
+    if (
+      isConfigured &&
+      audioFileIds &&
+      audioFileIds.length > 0 &&
+      profileId !== null
+    ) {
+      preloadOnHover(audioFileIds, {
+        profileId,
+        pageIndex,
+        padIndex,
+      });
+    }
+  }, [isConfigured, audioFileIds, profileId, pageIndex, padIndex]);
 
   // Drag and drop handlers for delete/move mode
   const handleDragStart = (e: React.DragEvent) => {
@@ -237,6 +258,7 @@ const Pad: React.FC<PadProps> = ({
       {...getRootProps()}
       id={id} // Use the passed unique ID
       className={padClasses} // Use clsx generated classes
+      onMouseEnter={handleMouseEnter} // Add hover preloading
       // Make clickable area separate from dropzone root if needed, but here it's combined
       // The single onClick handler below manages both playback and prevents dropzone default click
       onClick={(e) => {

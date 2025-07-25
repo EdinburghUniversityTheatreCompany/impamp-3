@@ -11,6 +11,7 @@
 import { useProfileStore } from "@/store/profileStore";
 import { PadConfiguration } from "../db";
 import { loadAndDecodeAudio, preloadAudioFiles } from "./decoder";
+import { audioPreloader } from "./preloader";
 import { getStrategy } from "./strategies";
 import {
   playBuffer,
@@ -113,6 +114,9 @@ export async function triggerAudioForPad(
     const buffer = await loadAndDecodeAudio(audioFileId);
 
     if (buffer) {
+      // Track this file as recently played for intelligent preloading
+      audioPreloader.trackPlayedFile(audioFileId);
+
       // Play the buffer
       console.log(
         `[Audio Controls] Playing audio file ID: ${audioFileId} for pad ${padIndex}`,
@@ -248,8 +252,9 @@ export async function ensureAudioContextActive(): Promise<void> {
 }
 
 /**
- * Preloads audio for a collection of pad configurations
+ * Preloads audio for a collection of pad configurations (DEPRECATED - use intelligent preloader)
  *
+ * @deprecated Use audioPreloader.preloadCurrentPage() instead for better performance
  * @param padConfigs - Array of pad configurations containing audio file IDs
  * @returns Promise that resolves when preloading is complete
  */
@@ -266,7 +271,7 @@ export async function preloadAudioForPage(
   }
 
   console.log(
-    `[Audio Controls] Preloading ${uniqueIds.length} audio files for the current page...`,
+    `[Audio Controls] [DEPRECATED] Preloading ${uniqueIds.length} audio files for the current page...`,
   );
 
   try {
@@ -277,4 +282,52 @@ export async function preloadAudioForPage(
   } catch (error) {
     console.error("[Audio Controls] Error during audio preloading:", error);
   }
+}
+
+/**
+ * Intelligent preloading for current page with priority-based loading
+ *
+ * @param padConfigs - Array of pad configurations for the current page
+ * @param profileId - ID of the active profile
+ * @param pageIndex - Index of the current page
+ */
+export function preloadCurrentPageIntelligent(
+  padConfigs: PadConfiguration[],
+  profileId: number,
+  pageIndex: number,
+): void {
+  audioPreloader.preloadCurrentPage(padConfigs, profileId, pageIndex);
+}
+
+/**
+ * Preload files on hover for anticipatory loading
+ *
+ * @param audioFileIds - Audio file IDs to preload
+ * @param context - Context information for the preload
+ */
+export function preloadOnHover(
+  audioFileIds: number[],
+  context: { profileId: number; pageIndex: number; padIndex: number },
+): void {
+  audioPreloader.preloadOnHover(audioFileIds, context);
+}
+
+/**
+ * Background preload of all configured audio files across all pages
+ *
+ * @param allPadConfigs - All pad configurations across all pages
+ * @param profileId - ID of the active profile
+ */
+export function preloadAllConfiguredFiles(
+  allPadConfigs: PadConfiguration[],
+  profileId: number,
+): void {
+  audioPreloader.preloadAllConfigured(allPadConfigs, profileId);
+}
+
+/**
+ * Get preloading statistics
+ */
+export function getPreloadingStats() {
+  return audioPreloader.getStats();
 }

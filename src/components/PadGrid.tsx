@@ -9,7 +9,8 @@ import { isEmergencyPage } from "@/lib/db";
 import {
   stopAllAudio,
   fadeOutAllAudio,
-  preloadAudioForPage,
+  preloadCurrentPageIntelligent,
+  preloadAllConfiguredFiles,
 } from "@/lib/audio";
 import { usePlaybackStore, useArmedTracks } from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
@@ -106,16 +107,25 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     }
   }, [isLoadingConfigs, configError]);
 
-  // Preload audio effect
+  // Intelligent preload audio files for current page and background loading
   useEffect(() => {
     if (activeProfileId === null || padConfigs.size === 0) return;
-    // Pass the actual configurations to the updated preload function
+
     const configsArray = Array.from(padConfigs.values());
     if (configsArray.length > 0) {
+      // Immediate preload for current page with highest priority
       console.log(
-        `[PadGrid Preload] Triggering preload for page ${currentPageIndex}`,
+        `[PadGrid Preload] Intelligent preload for page ${currentPageIndex}`,
       );
-      preloadAudioForPage(configsArray);
+      preloadCurrentPageIntelligent(
+        configsArray,
+        activeProfileId,
+        currentPageIndex,
+      );
+
+      // Background preload all configured files (lower priority)
+      // This will intelligently prioritize recently played files
+      preloadAllConfiguredFiles(configsArray, activeProfileId);
     }
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
@@ -298,6 +308,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           name={config?.name}
           isConfigured={soundCount > 0}
           soundCount={soundCount}
+          audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
           isPlaying={isPlaying}
           isFading={isFading}
           playProgress={progress}
