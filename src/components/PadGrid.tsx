@@ -77,6 +77,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     handleEditInteraction,
     handlePlaybackInteraction,
     handleArmTrack,
+    getPadLoadingState,
   } = usePadInteractions({
     currentPageIndex,
     padConfigs,
@@ -307,6 +308,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
       // --- Regular Pad Logic ---
       const dropAllowed = isDropAllowed(padIndex, soundCount, isSpecialPad);
+      
+      const loadingState = getPadLoadingState(padIndex);
 
       return (
         <Pad
@@ -327,6 +330,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           isEditMode={isEditMode}
           isDeleteMoveMode={isDeleteMoveMode}
           isArmed={isArmed}
+          isLoading={loadingState !== null}
+          loadingProgress={loadingState?.progress || 0}
+          loadingStatus={loadingState?.status}
+          loadingError={loadingState?.error}
           onClick={() => handlePadClick(padIndex)}
           onShiftClick={() => handlePadClick(padIndex)} // Shift click also goes through handlePadClick
           onCtrlClick={() => handleArmTrack(padIndex)} // Ctrl+Click arms the track
@@ -358,6 +365,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     isDropAllowed,
     handleSwapPads,
     handlePadClick,
+    getPadLoadingState,
   ]);
 
   return (

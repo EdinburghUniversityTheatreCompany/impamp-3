@@ -23,6 +23,10 @@ interface PadProps {
   isDeleteMoveMode?: boolean; // Whether we're in delete/move mode
   isSpecialPad?: boolean; // Whether this is a special control pad (Stop All, Fade Out All) that can't be deleted or moved
   isArmed?: boolean; // Whether this pad is currently armed
+  isLoading?: boolean; // Whether audio is currently loading
+  loadingProgress?: number; // Loading progress (0 to 1)
+  loadingStatus?: "loading" | "decoding" | "ready" | "error"; // Loading state
+  loadingError?: string; // Error message if loading failed
   onClick: () => void;
   onShiftClick: () => void; // Callback for shift+click (for renaming)
   onCtrlClick?: () => void; // Callback for ctrl+click (for arming)
@@ -45,6 +49,10 @@ const Pad: React.FC<PadProps> = ({
   isDeleteMoveMode = false,
   isSpecialPad = false, // Default to false
   isArmed = false, // Default to false
+  isLoading = false,
+  loadingProgress = 0,
+  loadingStatus,
+  loadingError,
   onClick,
   onShiftClick,
   onCtrlClick,
@@ -326,6 +334,41 @@ const Pad: React.FC<PadProps> = ({
             remainingTime={remainingSeconds} // Pass the calculated rounded seconds
           />
         )}
+
+      {/* Loading indicator for instant response */}
+      {isLoading && !isDeleteMoveMode && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-15 rounded-md">
+          <div className="text-center">
+            {/* Spinner */}
+            <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent mx-auto mb-1"></div>
+            
+            {/* Loading status text */}
+            <div className="text-white text-xs font-medium">
+              {loadingStatus === 'loading' && 'Loading...'}
+              {loadingStatus === 'decoding' && 'Decoding...'}
+              {loadingStatus === 'error' && 'Error'}
+              {!loadingStatus && 'Loading...'}
+            </div>
+            
+            {/* Progress bar for loading */}
+            {loadingProgress > 0 && (
+              <div className="w-16 h-1 bg-gray-600 rounded-full mt-1 mx-auto overflow-hidden">
+                <div 
+                  className="h-full bg-white transition-all duration-200" 
+                  style={{ width: `${Math.round(loadingProgress * 100)}%` }}
+                />
+              </div>
+            )}
+            
+            {/* Error message */}
+            {loadingError && (
+              <div className="text-red-300 text-xs mt-1 max-w-20 truncate">
+                {loadingError}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Dropzone overlay message (only show if drop is not disabled and not in delete/move mode) */}
       {isDragActive && !isDropDisabled && !isDeleteMoveMode && (

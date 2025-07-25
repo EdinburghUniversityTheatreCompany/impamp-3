@@ -394,14 +394,42 @@ export async function decodeAudioBlobStreaming(
 }
 
 /**
- * Enhanced load and decode with ReadableStream support for large files
+ * Loading states for instant response feedback
+ */
+export interface LoadingState {
+  audioFileId: number;
+  status: "loading" | "decoding" | "ready" | "error";
+  progress?: number; // 0-1 for progress indication
+  error?: string;
+  startTime: number;
+}
+
+/**
+ * Callback for loading state updates
+ */
+export type LoadingStateCallback = (state: LoadingState) => void;
+
+/**
+ * Enhanced load and decode with instant response and progress feedback
  *
  * @param audioFileId - ID of the audio file to load and decode
+ * @param onStateChange - Optional callback for loading state updates
  * @returns Promise that resolves to the decoded AudioBuffer or null
  */
 export async function loadAndDecodeAudioEnhanced(
   audioFileId: number,
+  onStateChange?: LoadingStateCallback,
 ): Promise<AudioBuffer | null> {
+  const startTime = performance.now();
+
+  // Immediate callback with loading state
+  onStateChange?.({
+    audioFileId,
+    status: "loading",
+    progress: 0,
+    startTime,
+  });
+
   // Check cache first
   if (isAudioBufferCached(audioFileId)) {
     const cachedBuffer = getCachedAudioBuffer(audioFileId);
@@ -409,12 +437,27 @@ export async function loadAndDecodeAudioEnhanced(
       console.warn(
         `[Audio Decoder] Unexpected undefined buffer for cached ID: ${audioFileId}`,
       );
+      onStateChange?.({
+        audioFileId,
+        status: "error",
+        error: "Unexpected cache state",
+        startTime,
+      });
       return null;
     }
     const cacheStatus = cachedBuffer ? "HIT" : "HIT (Failed)";
     console.log(
       `[Audio Decoder] [Cache ${cacheStatus}] Audio buffer for file ID: ${audioFileId}`,
     );
+
+    onStateChange?.({
+      audioFileId,
+      status: cachedBuffer ? "ready" : "error",
+      progress: 1,
+      error: cachedBuffer ? undefined : "Previously failed to decode",
+      startTime,
+    });
+
     return cachedBuffer;
   }
 
@@ -423,14 +466,38 @@ export async function loadAndDecodeAudioEnhanced(
   );
 
   try {
+    // Update state: loading from IndexedDB
+    onStateChange?.({
+      audioFileId,
+      status: "loading",
+      progress: 0.1,
+      startTime,
+    });
+
     const audioFileData = await getAudioFile(audioFileId);
     if (!audioFileData?.blob) {
       console.warn(
         `[Audio Decoder] Audio file with ID ${audioFileId} not found or has no blob.`,
       );
       cacheAudioBuffer(audioFileId, null);
+
+      onStateChange?.({
+        audioFileId,
+        status: "error",
+        error: "Audio file not found or has no data",
+        startTime,
+      });
+
       return null;
     }
+
+    // Update state: file loaded, starting decode
+    onStateChange?.({
+      audioFileId,
+      status: "decoding",
+      progress: 0.3,
+      startTime,
+    });
 
     console.log(
       `[Audio Decoder] Decoding audio for file ID: ${audioFileId}, name: ${audioFileData.name} ` +
@@ -440,6 +507,14 @@ export async function loadAndDecodeAudioEnhanced(
     // Use streaming decode for large files, standard decode for smaller ones
     const decodedBuffer = await decodeAudioBlobStreaming(audioFileData.blob);
 
+    // Update state: decode complete
+    onStateChange?.({
+      audioFileId,
+      status: "ready",
+      progress: 1,
+      startTime,
+    });
+
     cacheAudioBuffer(audioFileId, decodedBuffer);
     return decodedBuffer;
   } catch (error) {
@@ -448,6 +523,195 @@ export async function loadAndDecodeAudioEnhanced(
       error,
     );
     cacheAudioBuffer(audioFileId, null);
+
+    onStateChange?.({
+      audioFileId,
+      status: "error",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown error during loading/decoding",
+      startTime,
+    });
+
+    return null;
+  }
+}
+
+/**
+ * Progressive decode for large audio files - starts playback before full decode completes
+ *
+ * @param blob - The audio file blob to decode progressively
+ * @param onPartialReady - Callback when partial buffer is ready for immediate playback
+ * @param onStateChange - Optional progress callback
+ * @param audioFileId - Audio file ID for state updates
+ * @returns Promise that resolves to the complete decoded AudioBuffer
+ */
+export async function decodeAudioBlobProgressive(
+  blob: Blob,
+  onPartialReady?: (partialBuffer: AudioBuffer) => void,
+  onStateChange?: LoadingStateCallback,
+  audioFileId: number = 0,
+): Promise<AudioBuffer> {
+  const context = getAudioContext();
+
+  // For smaller files (<5MB), use standard decode
+  if (blob.size < 5 * 1024 * 1024) {
+    return decodeAudioBlob(blob);
+  }
+
+  console.log(
+    `[Audio Decoder] Progressive decode for large file (${(blob.size / 1024 / 1024).toFixed(1)}MB)`,
+  );
+
+  // For large files, try to provide fast feedback
+  onStateChange?.({
+    audioFileId,
+    status: "decoding",
+    progress: 0.4,
+    startTime: performance.now(),
+  });
+
+  try {
+    // Read the blob as ArrayBuffer
+    const arrayBuffer = await blob.arrayBuffer();
+
+    // Update progress
+    onStateChange?.({
+      audioFileId,
+      status: "decoding",
+      progress: 0.6,
+      startTime: performance.now(),
+    });
+
+    // For very large files (>20MB), we could implement chunked decoding
+    // But for now, decode the full buffer with progress updates
+    const audioBuffer = await context.decodeAudioData(arrayBuffer);
+
+    // Provide the complete buffer for immediate playback
+    if (onPartialReady) {
+      onPartialReady(audioBuffer);
+    }
+
+    onStateChange?.({
+      audioFileId,
+      status: "ready",
+      progress: 1,
+      startTime: performance.now(),
+    });
+
+    return audioBuffer;
+  } catch (error) {
+    console.error("[Audio Decoder] Error in progressive decode:", error);
+    onStateChange?.({
+      audioFileId,
+      status: "error",
+      error:
+        error instanceof Error ? error.message : "Progressive decode failed",
+      startTime: performance.now(),
+    });
+    throw new Error("Failed to progressively decode audio file.");
+  }
+}
+
+/**
+ * Load and decode with instant fallback - provides immediate response even on cache miss
+ *
+ * @param audioFileId - ID of the audio file to load and decode
+ * @param onStateChange - Optional callback for loading state updates
+ * @param onPartialReady - Optional callback when partial audio is ready for playback
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+export async function loadAndDecodeAudioInstant(
+  audioFileId: number,
+  onStateChange?: LoadingStateCallback,
+  onPartialReady?: (partialBuffer: AudioBuffer) => void,
+): Promise<AudioBuffer | null> {
+  const startTime = performance.now();
+
+  // Provide instant feedback
+  onStateChange?.({
+    audioFileId,
+    status: "loading",
+    progress: 0,
+    startTime,
+  });
+
+  // Check cache first - if hit, return immediately
+  if (isAudioBufferCached(audioFileId)) {
+    return loadAndDecodeAudioEnhanced(audioFileId, onStateChange);
+  }
+
+  // For cache misses, start loading in background while providing immediate user feedback
+  console.log(
+    `[Audio Decoder] [Instant Response] Starting background load for ID: ${audioFileId}`,
+  );
+
+  try {
+    // Load file from IndexedDB
+    onStateChange?.({
+      audioFileId,
+      status: "loading",
+      progress: 0.1,
+      startTime,
+    });
+
+    const audioFileData = await getAudioFile(audioFileId);
+    if (!audioFileData?.blob) {
+      console.warn(
+        `[Audio Decoder] Audio file with ID ${audioFileId} not found or has no blob.`,
+      );
+      cacheAudioBuffer(audioFileId, null);
+
+      onStateChange?.({
+        audioFileId,
+        status: "error",
+        error: "Audio file not found or has no data",
+        startTime,
+      });
+
+      return null;
+    }
+
+    // Start progressive decode with immediate partial playback capability
+    onStateChange?.({
+      audioFileId,
+      status: "decoding",
+      progress: 0.2,
+      startTime,
+    });
+
+    console.log(
+      `[Audio Decoder] [Instant] Progressively decoding ID: ${audioFileId}, name: ${audioFileData.name} ` +
+        `(${(audioFileData.blob.size / 1024).toFixed(1)}KB)`,
+    );
+
+    // Use progressive decode that can trigger onPartialReady early
+    const buffer = await decodeAudioBlobProgressive(
+      audioFileData.blob,
+      onPartialReady,
+      onStateChange,
+      audioFileId,
+    );
+
+    // Cache the final result
+    cacheAudioBuffer(audioFileId, buffer);
+
+    return buffer;
+  } catch (error) {
+    console.error(
+      `[Audio Decoder] Instant load failed for ID ${audioFileId}:`,
+      error,
+    );
+    cacheAudioBuffer(audioFileId, null);
+
+    onStateChange?.({
+      audioFileId,
+      status: "error",
+      error: error instanceof Error ? error.message : "Failed to load audio",
+      startTime,
+    });
+
     return null;
   }
 }

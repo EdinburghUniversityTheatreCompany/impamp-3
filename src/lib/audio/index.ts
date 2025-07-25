@@ -10,6 +10,7 @@
 // Re-export public functions from controls.ts
 export {
   triggerAudioForPad,
+  triggerAudioForPadInstant,
   stopAudio,
   fadeOutAudio,
   stopAllAudio,
@@ -17,7 +18,6 @@ export {
   isAudioPlaying,
   isAudioFading,
   ensureAudioContextActive,
-  preloadAudioForPage, // Legacy - deprecated
   preloadCurrentPageIntelligent,
   preloadOnHover,
   preloadAllConfiguredFiles,
@@ -30,6 +30,8 @@ export { audioPreloader } from "./preloader";
 // Re-export type definitions that are needed by other modules
 export { generatePlaybackKey } from "./types";
 export type { TriggerAudioArgs } from "./types";
+export type { TriggerAudioArgsEnhanced } from "./controls";
+export type { LoadingState } from "./decoder";
 
 /**
  * Audio Module Version

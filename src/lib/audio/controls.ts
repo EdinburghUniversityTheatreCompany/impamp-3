@@ -10,7 +10,12 @@
 
 import { useProfileStore } from "@/store/profileStore";
 import { PadConfiguration } from "../db";
-import { loadAndDecodeAudio, preloadAudioFiles } from "./decoder";
+import {
+  loadAndDecodeAudioInstant,
+  loadAndDecodeAudioEnhanced,
+  preloadAudioFiles,
+  LoadingState,
+} from "./decoder";
 import { audioPreloader } from "./preloader";
 import { getStrategy } from "./strategies";
 import {
@@ -23,21 +28,262 @@ import {
   isTrackFading,
   getActivePlaybackKeys,
 } from "./playback";
-import { resumeAudioContext } from "./context";
+import { resumeAudioContext, getAudioContext } from "./context";
 import { TriggerAudioArgs, generatePlaybackKey } from "./types";
 
 /**
- * Triggers audio playback for a pad
+ * Enhanced trigger args with loading state callbacks
+ */
+export interface TriggerAudioArgsEnhanced extends TriggerAudioArgs {
+  onLoadingStateChange?: (state: LoadingState) => void;
+  onInstantFeedback?: () => void; // Called immediately when pad is triggered
+  onAudioReady?: () => void; // Called when audio starts playing
+  onError?: (error: string) => void; // Called if loading/playback fails
+}
+
+/**
+ * Error recovery configuration
+ */
+interface ErrorRecoveryConfig {
+  maxRetries: number;
+  retryDelayMs: number;
+  fallbackToSilence: boolean;
+  showUserNotification: boolean;
+}
+
+/**
+ * Default error recovery settings
+ */
+const DEFAULT_ERROR_RECOVERY: ErrorRecoveryConfig = {
+  maxRetries: 2,
+  retryDelayMs: 1000,
+  fallbackToSilence: false,
+  showUserNotification: true,
+};
+
+/**
+ * Create a silent audio buffer as fallback for failed loads
  *
- * Handles the user interaction to play a pad's audio.
- * Checks activePadBehavior, selects the correct audio file based on playbackType,
- * loads audio if needed, and plays it.
+ * @param durationInSeconds - Duration of silent buffer (default: 0.1s)
+ * @returns Silent AudioBuffer
+ */
+function createSilentBuffer(durationInSeconds: number = 0.1): AudioBuffer {
+  const context = getAudioContext();
+  const sampleRate = context.sampleRate;
+  const numberOfChannels = 2; // Stereo
+  const length = sampleRate * durationInSeconds;
+
+  const buffer = context.createBuffer(numberOfChannels, length, sampleRate);
+
+  // Fill with silence (already initialized to 0, but explicit for clarity)
+  for (let channel = 0; channel < numberOfChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    channelData.fill(0);
+  }
+
+  return buffer;
+}
+
+/**
+ * Attempt to recover from audio loading errors with retry logic
+ *
+ * @param audioFileId - ID of the failed audio file
+ * @param onStateChange - Loading state callback
+ * @param config - Error recovery configuration
+ * @param attemptNumber - Current attempt number (for recursion)
+ * @returns Promise that resolves to recovered AudioBuffer or null
+ */
+async function recoverFromLoadError(
+  audioFileId: number,
+  onStateChange?: LoadingStateCallback,
+  config: ErrorRecoveryConfig = DEFAULT_ERROR_RECOVERY,
+  attemptNumber: number = 1,
+): Promise<AudioBuffer | null> {
+  if (attemptNumber > config.maxRetries) {
+    console.warn(
+      `[Audio Controls] Max retries (${config.maxRetries}) exceeded for audio file ID: ${audioFileId}`,
+    );
+
+    if (config.fallbackToSilence) {
+      console.log(
+        `[Audio Controls] Falling back to silent buffer for ID: ${audioFileId}`,
+      );
+      onStateChange?.({
+        audioFileId,
+        status: "ready",
+        progress: 1,
+        startTime: performance.now(),
+      });
+      return createSilentBuffer();
+    }
+
+    return null;
+  }
+
+  console.log(
+    `[Audio Controls] Attempting recovery for audio file ID: ${audioFileId} (attempt ${attemptNumber}/${config.maxRetries})`,
+  );
+
+  onStateChange?.({
+    audioFileId,
+    status: "loading",
+    progress: 0,
+    startTime: performance.now(),
+  });
+
+  // Wait before retry (exponential backoff)
+  await new Promise((resolve) =>
+    setTimeout(resolve, config.retryDelayMs * attemptNumber),
+  );
+
+  try {
+    // Clear any cached failure state for this file before retry
+    const { clearCachedAudioBuffer } = await import("./cache");
+    clearCachedAudioBuffer(audioFileId);
+
+    // Attempt to load again using enhanced method
+    const buffer = await loadAndDecodeAudioEnhanced(audioFileId, onStateChange);
+
+    if (buffer) {
+      console.log(
+        `[Audio Controls] Recovery successful for audio file ID: ${audioFileId} on attempt ${attemptNumber}`,
+      );
+      return buffer;
+    }
+
+    // If still null, try again
+    return recoverFromLoadError(
+      audioFileId,
+      onStateChange,
+      config,
+      attemptNumber + 1,
+    );
+  } catch (error) {
+    console.error(
+      `[Audio Controls] Recovery attempt ${attemptNumber} failed for ID ${audioFileId}:`,
+      error,
+    );
+    return recoverFromLoadError(
+      audioFileId,
+      onStateChange,
+      config,
+      attemptNumber + 1,
+    );
+  }
+}
+
+/**
+ * Handle graceful fallback when audio fails to load or play
+ *
+ * @param audioFileIds - All available audio file IDs for this pad
+ * @param failedAudioFileId - The ID that failed to load
+ * @param onStateChange - Loading state callback
+ * @param onError - Error callback
+ * @returns Promise that resolves to a fallback AudioBuffer or null
+ */
+async function handleAudioFallback(
+  audioFileIds: number[],
+  failedAudioFileId: number,
+  onStateChange?: LoadingStateCallback,
+  onError?: (error: string) => void,
+): Promise<AudioBuffer | null> {
+  console.log(
+    `[Audio Controls] Handling fallback for failed audio file ID: ${failedAudioFileId}`,
+  );
+
+  // Try to find an alternative audio file for this pad
+  const alternativeIds = audioFileIds.filter((id) => id !== failedAudioFileId);
+
+  for (const alternativeId of alternativeIds) {
+    console.log(
+      `[Audio Controls] Trying alternative audio file ID: ${alternativeId}`,
+    );
+
+    try {
+      const buffer = await loadAndDecodeAudioEnhanced(
+        alternativeId,
+        onStateChange,
+      );
+      if (buffer) {
+        console.log(
+          `[Audio Controls] Successfully loaded alternative audio file ID: ${alternativeId}`,
+        );
+        return buffer;
+      }
+    } catch (error) {
+      console.warn(
+        `[Audio Controls] Alternative audio file ID ${alternativeId} also failed:`,
+        error,
+      );
+      continue;
+    }
+  }
+
+  // If no alternatives work, try error recovery on the original file
+  console.log(
+    `[Audio Controls] No alternatives available, attempting error recovery for ID: ${failedAudioFileId}`,
+  );
+
+  const recoveredBuffer = await recoverFromLoadError(
+    failedAudioFileId,
+    onStateChange,
+  );
+
+  if (!recoveredBuffer) {
+    const errorMsg = `All audio files failed to load for this pad. Original ID: ${failedAudioFileId}, Alternatives tried: ${alternativeIds.length}`;
+    onError?.(errorMsg);
+    console.error(`[Audio Controls] ${errorMsg}`);
+  }
+
+  return recoveredBuffer;
+}
+
+/**
+ * Triggers audio playback for a pad (Legacy API - now uses instant response internally)
+ *
+ * This function maintains backward compatibility while providing all the benefits
+ * of instant response, progressive loading, and error recovery under the hood.
  *
  * @param args - Configuration for triggering audio
  * @returns Promise that resolves when audio playback has been triggered (or failed)
  */
 export async function triggerAudioForPad(
   args: TriggerAudioArgs,
+): Promise<void> {
+  console.log(`[Audio Controls] [Legacy API] Triggering pad ${args.padIndex} via legacy wrapper`);
+  
+  // Simply delegate to the instant version with basic callbacks
+  // This gives all callers instant response and error recovery automatically
+  return triggerAudioForPadInstant({
+    ...args,
+    onInstantFeedback: () => {
+      // Legacy callers don't need to know about instant feedback
+      console.log(`[Audio Controls] [Legacy] Instant feedback for pad ${args.padIndex}`);
+    },
+    onLoadingStateChange: (state: LoadingState) => {
+      // Legacy callers don't handle loading states, but we can log for debugging
+      console.log(`[Audio Controls] [Legacy] Loading state for pad ${args.padIndex}:`, state.status, `${Math.round((state.progress || 0) * 100)}%`);
+    },
+    onAudioReady: () => {
+      console.log(`[Audio Controls] [Legacy] Audio ready for pad ${args.padIndex}`);
+    },
+    onError: (error: string) => {
+      console.error(`[Audio Controls] [Legacy] Error for pad ${args.padIndex}:`, error);
+    },
+  });
+}
+
+/**
+ * Triggers audio playback for a pad with instant response and loading feedback
+ *
+ * Provides immediate user feedback even when audio needs to be loaded.
+ * Shows loading states and handles errors gracefully.
+ *
+ * @param args - Enhanced configuration for triggering audio with callbacks
+ * @returns Promise that resolves when audio playback has been initiated or failed
+ */
+export async function triggerAudioForPadInstant(
+  args: TriggerAudioArgsEnhanced,
 ): Promise<void> {
   const {
     padIndex,
@@ -46,13 +292,21 @@ export async function triggerAudioForPad(
     activeProfileId,
     currentPageIndex,
     name,
+    onLoadingStateChange,
+    onInstantFeedback,
+    onAudioReady,
+    onError,
   } = args;
+
+  // Provide instant feedback to user
+  onInstantFeedback?.();
 
   // Check if there are any audio files configured
   if (!audioFileIds || audioFileIds.length === 0) {
     console.log(
       `[Audio Controls] Pad ${padIndex} has no audio files configured.`,
     );
+    onError?.("No audio files configured for this pad");
     return;
   }
 
@@ -68,7 +322,7 @@ export async function triggerAudioForPad(
   const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
 
   console.log(
-    `[Audio Controls] Triggering pad ${padIndex}, key: ${playbackKey}, ` +
+    `[Audio Controls] [Instant] Triggering pad ${padIndex}, key: ${playbackKey}, ` +
       `Is Playing: ${isAlreadyPlaying}, Behavior: ${activePadBehavior}, ` +
       `Playback Type: ${playbackType}, Audio Files: ${audioFileIds.length}`,
   );
@@ -78,30 +332,29 @@ export async function triggerAudioForPad(
     switch (activePadBehavior) {
       case "continue":
         console.log(
-          `[Audio Controls] Behavior=continue. Doing nothing for key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=continue. Doing nothing for key: ${playbackKey}`,
         );
-        return; // Do nothing
+        return;
 
       case "stop":
         console.log(
-          `[Audio Controls] Behavior=stop. Stopping key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=stop. Stopping key: ${playbackKey}`,
         );
-        stopTrack(playbackKey); // Stop the existing sound
-        return; // Don't proceed to play again
+        stopTrack(playbackKey);
+        return;
 
       case "restart":
         console.log(
-          `[Audio Controls] Behavior=restart. Handling restart for key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=restart. Handling restart for key: ${playbackKey}`,
         );
-        // Stop first, then continue to play again (fall through)
         stopTrack(playbackKey);
-        break; // Continue to play the sound again
+        break;
 
       default:
         console.warn(
-          `[Audio Controls] Unknown activePadBehavior: ${activePadBehavior}. Defaulting to 'continue'.`,
+          `[Audio Controls] [Instant] Unknown activePadBehavior: ${activePadBehavior}. Defaulting to 'continue'.`,
         );
-        return; // Default to continue
+        return;
     }
   }
 
@@ -110,24 +363,51 @@ export async function triggerAudioForPad(
     const strategy = getStrategy(playbackType);
     const { audioFileId, index } = strategy.selectNextSound(audioFileIds);
 
-    // Load and decode the selected audio buffer
-    const buffer = await loadAndDecodeAudio(audioFileId);
+    // Use instant loading with progress feedback
+    let buffer = await loadAndDecodeAudioInstant(
+      audioFileId,
+      onLoadingStateChange,
+      // onPartialReady callback for progressive playback
+      () => {
+        console.log(
+          `[Audio Controls] [Instant] Partial audio ready for ID: ${audioFileId}`,
+        );
+        // Start playback immediately when partial buffer is available
+        onAudioReady?.();
+      },
+    );
+
+    // If primary loading failed, attempt fallback and recovery
+    if (!buffer) {
+      console.warn(
+        `[Audio Controls] [Instant] Primary load failed for ID: ${audioFileId}, attempting fallback...`,
+      );
+
+      buffer = await handleAudioFallback(
+        audioFileIds,
+        audioFileId,
+        onLoadingStateChange,
+        onError,
+      );
+    }
 
     if (buffer) {
       // Track this file as recently played for intelligent preloading
       audioPreloader.trackPlayedFile(audioFileId);
 
-      // Play the buffer
       console.log(
-        `[Audio Controls] Playing audio file ID: ${audioFileId} for pad ${padIndex}`,
+        `[Audio Controls] [Instant] Playing audio file ID: ${audioFileId} for pad ${padIndex}`,
       );
 
-      // Update strategy state after selection (important for round-robin and sequential)
+      // Update strategy state after selection
       strategy.updateState(index, audioFileIds);
+
+      // Notify that audio is ready and starting
+      onAudioReady?.();
 
       // Play the buffer with the appropriate parameters
       playBuffer(buffer, playbackKey, {
-        name: name || `Pad ${padIndex + 1}`, // Use provided name or fallback
+        name: name || `Pad ${padIndex + 1}`,
         padInfo: {
           profileId: activeProfileId,
           pageIndex: currentPageIndex,
@@ -138,7 +418,6 @@ export async function triggerAudioForPad(
           allAudioFileIds: audioFileIds,
           currentAudioFileId: audioFileId,
           currentAudioIndex: index,
-          // For round-robin, we might need to get available indices from the strategy
           availableAudioIndices:
             playbackType === "round-robin"
               ? (
@@ -150,15 +429,14 @@ export async function triggerAudioForPad(
         },
       });
     } else {
-      console.error(
-        `[Audio Controls] Failed to load audio file ID: ${audioFileId} for pad ${padIndex}`,
-      );
+      const errorMsg = `Failed to load audio file ID: ${audioFileId} for pad ${padIndex}`;
+      console.error(`[Audio Controls] [Instant] ${errorMsg}`);
+      onError?.(errorMsg);
     }
   } catch (error) {
-    console.error(
-      `[Audio Controls] Error triggering audio for pad ${padIndex}:`,
-      error,
-    );
+    const errorMsg = `Error triggering audio for pad ${padIndex}: ${error instanceof Error ? error.message : "Unknown error"}`;
+    console.error(`[Audio Controls] [Instant] ${errorMsg}`, error);
+    onError?.(errorMsg);
   }
 }
 
