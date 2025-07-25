@@ -11,8 +11,13 @@ import {
   stopAllAudio,
   fadeOutAllAudio,
   triggerAudioForPadInstant,
+  LoadingState,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
+import {
+  loadingStoreActions,
+  generatePadLoadingKey,
+} from "@/store/loadingStore";
 import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
@@ -119,21 +124,39 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
         `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
       );
     },
-    onLoadingStateChange: (state) => {
+    onLoadingStateChange: (state: LoadingState) => {
       console.log(
         `[KeyboardListener] Emergency sound loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
       );
+      const loadingKey = generatePadLoadingKey(
+        sound.profileId,
+        sound.pageIndex,
+        sound.padIndex,
+      );
+      loadingStoreActions.setPadLoadingState(loadingKey, state);
     },
     onAudioReady: () => {
       console.log(
         `[KeyboardListener] Emergency sound ready for pad ${sound.padIndex}`,
       );
+      const loadingKey = generatePadLoadingKey(
+        sound.profileId,
+        sound.pageIndex,
+        sound.padIndex,
+      );
+      loadingStoreActions.clearPadLoadingState(loadingKey);
     },
     onError: (error) => {
       console.error(
         `[KeyboardListener] Emergency sound error for pad ${sound.padIndex}:`,
         error,
       );
+      const loadingKey = generatePadLoadingKey(
+        sound.profileId,
+        sound.pageIndex,
+        sound.padIndex,
+      );
+      loadingStoreActions.clearPadLoadingState(loadingKey);
     },
   });
 }
@@ -557,21 +580,42 @@ export function useKeyboardListener() {
               `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,
             );
           },
-          onLoadingStateChange: (state) => {
+          onLoadingStateChange: (state: LoadingState) => {
             console.log(
               `[KeyboardListener] Keyboard shortcut loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
             );
+            if (activeProfileId === null) return;
+            const loadingKey = generatePadLoadingKey(
+              activeProfileId,
+              currentPageIndex,
+              matchedConfig.padIndex,
+            );
+            loadingStoreActions.setPadLoadingState(loadingKey, state);
           },
           onAudioReady: () => {
             console.log(
               `[KeyboardListener] Keyboard shortcut ready for pad ${matchedConfig.padIndex}`,
             );
+            if (activeProfileId === null) return;
+            const loadingKey = generatePadLoadingKey(
+              activeProfileId,
+              currentPageIndex,
+              matchedConfig.padIndex,
+            );
+            loadingStoreActions.clearPadLoadingState(loadingKey);
           },
           onError: (error) => {
             console.error(
               `[KeyboardListener] Keyboard shortcut error for pad ${matchedConfig.padIndex}:`,
               error,
             );
+            if (activeProfileId === null) return;
+            const loadingKey = generatePadLoadingKey(
+              activeProfileId,
+              currentPageIndex,
+              matchedConfig.padIndex,
+            );
+            loadingStoreActions.clearPadLoadingState(loadingKey);
           },
         });
       } else if (matchedConfig) {

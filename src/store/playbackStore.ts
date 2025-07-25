@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import { PlaybackType } from "@/lib/db"; // Import PlaybackType for armed tracks
+import { LoadingState } from "@/lib/audio";
+import {
+  loadingStoreActions,
+  generatePadLoadingKey,
+} from "@/store/loadingStore";
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
@@ -154,21 +159,39 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
                 `[PlaybackStore] Armed track triggered: "${firstTrack.name}"`,
               );
             },
-            onLoadingStateChange: (state) => {
+            onLoadingStateChange: (state: LoadingState) => {
               console.log(
                 `[PlaybackStore] Armed track loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
               );
+              const loadingKey = generatePadLoadingKey(
+                firstTrack.padInfo.profileId,
+                firstTrack.padInfo.pageIndex,
+                firstTrack.padInfo.padIndex,
+              );
+              loadingStoreActions.setPadLoadingState(loadingKey, state);
             },
             onAudioReady: () => {
               console.log(
                 `[PlaybackStore] Armed track ready: "${firstTrack.name}"`,
               );
+              const loadingKey = generatePadLoadingKey(
+                firstTrack.padInfo.profileId,
+                firstTrack.padInfo.pageIndex,
+                firstTrack.padInfo.padIndex,
+              );
+              loadingStoreActions.clearPadLoadingState(loadingKey);
             },
             onError: (error) => {
               console.error(
                 `[PlaybackStore] Armed track error for "${firstTrack.name}":`,
                 error,
               );
+              const loadingKey = generatePadLoadingKey(
+                firstTrack.padInfo.profileId,
+                firstTrack.padInfo.pageIndex,
+                firstTrack.padInfo.padIndex,
+              );
+              loadingStoreActions.clearPadLoadingState(loadingKey);
             },
           });
 

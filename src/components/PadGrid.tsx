@@ -17,6 +17,8 @@ import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
 import BulkImportModalContent from "./modals/BulkImportModalContent";
+import { usePadLoadingState } from "@/store/loadingStore";
+import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
 
 // Define configuration for special pads
@@ -38,6 +40,101 @@ const SPECIAL_PAD_INDICES = [
   SPECIAL_PAD_CONFIG.STOP_ALL.index,
   SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index,
 ];
+
+interface PadWithLoadingProps {
+  padId: string;
+  padIndex: number;
+  profileId: number | null;
+  pageIndex: number;
+  config: PadConfiguration | undefined;
+  soundCount: number;
+  isPlaying: boolean;
+  isFading: boolean;
+  playProgress: number;
+  remainingTime?: number;
+  isEditMode: boolean;
+  isDeleteMoveMode: boolean;
+  isArmed: boolean;
+  dropAllowed: boolean;
+  handlePadClick: (padIndex: number) => void;
+  handleArmTrack: (padIndex: number) => void;
+  handleDropAudio: (files: File[], padIndex: number) => Promise<void>;
+  handleRemoveInteraction: (padIndex: number) => void;
+  handleSwapPads: (fromIndex: number, toIndex: number) => void;
+}
+
+const PadWithLoading: React.FC<PadWithLoadingProps> = ({
+  padId,
+  padIndex,
+  profileId,
+  pageIndex,
+  config,
+  soundCount,
+  isPlaying,
+  isFading,
+  playProgress,
+  remainingTime,
+  isEditMode,
+  isDeleteMoveMode,
+  isArmed,
+  dropAllowed,
+  handlePadClick,
+  handleArmTrack,
+  handleDropAudio,
+  handleRemoveInteraction,
+  handleSwapPads,
+}) => {
+  // Get loading state from shared store using hook
+  const loadingState = usePadLoadingState(profileId, pageIndex, padIndex);
+
+  if (loadingState) {
+    console.log(
+      `[PadGrid] Pad ${padIndex} has loading state:`,
+      loadingState.status,
+      `${Math.round((loadingState.progress || 0) * 100)}%`,
+    );
+  }
+
+  return (
+    <Pad
+      key={padId}
+      id={padId}
+      padIndex={padIndex}
+      profileId={profileId}
+      pageIndex={pageIndex}
+      keyBinding={config?.keyBinding}
+      name={config?.name}
+      isConfigured={soundCount > 0}
+      soundCount={soundCount}
+      audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
+      isPlaying={isPlaying}
+      isFading={isFading}
+      playProgress={playProgress}
+      remainingTime={remainingTime}
+      isEditMode={isEditMode}
+      isDeleteMoveMode={isDeleteMoveMode}
+      isArmed={isArmed}
+      isLoading={loadingState !== null}
+      loadingProgress={loadingState?.progress || 0}
+      loadingStatus={loadingState?.status}
+      loadingError={loadingState?.error}
+      onClick={() => handlePadClick(padIndex)}
+      onShiftClick={() => handlePadClick(padIndex)} // Shift click also goes through handlePadClick
+      onCtrlClick={() => handleArmTrack(padIndex)} // Ctrl+Click arms the track
+      onDropAudio={(files) => {
+        if (dropAllowed) {
+          return handleDropAudio(files, padIndex);
+        }
+        return Promise.resolve(); // Return empty promise when drop not allowed
+      }}
+      onRemoveSound={
+        // Enable remove interaction if sounds exist
+        soundCount > 0 ? () => handleRemoveInteraction(padIndex) : undefined
+      }
+      onSwapWith={handleSwapPads}
+    />
+  );
+};
 
 interface PadGridProps {
   currentPageIndex: number;
@@ -77,7 +174,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     handleEditInteraction,
     handlePlaybackInteraction,
     handleArmTrack,
-    getPadLoadingState,
   } = usePadInteractions({
     currentPageIndex,
     padConfigs,
@@ -309,27 +405,15 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       // --- Regular Pad Logic ---
       const dropAllowed = isDropAllowed(padIndex, soundCount, isSpecialPad);
 
-      const loadingState = getPadLoadingState(padIndex);
-      if (loadingState) {
-        console.log(
-          `[PadGrid] Pad ${padIndex} has loading state:`,
-          loadingState.status,
-          `${Math.round((loadingState.progress || 0) * 100)}%`,
-        );
-      }
-
       return (
-        <Pad
+        <PadWithLoading
           key={padId}
-          id={padId}
+          padId={padId}
           padIndex={padIndex}
           profileId={activeProfileId}
           pageIndex={currentPageIndex}
-          keyBinding={config?.keyBinding}
-          name={config?.name}
-          isConfigured={soundCount > 0}
+          config={config}
           soundCount={soundCount}
-          audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
           isPlaying={isPlaying}
           isFading={isFading}
           playProgress={progress}
@@ -337,24 +421,12 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           isEditMode={isEditMode}
           isDeleteMoveMode={isDeleteMoveMode}
           isArmed={isArmed}
-          isLoading={loadingState !== null}
-          loadingProgress={loadingState?.progress || 0}
-          loadingStatus={loadingState?.status}
-          loadingError={loadingState?.error}
-          onClick={() => handlePadClick(padIndex)}
-          onShiftClick={() => handlePadClick(padIndex)} // Shift click also goes through handlePadClick
-          onCtrlClick={() => handleArmTrack(padIndex)} // Ctrl+Click arms the track
-          onDropAudio={(files) => {
-            if (dropAllowed) {
-              return handleDropAudio(files, padIndex);
-            }
-            return Promise.resolve(); // Return empty promise when drop not allowed
-          }}
-          onRemoveSound={
-            // Enable remove interaction if sounds exist
-            soundCount > 0 ? () => handleRemoveInteraction(padIndex) : undefined
-          }
-          onSwapWith={handleSwapPads}
+          dropAllowed={dropAllowed}
+          handlePadClick={handlePadClick}
+          handleArmTrack={handleArmTrack}
+          handleDropAudio={handleDropAudio}
+          handleRemoveInteraction={handleRemoveInteraction}
+          handleSwapPads={handleSwapPads}
         />
       );
     });
@@ -372,7 +444,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     isDropAllowed,
     handleSwapPads,
     handlePadClick,
-    getPadLoadingState,
   ]);
 
   return (

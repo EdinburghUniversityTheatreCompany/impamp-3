@@ -12,8 +12,13 @@ import React, { useRef, useEffect } from "react";
 import {
   triggerAudioForPadInstant,
   ensureAudioContextActive,
+  LoadingState,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
+import {
+  loadingStoreActions,
+  generatePadLoadingKey,
+} from "@/store/loadingStore";
 import { useSearch, type SearchResult } from "@/hooks/useSearch";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 
@@ -93,19 +98,37 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             `[SearchModal] Search result triggered for "${result.name}"`,
           );
         },
-        onLoadingStateChange: (state) => {
+        onLoadingStateChange: (state: LoadingState) => {
           console.log(
             `[SearchModal] Search result loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
           );
+          const loadingKey = generatePadLoadingKey(
+            result.profileId,
+            result.pageIndex,
+            result.padIndex,
+          );
+          loadingStoreActions.setPadLoadingState(loadingKey, state);
         },
         onAudioReady: () => {
           console.log(`[SearchModal] Search result ready for "${result.name}"`);
+          const loadingKey = generatePadLoadingKey(
+            result.profileId,
+            result.pageIndex,
+            result.padIndex,
+          );
+          loadingStoreActions.clearPadLoadingState(loadingKey);
         },
         onError: (error) => {
           console.error(
             `[SearchModal] Search result error for "${result.name}":`,
             error,
           );
+          const loadingKey = generatePadLoadingKey(
+            result.profileId,
+            result.pageIndex,
+            result.padIndex,
+          );
+          loadingStoreActions.clearPadLoadingState(loadingKey);
         },
       });
 
