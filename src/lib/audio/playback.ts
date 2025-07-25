@@ -17,6 +17,33 @@ const activeTracks = new Map<string, ActiveTrack>();
 // rAF loop ID
 let rAFId: number | null = null;
 
+// Previous playback state for change detection
+let previousPlaybackState = new Map<
+  string,
+  {
+    progress: number;
+    remainingTime: number;
+    isFading: boolean;
+  }
+>();
+
+// Reusable objects to reduce garbage collection pressure
+const reusableStateObject = {
+  key: "",
+  name: "",
+  remainingTime: 0,
+  totalDuration: 0,
+  progress: 0,
+  isFading: false,
+  padInfo: { profileId: 0, pageIndex: 0, padIndex: 0 },
+};
+
+const reusablePreviousState = {
+  progress: 0,
+  remainingTime: 0,
+  isFading: false,
+};
+
 /**
  * Creates an audio source node for playback
  *
@@ -77,6 +104,7 @@ export function playBuffer(
         `[Audio Playback] Playback naturally finished for key: ${playbackKey}`,
       );
       activeTracks.delete(playbackKey);
+      previousPlaybackState.delete(playbackKey); // Clean up change detection state
       playbackStoreActions.removeTrack(playbackKey);
       stopPlaybackLoop(); // Check if loop should stop
     };
@@ -234,6 +262,7 @@ export function fadeOutTrack(
         } finally {
           // Always remove state after fade attempt
           activeTracks.delete(playbackKey);
+          previousPlaybackState.delete(playbackKey); // Clean up change detection state
           playbackStoreActions.removeTrack(playbackKey);
           stopPlaybackLoop(); // Check if loop should stop
           console.log(
@@ -262,6 +291,7 @@ export function fadeOutTrack(
         );
         track.source.stop(0);
         activeTracks.delete(playbackKey);
+        previousPlaybackState.delete(playbackKey); // Clean up change detection state
         playbackStoreActions.removeTrack(playbackKey);
         stopPlaybackLoop();
       }
@@ -342,8 +372,46 @@ export function fadeOutAllTracks(durationInSeconds: number = 3): number {
 // --- Playback Monitoring Loop ---
 
 /**
- * Single frame of the playback monitoring loop
- * Updates UI state for all active tracks
+ * Threshold for progress change detection (0.1% = 0.001)
+ * Prevents unnecessary updates for tiny progress changes
+ */
+const PROGRESS_CHANGE_THRESHOLD = 0.001;
+
+/**
+ * Threshold for time change detection (10ms)
+ * Prevents updates for sub-frame time changes
+ */
+const TIME_CHANGE_THRESHOLD = 0.01;
+
+/**
+ * Check if playback state has meaningfully changed
+ */
+function hasPlaybackStateChanged(
+  key: string,
+  newProgress: number,
+  newRemainingTime: number,
+  newIsFading: boolean,
+): boolean {
+  const previous = previousPlaybackState.get(key);
+
+  if (!previous) {
+    return true; // New track, definitely changed
+  }
+
+  // Check for meaningful changes
+  const progressChanged =
+    Math.abs(newProgress - previous.progress) >= PROGRESS_CHANGE_THRESHOLD;
+  const timeChanged =
+    Math.abs(newRemainingTime - previous.remainingTime) >=
+    TIME_CHANGE_THRESHOLD;
+  const fadingChanged = newIsFading !== previous.isFading;
+
+  return progressChanged || timeChanged || fadingChanged;
+}
+
+/**
+ * Optimized single frame of the playback monitoring loop
+ * Only updates UI state when values actually change
  */
 function playbackLoopTick() {
   if (!getAudioContext || activeTracks.size === 0) {
@@ -353,7 +421,9 @@ function playbackLoopTick() {
 
   const context = getAudioContext();
   const currentTime = context.currentTime;
+  let hasAnyChanges = false;
   const currentPlaybackState = new Map();
+  const newPreviousState = new Map();
 
   activeTracks.forEach((track, key) => {
     const elapsed = currentTime - track.startTime;
@@ -368,6 +438,20 @@ function playbackLoopTick() {
       return; // Skip adding to current state if naturally ended
     }
 
+    // Check if this track's state has meaningfully changed
+    const hasChanged = hasPlaybackStateChanged(
+      key,
+      progress,
+      remaining,
+      track.isFading,
+    );
+
+    if (hasChanged) {
+      hasAnyChanges = true;
+    }
+
+    // Create state object - reuse object structure to reduce garbage collection
+    // Note: We still create new objects per track, but with consistent structure
     currentPlaybackState.set(key, {
       key,
       name: track.name,
@@ -377,15 +461,28 @@ function playbackLoopTick() {
       isFading: track.isFading,
       padInfo: track.padInfo,
     });
+
+    // Update our change detection state - create new object for each track
+    newPreviousState.set(key, {
+      progress,
+      remainingTime: remaining,
+      isFading: track.isFading,
+    });
   });
 
-  // Update the Zustand store with the latest state
+  // Update previous state for next comparison
+  previousPlaybackState = newPreviousState;
+
+  // Only update Zustand store if something actually changed
   if (currentPlaybackState.size > 0) {
-    playbackStoreActions.setPlaybackState(currentPlaybackState);
-    // Schedule the next frame
+    if (hasAnyChanges) {
+      playbackStoreActions.setPlaybackState(currentPlaybackState);
+    }
+    // Always schedule next frame regardless of changes (tracks are still playing)
     rAFId = requestAnimationFrame(playbackLoopTick);
   } else {
-    // If the loop ran but resulted in no tracks needing state updates, stop the loop.
+    // No tracks left, stop the loop and clear previous state
+    previousPlaybackState.clear();
     stopPlaybackLoop();
   }
 }
