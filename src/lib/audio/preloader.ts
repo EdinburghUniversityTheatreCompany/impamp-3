@@ -10,8 +10,8 @@
  * @module lib/audio/preloader
  */
 
-import { loadAndDecodeAudio } from "./decoder";
-import { isAudioBufferCached } from "./cache";
+import { loadAndDecodeAudioPipelined } from "./decoder";
+import { isAudioBufferCached, cacheAudioBuffer } from "./cache";
 import { PadConfiguration } from "../db";
 
 // Priority levels for preloading
@@ -211,7 +211,7 @@ class AudioPreloader {
   }
 
   /**
-   * Process the preload queue
+   * Process the preload queue using parallel loading for better performance
    */
   private async processQueue(): Promise<void> {
     if (this.isProcessing || this.taskQueue.length === 0) {
@@ -221,28 +221,48 @@ class AudioPreloader {
     this.isProcessing = true;
 
     try {
+      // Group tasks by priority for batch processing
+      const taskGroups = new Map<PreloadPriority, PreloadTask[]>();
+
+      // Process all tasks, grouping by priority
       while (this.taskQueue.length > 0) {
         const task = this.taskQueue.shift()!;
 
-        // Skip if already cached (might have been loaded by another process)
+        // Skip if already cached
         if (isAudioBufferCached(task.audioFileId)) {
           this.stats.cacheHitRate++;
+          this.stats.totalCompleted++;
           continue;
         }
 
-        // For low priority tasks, use idle time if available
-        if (
-          task.priority === PreloadPriority.LOW &&
-          this.isIdleCallbackSupported
-        ) {
+        if (!taskGroups.has(task.priority)) {
+          taskGroups.set(task.priority, []);
+        }
+        taskGroups.get(task.priority)!.push(task);
+      }
+
+      // Process groups in priority order
+      const priorities = [
+        PreloadPriority.IMMEDIATE,
+        PreloadPriority.HIGH,
+        PreloadPriority.MEDIUM,
+        PreloadPriority.LOW,
+      ];
+
+      for (const priority of priorities) {
+        const tasks = taskGroups.get(priority);
+        if (!tasks || tasks.length === 0) continue;
+
+        // For low priority tasks, wait for idle time
+        if (priority === PreloadPriority.LOW && this.isIdleCallbackSupported) {
           await this.waitForIdleTime();
         }
 
-        await this.processTask(task);
+        await this.processBatch(tasks, priority);
 
-        // Small delay between tasks to avoid overwhelming the system
-        if (task.priority !== PreloadPriority.IMMEDIATE) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
+        // Small delay between priority groups
+        if (priority !== PreloadPriority.IMMEDIATE && taskGroups.size > 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
       }
     } finally {
@@ -251,59 +271,94 @@ class AudioPreloader {
   }
 
   /**
-   * Process a single preload task
+   * Process a batch of tasks using parallel loading
    */
-  private async processTask(task: PreloadTask): Promise<void> {
+  private async processBatch(
+    tasks: PreloadTask[],
+    priority: PreloadPriority,
+  ): Promise<void> {
+    if (tasks.length === 0) return;
+
+    const audioFileIds = tasks.map((task) => task.audioFileId);
     const startTime = performance.now();
 
-    try {
-      task.attempts++;
+    console.log(
+      `[Audio Preloader] Processing batch of ${tasks.length} files with priority ${PreloadPriority[priority]}...`,
+    );
 
-      console.log(
-        `[Audio Preloader] Loading ID ${task.audioFileId} ` +
-          `(priority: ${PreloadPriority[task.priority]}, attempt: ${task.attempts})`,
+    try {
+      // Use parallel loading for better performance
+      const results = await loadAndDecodeAudioPipelined(
+        audioFileIds,
+        priority === PreloadPriority.IMMEDIATE ? 8 : 6, // Higher load concurrency for immediate tasks
+        priority === PreloadPriority.IMMEDIATE ? 6 : 4, // Higher decode concurrency for immediate tasks
       );
 
-      const buffer = await loadAndDecodeAudio(task.audioFileId);
       const endTime = performance.now();
       const loadTime = endTime - startTime;
 
-      if (buffer) {
-        this.stats.totalCompleted++;
-        this.loadTimes.push(loadTime);
+      // Update stats and cache results
+      let successCount = 0;
+      let failureCount = 0;
 
-        // Update average load time (keep last 100 measurements)
-        if (this.loadTimes.length > 100) {
-          this.loadTimes = this.loadTimes.slice(-100);
+      results.forEach((buffer, audioFileId) => {
+        // Find the corresponding task for retry logic
+        const task = tasks.find((t) => t.audioFileId === audioFileId);
+
+        if (buffer) {
+          successCount++;
+          this.stats.totalCompleted++;
+          this.loadTimes.push(loadTime / tasks.length); // Average per file
+
+          // Update average load time (keep last 100 measurements)
+          if (this.loadTimes.length > 100) {
+            this.loadTimes = this.loadTimes.slice(-100);
+          }
+          this.stats.averageLoadTime =
+            this.loadTimes.reduce((a, b) => a + b, 0) / this.loadTimes.length;
+        } else {
+          // Handle failures with retry logic for high-priority tasks
+          if (task && task.attempts < task.maxAttempts) {
+            task.attempts++;
+            console.log(
+              `[Audio Preloader] Retrying failed file ID ${audioFileId} (${task.attempts}/${task.maxAttempts})`,
+            );
+
+            // Re-queue with exponential backoff
+            setTimeout(() => {
+              this.taskQueue.unshift(task);
+              this.processQueue();
+            }, 1000 * task.attempts);
+          } else {
+            failureCount++;
+            this.stats.totalFailed++;
+            // Cache the failure to prevent repeated attempts
+            cacheAudioBuffer(audioFileId, null);
+          }
         }
-        this.stats.averageLoadTime =
-          this.loadTimes.reduce((a, b) => a + b, 0) / this.loadTimes.length;
+      });
 
-        console.log(
-          `[Audio Preloader] ✓ Loaded ID ${task.audioFileId} in ${loadTime.toFixed(1)}ms`,
-        );
-      } else {
-        throw new Error("Failed to decode audio buffer");
-      }
-    } catch (error) {
-      console.error(
-        `[Audio Preloader] ✗ Failed to load ID ${task.audioFileId}:`,
-        error,
+      console.log(
+        `[Audio Preloader] ✓ Batch completed: ${successCount}/${tasks.length} successful, ` +
+          `${failureCount} failed in ${loadTime.toFixed(1)}ms`,
       );
+    } catch (error) {
+      console.error(`[Audio Preloader] ✗ Batch processing failed:`, error);
 
-      // Retry for high-priority tasks
-      if (task.attempts < task.maxAttempts) {
-        console.log(
-          `[Audio Preloader] Retrying ID ${task.audioFileId} (${task.attempts}/${task.maxAttempts})`,
-        );
-        // Re-queue with slight delay
-        setTimeout(() => {
-          this.taskQueue.unshift(task);
-          this.processQueue();
-        }, 1000 * task.attempts); // Exponential backoff
-      } else {
-        this.stats.totalFailed++;
-      }
+      // Mark all tasks as failed and update stats
+      tasks.forEach((task) => {
+        if (task.attempts < task.maxAttempts) {
+          task.attempts++;
+          // Re-queue individual tasks for retry
+          setTimeout(() => {
+            this.taskQueue.push(task);
+            this.processQueue();
+          }, 1000 * task.attempts);
+        } else {
+          this.stats.totalFailed++;
+          cacheAudioBuffer(task.audioFileId, null);
+        }
+      });
     }
   }
 

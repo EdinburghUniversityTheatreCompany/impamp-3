@@ -64,7 +64,7 @@ export class RoundRobinStrategy implements PlaybackStrategy {
    * @param playedIndex - Index of the sound that was just played (unused in this implementation)
    * @param audioFileIds - Array of all available audio file IDs
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   updateState(playedIndex: number, audioFileIds: number[]): void {
     // If all sounds have been played, reset the available indices
     if (this.availableIndices.length === 0) {
