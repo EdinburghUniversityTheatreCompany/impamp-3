@@ -323,12 +323,15 @@ export async function loadAndDecodeAudioPipelined(
             );
             results.set(id, null);
             decodedCount++;
-          } finally {
-            activeDecodes.delete(decodePromise);
           }
         })();
 
         activeDecodes.add(decodePromise);
+
+        // Clean up after completion
+        decodePromise.finally(() => {
+          activeDecodes.delete(decodePromise);
+        });
       } catch (error) {
         console.error(
           `[Audio Decoder] Error loading audio file ID ${id}:`,

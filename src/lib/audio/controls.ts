@@ -32,6 +32,11 @@ import { resumeAudioContext, getAudioContext } from "./context";
 import { TriggerAudioArgs, generatePlaybackKey } from "./types";
 
 /**
+ * Type for loading state callback function
+ */
+export type LoadingStateCallback = (state: LoadingState) => void;
+
+/**
  * Enhanced trigger args with loading state callbacks
  */
 export interface TriggerAudioArgsEnhanced extends TriggerAudioArgs {

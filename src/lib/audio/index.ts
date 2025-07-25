@@ -29,7 +29,10 @@ export { audioPreloader } from "./preloader";
 // Re-export type definitions that are needed by other modules
 export { generatePlaybackKey } from "./types";
 export type { TriggerAudioArgs } from "./types";
-export type { TriggerAudioArgsEnhanced } from "./controls";
+export type {
+  TriggerAudioArgsEnhanced,
+  LoadingStateCallback,
+} from "./controls";
 export type { LoadingState } from "./decoder";
 
 /**
