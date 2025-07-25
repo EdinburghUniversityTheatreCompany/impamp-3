@@ -341,25 +341,25 @@ const Pad: React.FC<PadProps> = ({
           <div className="text-center">
             {/* Spinner */}
             <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent mx-auto mb-1"></div>
-            
+
             {/* Loading status text */}
             <div className="text-white text-xs font-medium">
-              {loadingStatus === 'loading' && 'Loading...'}
-              {loadingStatus === 'decoding' && 'Decoding...'}
-              {loadingStatus === 'error' && 'Error'}
-              {!loadingStatus && 'Loading...'}
+              {loadingStatus === "loading" && "Loading..."}
+              {loadingStatus === "decoding" && "Decoding..."}
+              {loadingStatus === "error" && "Error"}
+              {!loadingStatus && "Loading..."}
             </div>
-            
+
             {/* Progress bar for loading */}
             {loadingProgress > 0 && (
               <div className="w-16 h-1 bg-gray-600 rounded-full mt-1 mx-auto overflow-hidden">
-                <div 
-                  className="h-full bg-white transition-all duration-200" 
+                <div
+                  className="h-full bg-white transition-all duration-200"
                   style={{ width: `${Math.round(loadingProgress * 100)}%` }}
                 />
               </div>
             )}
-            
+
             {/* Error message */}
             {loadingError && (
               <div className="text-red-300 text-xs mt-1 max-w-20 truncate">

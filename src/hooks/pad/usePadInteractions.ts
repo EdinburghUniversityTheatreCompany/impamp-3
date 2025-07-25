@@ -14,7 +14,11 @@ import {
   isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
-import { triggerAudioForPadInstant, ensureAudioContextActive, LoadingState } from "@/lib/audio";
+import {
+  triggerAudioForPadInstant,
+  ensureAudioContextActive,
+  LoadingState,
+} from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import EditPadModalContent, {
   EditPadModalContentRef,
@@ -48,8 +52,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
-  
-  const [padLoadingStates, setPadLoadingStates] = useState<Map<number, LoadingState>>(new Map());
+
+  const [padLoadingStates, setPadLoadingStates] = useState<
+    Map<number, LoadingState>
+  >(new Map());
   const { openModal, closeModal } = useUIStore();
 
   /**
@@ -255,30 +261,44 @@ export function usePadInteractions(params: PadInteractionsParams) {
         currentPageIndex: currentPageIndex,
         name: padConfig.name,
         onInstantFeedback: () => {
-          console.log(`[Pad Interactions] Instant feedback for pad ${padConfig.padIndex}`);
+          console.log(
+            `[Pad Interactions] Instant feedback for pad ${padConfig.padIndex}`,
+          );
           // Pad clicked feedback is immediate
         },
         onLoadingStateChange: (state: LoadingState) => {
-          console.log(`[Pad Interactions] Loading state for pad ${padConfig.padIndex}:`, state);
-          setPadLoadingStates(prev => {
+          console.log(
+            `[Pad Interactions] Loading state for pad ${padConfig.padIndex}:`,
+            state.status,
+            `${Math.round((state.progress || 0) * 100)}%`,
+          );
+          setPadLoadingStates((prev) => {
             const newMap = new Map(prev);
             newMap.set(padConfig.padIndex, state);
+            console.log(
+              `[Pad Interactions] Updated loading states map size: ${newMap.size}`,
+            );
             return newMap;
           });
         },
         onAudioReady: () => {
-          console.log(`[Pad Interactions] Audio ready for pad ${padConfig.padIndex}`);
+          console.log(
+            `[Pad Interactions] Audio ready for pad ${padConfig.padIndex}`,
+          );
           // Clear loading state when audio starts playing
-          setPadLoadingStates(prev => {
+          setPadLoadingStates((prev) => {
             const newMap = new Map(prev);
             newMap.delete(padConfig.padIndex);
             return newMap;
           });
         },
         onError: (error: string) => {
-          console.error(`[Pad Interactions] Error for pad ${padConfig.padIndex}:`, error);
+          console.error(
+            `[Pad Interactions] Error for pad ${padConfig.padIndex}:`,
+            error,
+          );
           // Clear loading state on error
-          setPadLoadingStates(prev => {
+          setPadLoadingStates((prev) => {
             const newMap = new Map(prev);
             newMap.delete(padConfig.padIndex);
             return newMap;
@@ -327,9 +347,12 @@ export function usePadInteractions(params: PadInteractionsParams) {
   );
 
   // Helper function to get loading state for a specific pad
-  const getPadLoadingState = useCallback((padIndex: number) => {
-    return padLoadingStates.get(padIndex) || null;
-  }, [padLoadingStates]);
+  const getPadLoadingState = useCallback(
+    (padIndex: number) => {
+      return padLoadingStates.get(padIndex) || null;
+    },
+    [padLoadingStates],
+  );
 
   return {
     handleRemoveInteraction,

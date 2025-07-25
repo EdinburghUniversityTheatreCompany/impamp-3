@@ -10,7 +10,7 @@ import {
   ensureAudioContextActive,
   stopAllAudio,
   fadeOutAllAudio,
-  triggerAudioForPad,
+  triggerAudioForPadInstant,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { useSearchContext } from "@/components/search";
@@ -106,14 +106,35 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioIDs: ${sound.audioFileIds.join(",")}`,
   );
 
-  // Call the centralized trigger function with the new signature
-  await triggerAudioForPad({
+  // Call the instant trigger function for emergency sounds
+  await triggerAudioForPadInstant({
     padIndex: sound.padIndex,
     audioFileIds: sound.audioFileIds,
     playbackType: sound.playbackType,
     activeProfileId: sound.profileId,
     currentPageIndex: sound.pageIndex, // Use the pageIndex from the sound object
     name: sound.name,
+    onInstantFeedback: () => {
+      console.log(
+        `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
+      );
+    },
+    onLoadingStateChange: (state) => {
+      console.log(
+        `[KeyboardListener] Emergency sound loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
+      );
+    },
+    onAudioReady: () => {
+      console.log(
+        `[KeyboardListener] Emergency sound ready for pad ${sound.padIndex}`,
+      );
+    },
+    onError: (error) => {
+      console.error(
+        `[KeyboardListener] Emergency sound error for pad ${sound.padIndex}:`,
+        error,
+      );
+    },
   });
 }
 
@@ -521,16 +542,37 @@ export function useKeyboardListener() {
         }
 
         console.log(
-          `[KeyboardListener] Calling triggerAudioForPad for pad index ${matchedPadIndex}`,
+          `[KeyboardListener] Calling triggerAudioForPadInstant for pad index ${matchedPadIndex}`,
         );
-        // Call triggerAudioForPad with the new signature, destructuring the config
-        triggerAudioForPad({
+        // Call instant trigger function for keyboard shortcuts
+        triggerAudioForPadInstant({
           padIndex: matchedConfig.padIndex,
           audioFileIds: matchedConfig.audioFileIds,
           playbackType: matchedConfig.playbackType,
           activeProfileId: activeProfileId as number,
           currentPageIndex: currentPageIndex,
           name: matchedConfig.name,
+          onInstantFeedback: () => {
+            console.log(
+              `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,
+            );
+          },
+          onLoadingStateChange: (state) => {
+            console.log(
+              `[KeyboardListener] Keyboard shortcut loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
+            );
+          },
+          onAudioReady: () => {
+            console.log(
+              `[KeyboardListener] Keyboard shortcut ready for pad ${matchedConfig.padIndex}`,
+            );
+          },
+          onError: (error) => {
+            console.error(
+              `[KeyboardListener] Keyboard shortcut error for pad ${matchedConfig.padIndex}:`,
+              error,
+            );
+          },
         });
       } else if (matchedConfig) {
         console.log(

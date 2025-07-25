@@ -9,7 +9,10 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
-import { triggerAudioForPad, ensureAudioContextActive } from "@/lib/audio";
+import {
+  triggerAudioForPadInstant,
+  ensureAudioContextActive,
+} from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { useSearch, type SearchResult } from "@/hooks/useSearch";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
@@ -77,14 +80,33 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       // Resume audio context first
       ensureAudioContextActive();
 
-      // Call the centralized trigger function
-      await triggerAudioForPad({
+      // Call the instant trigger function for search results
+      await triggerAudioForPadInstant({
         padIndex: result.padIndex,
         audioFileIds: result.audioFileIds,
         playbackType: result.playbackType,
         activeProfileId: result.profileId,
         currentPageIndex: result.pageIndex,
         name: result.name,
+        onInstantFeedback: () => {
+          console.log(
+            `[SearchModal] Search result triggered for "${result.name}"`,
+          );
+        },
+        onLoadingStateChange: (state) => {
+          console.log(
+            `[SearchModal] Search result loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
+          );
+        },
+        onAudioReady: () => {
+          console.log(`[SearchModal] Search result ready for "${result.name}"`);
+        },
+        onError: (error) => {
+          console.error(
+            `[SearchModal] Search result error for "${result.name}":`,
+            error,
+          );
+        },
       });
 
       // Close the modal after initiating playback

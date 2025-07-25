@@ -308,8 +308,15 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
       // --- Regular Pad Logic ---
       const dropAllowed = isDropAllowed(padIndex, soundCount, isSpecialPad);
-      
+
       const loadingState = getPadLoadingState(padIndex);
+      if (loadingState) {
+        console.log(
+          `[PadGrid] Pad ${padIndex} has loading state:`,
+          loadingState.status,
+          `${Math.round((loadingState.progress || 0) * 100)}%`,
+        );
+      }
 
       return (
         <Pad

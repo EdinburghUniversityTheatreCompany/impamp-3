@@ -423,6 +423,9 @@ export async function loadAndDecodeAudioEnhanced(
   const startTime = performance.now();
 
   // Immediate callback with loading state
+  console.log(
+    `[Audio Decoder] [Enhanced] Starting load for ID: ${audioFileId}`,
+  );
   onStateChange?.({
     audioFileId,
     status: "loading",
@@ -432,6 +435,7 @@ export async function loadAndDecodeAudioEnhanced(
 
   // Check cache first
   if (isAudioBufferCached(audioFileId)) {
+    console.log(`[Audio Decoder] [Enhanced] Cache HIT for ID: ${audioFileId}`);
     const cachedBuffer = getCachedAudioBuffer(audioFileId);
     if (cachedBuffer === undefined) {
       console.warn(
@@ -630,6 +634,9 @@ export async function loadAndDecodeAudioInstant(
   const startTime = performance.now();
 
   // Provide instant feedback
+  console.log(
+    `[Audio Decoder] [Instant] Starting instant load for ID: ${audioFileId}`,
+  );
   onStateChange?.({
     audioFileId,
     status: "loading",
@@ -639,6 +646,9 @@ export async function loadAndDecodeAudioInstant(
 
   // Check cache first - if hit, return immediately
   if (isAudioBufferCached(audioFileId)) {
+    console.log(
+      `[Audio Decoder] [Instant] Cache HIT for ID: ${audioFileId} - no spinner needed`,
+    );
     return loadAndDecodeAudioEnhanced(audioFileId, onStateChange);
   }
 

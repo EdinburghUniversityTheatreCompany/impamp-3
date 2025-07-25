@@ -139,16 +139,37 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
       const firstTrack = state.armedTracks.get(firstKey);
 
       if (firstTrack) {
-        // Import triggerAudioForPad dynamically to avoid circular dependencies
-        import("@/lib/audio").then(({ triggerAudioForPad }) => {
-          // Play the track
-          triggerAudioForPad({
+        // Import triggerAudioForPadInstant dynamically to avoid circular dependencies
+        import("@/lib/audio").then(({ triggerAudioForPadInstant }) => {
+          // Play the armed track with instant response
+          triggerAudioForPadInstant({
             padIndex: firstTrack.padInfo.padIndex,
             audioFileIds: firstTrack.audioFileIds,
             playbackType: firstTrack.playbackType,
             activeProfileId: firstTrack.padInfo.profileId,
             currentPageIndex: firstTrack.padInfo.pageIndex,
             name: firstTrack.name,
+            onInstantFeedback: () => {
+              console.log(
+                `[PlaybackStore] Armed track triggered: "${firstTrack.name}"`,
+              );
+            },
+            onLoadingStateChange: (state) => {
+              console.log(
+                `[PlaybackStore] Armed track loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
+              );
+            },
+            onAudioReady: () => {
+              console.log(
+                `[PlaybackStore] Armed track ready: "${firstTrack.name}"`,
+              );
+            },
+            onError: (error) => {
+              console.error(
+                `[PlaybackStore] Armed track error for "${firstTrack.name}":`,
+                error,
+              );
+            },
           });
 
           // Remove from armed tracks

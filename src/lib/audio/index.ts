@@ -9,7 +9,6 @@
 
 // Re-export public functions from controls.ts
 export {
-  triggerAudioForPad,
   triggerAudioForPadInstant,
   stopAudio,
   fadeOutAudio,

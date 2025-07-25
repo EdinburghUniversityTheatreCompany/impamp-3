@@ -239,41 +239,6 @@ async function handleAudioFallback(
 }
 
 /**
- * Triggers audio playback for a pad (Legacy API - now uses instant response internally)
- *
- * This function maintains backward compatibility while providing all the benefits
- * of instant response, progressive loading, and error recovery under the hood.
- *
- * @param args - Configuration for triggering audio
- * @returns Promise that resolves when audio playback has been triggered (or failed)
- */
-export async function triggerAudioForPad(
-  args: TriggerAudioArgs,
-): Promise<void> {
-  console.log(`[Audio Controls] [Legacy API] Triggering pad ${args.padIndex} via legacy wrapper`);
-  
-  // Simply delegate to the instant version with basic callbacks
-  // This gives all callers instant response and error recovery automatically
-  return triggerAudioForPadInstant({
-    ...args,
-    onInstantFeedback: () => {
-      // Legacy callers don't need to know about instant feedback
-      console.log(`[Audio Controls] [Legacy] Instant feedback for pad ${args.padIndex}`);
-    },
-    onLoadingStateChange: (state: LoadingState) => {
-      // Legacy callers don't handle loading states, but we can log for debugging
-      console.log(`[Audio Controls] [Legacy] Loading state for pad ${args.padIndex}:`, state.status, `${Math.round((state.progress || 0) * 100)}%`);
-    },
-    onAudioReady: () => {
-      console.log(`[Audio Controls] [Legacy] Audio ready for pad ${args.padIndex}`);
-    },
-    onError: (error: string) => {
-      console.error(`[Audio Controls] [Legacy] Error for pad ${args.padIndex}:`, error);
-    },
-  });
-}
-
-/**
  * Triggers audio playback for a pad with instant response and loading feedback
  *
  * Provides immediate user feedback even when audio needs to be loaded.
