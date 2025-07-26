@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import { useUIStore } from "@/store/uiStore";
 import Modal from "./Modal";
+import { getModalComponent } from "./modals/modalRegistry";
 
 const ModalRenderer: React.FC = () => {
   // Select individual state pieces
@@ -27,6 +28,30 @@ const ModalRenderer: React.FC = () => {
     // The caller can call closeModal() within their onConfirm if needed.
   };
 
+  // Loading fallback component for lazy-loaded modals
+  const LoadingSpinner = () => (
+    <div className="flex items-center justify-center p-8">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      <span className="ml-2 text-gray-600">Loading...</span>
+    </div>
+  );
+
+  // Render modal content - either direct content or lazy-loaded component
+  const renderModalContent = () => {
+    // If modalType is specified, use lazy loading
+    if (modalConfig.modalType) {
+      const LazyModalComponent = getModalComponent(modalConfig.modalType);
+      return (
+        <Suspense fallback={<LoadingSpinner />}>
+          <LazyModalComponent {...(modalConfig.modalProps || {})} />
+        </Suspense>
+      );
+    }
+
+    // Otherwise, render direct content (backwards compatibility)
+    return modalConfig.content;
+  };
+
   return (
     <Modal
       isOpen={isModalOpen}
@@ -40,8 +65,7 @@ const ModalRenderer: React.FC = () => {
       showCancelButton={modalConfig.showCancelButton}
       size={modalConfig.size} // Pass the size prop
     >
-      {/* Render the content node provided in the config */}
-      {modalConfig.content}
+      {renderModalContent()}
     </Modal>
   );
 };

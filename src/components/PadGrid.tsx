@@ -3,7 +3,7 @@
 import React, { useRef, useMemo, useCallback } from "react";
 import Pad from "./Pad";
 import { useProfileStore } from "@/store/profileStore";
-import { useUIStore } from "@/store/uiStore";
+// useUIStore removed - now using useModal hook
 import { usePadConfigurations } from "@/hooks/usePadConfigurations";
 import { isEmergencyPage } from "@/lib/db";
 import {
@@ -16,7 +16,8 @@ import { usePlaybackStore, useArmedTracks } from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
-import BulkImportModalContent from "./modals/BulkImportModalContent";
+import { useModal } from "@/hooks/modal/useModal";
+import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
 import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
@@ -147,7 +148,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
-  const { openModal, closeModal } = useUIStore();
+  const { openLazyModal, closeModal } = useModal();
 
   // Refs
   const hasInteracted = useRef(false);
@@ -309,28 +310,27 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       });
     });
 
-    openModal({
+    openLazyModal({
       title: "Bulk Import Audio Files",
-      content: (
-        <BulkImportModalContent
-          profileId={activeProfileId}
-          pageIndex={currentPageIndex}
-          existingPadConfigs={existingConfigMap}
-          onAssignmentComplete={() => {
-            closeModal();
-            refreshPadConfigs();
-            // Check if we're on an emergency page and refresh if needed
-            isEmergencyPage(activeProfileId, currentPageIndex).then(
-              (isEmergency) => {
-                if (isEmergency) {
-                  incrementEmergencySoundsVersion();
-                  console.log("Emergency page updated after bulk import");
-                }
-              },
-            );
-          }}
-        />
-      ),
+      modalType: ModalType.BULK_IMPORT,
+      modalProps: {
+        profileId: activeProfileId,
+        pageIndex: currentPageIndex,
+        existingPadConfigs: existingConfigMap,
+        onAssignmentComplete: () => {
+          closeModal();
+          refreshPadConfigs();
+          // Check if we're on an emergency page and refresh if needed
+          isEmergencyPage(activeProfileId, currentPageIndex).then(
+            (isEmergency) => {
+              if (isEmergency) {
+                incrementEmergencySoundsVersion();
+                console.log("Emergency page updated after bulk import");
+              }
+            },
+          );
+        },
+      },
       confirmText: "",
       showConfirmButton: false,
       size: "full",

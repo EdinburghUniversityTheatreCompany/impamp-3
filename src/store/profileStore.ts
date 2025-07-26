@@ -11,14 +11,9 @@ import {
   getProfile,
   ActivePadBehavior,
 } from "@/lib/db";
-import {
-  importProfile,
-  importImpamp2Profile,
-  ProfileExport,
-  exportMultipleProfiles,
-  importMultipleProfiles,
-  MultiProfileExport,
-} from "../lib/importExport";
+// Import/export utilities will be loaded dynamically to reduce bundle size
+// Types are imported separately for type checking
+import type { ProfileExport, MultiProfileExport } from "../lib/importExport";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
@@ -398,6 +393,10 @@ export const useProfileStore = create<ProfileState>()(
           return false;
         }
         try {
+          // Dynamically import the export functions to reduce bundle size
+          const { exportMultipleProfiles } = await import(
+            "../lib/importExport"
+          );
           const exportData = await exportMultipleProfiles(profileIds);
 
           // Convert to JSON string
@@ -500,7 +499,10 @@ export const useProfileStore = create<ProfileState>()(
             );
           }
 
-          // Import the profiles using the function from importExport.ts
+          // Dynamically import the import functions to reduce bundle size
+          const { importMultipleProfiles } = await import(
+            "../lib/importExport"
+          );
           const { getDb } = await import("@/lib/db"); // Import getDb dynamically
           const db = await getDb();
           const results = await importMultipleProfiles(db, importData);
@@ -542,7 +544,8 @@ export const useProfileStore = create<ProfileState>()(
             throw new Error("Invalid profile export format");
           }
 
-          // Import the profile
+          // Dynamically import the import functions to reduce bundle size
+          const { importProfile } = await import("../lib/importExport");
           // Need to pass the db instance now
           const { getDb } = await import("@/lib/db"); // Import getDb dynamically
           const db = await getDb();
@@ -576,7 +579,8 @@ export const useProfileStore = create<ProfileState>()(
 
       importProfileFromImpamp2JSON: async (jsonData: string) => {
         try {
-          // Call the specific impamp2 import function from importExport.ts
+          // Dynamically import the import functions to reduce bundle size
+          const { importImpamp2Profile } = await import("../lib/importExport");
           // Need to pass the db instance now
           const { getDb } = await import("@/lib/db"); // Import getDb dynamically
           const db = await getDb();

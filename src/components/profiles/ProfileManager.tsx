@@ -7,7 +7,8 @@ import { SyncType, Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
-import { ConflictResolutionModal } from "@/components/modals/ConflictResolutionModal";
+import { useModal } from "@/hooks/modal/useModal";
+import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
 
 export default function ProfileManager() {
@@ -26,6 +27,8 @@ export default function ProfileManager() {
     setGoogleAuthDetails,
     clearGoogleAuthDetails,
   } = useProfileStore();
+
+  const { openLazyModal, closeModal } = useModal();
 
   // State management
   const [newProfileName, setNewProfileName] = useState("");
@@ -152,6 +155,50 @@ export default function ProfileManager() {
       setDriveActionError(driveHookError);
     }
   }, [driveHookStatus, driveHookError]);
+
+  // Open conflict resolution modal when conflicts are detected
+  useEffect(() => {
+    if (
+      driveHookStatus === "conflict" &&
+      driveHookConflictData &&
+      driveHookConflicts.length > 0
+    ) {
+      openLazyModal({
+        title: "Sync Conflict Resolution",
+        modalType: ModalType.CONFLICT_RESOLUTION,
+        modalProps: {
+          conflicts: driveHookConflicts,
+          conflictData: driveHookConflictData,
+          onResolve: (resolvedData: ProfileSyncData) => {
+            applyConflictResolution(
+              resolvedData,
+              driveHookConflictData.fileId,
+              driveHookConflictData.local.profile.id!,
+            );
+            closeModal();
+          },
+          onCancel: () => {
+            console.log("Conflict resolution cancelled by user.");
+            setDriveActionStatus("idle");
+            setDriveActionError(null);
+            closeModal();
+          },
+        },
+        showConfirmButton: false,
+        showCancelButton: false,
+        size: "xl",
+      });
+    }
+  }, [
+    driveHookStatus,
+    driveHookConflictData,
+    driveHookConflicts,
+    openLazyModal,
+    closeModal,
+    applyConflictResolution,
+    setDriveActionStatus,
+    setDriveActionError,
+  ]);
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1051,28 +1098,6 @@ export default function ProfileManager() {
                   </div>
                 </div>
               )}
-
-              {/* Conflict Resolution Modal */}
-              {driveHookStatus === "conflict" &&
-                driveHookConflictData &&
-                driveHookConflicts.length > 0 && (
-                  <ConflictResolutionModal
-                    conflicts={driveHookConflicts}
-                    conflictData={driveHookConflictData}
-                    onResolve={(resolvedData) => {
-                      applyConflictResolution(
-                        resolvedData,
-                        driveHookConflictData.fileId,
-                        driveHookConflictData.local.profile.id!,
-                      );
-                    }}
-                    onCancel={() => {
-                      console.log("Conflict resolution cancelled by user.");
-                      setDriveActionStatus("idle");
-                      setDriveActionError(null);
-                    }}
-                  />
-                )}
             </div>
           )}
         </div>

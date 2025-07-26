@@ -1,11 +1,14 @@
 import { create } from "zustand";
 import React from "react";
+import { ModalType } from "@/components/modals/modalRegistry";
 
 type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
 
 interface ModalConfig {
   title?: string;
-  content: React.ReactNode; // The component to render inside the modal
+  content?: React.ReactNode; // The component to render inside the modal (for direct content)
+  modalType?: ModalType; // Type for lazy-loaded modals
+  modalProps?: Record<string, unknown>; // Props to pass to the lazy-loaded modal
   confirmText?: string;
   cancelText?: string;
   onConfirm?: () => void | Promise<void>; // Callback for confirm action

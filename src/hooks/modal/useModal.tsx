@@ -8,6 +8,7 @@
 
 import { useCallback } from "react";
 import { useUIStore } from "@/store/uiStore";
+import { ModalType } from "@/components/modals/modalRegistry";
 import type { ReactNode } from "react";
 import React from "react";
 
@@ -35,6 +36,14 @@ export interface ConfirmModalOptions extends BaseModalOptions {
 export interface ContentModalOptions<T = unknown> extends BaseModalOptions {
   content: ReactNode;
   data?: T;
+  onConfirm?: () => void | Promise<void>;
+  onCancel?: () => void | Promise<void>;
+}
+
+// Specific options for lazy-loaded modal components
+export interface LazyModalOptions<T = unknown> extends BaseModalOptions {
+  modalType: ModalType;
+  modalProps?: T;
   onConfirm?: () => void | Promise<void>;
   onCancel?: () => void | Promise<void>;
 }
@@ -92,6 +101,27 @@ export function useModal() {
   );
 
   /**
+   * Opens a lazy-loaded modal component
+   *
+   * @param options - Configuration for the lazy modal
+   */
+  const openLazyModal = useCallback(
+    function openLazyModalFn<T>(options: LazyModalOptions<T>) {
+      const { modalType, modalProps, onConfirm, onCancel, ...baseOptions } =
+        options;
+
+      openModal({
+        modalType,
+        modalProps: modalProps as Record<string, unknown>,
+        onConfirm,
+        onCancel,
+        ...baseOptions,
+      });
+    },
+    [openModal],
+  );
+
+  /**
    * Closes the currently open modal
    */
   const close = useCallback(() => {
@@ -101,6 +131,7 @@ export function useModal() {
   return {
     openConfirmModal,
     openContentModal,
+    openLazyModal,
     closeModal: close,
     isModalOpen,
   };

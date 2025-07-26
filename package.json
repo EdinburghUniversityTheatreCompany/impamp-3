@@ -9,6 +9,9 @@
     "dev": "next dev --turbopack",
     "start": "next start",
     "lint": "next lint",
+    "analyze": "ANALYZE=true npm run build",
+    "analyze:server": "BUNDLE_ANALYZE=server npm run build",
+    "analyze:client": "BUNDLE_ANALYZE=client npm run build",
     "generate-favicon": "node scripts/generate-favicon.js",
     "test:e2e": "playwright test",
     "test:e2e:audio": "playwright test audio-playback.spec.ts",
@@ -36,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@next/bundle-analyzer": "^15.4.4",
     "@playwright/test": "^1.42.1",
     "@tailwindcss/postcss": "^4",
     "@types/gapi": "^0.0.47",
