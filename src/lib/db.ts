@@ -393,6 +393,35 @@ export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   return db.get("audioFiles", id);
 }
 
+// Delete an audio file by ID
+export async function deleteAudioFile(id: number): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  await tx.store.delete(id);
+  await tx.done;
+  console.log(`Deleted audio file with id: ${id}`);
+}
+
+// Get all audio file IDs referenced by pad configurations for a specific profile
+export async function getAudioFileIdsForProfile(profileId: number): Promise<Set<number>> {
+  const db = await getDb();
+  const tx = db.transaction("padConfigurations", "readonly");
+  const store = tx.objectStore("padConfigurations");
+  const index = store.index("profileId");
+  const padConfigs = await index.getAll(profileId);
+  await tx.done;
+  
+  const audioFileIds = new Set<number>();
+  padConfigs.forEach((pad) => {
+    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
+      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
+    }
+  });
+  
+  console.log(`Found ${audioFileIds.size} unique audio file IDs for profile ${profileId}`);
+  return audioFileIds;
+}
+
 // Add a profile (Updated)
 export async function addProfile(
   profileData: Omit<
@@ -519,12 +548,19 @@ export async function updateProfile(
 // Delete a profile
 export async function deleteProfile(id: number): Promise<void> {
   const db = await getDb();
+  
+  // First, collect all audio file IDs referenced by this profile's pad configurations
+  const audioFileIds = await getAudioFileIdsForProfile(id);
+  
   const tx = db.transaction(
-    ["profiles", "padConfigurations", "pageMetadata"],
+    ["profiles", "padConfigurations", "pageMetadata", "audioFiles"],
     "readwrite",
   );
   try {
+    // Delete the profile
     await tx.objectStore("profiles").delete(id);
+    
+    // Delete pad configurations
     const padStore = tx.objectStore("padConfigurations");
     const padIndex = padStore.index("profileId");
     let padCursor = await padIndex.openCursor(id);
@@ -532,6 +568,8 @@ export async function deleteProfile(id: number): Promise<void> {
       await padCursor.delete();
       padCursor = await padCursor.continue();
     }
+    
+    // Delete page metadata
     const pageStore = tx.objectStore("pageMetadata");
     const pageIndex = pageStore.index("profileId");
     let pageCursor = await pageIndex.openCursor(id);
@@ -539,8 +577,34 @@ export async function deleteProfile(id: number): Promise<void> {
       await pageCursor.delete();
       pageCursor = await pageCursor.continue();
     }
+    
+    // Delete associated audio files
+    const audioStore = tx.objectStore("audioFiles");
+    for (const audioFileId of audioFileIds) {
+      await audioStore.delete(audioFileId);
+    }
+    
     await tx.done;
-    console.log(`Deleted profile with id: ${id} and all associated data`);
+    
+    // Clear audio cache entries for deleted audio files
+    // Import dynamically to avoid circular dependency issues
+    if (typeof window !== "undefined") {
+      try {
+        const { clearCachedAudioBuffer } = await import("./audio/cache");
+        let clearedCacheCount = 0;
+        for (const audioFileId of audioFileIds) {
+          if (clearCachedAudioBuffer(audioFileId)) {
+            clearedCacheCount++;
+          }
+        }
+        console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files (${clearedCacheCount} cache entries cleared)`);
+      } catch (cacheError) {
+        console.warn("Failed to clear audio cache entries:", cacheError);
+        console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`);
+      }
+    } else {
+      console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`);
+    }
   } catch (error) {
     console.error(`Failed to delete profile ${id}:`, error);
     if (tx.error && !tx.done) {
