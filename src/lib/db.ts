@@ -403,23 +403,153 @@ export async function deleteAudioFile(id: number): Promise<void> {
 }
 
 // Get all audio file IDs referenced by pad configurations for a specific profile
-export async function getAudioFileIdsForProfile(profileId: number): Promise<Set<number>> {
+export async function getAudioFileIdsForProfile(
+  profileId: number,
+): Promise<Set<number>> {
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readonly");
   const store = tx.objectStore("padConfigurations");
   const index = store.index("profileId");
   const padConfigs = await index.getAll(profileId);
   await tx.done;
-  
+
   const audioFileIds = new Set<number>();
   padConfigs.forEach((pad) => {
     if (pad.audioFileIds && pad.audioFileIds.length > 0) {
       pad.audioFileIds.forEach((id) => audioFileIds.add(id));
     }
   });
-  
-  console.log(`Found ${audioFileIds.size} unique audio file IDs for profile ${profileId}`);
+
+  console.log(
+    `Found ${audioFileIds.size} unique audio file IDs for profile ${profileId}`,
+  );
   return audioFileIds;
+}
+
+// Find orphaned audio files that are not referenced by any pad configuration
+export async function findOrphanedAudioFiles(): Promise<{
+  orphanedIds: Set<number>;
+  referencedIds: Set<number>;
+  totalAudioFiles: number;
+}> {
+  const db = await getDb();
+
+  // Get all audio file IDs
+  const audioTx = db.transaction("audioFiles", "readonly");
+  const audioStore = audioTx.objectStore("audioFiles");
+  const allAudioFiles = await audioStore.getAllKeys();
+  await audioTx.done;
+
+  // Get all referenced audio file IDs from pad configurations
+  const padTx = db.transaction("padConfigurations", "readonly");
+  const padStore = padTx.objectStore("padConfigurations");
+  const allPadConfigs = await padStore.getAll();
+  await padTx.done;
+
+  const referencedIds = new Set<number>();
+  allPadConfigs.forEach((pad) => {
+    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
+      pad.audioFileIds.forEach((id) => referencedIds.add(id));
+    }
+  });
+
+  // Find orphaned IDs (exist in audioFiles but not referenced by any pad)
+  const orphanedIds = new Set<number>();
+  allAudioFiles.forEach((audioId) => {
+    if (typeof audioId === "number" && !referencedIds.has(audioId)) {
+      orphanedIds.add(audioId);
+    }
+  });
+
+  console.log(
+    `[Orphan Detection] Found ${orphanedIds.size} orphaned audio files out of ${allAudioFiles.length} total`,
+  );
+  console.log(
+    `[Orphan Detection] Referenced files: ${referencedIds.size}, Orphaned files: ${orphanedIds.size}`,
+  );
+
+  return {
+    orphanedIds,
+    referencedIds,
+    totalAudioFiles: allAudioFiles.length,
+  };
+}
+
+// Clean up orphaned audio files and their cache entries
+export async function cleanupOrphanedAudioFiles(): Promise<{
+  deletedCount: number;
+  cacheEntriesCleared: number;
+  errors: string[];
+}> {
+  const db = await getDb();
+  const errors: string[] = [];
+  let deletedCount = 0;
+  let cacheEntriesCleared = 0;
+
+  try {
+    // Find orphaned files
+    const { orphanedIds } = await findOrphanedAudioFiles();
+
+    if (orphanedIds.size === 0) {
+      console.log("[Orphan Cleanup] No orphaned audio files found");
+      return { deletedCount: 0, cacheEntriesCleared: 0, errors: [] };
+    }
+
+    console.log(
+      `[Orphan Cleanup] Starting cleanup of ${orphanedIds.size} orphaned audio files...`,
+    );
+
+    // Delete orphaned audio files in a single transaction
+    const audioTx = db.transaction("audioFiles", "readwrite");
+    const audioStore = audioTx.objectStore("audioFiles");
+
+    const deletePromises = Array.from(orphanedIds).map(async (audioId) => {
+      try {
+        await audioStore.delete(audioId);
+        deletedCount++;
+        console.log(`[Orphan Cleanup] Deleted audio file ID: ${audioId}`);
+      } catch (error) {
+        const errorMsg = `Failed to delete audio file ${audioId}: ${error instanceof Error ? error.message : error}`;
+        errors.push(errorMsg);
+        console.error(`[Orphan Cleanup] ${errorMsg}`);
+      }
+    });
+
+    await Promise.all(deletePromises);
+    await audioTx.done;
+
+    // Clear cache entries for deleted audio files
+    if (typeof window !== "undefined") {
+      try {
+        const { clearCachedAudioBuffer } = await import("./audio/cache");
+        for (const audioId of orphanedIds) {
+          if (clearCachedAudioBuffer(audioId)) {
+            cacheEntriesCleared++;
+          }
+        }
+      } catch (cacheError) {
+        const errorMsg = `Failed to clear audio cache entries: ${cacheError instanceof Error ? cacheError.message : cacheError}`;
+        errors.push(errorMsg);
+        console.warn(`[Orphan Cleanup] ${errorMsg}`);
+      }
+    }
+
+    console.log(
+      `[Orphan Cleanup] Completed: ${deletedCount} files deleted, ${cacheEntriesCleared} cache entries cleared`,
+    );
+    if (errors.length > 0) {
+      console.warn(
+        `[Orphan Cleanup] Encountered ${errors.length} errors during cleanup`,
+      );
+    }
+
+    return { deletedCount, cacheEntriesCleared, errors };
+  } catch (error) {
+    const errorMsg = `Critical error during orphan cleanup: ${error instanceof Error ? error.message : error}`;
+    console.error(`[Orphan Cleanup] ${errorMsg}`);
+    errors.push(errorMsg);
+    return { deletedCount, cacheEntriesCleared, errors };
+  }
 }
 
 // Add a profile (Updated)
@@ -548,10 +678,10 @@ export async function updateProfile(
 // Delete a profile
 export async function deleteProfile(id: number): Promise<void> {
   const db = await getDb();
-  
+
   // First, collect all audio file IDs referenced by this profile's pad configurations
   const audioFileIds = await getAudioFileIdsForProfile(id);
-  
+
   const tx = db.transaction(
     ["profiles", "padConfigurations", "pageMetadata", "audioFiles"],
     "readwrite",
@@ -559,7 +689,7 @@ export async function deleteProfile(id: number): Promise<void> {
   try {
     // Delete the profile
     await tx.objectStore("profiles").delete(id);
-    
+
     // Delete pad configurations
     const padStore = tx.objectStore("padConfigurations");
     const padIndex = padStore.index("profileId");
@@ -568,7 +698,7 @@ export async function deleteProfile(id: number): Promise<void> {
       await padCursor.delete();
       padCursor = await padCursor.continue();
     }
-    
+
     // Delete page metadata
     const pageStore = tx.objectStore("pageMetadata");
     const pageIndex = pageStore.index("profileId");
@@ -577,15 +707,15 @@ export async function deleteProfile(id: number): Promise<void> {
       await pageCursor.delete();
       pageCursor = await pageCursor.continue();
     }
-    
+
     // Delete associated audio files
     const audioStore = tx.objectStore("audioFiles");
     for (const audioFileId of audioFileIds) {
       await audioStore.delete(audioFileId);
     }
-    
+
     await tx.done;
-    
+
     // Clear audio cache entries for deleted audio files
     // Import dynamically to avoid circular dependency issues
     if (typeof window !== "undefined") {
@@ -597,13 +727,19 @@ export async function deleteProfile(id: number): Promise<void> {
             clearedCacheCount++;
           }
         }
-        console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files (${clearedCacheCount} cache entries cleared)`);
+        console.log(
+          `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files (${clearedCacheCount} cache entries cleared)`,
+        );
       } catch (cacheError) {
         console.warn("Failed to clear audio cache entries:", cacheError);
-        console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`);
+        console.log(
+          `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`,
+        );
       }
     } else {
-      console.log(`Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`);
+      console.log(
+        `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`,
+      );
     }
   } catch (error) {
     console.error(`Failed to delete profile ${id}:`, error);
