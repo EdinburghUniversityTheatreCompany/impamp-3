@@ -394,9 +394,8 @@ export const useProfileStore = create<ProfileState>()(
         }
         try {
           // Dynamically import the export functions to reduce bundle size
-          const { exportMultipleProfiles } = await import(
-            "../lib/importExport"
-          );
+          const { exportMultipleProfiles } =
+            await import("../lib/importExport");
           const exportData = await exportMultipleProfiles(profileIds);
 
           // Convert to JSON string
@@ -500,9 +499,8 @@ export const useProfileStore = create<ProfileState>()(
           }
 
           // Dynamically import the import functions to reduce bundle size
-          const { importMultipleProfiles } = await import(
-            "../lib/importExport"
-          );
+          const { importMultipleProfiles } =
+            await import("../lib/importExport");
           const { getDb } = await import("@/lib/db"); // Import getDb dynamically
           const db = await getDb();
           const results = await importMultipleProfiles(db, importData);

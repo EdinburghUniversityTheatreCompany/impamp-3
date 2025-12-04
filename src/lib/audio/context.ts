@@ -32,8 +32,9 @@ export function getAudioContext(): AudioContext {
   if (!audioContext) {
     // Cast window to the extended type to check for webkitAudioContext (Safari support)
     const extendedWindow = window as ExtendedWindow;
-    audioContext = new (window.AudioContext ||
-      extendedWindow.webkitAudioContext)();
+    audioContext = new (
+      window.AudioContext || extendedWindow.webkitAudioContext
+    )();
 
     console.log("[Audio Context] Created new AudioContext instance");
   }
