@@ -30,7 +30,7 @@
     "google-api-javascript-client": "^0.1.0",
     "idb": "^8.0.2",
     "jwt-decode": "^4.0.0",
-    "next": "^15.2.4",
+    "next": "^16.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-dropzone": "^14.3.8",
