@@ -330,7 +330,7 @@ export async function triggerAudioForPadInstant(
 
   try {
     // Use the strategy pattern to select which audio file to play
-    const strategy = getStrategy(playbackType);
+    const strategy = getStrategy(playbackType, playbackKey);
     const { audioFileId, index } = strategy.selectNextSound(audioFileIds);
 
     // Use instant loading with progress feedback
@@ -393,6 +393,7 @@ export async function triggerAudioForPadInstant(
               ? (
                   getStrategy(
                     "round-robin",
+                    playbackKey,
                   ) as import("./strategies/roundRobin").RoundRobinStrategy
                 ).getAvailableIndices?.()
               : undefined,
