@@ -306,6 +306,7 @@ class AudioPreloader {
         const task = tasks.find((t) => t.audioFileId === audioFileId);
 
         if (buffer) {
+          cacheAudioBuffer(audioFileId, buffer);
           successCount++;
           this.stats.totalCompleted++;
           this.loadTimes.push(loadTime / tasks.length); // Average per file
