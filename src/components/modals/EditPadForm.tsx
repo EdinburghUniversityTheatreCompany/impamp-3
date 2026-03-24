@@ -252,9 +252,13 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
 
       {/* Sounds List & DND */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-0.5">
           Sounds (Drag to Reorder)
         </label>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+          Use <span className="font-medium">Trim</span> to set start/end points
+          for each sound.
+        </p>
         {isLoadingNames ? (
           <p className="text-gray-500 dark:text-gray-400">Loading sounds...</p>
         ) : sounds.length === 0 ? (

@@ -451,6 +451,40 @@ const HelpModalContent: React.FC = () => {
             </ul>
           </div>
 
+          <div className="space-y-2 mt-4">
+            <h4 className="font-medium">Trimming Sounds</h4>
+            <p>
+              You can set start and end points for each sound to play only a
+              specific portion:
+            </p>
+            <ol className="list-decimal pl-5 space-y-1">
+              <li>Open the Edit Pad modal (Shift+click on a pad)</li>
+              <li>
+                Click the{" "}
+                <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                  Trim
+                </span>{" "}
+                button next to any sound in the list
+              </li>
+              <li>
+                Drag the green (start) and red (end) handles on the waveform to
+                select the region you want to play
+              </li>
+              <li>
+                Click &quot;Preview&quot; to hear the trimmed region before
+                saving
+              </li>
+              <li>
+                Click &quot;Apply&quot; to confirm, then &quot;Save
+                Changes&quot;
+              </li>
+            </ol>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              Trim settings are saved per sound and are included when exporting
+              or syncing profiles. The original audio file is never modified.
+            </p>
+          </div>
+
           <div className="space-y-2 mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 rounded-md">
             <h4 className="font-medium">Bulk Import Feature</h4>
             <p className="mt-2">
