@@ -269,6 +269,9 @@ export async function triggerAudioForPadInstant(
     onError,
   } = args;
 
+  // Ensure AudioContext is active before any playback attempt
+  await ensureAudioContextActive();
+
   // Provide instant feedback to user
   onInstantFeedback?.();
 
