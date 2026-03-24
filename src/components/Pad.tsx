@@ -260,14 +260,15 @@ const Pad: React.FC<PadProps> = ({
     ],
   );
 
+  const rootProps = getRootProps();
+
   return (
     // Spread dropzone props onto the root div
     <div
-      {...getRootProps()}
+      {...rootProps}
       id={id} // Use the passed unique ID
       className={padClasses} // Use clsx generated classes
       onMouseEnter={handleMouseEnter} // Add hover preloading
-      // Make clickable area separate from dropzone root if needed, but here it's combined
       // The single onClick handler below manages both playback and prevents dropzone default click
       onClick={(e) => {
         // Prevent dropzone's default click behavior if necessary, though noClick should handle it
@@ -298,9 +299,18 @@ const Pad: React.FC<PadProps> = ({
       draggable={isDeleteMoveMode && !isSpecialPad}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={(e) => {
+        rootProps.onDragOver?.(e);
+        handleDragOver(e);
+      }}
+      onDragLeave={(e) => {
+        rootProps.onDragLeave?.(e);
+        handleDragLeave();
+      }}
+      onDrop={(e) => {
+        rootProps.onDrop?.(e);
+        handleDrop(e);
+      }}
       role="button"
       tabIndex={0} // Make it focusable
       aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}`}
