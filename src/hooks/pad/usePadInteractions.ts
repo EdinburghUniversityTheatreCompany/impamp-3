@@ -261,6 +261,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         activeProfileId: activeProfileId,
         currentPageIndex: currentPageIndex,
         name: padConfig.name,
+        audioTrimSettings: padConfig.audioTrimSettings,
         onInstantFeedback: () => {
           console.log(
             `[Pad Interactions] Instant feedback for pad ${padConfig.padIndex}`,
@@ -343,6 +344,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         },
         audioFileIds: config.audioFileIds,
         playbackType: config.playbackType || "round-robin",
+        audioTrimSettings: config.audioTrimSettings,
       });
 
       console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);

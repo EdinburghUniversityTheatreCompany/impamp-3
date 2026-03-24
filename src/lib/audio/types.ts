@@ -66,6 +66,7 @@ export interface TriggerAudioArgs {
   activeProfileId: number;
   currentPageIndex: number;
   name?: string;
+  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
 }
 
 /**
@@ -79,6 +80,8 @@ export interface PlayAudioParams {
     padIndex: number;
   };
   volume?: number;
+  trimStart?: number;
+  trimEnd?: number;
   multiSoundState: {
     playbackType: PlaybackType;
     allAudioFileIds: number[];

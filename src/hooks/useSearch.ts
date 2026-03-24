@@ -28,6 +28,8 @@ export interface SearchResult {
   audioFileIds: number[];
   /** Playback strategy for this pad */
   playbackType: PlaybackType;
+  /** Trim settings per audio file */
+  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   /** Original filename of the first audio file */
   originalFileName: string;
   /** Display name of the bank containing this pad */
@@ -144,6 +146,7 @@ export function useSearch(searchOptions: SearchOptions = {}) {
               name: padName,
               audioFileIds: pad.audioFileIds,
               playbackType: pad.playbackType,
+              audioTrimSettings: pad.audioTrimSettings,
               originalFileName: displayFileName,
               bankName:
                 bankNames.get(pad.pageIndex) ||

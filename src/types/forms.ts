@@ -16,6 +16,7 @@ export interface PadFormValues extends Record<string, unknown> {
   name: string;
   playbackType: PlaybackType;
   audioFileIds: number[];
+  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
 }
 
 /**

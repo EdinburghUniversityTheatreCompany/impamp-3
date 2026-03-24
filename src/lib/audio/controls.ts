@@ -262,6 +262,7 @@ export async function triggerAudioForPadInstant(
     activeProfileId,
     currentPageIndex,
     name,
+    audioTrimSettings,
     onLoadingStateChange,
     onInstantFeedback,
     onAudioReady,
@@ -375,6 +376,9 @@ export async function triggerAudioForPadInstant(
       // Notify that audio is ready and starting
       onAudioReady?.();
 
+      // Look up trim settings for this specific audio file
+      const trimForFile = audioTrimSettings?.[audioFileId];
+
       // Play the buffer with the appropriate parameters
       playBuffer(buffer, playbackKey, {
         name: name || `Pad ${padIndex + 1}`,
@@ -383,6 +387,8 @@ export async function triggerAudioForPadInstant(
           pageIndex: currentPageIndex,
           padIndex,
         },
+        trimStart: trimForFile?.trimStart,
+        trimEnd: trimForFile?.trimEnd,
         multiSoundState: {
           playbackType,
           allAudioFileIds: audioFileIds,

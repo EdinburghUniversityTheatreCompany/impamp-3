@@ -94,15 +94,20 @@ export function playBuffer(
       stopPlaybackLoop(); // Check if loop should stop
     };
 
-    // Start playback
-    source.start(0);
+    // Apply trim settings
+    const trimStart = params.trimStart ?? 0;
+    const trimEnd = params.trimEnd ?? buffer.duration;
+    const trimmedDuration = trimEnd - trimStart;
+
+    // Start playback with trim offset and duration
+    source.start(0, trimStart, trimmedDuration);
 
     // Store track information
     const track: ActiveTrack = {
       source,
       name: params.name,
       startTime: context.currentTime,
-      duration: buffer.duration,
+      duration: trimmedDuration,
       padInfo: params.padInfo,
       isFading: false,
       // Include multi-sound state
@@ -120,8 +125,8 @@ export function playBuffer(
       key: playbackKey,
       name: params.name,
       progress: 0,
-      remainingTime: buffer.duration,
-      totalDuration: buffer.duration,
+      remainingTime: trimmedDuration,
+      totalDuration: trimmedDuration,
       isFading: false,
       padInfo: params.padInfo,
     };

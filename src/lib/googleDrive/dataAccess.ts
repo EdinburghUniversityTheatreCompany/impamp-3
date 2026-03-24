@@ -192,6 +192,24 @@ export const updateLocalData = async (
         padWithProfileId.audioFileIds = padWithProfileId.audioFileIds
           .map((id) => audioIdMap.get(id) || id)
           .filter((id) => typeof id === "number");
+
+        // Also map audioTrimSettings keys
+        if (padWithProfileId.audioTrimSettings) {
+          const mappedTrim: Record<
+            number,
+            { trimStart: number; trimEnd: number }
+          > = {};
+          for (const [oldIdStr, trimValue] of Object.entries(
+            padWithProfileId.audioTrimSettings,
+          )) {
+            const oldId = Number(oldIdStr);
+            const newId = audioIdMap.get(oldId) || oldId;
+            if (typeof newId === "number") {
+              mappedTrim[newId] = trimValue;
+            }
+          }
+          padWithProfileId.audioTrimSettings = mappedTrim;
+        }
       }
 
       // Check if pad exists locally

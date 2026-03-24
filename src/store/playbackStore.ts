@@ -33,6 +33,7 @@ export interface ArmedTrackState {
   };
   audioFileIds: number[];
   playbackType: PlaybackType;
+  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
 }
 
 // Define the store's state and actions
@@ -154,6 +155,7 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
             activeProfileId: firstTrack.padInfo.profileId,
             currentPageIndex: firstTrack.padInfo.pageIndex,
             name: firstTrack.name,
+            audioTrimSettings: firstTrack.audioTrimSettings,
             onInstantFeedback: () => {
               console.log(
                 `[PlaybackStore] Armed track triggered: "${firstTrack.name}"`,

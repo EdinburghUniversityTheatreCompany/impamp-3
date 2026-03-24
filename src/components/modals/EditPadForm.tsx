@@ -6,7 +6,14 @@
  * @module components/modals/EditPadForm
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  lazy,
+  Suspense,
+} from "react";
 import {
   DragDropContext,
   Droppable,
@@ -19,6 +26,8 @@ import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
 import { getAudioFile, addAudioFile, PlaybackType } from "@/lib/db";
 import { DEFAULT_PAD_NAME } from "@/lib/constants";
+
+const WaveformTrimmer = lazy(() => import("@/components/WaveformTrimmer"));
 
 // Extension of the render props to include profile ID which is needed for sound uploads
 interface EditPadFormProps extends FormModalRenderProps<PadFormValues> {
@@ -45,6 +54,9 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
   const [sounds, setSounds] = useState<SoundListItem[]>([]);
   const [isLoadingNames, setIsLoadingNames] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [trimmingSound, setTrimmingSound] = useState<SoundListItem | null>(
+    null,
+  );
 
   // Keep track of whether we're doing the initial load
   const initialLoadRef = useRef(true);
@@ -273,19 +285,31 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                           className="p-2 flex items-center justify-between bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
                           data-testid={`edit-pad-sound-item-${sound.fileId}`}
                         >
-                          <span className="text-gray-800 dark:text-gray-200 truncate">
+                          <span className="text-gray-800 dark:text-gray-200 truncate flex-1">
                             {sound.name}
                           </span>
-                          <button
-                            onClick={() => handleRemoveSound(sound.dndId)}
-                            className="ml-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-bold"
-                            aria-label={`Remove ${sound.name}`}
-                            title={`Remove ${sound.name}`}
-                            data-testid={`edit-pad-remove-sound-${sound.fileId}`}
-                            type="button"
-                          >
-                            ✕
-                          </button>
+                          <div className="flex items-center gap-2 ml-2 shrink-0">
+                            <button
+                              onClick={() => setTrimmingSound(sound)}
+                              className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+                              aria-label={`Trim ${sound.name}`}
+                              title={`Trim ${sound.name}`}
+                              data-testid={`edit-pad-trim-sound-${sound.fileId}`}
+                              type="button"
+                            >
+                              Trim
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSound(sound.dndId)}
+                              className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-bold"
+                              aria-label={`Remove ${sound.name}`}
+                              title={`Remove ${sound.name}`}
+                              data-testid={`edit-pad-remove-sound-${sound.fileId}`}
+                              type="button"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </li>
                       )}
                     </Draggable>
@@ -297,6 +321,30 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           </DragDropContext>
         )}
       </div>
+
+      {/* Waveform Trimmer Overlay */}
+      {trimmingSound && (
+        <Suspense fallback={null}>
+          <WaveformTrimmer
+            audioFileId={trimmingSound.fileId}
+            audioFileName={trimmingSound.name}
+            trimStart={
+              values.audioTrimSettings?.[trimmingSound.fileId]?.trimStart ?? 0
+            }
+            trimEnd={
+              values.audioTrimSettings?.[trimmingSound.fileId]?.trimEnd ?? 0
+            }
+            onTrimChange={(trimStart, trimEnd) => {
+              const current = values.audioTrimSettings ?? {};
+              updateValue("audioTrimSettings", {
+                ...current,
+                [trimmingSound.fileId]: { trimStart, trimEnd },
+              });
+            }}
+            onClose={() => setTrimmingSound(null)}
+          />
+        </Suspense>
+      )}
 
       {/* Add Sounds Button */}
       <div>

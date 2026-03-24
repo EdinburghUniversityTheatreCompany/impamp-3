@@ -42,6 +42,7 @@ const EditPadModalContent = React.forwardRef<
     name: initialPadConfig.name || "Empty Pad",
     playbackType: initialPadConfig.playbackType || "sequential",
     audioFileIds: initialPadConfig.audioFileIds || [],
+    audioTrimSettings: initialPadConfig.audioTrimSettings,
   });
 
   // Memoized padState to prevent unnecessary recalculations
@@ -54,6 +55,7 @@ const EditPadModalContent = React.forwardRef<
       name: formValues.name,
       playbackType: formValues.playbackType,
       audioFileIds: formValues.audioFileIds,
+      audioTrimSettings: formValues.audioTrimSettings,
     }),
     [formValues, initialPadConfig, profileId, pageIndex, padIndex],
   );
@@ -88,6 +90,7 @@ const EditPadModalContent = React.forwardRef<
       name: padState.name,
       playbackType: padState.playbackType,
       audioFileIds: padState.audioFileIds,
+      audioTrimSettings: padState.audioTrimSettings,
       keyBinding: initialPadConfig.keyBinding, // Preserve original keybinding
     }),
   }));

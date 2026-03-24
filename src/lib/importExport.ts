@@ -476,6 +476,23 @@ async function importPadConfigurations(
       );
     }
 
+    // Map audioTrimSettings keys (old audioFileId -> new audioFileId)
+    let mappedTrimSettings:
+      | Record<number, { trimStart: number; trimEnd: number }>
+      | undefined;
+    if (pad.audioTrimSettings) {
+      mappedTrimSettings = {};
+      for (const [oldIdStr, trimValue] of Object.entries(
+        pad.audioTrimSettings,
+      )) {
+        const oldId = Number(oldIdStr);
+        const newId = audioIdMap.get(oldId);
+        if (newId !== undefined) {
+          mappedTrimSettings[newId] = trimValue;
+        }
+      }
+    }
+
     // Construct the new pad configuration using the updated structure
     const newPadData: Omit<PadConfiguration, "id"> = {
       profileId,
@@ -484,6 +501,7 @@ async function importPadConfigurations(
       keyBinding: pad.keyBinding,
       name: pad.name,
       audioFileIds: mappedAudioFileIds, // Use the mapped array
+      audioTrimSettings: mappedTrimSettings,
       playbackType: pad.playbackType || "sequential", // Use imported type or default
       createdAt: now,
       updatedAt: now,

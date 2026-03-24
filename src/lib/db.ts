@@ -43,6 +43,7 @@ export interface PadConfiguration {
   keyBinding?: string;
   name?: string;
   audioFileIds: number[];
+  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   playbackType: PlaybackType;
   createdAt: Date;
   updatedAt: Date;
