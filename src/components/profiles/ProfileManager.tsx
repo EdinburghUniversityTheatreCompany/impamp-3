@@ -63,7 +63,6 @@ export default function ProfileManager() {
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
 
   // Connect to shared profile state
-  const [showConnectForm, setShowConnectForm] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -96,12 +95,15 @@ export default function ProfileManager() {
 
   // State for Google Drive file handling
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
-  const [showDriveImportModal, setShowDriveImportModal] = useState(false);
+  const [driveFilesLoaded, setDriveFilesLoaded] = useState(false);
   const [driveActionStatus, setDriveActionStatus] = useState<
     "idle" | "loading" | "error" | "success"
   >("idle");
   const [driveActionError, setDriveActionError] = useState<string | null>(null);
   const [importingFileId, setImportingFileId] = useState<string | null>(null);
+  const [importedFileId, setImportedFileId] = useState<string | null>(null); // tracks last successfully connected file
+  const [driveConnectReadOnly, setDriveConnectReadOnly] = useState(false);
+  const [shareConnectReadOnly, setShareConnectReadOnly] = useState(false);
 
   // Hooks
   const {
@@ -249,16 +251,16 @@ export default function ProfileManager() {
     console.log("Logged out from Google");
   };
 
-  // Handle showing the Drive import modal and loading files
-  const handleShowDriveImportModal = async () => {
-    setShowDriveImportModal(true);
+  // Load Drive files inline (no modal)
+  const handleLoadDriveFiles = async () => {
     setDriveActionStatus("loading");
     setDriveActionError(null);
+    setImportedFileId(null);
 
     try {
-      // Use the hook's listAppFiles function to fetch ImpAmp profile files
       const files = await listAppFiles();
       setDriveFiles(files);
+      setDriveFilesLoaded(true);
       setDriveActionStatus("success");
     } catch (error) {
       console.error("Failed to load Drive files:", error);
@@ -322,8 +324,8 @@ export default function ProfileManager() {
     };
   };
 
-  const handleImportFromDrive = async (fileId: string) => {
-    setImportingFileId(fileId); // Track which file is being imported
+  const handleImportFromDrive = async (fileId: string, readOnly = false) => {
+    setImportingFileId(fileId);
     setDriveActionStatus("loading");
     setDriveActionError(null);
 
@@ -346,13 +348,16 @@ export default function ProfileManager() {
           .getState()
           .profiles.find((p) => !profileIdsBefore.has(p.id));
         if (newProfile?.id) {
-          await updateProfile(newProfile.id, { googleDriveFileId: fileId });
+          await updateProfile(newProfile.id, {
+            googleDriveFileId: fileId,
+            readOnly: readOnly || undefined,
+          });
         }
 
         console.log(
           `Successfully connected profile "${syncData.profile.name}" from Google Drive.`,
         );
-        setShowDriveImportModal(false);
+        setImportedFileId(fileId);
       } else {
         console.warn("Downloaded file data:", syncData);
         throw new Error(
@@ -414,11 +419,14 @@ export default function ProfileManager() {
         (p) => !profileIdsBefore.has(p.id),
       );
       if (newProfile?.id) {
-        await updateProfile(newProfile.id, { googleDriveFileId: fileId });
+        await updateProfile(newProfile.id, {
+          googleDriveFileId: fileId,
+          readOnly: shareConnectReadOnly || undefined,
+        });
       }
 
       setShareUrl("");
-      setShowConnectForm(false);
+      setShareConnectReadOnly(false);
     } catch (error) {
       console.error("Failed to connect to shared profile:", error);
       setConnectError(
@@ -638,72 +646,6 @@ export default function ProfileManager() {
                   </div>
                 </form>
               </div>
-
-              {/* Connect to Shared Profile */}
-              {isGoogleSignedIn && (
-                <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                      Connect to Shared Profile
-                    </h3>
-                    {!showConnectForm && (
-                      <button
-                        onClick={() => setShowConnectForm(true)}
-                        className="px-3 py-1.5 text-sm bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40"
-                      >
-                        Connect...
-                      </button>
-                    )}
-                  </div>
-
-                  {showConnectForm && (
-                    <form
-                      onSubmit={handleConnectSharedProfile}
-                      className="space-y-3"
-                    >
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Paste a Google Drive share link from a collaborator to
-                        create a local profile that syncs to their shared file.
-                      </p>
-                      <div>
-                        <input
-                          type="text"
-                          value={shareUrl}
-                          onChange={(e) => setShareUrl(e.target.value)}
-                          placeholder="https://drive.google.com/file/d/..."
-                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
-                          required
-                        />
-                      </div>
-                      {connectError && (
-                        <p className="text-xs text-red-600 dark:text-red-400">
-                          {connectError}
-                        </p>
-                      )}
-                      <div className="flex gap-2">
-                        <button
-                          type="submit"
-                          disabled={isConnecting}
-                          className="px-4 py-2 text-sm bg-teal-500 text-white rounded-md hover:bg-teal-600 transition-colors disabled:opacity-50"
-                        >
-                          {isConnecting ? "Connecting..." : "Connect"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowConnectForm(false);
-                            setShareUrl("");
-                            setConnectError(null);
-                          }}
-                          className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -1017,13 +959,10 @@ export default function ProfileManager() {
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
                   Google Drive Integration
                 </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                  Connect your Google account to enable profile synchronization
-                  via Google Drive&apos;s AppData folder (hidden from user).
-                </p>
 
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center space-x-4 mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4">
+                  {/* Sign in / user row */}
+                  <div className="flex items-center space-x-4">
                     {!isGoogleSignedIn ? (
                       <>
                         <button
@@ -1065,246 +1004,177 @@ export default function ProfileManager() {
                     )}
                   </div>
 
-                  {isGoogleSignedIn && (
-                    <div className="space-y-3">
-                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                        Profile synchronization actions (like Link, Sync Now,
-                        Unlink) are available on individual profile cards when
-                        the &apos;Profiles&apos; tab is selected.
-                      </p>
-
-                      {/* Google Drive Import Button */}
-                      <div className="mt-4">
-                        <button
-                          onClick={handleShowDriveImportModal}
-                          className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors w-full sm:w-auto"
-                        >
-                          <div className="flex items-center justify-center">
-                            <svg
-                              className="h-5 w-5 mr-2"
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M2 9.5A3.5 3.5 0 005.5 13H9v2.586l-1.293-1.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 15.586V13h2.5a4.5 4.5 0 10-.616-8.958 4.002 4.002 0 10-7.753 1.977A3.5 3.5 0 002 9.5zm9 3.5H9V8a1 1 0 012 0v5z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                            Connect Profile from Google Drive
-                          </div>
-                        </button>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                          Choose a profile from your Google Drive to connect and
-                          keep in sync.
-                        </p>
-                      </div>
-
-                      {driveActionStatus === "error" && driveActionError && (
-                        <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                          Drive Action Error: {driveActionError}
-                        </p>
-                      )}
-                      {driveHookStatus === "error" &&
-                        driveHookError &&
-                        !driveActionError && (
-                          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                            Sync Error: {driveHookError}
-                          </p>
-                        )}
-                      {driveHookStatus === "conflict" && driveHookError && (
-                        <p className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
-                          Sync Conflict: {driveHookError}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
                   {googleApiError && !isGoogleSignedIn && (
-                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                    <p className="text-xs text-red-600 dark:text-red-400">
                       Auth Error: {googleApiError}
                     </p>
                   )}
+
+                  {isGoogleSignedIn && (
+                    <>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Profile sync actions (Link, Sync Now, Unlink) are on
+                        individual profile cards in the{" "}
+                        <button
+                          onClick={() => setActiveTab("profiles")}
+                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          Profiles tab
+                        </button>
+                        .
+                      </p>
+
+                      {/* ── Connect from your Drive ── */}
+                      <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                            Connect from your Drive
+                          </h4>
+                          <button
+                            onClick={handleLoadDriveFiles}
+                            disabled={driveActionStatus === "loading"}
+                            className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50 transition-colors"
+                          >
+                            {driveActionStatus === "loading"
+                              ? "Loading..."
+                              : driveFilesLoaded
+                                ? "Refresh"
+                                : "Load my Drive profiles"}
+                          </button>
+                        </div>
+
+                        {driveActionStatus === "error" && driveActionError && (
+                          <p className="text-xs text-red-600 dark:text-red-400 mb-2">
+                            {driveActionError}
+                          </p>
+                        )}
+
+                        {driveFilesLoaded &&
+                          driveActionStatus === "success" && (
+                            <>
+                              {driveFiles.length === 0 ? (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                                  No ImpAmp profile files found in your Drive.
+                                </p>
+                              ) : (
+                                <ul className="divide-y divide-gray-200 dark:divide-gray-700 border rounded dark:border-gray-600">
+                                  {driveFiles.map((file) => (
+                                    <li
+                                      key={file.id}
+                                      className={`flex items-center px-3 py-2 gap-3 ${
+                                        importedFileId === file.id
+                                          ? "bg-green-50 dark:bg-green-900/20"
+                                          : "hover:bg-gray-50 dark:hover:bg-gray-700"
+                                      }`}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                                          {file.name}
+                                        </p>
+                                        {file.modifiedTime && (
+                                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                                            {new Date(
+                                              file.modifiedTime,
+                                            ).toLocaleString()}
+                                          </p>
+                                        )}
+                                      </div>
+                                      {importedFileId === file.id ? (
+                                        <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
+                                          Connected!
+                                        </span>
+                                      ) : (
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <label className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                                            <input
+                                              type="checkbox"
+                                              checked={driveConnectReadOnly}
+                                              onChange={(e) =>
+                                                setDriveConnectReadOnly(
+                                                  e.target.checked,
+                                                )
+                                              }
+                                              className="rounded"
+                                            />
+                                            Read-only
+                                          </label>
+                                          <button
+                                            onClick={() =>
+                                              handleImportFromDrive(
+                                                file.id,
+                                                driveConnectReadOnly,
+                                              )
+                                            }
+                                            disabled={
+                                              importingFileId === file.id
+                                            }
+                                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50 transition-colors"
+                                          >
+                                            {importingFileId === file.id
+                                              ? "Connecting..."
+                                              : "Connect"}
+                                          </button>
+                                        </div>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </>
+                          )}
+                      </div>
+
+                      {/* ── Connect to shared profile ── */}
+                      <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                          Connect to shared profile
+                        </h4>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                          Paste a Google Drive share link from a collaborator.
+                        </p>
+                        <form
+                          onSubmit={handleConnectSharedProfile}
+                          className="space-y-2"
+                        >
+                          <input
+                            type="text"
+                            value={shareUrl}
+                            onChange={(e) => setShareUrl(e.target.value)}
+                            placeholder="https://drive.google.com/file/d/..."
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
+                            required
+                          />
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={shareConnectReadOnly}
+                                onChange={(e) =>
+                                  setShareConnectReadOnly(e.target.checked)
+                                }
+                                className="rounded"
+                              />
+                              Read-only
+                            </label>
+                            <button
+                              type="submit"
+                              disabled={isConnecting}
+                              className="px-3 py-1.5 text-sm bg-teal-500 text-white rounded-md hover:bg-teal-600 transition-colors disabled:opacity-50"
+                            >
+                              {isConnecting ? "Connecting..." : "Connect"}
+                            </button>
+                          </div>
+                          {connectError && (
+                            <p className="text-xs text-red-600 dark:text-red-400">
+                              {connectError}
+                            </p>
+                          )}
+                        </form>
+                      </div>
+                    </>
+                  )}
                 </div>
               </section>
-
-              {/* Drive Import Modal */}
-              {showDriveImportModal && (
-                <div className="fixed inset-0 z-60 bg-black/60 flex items-center justify-center p-4">
-                  <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                        Connect Profile from Google Drive
-                      </h3>
-                      <button
-                        onClick={() => setShowDriveImportModal(false)}
-                        className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
-                        aria-label="Close"
-                      >
-                        <svg
-                          className="h-5 w-5"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M6 18L18 6M6 6l12 12"
-                          />
-                        </svg>
-                      </button>
-                    </div>
-
-                    {/* Loading State */}
-                    {driveActionStatus === "loading" && (
-                      <div className="flex flex-col items-center justify-center py-8">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-                        <p className="mt-4 text-gray-600 dark:text-gray-400">
-                          Loading files from Google Drive...
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Error State */}
-                    {driveActionStatus === "error" && driveActionError && (
-                      <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-md mb-4">
-                        <p className="text-red-600 dark:text-red-400">
-                          <span className="font-medium">Error:</span>{" "}
-                          {driveActionError}
-                        </p>
-                        <button
-                          onClick={handleShowDriveImportModal}
-                          className="mt-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          Try Again
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Success State with No Files */}
-                    {driveActionStatus === "success" &&
-                      driveFiles.length === 0 && (
-                        <div className="text-center py-8">
-                          <svg
-                            className="mx-auto h-12 w-12 text-gray-400"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
-                            />
-                          </svg>
-                          <p className="mt-2 text-gray-600 dark:text-gray-400">
-                            No ImpAmp profile files found in your Google Drive.
-                          </p>
-                          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                            Export a profile first to create files in your
-                            Google Drive.
-                          </p>
-                        </div>
-                      )}
-
-                    {/* File List */}
-                    {driveActionStatus === "success" &&
-                      driveFiles.length > 0 && (
-                        <div className="mb-4">
-                          <div className="max-h-60 overflow-y-auto border rounded dark:border-gray-600">
-                            <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                              {driveFiles.map((file) => (
-                                <li
-                                  key={file.id}
-                                  className="hover:bg-gray-50 dark:hover:bg-gray-700"
-                                >
-                                  <button
-                                    onClick={() =>
-                                      handleImportFromDrive(file.id)
-                                    }
-                                    disabled={importingFileId === file.id}
-                                    className="w-full text-left p-3 flex items-center space-x-3"
-                                  >
-                                    <div className="flex-shrink-0">
-                                      {importingFileId === file.id ? (
-                                        <div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-                                      ) : (
-                                        <svg
-                                          className="h-6 w-6 text-blue-500"
-                                          fill="none"
-                                          viewBox="0 0 24 24"
-                                          stroke="currentColor"
-                                        >
-                                          <path
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            strokeWidth={2}
-                                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                                          />
-                                        </svg>
-                                      )}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-                                        {file.name}
-                                      </p>
-                                      {file.modifiedTime && (
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                                          Modified:{" "}
-                                          {new Date(
-                                            file.modifiedTime,
-                                          ).toLocaleString()}
-                                        </p>
-                                      )}
-                                    </div>
-                                    {!importingFileId && (
-                                      <div className="flex-shrink-0">
-                                        <svg
-                                          className="h-5 w-5 text-gray-400"
-                                          fill="none"
-                                          viewBox="0 0 24 24"
-                                          stroke="currentColor"
-                                        >
-                                          <path
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            strokeWidth={2}
-                                            d="M9 5l7 7-7 7"
-                                          />
-                                        </svg>
-                                      </div>
-                                    )}
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        </div>
-                      )}
-
-                    {/* Action Buttons */}
-                    <div className="flex justify-end space-x-3">
-                      {driveActionStatus === "success" && (
-                        <button
-                          onClick={handleShowDriveImportModal}
-                          className="px-4 py-2 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
-                        >
-                          Refresh Files
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setShowDriveImportModal(false)}
-                        className="px-4 py-2 text-sm bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
