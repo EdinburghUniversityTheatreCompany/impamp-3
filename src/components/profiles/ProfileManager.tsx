@@ -18,6 +18,7 @@ export default function ProfileManager() {
     isProfileManagerOpen,
     closeProfileManager,
     createProfile,
+    updateProfile,
     importProfileFromJSON,
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
@@ -60,6 +61,12 @@ export default function ProfileManager() {
     totalAudioFiles: number;
   } | null>(null);
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
+
+  // Connect to shared profile state
+  const [showConnectForm, setShowConnectForm] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -324,22 +331,27 @@ export default function ProfileManager() {
       const syncData = await downloadDriveFile(fileId);
 
       if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
-        // Convert the sync format to export format before importing
         const exportData = convertSyncToExportFormat(syncData);
+        exportData.profile = {
+          ...exportData.profile,
+          id: undefined,
+          syncType: "googleDrive",
+        };
 
-        // Log the converted data for debugging
-        console.log("Converting sync data to export format:", {
-          syncVersion: syncData._syncFormatVersion,
-          exportVersion: exportData.exportVersion,
-        });
-
-        // Import using the converted format
+        const profileIdsBefore = new Set(profiles.map((p) => p.id));
         await importProfileFromJSON(JSON.stringify(exportData));
 
+        // Link the newly created profile to the Drive file for ongoing sync
+        const newProfile = useProfileStore
+          .getState()
+          .profiles.find((p) => !profileIdsBefore.has(p.id));
+        if (newProfile?.id) {
+          await updateProfile(newProfile.id, { googleDriveFileId: fileId });
+        }
+
         console.log(
-          `Successfully imported profile "${syncData.profile.name}" from Google Drive.`,
+          `Successfully connected profile "${syncData.profile.name}" from Google Drive.`,
         );
-        // Close modal on success
         setShowDriveImportModal(false);
       } else {
         console.warn("Downloaded file data:", syncData);
@@ -358,6 +370,64 @@ export default function ProfileManager() {
       setDriveActionStatus("error");
     } finally {
       setImportingFileId(null); // Clear the loading state
+    }
+  };
+
+  const handleConnectSharedProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setConnectError(null);
+
+    // Extract file ID from a Drive URL, or treat the input as a raw file ID
+    const match = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    const fileId = match ? match[1] : shareUrl.trim();
+
+    if (!fileId) {
+      setConnectError(
+        "Please enter a valid Google Drive share URL or file ID.",
+      );
+      return;
+    }
+
+    setIsConnecting(true);
+    try {
+      const syncData = await downloadDriveFile(fileId);
+
+      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
+        throw new Error("Not a valid ImpAmp profile file.");
+      }
+
+      // Record existing profile IDs so we can identify the newly created one
+      const profileIdsBefore = new Set(profiles.map((p) => p.id));
+
+      // Convert sync format to export format and import as a new local profile
+      const exportData = convertSyncToExportFormat(syncData);
+      exportData.profile = {
+        ...exportData.profile,
+        id: undefined,
+        syncType: "googleDrive",
+      };
+      await importProfileFromJSON(JSON.stringify(exportData));
+
+      // Find the newly created profile and link it to the shared Drive file
+      const updatedProfiles = useProfileStore.getState().profiles;
+      const newProfile = updatedProfiles.find(
+        (p) => !profileIdsBefore.has(p.id),
+      );
+      if (newProfile?.id) {
+        await updateProfile(newProfile.id, { googleDriveFileId: fileId });
+      }
+
+      setShareUrl("");
+      setShowConnectForm(false);
+    } catch (error) {
+      console.error("Failed to connect to shared profile:", error);
+      setConnectError(
+        error instanceof Error
+          ? error.message
+          : "Failed to connect to shared profile.",
+      );
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -568,6 +638,72 @@ export default function ProfileManager() {
                   </div>
                 </form>
               </div>
+
+              {/* Connect to Shared Profile */}
+              {isGoogleSignedIn && (
+                <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                      Connect to Shared Profile
+                    </h3>
+                    {!showConnectForm && (
+                      <button
+                        onClick={() => setShowConnectForm(true)}
+                        className="px-3 py-1.5 text-sm bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40"
+                      >
+                        Connect...
+                      </button>
+                    )}
+                  </div>
+
+                  {showConnectForm && (
+                    <form
+                      onSubmit={handleConnectSharedProfile}
+                      className="space-y-3"
+                    >
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Paste a Google Drive share link from a collaborator to
+                        create a local profile that syncs to their shared file.
+                      </p>
+                      <div>
+                        <input
+                          type="text"
+                          value={shareUrl}
+                          onChange={(e) => setShareUrl(e.target.value)}
+                          placeholder="https://drive.google.com/file/d/..."
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
+                          required
+                        />
+                      </div>
+                      {connectError && (
+                        <p className="text-xs text-red-600 dark:text-red-400">
+                          {connectError}
+                        </p>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          disabled={isConnecting}
+                          className="px-4 py-2 text-sm bg-teal-500 text-white rounded-md hover:bg-teal-600 transition-colors disabled:opacity-50"
+                        >
+                          {isConnecting ? "Connecting..." : "Connect"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowConnectForm(false);
+                            setShareUrl("");
+                            setConnectError(null);
+                          }}
+                          className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -955,12 +1091,12 @@ export default function ProfileManager() {
                                 clipRule="evenodd"
                               />
                             </svg>
-                            Import Profiles from Google Drive
+                            Connect Profile from Google Drive
                           </div>
                         </button>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                          Choose from previously exported profiles stored in
-                          your Google Drive.
+                          Choose a profile from your Google Drive to connect and
+                          keep in sync.
                         </p>
                       </div>
 
@@ -998,7 +1134,7 @@ export default function ProfileManager() {
                   <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-lg w-full">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                        Import Profile from Google Drive
+                        Connect Profile from Google Drive
                       </h3>
                       <button
                         onClick={() => setShowDriveImportModal(false)}

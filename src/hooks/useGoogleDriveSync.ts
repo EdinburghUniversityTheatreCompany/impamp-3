@@ -24,6 +24,7 @@ import {
   listAppFiles,
   downloadDriveFile,
   uploadDriveFile,
+  createFilePermission,
 } from "@/lib/googleDrive/api";
 import { syncProfile, applyConflictResolution } from "@/lib/googleDrive/sync";
 import { getLocalProfileSyncData } from "@/lib/googleDrive/dataAccess";
@@ -46,6 +47,7 @@ type UploadDriveFileFn = (
 ) => Promise<DriveFile>;
 type FindDriveFileByIdFn = (fileId: string) => Promise<DriveFile | null>;
 type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
+type ShareDriveFileFn = (fileId: string) => Promise<void>;
 
 // Hook return type interface
 interface GoogleDriveSyncHookReturn {
@@ -64,6 +66,7 @@ interface GoogleDriveSyncHookReturn {
   uploadDriveFile: UploadDriveFileFn;
   findDriveFileById: FindDriveFileByIdFn;
   findDriveFileByName: FindDriveFileByNameFn;
+  shareDriveFile: ShareDriveFileFn;
 }
 
 /**
@@ -372,6 +375,17 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [currentTokenInfo, handleTokenRefresh],
   );
 
+  const shareFile = useCallback(
+    async (fileId: string): Promise<void> => {
+      return await createFilePermission(
+        fileId,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
   // Return the hook API
   return {
     syncStatus,
@@ -385,6 +399,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     uploadDriveFile: uploadFile,
     findDriveFileById: findFileById,
     findDriveFileByName: findFileByName,
+    shareDriveFile: shareFile,
   };
 };
 

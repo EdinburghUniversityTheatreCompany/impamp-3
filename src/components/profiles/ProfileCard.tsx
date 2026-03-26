@@ -52,6 +52,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const {
     syncProfile,
     uploadDriveFile,
+    shareDriveFile,
     syncStatus: driveHookStatus,
     error: driveHookError,
   } = useGoogleDriveSync();
@@ -68,6 +69,10 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [isPickerLoading, setIsPickerLoading] = useState(false); // State for picker loading
   const [lastSyncInitiatedByThisCard, setLastSyncInitiatedByThisCard] =
     useState(false); // Track if this card triggered the last sync
+
+  // Share state
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Sync pause states
   const [isPausing, setIsPausing] = useState(false);
@@ -199,6 +204,26 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       setIsUnlinking(false);
     }
   }, [profile.id, profile.name, updateProfile]);
+
+  const handleShareDriveFile = useCallback(async () => {
+    if (!profile.googleDriveFileId) return;
+    setIsSharing(true);
+    setCardError(null);
+    try {
+      await shareDriveFile(profile.googleDriveFileId);
+      const shareUrl = `https://drive.google.com/file/d/${profile.googleDriveFileId}/view`;
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 3000);
+    } catch (error) {
+      console.error("Failed to share Drive file:", error);
+      setCardError(
+        error instanceof Error ? error.message : "Failed to share profile.",
+      );
+    } finally {
+      setIsSharing(false);
+    }
+  }, [profile.googleDriveFileId, shareDriveFile]);
 
   // Create ref for the drive-picker component
   const pickerRef = useRef<HTMLElement | null>(null);
@@ -635,6 +660,18 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                     )}
                   </div>
                 ) : null}
+
+                <button
+                  onClick={handleShareDriveFile}
+                  disabled={isSharing}
+                  className="px-3 py-1 text-xs bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40 disabled:opacity-50"
+                >
+                  {isSharing
+                    ? "Sharing..."
+                    : shareCopied
+                      ? "Link copied!"
+                      : "Share"}
+                </button>
 
                 <button
                   onClick={handleUnlinkDriveFile}

@@ -27,16 +27,17 @@ async function authenticatedRequest<T>(
   }
 
   try {
-    // Set up headers with auth token
+    // Set up headers with auth token, keeping any extra headers from options
+    const { headers: extraHeaders, ...restOptions } = options;
     const headers = {
       Authorization: `Bearer ${tokenInfo.accessToken}`,
-      ...options.headers,
+      ...extraHeaders,
     };
 
     const response = await fetch(url, {
       method,
       headers,
-      ...options,
+      ...restOptions,
     });
 
     // Handle authentication errors
@@ -53,13 +54,13 @@ async function authenticatedRequest<T>(
         // Retry the request with new token
         const retryHeaders = {
           Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
-          ...options.headers,
+          ...extraHeaders,
         };
 
         const retryResponse = await fetch(url, {
           method,
           headers: retryHeaders,
-          ...options,
+          ...restOptions,
         });
 
         if (retryResponse.ok) {
@@ -231,6 +232,36 @@ export const downloadDriveFile = async (
     console.error(`Error downloading file ${fileId}:`, err);
     throw err;
   }
+};
+
+/**
+ * Set a file permission on Google Drive (e.g. make it editable by anyone with the link)
+ * @param fileId The file ID to update permissions on
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ */
+export const createFilePermission = async (
+  fileId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`;
+  const body = JSON.stringify({ type: "anyone", role: "writer" });
+
+  await authenticatedRequest<unknown>(
+    url,
+    "POST",
+    tokenInfo,
+    {
+      headers: { "Content-Type": "application/json" },
+      body,
+    },
+    refreshCallback,
+  );
 };
 
 /**
