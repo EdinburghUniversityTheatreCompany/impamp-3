@@ -200,6 +200,14 @@ test.describe('Backup Reminders', () => {
                 profile.backupReminderPeriod = oneMonthMs;
                 // updatedAt matches lastBackedUpAt — no changes since backup
                 profile.updatedAt = new Date(backedUpAt);
+                // Also backdate _fieldsModified so no field appears newer than lastBackedUpAt
+                if (profile._fieldsModified) {
+                  const backdated: Record<string, number> = {};
+                  for (const key of Object.keys(profile._fieldsModified)) {
+                    backdated[key] = backedUpAt - 1000;
+                  }
+                  profile._fieldsModified = backdated;
+                }
                 const putRequest = store.put(profile);
                 putRequest.onsuccess = () => resolve(true);
                 putRequest.onerror = () => reject(new Error(`Failed to update profile: ${putRequest.error?.message}`));
