@@ -502,6 +502,58 @@ export const detectProfileConflicts = (
     requiresManualResolution = true;
   }
 
+  // --- Translate remote audio IDs to local IDs in merged pad configs ---
+  // audioFileIds are local IndexedDB auto-increment keys (device-specific).
+  // When a remote pad config "wins" a field merge, its audioFileIds reference
+  // remote IDs that may not exist locally. Translate them via filename matching.
+  if (remoteData.audioFiles?.length) {
+    const localAudioByName = new Map(
+      localData.audioFiles.map((f) => [f.name, f.id]),
+    );
+
+    // Map: remote audio ID → local audio ID (matched by filename)
+    const remoteToLocalIdMap = new Map<number, number>();
+    for (const remoteFile of remoteData.audioFiles) {
+      const localId = localAudioByName.get(remoteFile.name);
+      if (localId !== undefined) {
+        remoteToLocalIdMap.set(remoteFile.id, localId);
+      }
+    }
+
+    if (remoteToLocalIdMap.size > 0) {
+      mergedData.padConfigurations = mergedData.padConfigurations.map((pad) => {
+        const translatedIds = pad.audioFileIds?.map(
+          (id) => remoteToLocalIdMap.get(id) ?? id,
+        );
+
+        let translatedTrimSettings = pad.audioTrimSettings;
+        if (translatedTrimSettings) {
+          const newTrim: typeof translatedTrimSettings = {};
+          for (const [idStr, trim] of Object.entries(translatedTrimSettings)) {
+            const id = Number(idStr);
+            newTrim[remoteToLocalIdMap.get(id) ?? id] = trim;
+          }
+          translatedTrimSettings = newTrim;
+        }
+
+        return {
+          ...pad,
+          audioFileIds: translatedIds ?? pad.audioFileIds,
+          audioTrimSettings: translatedTrimSettings,
+        };
+      });
+    }
+
+    // Add audio files from remote that don't exist locally so updateLocalData
+    // can import them and build the correct ID mapping for new files.
+    const localAudioNames = new Set(localData.audioFiles.map((f) => f.name));
+    for (const remoteFile of remoteData.audioFiles) {
+      if (!localAudioNames.has(remoteFile.name)) {
+        mergedData.audioFiles.push(remoteFile);
+      }
+    }
+  }
+
   // --- Final Merge Metadata ---
   // Set the timestamp for the *merged* data before returning/uploading
   mergedData._lastSyncTimestamp = Date.now();
