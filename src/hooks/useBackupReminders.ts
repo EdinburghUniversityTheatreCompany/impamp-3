@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { Profile } from "@/lib/db";
+import { Profile, hasProfileChangedSince } from "@/lib/db";
 
 /**
  * Hook to identify profiles that require a backup reminder.
@@ -14,59 +14,47 @@ export function useBackupReminders(): Profile[] {
   >([]);
 
   useEffect(() => {
-    console.log(
-      "[useBackupReminders] Checking profiles for backup reminders...",
-    );
-    const now = Date.now();
-    const remindersNeeded: Profile[] = [];
+    const checkReminders = async () => {
+      const now = Date.now();
+      const remindersNeeded: Profile[] = [];
 
-    profiles.forEach((profile) => {
-      // Skip if reminder period is set to 'never' (-1) or if essential data is missing
-      if (
-        profile.backupReminderPeriod === -1 ||
-        profile.lastBackedUpAt === undefined ||
-        profile.backupReminderPeriod === undefined
-      ) {
-        return;
-      }
+      for (const profile of profiles) {
+        if (
+          profile.backupReminderPeriod === -1 ||
+          profile.lastBackedUpAt === undefined ||
+          profile.backupReminderPeriod === undefined
+        ) {
+          continue;
+        }
 
-      const timeSinceLastBackup = now - profile.lastBackedUpAt;
-      const reminderPeriod = profile.backupReminderPeriod;
+        const timeSinceLastBackup = now - profile.lastBackedUpAt;
+        if (timeSinceLastBackup <= profile.backupReminderPeriod) continue;
 
-      console.log(
-        `[useBackupReminders] Profile: ${profile.name} (ID: ${profile.id}), Last Backup: ${new Date(profile.lastBackedUpAt).toISOString()}, Reminder Period (ms): ${reminderPeriod}, Time Since Last Backup (ms): ${timeSinceLastBackup}`,
-      );
+        // Time is overdue — only remind if something actually changed since last backup
+        const profileMetaChanged =
+          profile.updatedAt.getTime() > profile.lastBackedUpAt;
+        const contentChanged =
+          profileMetaChanged ||
+          (await hasProfileChangedSince(profile.id!, profile.lastBackedUpAt));
+        if (!contentChanged) continue;
 
-      if (timeSinceLastBackup > reminderPeriod) {
-        console.log(
-          `[useBackupReminders] Reminder needed for profile: ${profile.name} (ID: ${profile.id})`,
-        );
         remindersNeeded.push(profile);
       }
-    });
 
-    // Only update state if the list of profiles needing reminders has actually changed
-    // This prevents unnecessary re-renders if the list remains the same
-    setProfilesNeedingReminder((currentReminders) => {
-      const currentIds = new Set(currentReminders.map((p) => p.id));
-      const newIds = new Set(remindersNeeded.map((p) => p.id));
+      setProfilesNeedingReminder((current) => {
+        const currentIds = new Set(current.map((p) => p.id));
+        if (
+          currentIds.size !== remindersNeeded.length ||
+          !remindersNeeded.every((p) => currentIds.has(p.id))
+        ) {
+          return remindersNeeded;
+        }
+        return current;
+      });
+    };
 
-      if (
-        currentIds.size !== newIds.size ||
-        !remindersNeeded.every((p) => currentIds.has(p.id))
-      ) {
-        console.log(
-          "[useBackupReminders] Updating state with profiles needing reminders:",
-          remindersNeeded.map((p) => p.name),
-        );
-        return remindersNeeded;
-      }
-      console.log(
-        "[useBackupReminders] No change in profiles needing reminders.",
-      );
-      return currentReminders; // Return the existing state if no change
-    });
-  }, [profiles]); // Re-run the effect when the profiles list changes
+    checkReminders();
+  }, [profiles]);
 
   return profilesNeedingReminder;
 }

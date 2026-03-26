@@ -174,6 +174,55 @@ test.describe('Backup Reminders', () => {
     await expect(reminderBanner).toBeHidden();
   });
 
+  test('Reminder does NOT appear when backup is overdue but no changes were made', async ({ page }) => {
+    // Simulate: user backed up, then nothing changed, but time has passed
+    await page.evaluate(
+      (args) => {
+        const { profileName, twoMonthsMs, oneMonthMs } = args;
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open('impamp3DB');
+          request.onerror = () => reject(new Error(`IndexedDB error: ${request.error?.message}`));
+          request.onsuccess = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            if (!db.objectStoreNames.contains('profiles')) {
+              db.close();
+              return reject(new Error('Profiles object store not found'));
+            }
+            const transaction = db.transaction('profiles', 'readwrite');
+            const store = transaction.objectStore('profiles');
+            const index = store.index('name');
+            const getRequest = index.get(profileName);
+            getRequest.onsuccess = () => {
+              const profile = getRequest.result;
+              if (profile) {
+                const backedUpAt = Date.now() - twoMonthsMs;
+                profile.lastBackedUpAt = backedUpAt;
+                profile.backupReminderPeriod = oneMonthMs;
+                // updatedAt matches lastBackedUpAt — no changes since backup
+                profile.updatedAt = new Date(backedUpAt);
+                const putRequest = store.put(profile);
+                putRequest.onsuccess = () => resolve(true);
+                putRequest.onerror = () => reject(new Error(`Failed to update profile: ${putRequest.error?.message}`));
+              } else {
+                reject(new Error(`Profile "${profileName}" not found`));
+              }
+            };
+            getRequest.onerror = () => reject(new Error(`Failed to get profile: ${getRequest.error?.message}`));
+            transaction.oncomplete = () => db.close();
+            transaction.onerror = () => reject(new Error(`Transaction error: ${transaction.error?.message}`));
+          };
+        });
+      },
+      { profileName, twoMonthsMs, oneMonthMs },
+    );
+
+    await page.reload();
+    await page.waitForSelector('[id^="pad-"]');
+
+    const reminderBanner = page.locator('[data-testid="backup-reminder-banner"]');
+    await expect(reminderBanner).toBeHidden();
+  });
+
   test('Reminder does not appear when set to "Never"', async ({ page }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue ---
     // (Same evaluate logic as 'Reminder appears when backup is overdue' test)

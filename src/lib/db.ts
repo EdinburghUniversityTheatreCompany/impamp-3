@@ -761,6 +761,31 @@ export async function getAllProfiles(): Promise<Profile[]> {
   return db.getAll("profiles");
 }
 
+export async function hasProfileChangedSince(
+  profileId: number,
+  since: number,
+): Promise<boolean> {
+  const db = await getDb();
+
+  const padTx = db.transaction("padConfigurations", "readonly");
+  const pads = await padTx
+    .objectStore("padConfigurations")
+    .index("profileId")
+    .getAll(profileId);
+  await padTx.done;
+  if (pads.some((pad) => pad.updatedAt.getTime() > since)) return true;
+
+  const pageTx = db.transaction("pageMetadata", "readonly");
+  const pages = await pageTx
+    .objectStore("pageMetadata")
+    .index("profileId")
+    .getAll(profileId);
+  await pageTx.done;
+  if (pages.some((page) => page.updatedAt.getTime() > since)) return true;
+
+  return false;
+}
+
 // Add or update a pad configuration (Updated)
 export async function upsertPadConfiguration(
   padConfig: Omit<
