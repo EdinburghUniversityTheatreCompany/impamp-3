@@ -192,30 +192,34 @@ export const syncProfile = async (
     } else {
       // No conflicts, or automatically merged
       console.log(`Auto-merging/updating profile ${profileId}`);
-      const driveFileName = getProfileSyncFilename(mergedData.profile.name);
 
-      // Set the timestamp *before* uploading
       mergedData._lastSyncTimestamp = Date.now();
 
-      // 4. Upload Merged Data to Drive (Create or Update)
-      // Ensure fileId is never undefined by explicitly using null if fileId is falsy
-      const uploadedFile = await uploadDriveFile(
-        driveFileName,
-        mergedData,
-        fileId !== undefined ? fileId : null,
-        profileId,
-        tokenInfo,
-        refreshCallback,
-      );
+      if (localProfile.readOnly) {
+        // Read-only: apply remote changes locally but never write back to Drive
+        console.log(`Profile ${profileId} is read-only — skipping upload.`);
+        await updateLocalData(profileId, mergedData);
+      } else {
+        // 4. Upload Merged Data to Drive (Create or Update)
+        const driveFileName = getProfileSyncFilename(mergedData.profile.name);
+        const uploadedFile = await uploadDriveFile(
+          driveFileName,
+          mergedData,
+          fileId !== undefined ? fileId : null,
+          profileId,
+          tokenInfo,
+          refreshCallback,
+        );
 
-      // 5. Update Local Data with Merged Data
-      await updateLocalData(profileId, mergedData);
+        // 5. Update Local Data with Merged Data
+        await updateLocalData(profileId, mergedData);
 
-      // 6. Ensure local profile has the correct file ID
-      if (uploadedFile.id !== fileId) {
-        await updateProfile(profileId, {
-          googleDriveFileId: uploadedFile.id,
-        });
+        // 6. Ensure local profile has the correct file ID
+        if (uploadedFile.id !== fileId) {
+          await updateProfile(profileId, {
+            googleDriveFileId: uploadedFile.id,
+          });
+        }
       }
 
       onStatusChange("success");

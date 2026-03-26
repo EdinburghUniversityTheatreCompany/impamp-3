@@ -19,6 +19,7 @@ export interface Profile {
   name: string;
   syncType: SyncType;
   googleDriveFileId?: string | null; // Link to the specific file in user's Drive
+  readOnly?: boolean; // If true, sync only downloads from Drive, never uploads
   activePadBehavior?: ActivePadBehavior;
   syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
   lastBackedUpAt: number;
