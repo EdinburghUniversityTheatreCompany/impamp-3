@@ -438,7 +438,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               onClick={handleActivate}
               className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40"
             >
-              Activate
+              Use This Profile
             </button>
           )}
         </div>
