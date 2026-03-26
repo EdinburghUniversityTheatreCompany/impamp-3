@@ -162,8 +162,20 @@ export const updateLocalData = async (
   const pageCompoundIndex = pageStore.index("profilePage");
 
   try {
-    // 1. Update Profile
-    const profileWithId = { ...data.profile, id: profileId };
+    // 1. Update Profile — preserve local-only fields that must not be overwritten by remote
+    const existingLocalProfile = await profileStore.get(profileId);
+    const profileWithId = {
+      ...data.profile,
+      id: profileId,
+      name: existingLocalProfile?.name ?? data.profile.name,
+      readOnly: existingLocalProfile?.readOnly ?? data.profile.readOnly,
+      syncType: existingLocalProfile?.syncType ?? data.profile.syncType,
+      googleDriveFileId:
+        existingLocalProfile?.googleDriveFileId ??
+        data.profile.googleDriveFileId,
+      syncPausedUntil:
+        existingLocalProfile?.syncPausedUntil ?? data.profile.syncPausedUntil,
+    };
     await profileStore.put(profileWithId);
 
     // 2. Update Pad Configurations (Upsert/Delete logic)
