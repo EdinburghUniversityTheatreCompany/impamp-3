@@ -420,7 +420,9 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           </h3>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {profile.syncType === "googleDrive"
-              ? "Google Drive Sync"
+              ? profile.readOnly
+                ? "Google Drive Sync (read-only)"
+                : "Google Drive Sync"
               : "Local Storage Only"}
           </p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
@@ -572,7 +574,11 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                   disabled={isSyncingNow || isSyncPaused(profile.id!)}
                   className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
                 >
-                  {isSyncingNow ? "Syncing..." : "Sync Now"}
+                  {isSyncingNow
+                    ? "Syncing..."
+                    : profile.readOnly
+                      ? "Update from Drive"
+                      : "Sync Now"}
                 </button>
 
                 {/* Pause Sync Button and Dropdown */}
