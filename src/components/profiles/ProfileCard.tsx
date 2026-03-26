@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { format, formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
@@ -40,7 +40,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     updateProfile,
     deleteProfile,
     isGoogleSignedIn,
-    googleAccessToken,
     needsReauth,
     openProfileManager,
   } = useProfileStore();
@@ -66,7 +65,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [isSyncingNow, setIsSyncingNow] = useState(false);
   const [isUnlinking, setIsUnlinking] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null); // Local error state for card actions
-  const [isPickerLoading, setIsPickerLoading] = useState(false); // State for picker loading
   const [lastSyncInitiatedByThisCard, setLastSyncInitiatedByThisCard] =
     useState(false); // Track if this card triggered the last sync
 
@@ -80,16 +78,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [selectedPauseDuration, setSelectedPauseDuration] =
     useState<string>("1h");
   const [showPauseOptions, setShowPauseOptions] = useState(false);
-
-  // Dynamically import the Google Drive Picker component on the client side only
-  useEffect(() => {
-    // Only import the component in the browser
-    if (typeof window !== "undefined") {
-      import("@googleworkspace/drive-picker-element").catch((err) => {
-        console.error("Error importing Google Drive Picker component:", err);
-      });
-    }
-  }, []);
 
   const handleDelete = async () => {
     if (isActive) {
@@ -181,6 +169,38 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   }, [profile.id, syncProfile]);
 
+  const handleSyncToGoogleDrive = useCallback(async () => {
+    if (!profile.id) return;
+    setIsLinking(true);
+    setCardError(null);
+    try {
+      const syncData = await getLocalProfileSyncData(profile.id);
+      if (!syncData) throw new Error("Could not load profile data.");
+
+      const fileName = getProfileSyncFilename(profile.name);
+      const uploadedFile = await uploadDriveFile(
+        fileName,
+        syncData,
+        null,
+        profile.id,
+      );
+
+      await updateProfile(profile.id, {
+        googleDriveFileId: uploadedFile.id,
+        syncType: "googleDrive",
+      });
+    } catch (error) {
+      console.error("Failed to sync profile to Google Drive:", error);
+      setCardError(
+        error instanceof Error
+          ? error.message
+          : "Failed to sync profile to Google Drive.",
+      );
+    } finally {
+      setIsLinking(false);
+    }
+  }, [profile.id, profile.name, uploadDriveFile, updateProfile]);
+
   const handleUnlinkDriveFile = useCallback(async () => {
     if (!profile.id) return;
     if (
@@ -224,128 +244,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       setIsSharing(false);
     }
   }, [profile.googleDriveFileId, shareDriveFile]);
-
-  // Create ref for the drive-picker component
-  const pickerRef = useRef<HTMLElement | null>(null);
-
-  // Handler for linking to an existing file using the new Drive Picker Web Component
-  const handleLinkToExisting = useCallback(async () => {
-    if (!profile.id || !googleAccessToken) {
-      setCardError("Cannot open picker: Missing profile ID or not signed in.");
-      return;
-    }
-
-    setIsPickerLoading(true);
-    setCardError(null);
-
-    try {
-      // Ensure the Google Drive Picker component is loaded
-      if (
-        typeof window !== "undefined" &&
-        !customElements.get("drive-picker")
-      ) {
-        await import("@googleworkspace/drive-picker-element");
-      }
-
-      // Get the client ID from environment
-      const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-
-      if (!clientId) {
-        throw new Error("Google Client ID not configured");
-      }
-
-      // Create a Google Drive Picker web component
-      const pickerElement = document.createElement("drive-picker");
-      pickerElement.setAttribute("client-id", clientId);
-      pickerElement.setAttribute("oauth-token", googleAccessToken);
-      pickerElement.setAttribute("nav-hidden", "true");
-
-      // Add a docs view
-      const docsView = document.createElement("drive-picker-docs-view");
-      docsView.setAttribute("mime-types", "application/json");
-      pickerElement.appendChild(docsView);
-
-      // Add event listeners
-      pickerElement.addEventListener("picker:picked", (event: Event) => {
-        const customEvent = event as CustomEvent;
-        const docs = customEvent.detail?.docs;
-
-        if (Array.isArray(docs) && docs.length > 0) {
-          const fileId = docs[0].id;
-          if (fileId) {
-            console.log(`Picker selected file ID: ${fileId}`);
-            updateProfile(profile.id!, { googleDriveFileId: fileId })
-              .then(() => {
-                console.log(
-                  `Profile ${profile.id} linked to existing Drive file ${fileId}`,
-                );
-              })
-              .catch((error) => {
-                console.error(
-                  "Failed to update profile with selected file ID:",
-                  error,
-                );
-                setCardError(
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to link profile.",
-                );
-              })
-              .finally(() => {
-                setIsPickerLoading(false);
-
-                // Remove the picker element after use
-                if (pickerElement.parentNode) {
-                  pickerElement.parentNode.removeChild(pickerElement);
-                }
-              });
-          }
-        } else {
-          console.warn("Picker selection did not contain any documents.");
-          setCardError("No file selected or selection invalid.");
-          setIsPickerLoading(false);
-        }
-      });
-
-      pickerElement.addEventListener("picker:canceled", () => {
-        console.log("Picker cancelled by user.");
-        setIsPickerLoading(false);
-
-        // Remove the picker element after use
-        if (pickerElement.parentNode) {
-          pickerElement.parentNode.removeChild(pickerElement);
-        }
-      });
-
-      pickerElement.addEventListener("picker:error", (event: Event) => {
-        const customEvent = event as CustomEvent;
-        console.error("Picker error:", customEvent.detail);
-        setCardError("Failed to select file. Please try again.");
-        setIsPickerLoading(false);
-
-        // Remove the picker element after use
-        if (pickerElement.parentNode) {
-          pickerElement.parentNode.removeChild(pickerElement);
-        }
-      });
-
-      // Add to DOM temporarily and show the picker
-      document.body.appendChild(pickerElement);
-      pickerRef.current = pickerElement;
-
-      // Make the picker visible
-      // The visible property is set directly on the element
-      pickerElement.setAttribute("visible", "true");
-    } catch (error) {
-      console.error("Error initializing Drive Picker:", error);
-      setCardError(
-        error instanceof Error
-          ? error.message
-          : "Failed to initialize file picker",
-      );
-      setIsPickerLoading(false);
-    }
-  }, [googleAccessToken, profile.id, updateProfile]);
 
   // Effect to clear the 'initiated by this card' flag when hook status resets
   useEffect(() => {
@@ -505,6 +403,24 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           ))}
       </div>
 
+      {/* Convert local profile to Google Drive sync */}
+      {profile.syncType !== "googleDrive" && isGoogleSignedIn && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={handleSyncToGoogleDrive}
+            disabled={isLinking}
+            className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
+          >
+            {isLinking ? "Syncing..." : "Sync to Google Drive"}
+          </button>
+          {cardError && (
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+              Error: {cardError}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Google Drive Sync Actions (View Mode) */}
       {profile.syncType === "googleDrive" && isGoogleSignedIn && (
         <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
@@ -549,23 +465,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
           <div className="flex flex-wrap gap-2">
             {!profile.googleDriveFileId ? (
-              // Not Linked - Show two buttons side by side
-              <>
-                <button
-                  onClick={handleCreateAndLinkDriveFile}
-                  disabled={isLinking}
-                  className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
-                >
-                  {isLinking ? "Linking..." : "Link to Drive"}
-                </button>
-                <button
-                  onClick={() => handleLinkToExisting()}
-                  disabled={isLinking || isPickerLoading}
-                  className="px-3 py-1 text-xs bg-cyan-100 text-cyan-800 rounded-md hover:bg-cyan-200 transition-colors dark:bg-cyan-900/30 dark:text-cyan-300 dark:hover:bg-cyan-800/40 disabled:opacity-50"
-                >
-                  {isPickerLoading ? "Loading..." : "Link to Existing..."}
-                </button>
-              </>
+              <button
+                onClick={handleCreateAndLinkDriveFile}
+                disabled={isLinking}
+                className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
+              >
+                {isLinking ? "Linking..." : "Upload and Link to Drive"}
+              </button>
             ) : (
               // Linked - Show sync controls
               <>
