@@ -31,11 +31,10 @@ export function useBackupReminders(): Profile[] {
         if (timeSinceLastBackup <= profile.backupReminderPeriod) continue;
 
         // Time is overdue — only remind if something actually changed since last backup
-        const profileMetaChanged =
-          profile.updatedAt.getTime() > profile.lastBackedUpAt;
-        const contentChanged =
-          profileMetaChanged ||
-          (await hasProfileChangedSince(profile.id!, profile.lastBackedUpAt));
+        const contentChanged = await hasProfileChangedSince(
+          profile.id!,
+          profile.lastBackedUpAt,
+        );
         if (!contentChanged) continue;
 
         remindersNeeded.push(profile);

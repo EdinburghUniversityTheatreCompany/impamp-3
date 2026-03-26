@@ -761,12 +761,36 @@ export async function getAllProfiles(): Promise<Profile[]> {
   return db.getAll("profiles");
 }
 
+// Fields updated by backup/sync operations that should NOT count as user content changes
+const BACKUP_ONLY_FIELDS = new Set([
+  "lastBackedUpAt",
+  "backupReminderPeriod",
+  "syncType",
+  "googleDriveFileId",
+  "syncPausedUntil",
+]);
+
 export async function hasProfileChangedSince(
   profileId: number,
   since: number,
 ): Promise<boolean> {
   const db = await getDb();
 
+  // Check profile _fieldsModified for any content field changed after 'since'.
+  // Using _fieldsModified rather than updatedAt because updateProfile() always
+  // bumps updatedAt to new Date(), including during export (which would make
+  // updatedAt always newer than lastBackedUpAt by a few ms).
+  const profile = await db.get("profiles", profileId);
+  if (profile?._fieldsModified) {
+    const hasProfileContentChange = Object.entries(
+      profile._fieldsModified,
+    ).some(
+      ([key, timestamp]) => !BACKUP_ONLY_FIELDS.has(key) && timestamp > since,
+    );
+    if (hasProfileContentChange) return true;
+  }
+
+  // Check pad configurations
   const padTx = db.transaction("padConfigurations", "readonly");
   const pads = await padTx
     .objectStore("padConfigurations")
@@ -775,6 +799,7 @@ export async function hasProfileChangedSince(
   await padTx.done;
   if (pads.some((pad) => pad.updatedAt.getTime() > since)) return true;
 
+  // Check page metadata
   const pageTx = db.transaction("pageMetadata", "readonly");
   const pages = await pageTx
     .objectStore("pageMetadata")
