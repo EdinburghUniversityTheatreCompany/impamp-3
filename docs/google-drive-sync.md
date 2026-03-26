@@ -24,7 +24,7 @@ To use this feature for your own hosted version, you first need to configure API
         *   **Developer contact information:** Your email address.
     *   Click "Save and Continue".
     *   On the "Scopes" page, click "Add or Remove Scopes".
-    *   In the filter box, search for `https://www.googleapis.com/auth/drive.appdata`.
+    *   In the filter box, search for `https://www.googleapis.com/auth/drive.file`.
     *   Check the box next to this scope.
     *   Click "Update".
     *   Click "Save and Continue".
@@ -68,26 +68,17 @@ Once the setup is complete and you've restarted the app:
 
 ### Linking Profiles to Google Drive
 
-Once signed in, each profile card in the Profile Manager will display Google Drive sync options:
+Once signed in, each profile card in the **Profiles tab** shows Google Drive sync options:
 
-1.  **Link to a New Drive File:**
-    *   Click the "Link to new Drive file" button on a profile card.
-    *   ImpAmp3 will create a new file in your Google Drive with the current profile data.
-    *   Once linked, the profile card will show the sync status.
+1.  **Link to Drive (new file):** Creates a new file in your Google Drive with the current profile data.
 
-2.  **Link to an Existing Drive File:**
-    *   Click the "Link to existing file" button on a profile card.
-    *   A file picker will appear showing your existing ImpAmp3 profile files in Drive.
-    *   Select the file you want to link to.
-    *   If the selected file's data differs from your local profile, a conflict resolution dialog may appear.
+2.  **Link to Existing…:** Opens the Google Drive picker to select an existing ImpAmp3 file and link this profile to it.
 
-3.  **Manual Sync:**
-    *   For any linked profile, click the "Sync now" button to manually trigger synchronization.
-    *   This will compare local and remote data and either sync automatically or prompt for conflict resolution.
+3.  **Sync Now / Update from Drive:** Manually triggers sync. Read-only profiles show "Update from Drive" and only download changes.
 
-4.  **Unlink a Profile:**
-    *   Click the "Unlink from Drive" button on a linked profile card.
-    *   This removes the link between your local profile and the Drive file (but doesn't delete the Drive file).
+4.  **Share:** Makes the linked Drive file accessible to anyone with the link (sets it to public editable). Copies the share URL to your clipboard. Only shown for writable profiles.
+
+5.  **Unlink:** Removes the link between the local profile and the Drive file (does not delete the Drive file).
 
 ### Automatic Synchronization
 
@@ -116,28 +107,38 @@ If changes are made to the same profile on different devices, ImpAmp3 will detec
 
 ## 3. Collaboration with Others
 
-You can share your profiles with other ImpAmp3 users:
+You can share your profiles with other ImpAmp3 users directly from within ImpAmp3.
+
+### Sharing a Profile (Person A — the file owner)
 
 1.  **Link a Profile to Google Drive** as described above.
 
-2.  **Share the Drive File:**
-    *   Open Google Drive in your browser.
-    *   Find the linked file (format: `impamp-profile-profilename.json`).
-        * Note: If you can't see the file in your main Drive view, it might be in the hidden AppData folder. In this case, you can click "Search in Drive" in the Google Drive UI and search for "impamp-profile".
-    *   Right-click and select "Share".
-    *   Add email addresses of people you want to share with and set permissions (usually "Editor" if you want them to be able to make changes).
-    *   Click "Send" to share the file.
+2.  **Click "Share"** on the linked profile card in the Profiles tab.
+    *   This makes the Drive file editable by anyone with the link.
+    *   The share link is automatically copied to your clipboard.
 
-3.  **Collaborator Access:**
-    *   Your collaborators need to:
-        *   Have ImpAmp3 set up with their own Google account.
-        *   Link one of their profiles to the shared file using the "Link to existing file" option.
-    *   Once linked, their changes will sync with yours through the shared Drive file.
+3.  **Send the link** to your collaborators.
 
-4.  **Important Note on Audio Files:**
-    *   The sync process transfers profile configurations (pad layouts, names, etc.) but **not the audio files themselves**.
-    *   All users need to have the necessary audio files on their local devices.
-    *   Consider sharing your audio files separately if needed for collaboration.
+### Connecting to a Shared Profile (Person B — a collaborator)
+
+1.  **Open Profile Manager** and go to the **Import/Export** tab.
+
+2.  **Scroll to "Connect to shared profile"** at the bottom of the tab.
+
+3.  **Paste the share link** you received into the input field.
+    *   Accepts a full Google Drive URL (e.g. `https://drive.google.com/file/d/.../view`).
+
+4.  Optionally check **"Read-only"** if you want to receive updates from the shared profile without being able to push your own changes back.
+
+5.  **Click "Connect"** — ImpAmp3 will download the profile and link it to the shared Drive file automatically.
+
+From this point, sync works exactly like a personal profile. The existing sync mechanism handles everything, including conflict detection and the conflict resolution modal when both users edit the same pad.
+
+### Important Note on Audio Files
+
+*   The sync process transfers profile configurations (pad layouts, names, etc.) but **not the audio files themselves**.
+*   All users need to have the necessary audio files on their local devices.
+*   Consider sharing your audio files separately if needed for collaboration.
 
 ## Sync Status Indicators
 
