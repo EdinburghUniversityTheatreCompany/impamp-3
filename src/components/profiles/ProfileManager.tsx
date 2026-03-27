@@ -543,6 +543,7 @@ export default function ProfileManager() {
 
       // File link: try authenticated first, then public proxy fallback
       let syncData: ProfileSyncData | null = null;
+      let forceReadOnly = false;
       try {
         syncData = await downloadDriveFile(fileId!);
       } catch (err) {
@@ -552,6 +553,7 @@ export default function ProfileManager() {
           );
           if (proxyResponse.ok) {
             syncData = await proxyResponse.json();
+            forceReadOnly = true; // public proxy = can't write back
           } else {
             throw new Error(
               'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
@@ -583,7 +585,7 @@ export default function ProfileManager() {
       if (newProfile?.id) {
         await updateProfile(newProfile.id, {
           googleDriveFileId: fileId,
-          readOnly: shareConnectReadOnly || undefined,
+          readOnly: forceReadOnly || shareConnectReadOnly || undefined,
         });
       }
 
