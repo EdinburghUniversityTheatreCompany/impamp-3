@@ -1384,6 +1384,18 @@ export default function ProfileManager() {
                               </button>
                             </form>
                           </div>
+                          {/* Open With option — via Google Drive right-click */}
+                          <div className="rounded-md bg-gray-50 dark:bg-gray-700/50 px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                            <span className="font-medium text-gray-700 dark:text-gray-300">
+                              Tip:{" "}
+                            </span>
+                            Open the shared folder in Google Drive, right-click
+                            it, and choose{" "}
+                            <span className="font-medium">
+                              Open with → ImpAmp3
+                            </span>{" "}
+                            to connect it directly.
+                          </div>
                           {connectError && (
                             <p className="text-xs text-red-600 dark:text-red-400">
                               {connectError}
