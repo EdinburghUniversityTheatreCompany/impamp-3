@@ -65,6 +65,7 @@ export default function ProfileManager() {
   const [shareUrl, setShareUrl] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectSuccess, setConnectSuccess] = useState<string | null>(null);
   const [audioDownloadProgress, setAudioDownloadProgress] = useState<{
     current: number;
     total: number;
@@ -473,10 +474,12 @@ export default function ProfileManager() {
         });
       }
 
+      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
       setShareUrl("");
       setShareConnectReadOnly(false);
     } catch (error) {
       console.error("Failed to connect to shared profile:", error);
+      setConnectSuccess(null);
       setConnectError(
         error instanceof Error
           ? error.message
@@ -1162,7 +1165,11 @@ export default function ProfileManager() {
                           <input
                             type="text"
                             value={shareUrl}
-                            onChange={(e) => setShareUrl(e.target.value)}
+                            onChange={(e) => {
+                              setShareUrl(e.target.value);
+                              setConnectSuccess(null);
+                              setConnectError(null);
+                            }}
                             placeholder="https://drive.google.com/file/d/..."
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
                             required
@@ -1194,6 +1201,11 @@ export default function ProfileManager() {
                           {connectError && (
                             <p className="text-xs text-red-600 dark:text-red-400">
                               {connectError}
+                            </p>
+                          )}
+                          {connectSuccess && (
+                            <p className="text-xs text-green-600 dark:text-green-400">
+                              {connectSuccess}
                             </p>
                           )}
                         </form>
