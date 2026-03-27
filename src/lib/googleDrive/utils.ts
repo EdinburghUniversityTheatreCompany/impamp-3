@@ -15,6 +15,18 @@ export const getProfileSyncFilename = (profileName: string): string => {
 };
 
 /**
+ * Constructs a standardized folder name for a profile's Drive sub-folder
+ * @param profileName The name of the profile
+ * @returns A sanitized folder name suitable for Google Drive
+ */
+export const getProfileFolderName = (profileName: string): string => {
+  const sanitizedName = profileName
+    .replace(/[^a-z0-9._-]/gi, "-")
+    .toLowerCase();
+  return `profile-${sanitizedName}`;
+};
+
+/**
  * Validates the Google auth token
  * @param accessToken The Google access token
  * @param expiresAt The token expiration timestamp

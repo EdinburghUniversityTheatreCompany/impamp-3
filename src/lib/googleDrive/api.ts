@@ -5,6 +5,7 @@
 
 import { DriveFile, DriveFileList, ProfileSyncData, TokenInfo } from "./types";
 import { checkAndRefreshAuth } from "./auth";
+import { getProfileFolderName } from "./utils";
 
 /**
  * Performs an authenticated request to the Google Drive API
@@ -148,6 +149,140 @@ export const getOrCreateAppFolder = async (
 
   console.log(`Created ${APP_FOLDER_NAME} folder with ID: ${created.id}`);
   return created.id;
+};
+
+/**
+ * Find or create a per-profile sub-folder inside ImpAmp_Data
+ * @param profileName The profile name (used to derive the folder name)
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The folder ID
+ */
+export const getOrCreateProfileFolder = async (
+  profileName: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string> => {
+  const appFolderId = await getOrCreateAppFolder(tokenInfo, refreshCallback);
+  const folderName = getProfileFolderName(profileName);
+
+  // Search for existing sub-folder inside the app folder
+  const query = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${appFolderId}' in parents and trashed=false`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+
+  const data = await authenticatedRequest<DriveFileList>(
+    url,
+    "GET",
+    tokenInfo,
+    {},
+    refreshCallback,
+  );
+
+  if (data?.files && data.files.length > 0) {
+    return data.files[0].id;
+  }
+
+  // Create the sub-folder
+  console.log(`Creating profile folder "${folderName}" inside ${APP_FOLDER_NAME}`);
+  const metadata = {
+    name: folderName,
+    mimeType: "application/vnd.google-apps.folder",
+    parents: [appFolderId],
+  };
+
+  const created = await authenticatedRequest<DriveFile>(
+    "https://www.googleapis.com/drive/v3/files?fields=id,name",
+    "POST",
+    tokenInfo,
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(metadata),
+    },
+    refreshCallback,
+  );
+
+  if (!created?.id) {
+    throw new Error(`Failed to create profile folder "${folderName}" in Google Drive`);
+  }
+
+  console.log(`Created profile folder "${folderName}" with ID: ${created.id}`);
+  return created.id;
+};
+
+export type FolderCapability = "owner" | "writer" | "reader" | "none";
+
+/**
+ * Determine the current user's effective access level on a Drive folder
+ * @param folderId The folder ID to check
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The capability level: "owner", "writer", "reader", or "none"
+ */
+export const getFolderCapabilities = async (
+  folderId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<FolderCapability> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const url = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=capabilities(canAddChildren),ownedByMe`;
+
+    const data = await authenticatedRequest<{
+      capabilities?: { canAddChildren?: boolean };
+      ownedByMe?: boolean;
+    }>(url, "GET", tokenInfo, {}, refreshCallback);
+
+    if (!data) return "none";
+    if (data.ownedByMe) return "owner";
+    if (data.capabilities?.canAddChildren) return "writer";
+    return "reader";
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes("404") || err.message.includes("403"))) {
+      return "none";
+    }
+    throw err;
+  }
+};
+
+/**
+ * Move a file into a different parent folder
+ * @param fileId The file to move
+ * @param newParentId The destination folder ID
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ */
+export const moveFileToFolder = async (
+  fileId: string,
+  newParentId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  // Get current parents first
+  const fileInfo = await authenticatedRequest<{ parents?: string[] }>(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents`,
+    "GET",
+    tokenInfo,
+    {},
+    refreshCallback,
+  );
+
+  const currentParents = fileInfo?.parents?.join(",") ?? "";
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${newParentId}&removeParents=${encodeURIComponent(currentParents)}&fields=id,parents`;
+
+  await authenticatedRequest<DriveFile>(
+    url,
+    "PATCH",
+    tokenInfo,
+    { headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
+    refreshCallback,
+  );
 };
 
 /**
@@ -342,6 +477,7 @@ export const uploadDriveFile = async (
   profileId: number,
   tokenInfo: TokenInfo | null,
   refreshCallback: (token: TokenInfo) => void,
+  folderId?: string,
 ): Promise<DriveFile> => {
   if (!tokenInfo?.accessToken) {
     throw new Error("Not authenticated");
@@ -350,7 +486,7 @@ export const uploadDriveFile = async (
   try {
     const parentId = existingFileId
       ? null
-      : await getOrCreateAppFolder(tokenInfo, refreshCallback);
+      : (folderId ?? await getOrCreateAppFolder(tokenInfo, refreshCallback));
 
     const metadata = {
       name: fileName,
@@ -475,6 +611,7 @@ export const uploadAudioFile = async (
   profileId: number,
   tokenInfo: TokenInfo | null,
   refreshCallback: (token: TokenInfo) => void,
+  folderId?: string,
 ): Promise<DriveFile> => {
   if (!tokenInfo?.accessToken) {
     throw new Error("Not authenticated");
@@ -483,7 +620,7 @@ export const uploadAudioFile = async (
   try {
     const parentId = existingDriveId
       ? null
-      : await getOrCreateAppFolder(tokenInfo, refreshCallback);
+      : (folderId ?? await getOrCreateAppFolder(tokenInfo, refreshCallback));
 
     const metadata = {
       name: fileName,

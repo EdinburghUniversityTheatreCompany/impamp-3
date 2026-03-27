@@ -23,6 +23,9 @@ import {
   uploadDriveFile,
   uploadAudioFile,
   downloadAudioFileAsBlob,
+  getOrCreateProfileFolder,
+  getFolderCapabilities,
+  moveFileToFolder,
 } from "./api";
 import {
   ProfileSyncData,
@@ -40,6 +43,7 @@ export async function uploadMissingAudioFiles(
   profileId: number,
   tokenInfo: TokenInfo,
   refreshCallback: (token: TokenInfo) => void,
+  folderId?: string,
 ): Promise<void> {
   const audioFileIds = await getAudioFileIdsForProfile(profileId);
   for (const id of audioFileIds) {
@@ -60,6 +64,7 @@ export async function uploadMissingAudioFiles(
         profileId,
         tokenInfo,
         refreshCallback,
+        folderId,
       );
       await updateAudioFileDriveId(id, driveFile.id);
       console.log(
@@ -70,6 +75,61 @@ export async function uploadMissingAudioFiles(
       // Non-fatal: continue syncing other files; profile JSON will omit driveFileId for this one
     }
   }
+}
+
+/**
+ * Migrate a profile from the flat ImpAmp_Data layout to a per-profile folder.
+ * Moves the existing profile JSON and any Drive audio files into the new folder.
+ * Returns the new folder ID.
+ */
+async function migrateToFolderLayout(
+  profileId: number,
+  profileName: string,
+  fileId: string,
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string> {
+  console.log(`Migrating profile ${profileId} to folder layout…`);
+
+  const folderId = await getOrCreateProfileFolder(
+    profileName,
+    tokenInfo,
+    refreshCallback,
+  );
+
+  // Move the profile JSON into the folder
+  await moveFileToFolder(fileId, folderId, tokenInfo, refreshCallback);
+  console.log(`Moved profile JSON ${fileId} → folder ${folderId}`);
+
+  // Find and move audio files for this profile that are in Drive
+  try {
+    const query = `appProperties has { key='profileId' and value='${profileId}' } and appProperties has { key='fileType' and value='audioFile' } and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+    const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
+    const resp = await fetch(url, { headers });
+    if (resp.ok) {
+      const data = await resp.json();
+      const files: { id: string; name: string }[] = data.files ?? [];
+      for (const f of files) {
+        try {
+          await moveFileToFolder(f.id, folderId, tokenInfo, refreshCallback);
+          console.log(`Moved audio file "${f.name}" → folder ${folderId}`);
+        } catch (err) {
+          console.error(`Failed to move audio file "${f.name}":`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to list/move audio files during migration:", err);
+    // Non-fatal — files are still accessible from the old location
+  }
+
+  // Persist the new folder ID
+  await updateProfile(profileId, { googleDriveFolderId: folderId });
+  console.log(
+    `Migration complete for profile ${profileId}, folder: ${folderId}`,
+  );
+  return folderId;
 }
 
 /**
@@ -193,7 +253,7 @@ export const syncProfile = async (
 
   try {
     // Get the profile from IndexedDB
-    const localProfile = await getProfile(profileId);
+    let localProfile = await getProfile(profileId);
     if (!localProfile) {
       throw new Error(`Profile ${profileId} not found locally.`);
     }
@@ -236,6 +296,7 @@ export const syncProfile = async (
     }
 
     let fileId = localProfile.googleDriveFileId;
+    let folderId = localProfile.googleDriveFolderId ?? null;
     let driveFile = null;
 
     // If the profile is already linked to a Drive file, check if it still exists
@@ -273,9 +334,67 @@ export const syncProfile = async (
       }
     }
 
+    // Resolve per-profile folder
+    if (!folderId) {
+      if (fileId) {
+        // Migration: existing flat-layout profile → move into a folder
+        folderId = await migrateToFolderLayout(
+          profileId,
+          localProfile.name,
+          fileId,
+          tokenInfo,
+          refreshCallback,
+        );
+      } else {
+        // New profile: create the folder now so audio and JSON land in it
+        folderId = await getOrCreateProfileFolder(
+          localProfile.name,
+          tokenInfo,
+          refreshCallback,
+        );
+        await updateProfile(profileId, { googleDriveFolderId: folderId });
+      }
+    }
+
+    // Reconcile readOnly against actual Drive folder permissions
+    try {
+      const capability = await getFolderCapabilities(
+        folderId,
+        tokenInfo,
+        refreshCallback,
+      );
+      const shouldBeReadOnly = capability === "reader";
+      const shouldBeReadWrite =
+        capability === "owner" || capability === "writer";
+      if (shouldBeReadOnly && !localProfile.readOnly) {
+        console.log(
+          `Profile ${profileId}: Drive access is read-only — setting readOnly=true`,
+        );
+        await updateProfile(profileId, { readOnly: true });
+        localProfile = { ...localProfile, readOnly: true };
+      } else if (shouldBeReadWrite && localProfile.readOnly) {
+        console.log(
+          `Profile ${profileId}: Drive access upgraded to write — setting readOnly=false`,
+        );
+        await updateProfile(profileId, { readOnly: false });
+        localProfile = { ...localProfile, readOnly: false };
+      }
+    } catch (err) {
+      console.warn(
+        `Could not determine folder capabilities for profile ${profileId}:`,
+        err,
+      );
+      // Non-fatal: fall back to existing readOnly value
+    }
+
     // 1a. Upload any audio files that don't have a Drive file ID yet
     if (!localProfile.readOnly) {
-      await uploadMissingAudioFiles(profileId, tokenInfo, refreshCallback);
+      await uploadMissingAudioFiles(
+        profileId,
+        tokenInfo,
+        refreshCallback,
+        folderId,
+      );
     }
 
     // 1b. Get Local Data (now that audio files have driveFileIds set)
@@ -349,6 +468,7 @@ export const syncProfile = async (
           profileId,
           tokenInfo,
           refreshCallback,
+          folderId ?? undefined,
         );
 
         // 5. Update Local Data with Merged Data
