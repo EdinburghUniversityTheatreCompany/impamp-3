@@ -9,7 +9,7 @@
 import React from "react";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import ProfileEditForm from "@/components/profiles/ProfileEditForm";
-import { updateProfile } from "@/lib/db";
+import { useProfileStore } from "@/store/profileStore";
 import type { ProfileFormValues, FormErrors } from "@/types/forms";
 import type { Profile } from "@/lib/db";
 
@@ -18,6 +18,7 @@ import type { Profile } from "@/lib/db";
  */
 export function useProfileEdit() {
   const { openFormModal } = useFormModal();
+  const { updateProfile } = useProfileStore();
 
   /**
    * Opens a modal for editing a profile
