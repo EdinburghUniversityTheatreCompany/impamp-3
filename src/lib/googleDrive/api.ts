@@ -91,6 +91,65 @@ async function authenticatedRequest<T>(
   }
 }
 
+const APP_FOLDER_NAME = "ImpAmp_Data";
+
+/**
+ * Find or create the ImpAmp_Data folder in Google Drive root
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The folder ID
+ */
+export const getOrCreateAppFolder = async (
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  // Try to find existing folder
+  const query = `name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+
+  const data = await authenticatedRequest<DriveFileList>(
+    url,
+    "GET",
+    tokenInfo,
+    {},
+    refreshCallback,
+  );
+
+  if (data?.files && data.files.length > 0) {
+    return data.files[0].id;
+  }
+
+  // Create the folder
+  console.log(`Creating ${APP_FOLDER_NAME} folder in Google Drive`);
+  const metadata = {
+    name: APP_FOLDER_NAME,
+    mimeType: "application/vnd.google-apps.folder",
+    parents: ["root"],
+  };
+
+  const created = await authenticatedRequest<DriveFile>(
+    "https://www.googleapis.com/drive/v3/files?fields=id,name",
+    "POST",
+    tokenInfo,
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(metadata),
+    },
+    refreshCallback,
+  );
+
+  if (!created?.id) {
+    throw new Error("Failed to create ImpAmp_Data folder in Google Drive");
+  }
+
+  console.log(`Created ${APP_FOLDER_NAME} folder with ID: ${created.id}`);
+  return created.id;
+};
+
 /**
  * Find a Google Drive file by its ID
  * @param fileId The file ID to find
@@ -287,6 +346,10 @@ export const uploadDriveFile = async (
   }
 
   try {
+    const parentId = existingFileId
+      ? null
+      : await getOrCreateAppFolder(tokenInfo, refreshCallback);
+
     const metadata = {
       name: fileName,
       mimeType: "application/json",
@@ -294,7 +357,7 @@ export const uploadDriveFile = async (
         profileId: profileId.toString(),
         appIdentifier: "ImpAmp3",
       },
-      ...(existingFileId ? {} : { parents: ["root"] }), // Only set parents when creating new
+      ...(parentId ? { parents: [parentId] } : {}),
     };
 
     const blob = new Blob([JSON.stringify(jsonData, null, 2)], {
@@ -416,6 +479,10 @@ export const uploadAudioFile = async (
   }
 
   try {
+    const parentId = existingDriveId
+      ? null
+      : await getOrCreateAppFolder(tokenInfo, refreshCallback);
+
     const metadata = {
       name: fileName,
       mimeType,
@@ -424,7 +491,7 @@ export const uploadAudioFile = async (
         fileType: "audioFile",
         profileId: profileId.toString(),
       },
-      ...(existingDriveId ? {} : { parents: ["root"] }),
+      ...(parentId ? { parents: [parentId] } : {}),
     };
 
     const form = new FormData();
