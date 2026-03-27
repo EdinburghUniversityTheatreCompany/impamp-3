@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
-import { SyncType, Profile, PadConfiguration, PageMetadata } from "@/lib/db";
+import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
@@ -34,8 +34,6 @@ export default function ProfileManager() {
 
   // State management
   const [newProfileName, setNewProfileName] = useState("");
-  const [newProfileSyncType, setNewProfileSyncType] =
-    useState<SyncType>("local");
   const [isCreating, setIsCreating] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "profiles" | "import-export" | "maintenance"
@@ -277,10 +275,9 @@ export default function ProfileManager() {
       setIsCreating(true);
       await createProfile({
         name: newProfileName.trim(),
-        syncType: newProfileSyncType,
+        syncType: "local",
       });
       setNewProfileName("");
-      setNewProfileSyncType("local");
       setIsCreating(false);
     } catch (error) {
       console.error("Failed to create profile:", error);
@@ -655,33 +652,6 @@ export default function ProfileManager() {
                       placeholder="Enter profile name"
                       required
                     />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="syncType"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    >
-                      Storage Type
-                    </label>
-                    <select
-                      id="syncType"
-                      value={newProfileSyncType}
-                      onChange={(e) =>
-                        setNewProfileSyncType(e.target.value as SyncType)
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
-                    >
-                      <option value="local">Local Only</option>
-                      <option value="googleDrive">Google Drive</option>
-                    </select>
-                    {newProfileSyncType === "googleDrive" && (
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        Google Drive sync allows you to automatically
-                        synchronize this profile across devices and collaborate
-                        with others.
-                      </p>
-                    )}
                   </div>
 
                   <div>
