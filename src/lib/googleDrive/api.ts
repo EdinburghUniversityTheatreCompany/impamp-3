@@ -871,6 +871,7 @@ export const downloadAudioFileAsBlob = async (
           },
         });
         if (retryResponse.ok) return retryResponse.blob();
+        if (retryResponse.status === 404) return null;
         throw new Error(
           `API Error: ${retryResponse.status} ${retryResponse.statusText}`,
         );
