@@ -36,6 +36,78 @@ import {
 } from "./types";
 
 /**
+ * Verify all audio files for a profile exist in Drive, uploading any that are
+ * missing (no driveFileId) or whose Drive file has been deleted (stale driveFileId).
+ * Updates IndexedDB records with new Drive file IDs as needed.
+ */
+export async function repairDriveAudioFiles(
+  profileId: number,
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+  folderId?: string,
+): Promise<{ checked: number; uploaded: number; errors: string[] }> {
+  const audioFileIds = await getAudioFileIdsForProfile(profileId);
+  let checked = 0;
+  let uploaded = 0;
+  const errors: string[] = [];
+
+  for (const id of audioFileIds) {
+    const audioFile = await getAudioFile(id);
+    if (!audioFile) continue;
+    checked++;
+
+    let needsUpload = false;
+
+    if (!audioFile.driveFileId) {
+      needsUpload = true;
+    } else {
+      const existing = await findDriveFileById(
+        audioFile.driveFileId,
+        tokenInfo,
+        refreshCallback,
+      );
+      if (!existing) {
+        console.log(
+          `Audio file "${audioFile.name}" missing from Drive — will re-upload`,
+        );
+        needsUpload = true;
+      } else if (folderId && !existing.parents?.includes(folderId)) {
+        console.log(
+          `Audio file "${audioFile.name}" exists in Drive but not in profile folder — will re-upload`,
+        );
+        needsUpload = true;
+      }
+    }
+
+    if (!needsUpload) continue;
+
+    try {
+      const driveFile = await uploadAudioFile(
+        audioFile.name,
+        audioFile.blob,
+        audioFile.type,
+        null,
+        profileId,
+        tokenInfo,
+        refreshCallback,
+        folderId,
+      );
+      await updateAudioFileDriveId(id, driveFile.id);
+      uploaded++;
+      console.log(
+        `Repaired audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`"${audioFile.name}": ${msg}`);
+      console.error(`Failed to repair audio file "${audioFile.name}":`, err);
+    }
+  }
+
+  return { checked, uploaded, errors };
+}
+
+/**
  * Upload any audio files for a profile that don't yet have a Drive file ID.
  * Updates the IndexedDB record with the returned Drive file ID.
  */

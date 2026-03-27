@@ -435,7 +435,7 @@ export const findDriveFileById = async (
   }
 
   try {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,appProperties,modifiedTime,kind`;
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,appProperties,modifiedTime,kind,parents`;
 
     const data = await authenticatedRequest<DriveFile>(
       url,

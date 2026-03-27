@@ -37,6 +37,7 @@ import {
   syncProfile,
   applyConflictResolution,
   uploadMissingAudioFiles,
+  repairDriveAudioFiles,
 } from "@/lib/googleDrive/sync";
 import { getLocalProfileSyncData } from "@/lib/googleDrive/dataAccess";
 import { getProfileSyncFilename } from "@/lib/googleDrive/utils";
@@ -61,6 +62,10 @@ type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
 type ShareDriveFileFn = (fileId: string) => Promise<void>;
 type DownloadAudioFileFn = (driveFileId: string) => Promise<Blob | null>;
 type UploadMissingAudioFilesFn = (profileId: number) => Promise<void>;
+type RepairDriveAudioFn = (
+  profileId: number,
+  folderId?: string,
+) => Promise<{ checked: number; uploaded: number; errors: string[] }>;
 type ListFolderPermissionsFn = (folderId: string) => Promise<DrivePermission[]>;
 type SetPublicLinkAccessFn = (
   folderId: string,
@@ -100,6 +105,7 @@ interface GoogleDriveSyncHookReturn {
   setPublicLinkAccess: SetPublicLinkAccessFn;
   inviteUser: InviteUserFn;
   removePermission: RemovePermissionFn;
+  repairDriveAudio: RepairDriveAudioFn;
 }
 
 /**
@@ -457,6 +463,23 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [currentTokenInfo, handleTokenRefresh],
   );
 
+  const repairAudio = useCallback(
+    async (
+      profileId: number,
+      folderId?: string,
+    ): Promise<{ checked: number; uploaded: number; errors: string[] }> => {
+      if (!currentTokenInfo)
+        throw new Error("Not authenticated with Google Drive");
+      return repairDriveAudioFiles(
+        profileId,
+        currentTokenInfo,
+        handleTokenRefresh,
+        folderId,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
   const listPermissions = useCallback(
     async (folderId: string): Promise<DrivePermission[]> => {
       return await listFolderPermissions(
@@ -532,6 +555,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     setPublicLinkAccess: setPublicAccess,
     inviteUser: invite,
     removePermission: removePerm,
+    repairDriveAudio: repairAudio,
   };
 };
 

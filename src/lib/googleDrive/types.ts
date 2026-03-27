@@ -26,6 +26,7 @@ export interface DriveFile {
   mimeType: string;
   appProperties?: Record<string, string>;
   modifiedTime?: string;
+  parents?: string[];
 }
 
 export interface DriveFileList {
