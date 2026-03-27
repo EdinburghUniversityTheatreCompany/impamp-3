@@ -47,6 +47,7 @@ export default function Home() {
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   ); // Get the action
+  const requestSync = useProfileStore((state) => state.requestSync);
   const { openModal, closeModal } = useUIStore(); // Get modal actions
 
   // Memoized components to prevent unnecessary remounting
@@ -164,6 +165,7 @@ export default function Home() {
               `Set emergency status for bank ${bankNumber} to ${newIsEmergency}, triggered emergency sounds refresh`,
             );
           }
+          requestSync(activeProfileId);
         } catch (error) {
           console.error(`Failed to update bank ${bankNumber}:`, error);
           alert(`Failed to update bank ${bankNumber}. Please try again.`);

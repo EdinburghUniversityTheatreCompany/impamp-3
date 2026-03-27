@@ -56,6 +56,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
+  const requestSync = useProfileStore((state) => state.requestSync);
   const { openModal, closeModal } = useUIStore();
 
   /**
@@ -98,6 +99,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           // Upsert the configuration with the data from the modal state
           await upsertPadConfiguration(updatedPadConfigData);
           refreshPadConfigs(); // Refresh the grid display
+          if (activeProfileId !== null) requestSync(activeProfileId);
           console.log(
             `Saved changes for pad ${padIndex}`,
             updatedPadConfigData,
@@ -143,6 +145,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
       padConfigs,
       refreshPadConfigs,
       incrementEmergencySoundsVersion,
+      requestSync,
       openModal,
       closeModal,
       editModalRef,
@@ -199,6 +202,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
           refreshPadConfigs();
+          requestSync(activeProfileId);
           console.log(`Removed single sound from pad ${padIndex}`);
 
           const isEmergency = await isEmergencyPage(
@@ -235,6 +239,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
       padConfigs,
       refreshPadConfigs,
       incrementEmergencySoundsVersion,
+      requestSync,
       openModal,
       closeModal,
       handleEditInteraction,

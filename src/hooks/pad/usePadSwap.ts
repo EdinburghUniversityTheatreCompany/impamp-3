@@ -34,6 +34,7 @@ export function usePadSwap(params: PadSwapParams) {
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
+  const requestSync = useProfileStore((state) => state.requestSync);
 
   /**
    * Handler for swapping pads in delete/move mode
@@ -137,6 +138,7 @@ export function usePadSwap(params: PadSwapParams) {
 
         // Success - refresh grid and update emergency sounds if needed
         refreshPadConfigs();
+        requestSync(activeProfileId);
         console.log(`Successfully swapped pads ${fromIndex} and ${toIndex}`);
 
         // Check if we're on an emergency page and refresh if needed
@@ -162,6 +164,7 @@ export function usePadSwap(params: PadSwapParams) {
       refreshPadConfigs,
       specialPadIndices,
       incrementEmergencySoundsVersion,
+      requestSync,
     ],
   );
 

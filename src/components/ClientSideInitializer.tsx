@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+
+const AUTO_SYNC_DEBOUNCE_MS = 60_000; // 1 minute
 import { useProfileStore } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { getAllProfiles } from "@/lib/db";
@@ -109,6 +111,47 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
   }, [isGoogleSignedIn, syncProfile]);
+
+  // Debounced auto-sync after edits (1 minute after last edit)
+  const debounceTimersRef = useRef<
+    Record<number, ReturnType<typeof setTimeout>>
+  >({});
+
+  useEffect(() => {
+    let prevQueue = useProfileStore.getState().syncRequestQueue;
+
+    const unsubscribe = useProfileStore.subscribe((state) => {
+      if (state.syncRequestQueue === prevQueue) return;
+      prevQueue = state.syncRequestQueue;
+
+      Object.keys(state.syncRequestQueue).forEach((key) => {
+        const profileId = parseInt(key);
+        if (debounceTimersRef.current[profileId]) {
+          clearTimeout(debounceTimersRef.current[profileId]);
+        }
+        debounceTimersRef.current[profileId] = setTimeout(async () => {
+          delete debounceTimersRef.current[profileId];
+          const { profiles, isGoogleSignedIn } = useProfileStore.getState();
+          const profile = profiles.find((p) => p.id === profileId);
+          if (
+            isGoogleSignedIn &&
+            profile?.syncType === "googleDrive" &&
+            profile.googleDriveFileId
+          ) {
+            console.log(
+              `Auto-syncing profile ${profileId} after edit (debounced)...`,
+            );
+            await syncProfile(profileId);
+          }
+        }, AUTO_SYNC_DEBOUNCE_MS);
+      });
+    });
+
+    return () => {
+      unsubscribe();
+      Object.values(debounceTimersRef.current).forEach(clearTimeout);
+    };
+  }, [syncProfile]);
 
   // Periodic sync (every 15 minutes)
   useEffect(() => {

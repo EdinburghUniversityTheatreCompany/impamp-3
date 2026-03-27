@@ -50,6 +50,10 @@ interface ProfileState {
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
   setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
 
+  // Auto-sync after edits
+  syncRequestQueue: Record<number, number>; // profileId → last request timestamp
+  requestSync: (profileId: number) => void;
+
   // Sync pausing methods
   pauseSync: (profileId: number, durationMs: number) => Promise<void>; // Pause sync for a profile
   resumeSync: (profileId: number) => Promise<void>; // Resume sync for a profile
@@ -136,6 +140,7 @@ export const useProfileStore = create<ProfileState>()(
       isProfileManagerOpen: false, // Profile manager modal is closed by default
       emergencySoundsVersion: 0, // Initial version for emergency sounds tracking
       fadeoutDuration: 3, // Default fadeout duration in seconds
+      syncRequestQueue: {},
 
       // Google Auth State
       googleUser: null,
@@ -300,6 +305,15 @@ export const useProfileStore = create<ProfileState>()(
         );
         set((state) => ({
           emergencySoundsVersion: state.emergencySoundsVersion + 1,
+        }));
+      },
+
+      requestSync: (profileId: number) => {
+        set((state) => ({
+          syncRequestQueue: {
+            ...state.syncRequestQueue,
+            [profileId]: Date.now(),
+          },
         }));
       },
 

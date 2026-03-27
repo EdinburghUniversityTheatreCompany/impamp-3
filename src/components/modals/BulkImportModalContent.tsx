@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { addAudioFile, upsertPadConfiguration } from "@/lib/db";
+import { useProfileStore } from "@/store/profileStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 
 // Define special pad indices to avoid assignment
@@ -328,6 +329,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
       }
 
       // Complete import
+      useProfileStore.getState().requestSync(profileId);
       setIsImporting(false);
       onAssignmentComplete();
     } catch (error) {
