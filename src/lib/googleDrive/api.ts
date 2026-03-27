@@ -504,6 +504,43 @@ export const findDriveFileByName = async (
 };
 
 /**
+ * Find an audio file already uploaded to a specific Drive folder for a given profile.
+ * Used to avoid re-uploading files that another browser already uploaded.
+ */
+export const findAudioFileInDriveFolder = async (
+  fileName: string,
+  profileId: number,
+  folderId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DriveFile | null> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const query = `name='${fileName}' and '${folderId}' in parents and appProperties has { key='profileId' and value='${profileId}' } and appProperties has { key='fileType' and value='audioFile' } and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind,parents)`;
+
+    const data = await authenticatedRequest<DriveFileList>(
+      url,
+      "GET",
+      tokenInfo,
+      {},
+      refreshCallback,
+    );
+
+    return data?.files && data.files.length > 0 ? data.files[0] : null;
+  } catch (err) {
+    console.error(
+      `Error finding audio file "${fileName}" in Drive folder:`,
+      err,
+    );
+    throw err;
+  }
+};
+
+/**
  * List all files created by this app in Google Drive
  * @param tokenInfo Current token information
  * @param refreshCallback Callback to update token if refreshed

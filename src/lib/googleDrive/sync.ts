@@ -20,6 +20,7 @@ import {
   downloadDriveFile,
   findDriveFileById,
   findDriveFileByName,
+  findAudioFileInDriveFolder,
   uploadDriveFile,
   uploadAudioFile,
   downloadAudioFileAsBlob,
@@ -82,6 +83,31 @@ export async function repairDriveAudioFiles(
 
     if (!needsUpload) continue;
 
+    // Before uploading, check if another browser already uploaded this file to the folder
+    if (folderId) {
+      try {
+        const existing = await findAudioFileInDriveFolder(
+          audioFile.name,
+          profileId,
+          folderId,
+          tokenInfo,
+          refreshCallback,
+        );
+        if (existing) {
+          console.log(
+            `Audio file "${audioFile.name}" already exists in Drive folder — recording ID without re-uploading`,
+          );
+          await updateAudioFileDriveId(id, existing.id, profileId);
+          continue;
+        }
+      } catch (err) {
+        console.warn(
+          `Could not check Drive for existing "${audioFile.name}" — will upload:`,
+          err,
+        );
+      }
+    }
+
     try {
       const driveFile = await uploadAudioFile(
         audioFile.name,
@@ -127,6 +153,30 @@ export async function uploadMissingAudioFiles(
         `Audio file "${audioFile.name}" already on Drive for profile ${profileId} — skipping upload`,
       );
       continue;
+    }
+    // No local Drive ID — check if another browser already uploaded this file
+    if (folderId) {
+      try {
+        const existing = await findAudioFileInDriveFolder(
+          audioFile.name,
+          profileId,
+          folderId,
+          tokenInfo,
+          refreshCallback,
+        );
+        if (existing) {
+          console.log(
+            `Audio file "${audioFile.name}" already exists in Drive folder — recording ID without re-uploading`,
+          );
+          await updateAudioFileDriveId(id, existing.id, profileId);
+          continue;
+        }
+      } catch (err) {
+        console.warn(
+          `Could not check Drive for existing "${audioFile.name}" — will upload:`,
+          err,
+        );
+      }
     }
     try {
       const driveFile = await uploadAudioFile(
