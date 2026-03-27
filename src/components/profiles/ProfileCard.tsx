@@ -421,6 +421,17 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         </div>
       )}
 
+      {/* Google Drive signed-out notice */}
+      {profile.syncType === "googleDrive" && !isGoogleSignedIn && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            {profile.readOnly
+              ? "This profile is synced from an external Google Drive file. Sign in to Google to update it from Drive."
+              : "This profile was synced with Google Drive. Sign in to Google to resume syncing."}
+          </p>
+        </div>
+      )}
+
       {/* Google Drive Sync Actions (View Mode) */}
       {profile.syncType === "googleDrive" && isGoogleSignedIn && (
         <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
