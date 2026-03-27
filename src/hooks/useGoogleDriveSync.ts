@@ -27,7 +27,11 @@ import {
   createFilePermission,
   downloadAudioFileAsBlob,
 } from "@/lib/googleDrive/api";
-import { syncProfile, applyConflictResolution } from "@/lib/googleDrive/sync";
+import {
+  syncProfile,
+  applyConflictResolution,
+  uploadMissingAudioFiles,
+} from "@/lib/googleDrive/sync";
 import { getLocalProfileSyncData } from "@/lib/googleDrive/dataAccess";
 import { getProfileSyncFilename } from "@/lib/googleDrive/utils";
 
@@ -50,6 +54,7 @@ type FindDriveFileByIdFn = (fileId: string) => Promise<DriveFile | null>;
 type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
 type ShareDriveFileFn = (fileId: string) => Promise<void>;
 type DownloadAudioFileFn = (driveFileId: string) => Promise<Blob | null>;
+type UploadMissingAudioFilesFn = (profileId: number) => Promise<void>;
 
 // Hook return type interface
 interface GoogleDriveSyncHookReturn {
@@ -70,6 +75,7 @@ interface GoogleDriveSyncHookReturn {
   findDriveFileById: FindDriveFileByIdFn;
   findDriveFileByName: FindDriveFileByNameFn;
   shareDriveFile: ShareDriveFileFn;
+  uploadMissingAudioFiles: UploadMissingAudioFilesFn;
 }
 
 /**
@@ -404,6 +410,19 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [currentTokenInfo, handleTokenRefresh],
   );
 
+  const uploadMissingAudio = useCallback(
+    async (profileId: number): Promise<void> => {
+      if (!currentTokenInfo)
+        throw new Error("Not authenticated with Google Drive");
+      return await uploadMissingAudioFiles(
+        profileId,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
   // Return the hook API
   return {
     syncStatus,
@@ -419,6 +438,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     findDriveFileById: findFileById,
     findDriveFileByName: findFileByName,
     shareDriveFile: shareFile,
+    uploadMissingAudioFiles: uploadMissingAudio,
   };
 };
 

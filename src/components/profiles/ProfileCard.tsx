@@ -55,6 +55,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     syncProfile,
     uploadDriveFile,
     shareDriveFile,
+    uploadMissingAudioFiles,
     syncStatus: driveHookStatus,
     error: driveHookError,
     conflicts: driveHookConflicts,
@@ -119,6 +120,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     setIsLinking(true);
     setCardError(null);
     try {
+      await uploadMissingAudioFiles(profile.id);
       const syncData = await getLocalProfileSyncData(profile.id);
       if (!syncData) throw new Error("Could not load profile data.");
 
@@ -147,7 +149,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     } finally {
       setIsLinking(false);
     }
-  }, [profile.id, profile.name, uploadDriveFile, updateProfile]);
+  }, [
+    profile.id,
+    profile.name,
+    uploadDriveFile,
+    uploadMissingAudioFiles,
+    updateProfile,
+  ]);
 
   const handleManualSync = useCallback(async () => {
     if (!profile.id) return;
@@ -182,6 +190,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     setIsLinking(true);
     setCardError(null);
     try {
+      await uploadMissingAudioFiles(profile.id);
       const syncData = await getLocalProfileSyncData(profile.id);
       if (!syncData) throw new Error("Could not load profile data.");
 
@@ -207,7 +216,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     } finally {
       setIsLinking(false);
     }
-  }, [profile.id, profile.name, uploadDriveFile, updateProfile]);
+  }, [
+    profile.id,
+    profile.name,
+    uploadDriveFile,
+    uploadMissingAudioFiles,
+    updateProfile,
+  ]);
 
   const handleUnlinkDriveFile = useCallback(async () => {
     if (!profile.id) return;

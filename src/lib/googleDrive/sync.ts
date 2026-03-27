@@ -34,7 +34,7 @@ import {
  * Upload any audio files for a profile that don't yet have a Drive file ID.
  * Updates the IndexedDB record with the returned Drive file ID.
  */
-async function uploadMissingAudioFiles(
+export async function uploadMissingAudioFiles(
   profileId: number,
   tokenInfo: TokenInfo,
   refreshCallback: (token: TokenInfo) => void,
