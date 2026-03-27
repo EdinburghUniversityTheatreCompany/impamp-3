@@ -1042,3 +1042,336 @@ export async function importImpamp2Profile(
     throw error; // Re-throw the original error
   }
 }
+
+// --- ZIP Export/Import ---
+
+export interface AudioFileRef {
+  id: number;
+  name: string;
+  type: string;
+}
+
+export interface ProfileExportLean {
+  exportVersion: 2;
+  exportDate: string;
+  profile: Omit<Profile, "lastBackedUpAt"> & { id?: number };
+  padConfigurations: PadConfiguration[];
+  pageMetadata: PageMetadata[];
+  audioFiles: AudioFileRef[]; // no base64 data — audio stored as separate files in ZIP
+}
+
+export interface ZipManifest {
+  exportVersion: 3;
+  exportDate: string;
+  profiles: { name: string; folder: string }[];
+}
+
+/**
+ * Collects profile data without converting audio to base64.
+ * Returns lean profile data plus a map of audioFileId → Blob for ZIP storage.
+ */
+async function collectProfileDataForZip(profileId: number): Promise<{
+  lean: ProfileExportLean;
+  audioBlobs: Map<number, { blob: Blob; name: string; type: string }>;
+}> {
+  const profile = await getProfile(profileId);
+  if (!profile) {
+    throw new Error(`Profile with ID ${profileId} not found`);
+  }
+
+  const padConfigurations = await getAllPadConfigurationsForProfile(profileId);
+  const pageMetadata = await getAllPageMetadataForProfile(profileId);
+
+  const audioFileIds = new Set<number>();
+  padConfigurations.forEach((pad) => {
+    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
+      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
+    }
+  });
+
+  const audioFiles: AudioFileRef[] = [];
+  const audioBlobs = new Map<
+    number,
+    { blob: Blob; name: string; type: string }
+  >();
+
+  for (const audioFileId of audioFileIds) {
+    const audioFile = await getAudioFile(audioFileId);
+    if (audioFile) {
+      audioFiles.push({
+        id: audioFileId,
+        name: audioFile.name,
+        type: audioFile.type,
+      });
+      audioBlobs.set(audioFileId, {
+        blob: audioFile.blob,
+        name: audioFile.name,
+        type: audioFile.type,
+      });
+    } else {
+      console.warn(
+        `Audio file ID ${audioFileId} referenced but not found in DB.`,
+      );
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { lastBackedUpAt, ...profileToExport } = profile;
+
+  const lean: ProfileExportLean = {
+    exportVersion: 2,
+    exportDate: new Date().toISOString(),
+    profile: profileToExport,
+    padConfigurations,
+    pageMetadata,
+    audioFiles,
+  };
+
+  return { lean, audioBlobs };
+}
+
+/**
+ * Exports a single profile as a ZIP blob (.iaz).
+ * Structure: profile.json + audio/<id>
+ */
+export async function exportProfileToZip(profileId: number): Promise<Blob> {
+  const JSZip = (await import("jszip")).default;
+  const { lean, audioBlobs } = await collectProfileDataForZip(profileId);
+
+  const zip = new JSZip();
+  zip.file("profile.json", JSON.stringify(lean, null, 2));
+
+  for (const [id, { blob }] of audioBlobs) {
+    const buffer = await blob.arrayBuffer();
+    zip.file(`audio/${id}`, buffer);
+  }
+
+  return zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+}
+
+/**
+ * Exports multiple profiles as a ZIP blob (.iaz).
+ * Structure: manifest.json + audio/<id> (shared) + profiles/<n>/profile.json
+ */
+export async function exportMultipleProfilesToZip(
+  profileIds: number[],
+): Promise<Blob> {
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+
+  const manifestProfiles: { name: string; folder: string }[] = [];
+  // Shared audio map across all profiles (IDs are globally unique in IndexedDB)
+  const allAudioBlobs = new Map<number, { blob: Blob }>();
+
+  for (let i = 0; i < profileIds.length; i++) {
+    try {
+      const { lean, audioBlobs } = await collectProfileDataForZip(
+        profileIds[i],
+      );
+      const folder = String(i);
+      manifestProfiles.push({ name: lean.profile.name, folder });
+      zip.file(
+        `profiles/${folder}/profile.json`,
+        JSON.stringify(lean, null, 2),
+      );
+      for (const [id, data] of audioBlobs) {
+        if (!allAudioBlobs.has(id)) {
+          allAudioBlobs.set(id, data);
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to export profile ID ${profileIds[i]}:`, error);
+    }
+  }
+
+  for (const [id, { blob }] of allAudioBlobs) {
+    const buffer = await blob.arrayBuffer();
+    zip.file(`audio/${id}`, buffer);
+  }
+
+  const manifest: ZipManifest = {
+    exportVersion: 3,
+    exportDate: new Date().toISOString(),
+    profiles: manifestProfiles,
+  };
+  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+
+  return zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+}
+
+/**
+ * Imports a single-profile ZIP (containing profile.json + audio/<id>).
+ */
+export async function importProfileFromZip(
+  zipBlob: Blob,
+  db: IDBPDatabase<ImpAmpDBSchema>,
+): Promise<number> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(zipBlob);
+
+  const profileJsonFile = zip.file("profile.json");
+  if (!profileJsonFile) {
+    throw new Error("Invalid .iaz file: missing profile.json");
+  }
+
+  const lean = JSON.parse(
+    await profileJsonFile.async("string"),
+  ) as ProfileExportLean;
+
+  // Reconstruct full ProfileExport by reading audio files from the ZIP
+  const audioFiles: ProfileExport["audioFiles"] = [];
+  for (const ref of lean.audioFiles) {
+    const entry = zip.file(`audio/${ref.id}`);
+    if (entry) {
+      const buffer = await entry.async("arraybuffer");
+      const blob = new Blob([buffer], { type: ref.type });
+      const data = await blobToBase64(blob);
+      audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
+    } else {
+      console.warn(
+        `Audio file ${ref.id} referenced in profile.json but not found in ZIP.`,
+      );
+    }
+  }
+
+  const fullExport: ProfileExport = {
+    exportVersion: lean.exportVersion,
+    exportDate: lean.exportDate,
+    profile: lean.profile,
+    padConfigurations: lean.padConfigurations,
+    pageMetadata: lean.pageMetadata,
+    audioFiles,
+  };
+
+  return importProfile(db, fullExport);
+}
+
+/**
+ * Imports a multi-profile ZIP (containing manifest.json + audio/<id> + profiles/<n>/profile.json).
+ */
+export async function importMultipleProfilesFromZip(
+  zipBlob: Blob,
+  db: IDBPDatabase<ImpAmpDBSchema>,
+): Promise<{ profileName: string; result: number | Error }[]> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(zipBlob);
+
+  const manifestFile = zip.file("manifest.json");
+  if (!manifestFile) {
+    throw new Error("Invalid multi-profile .iaz file: missing manifest.json");
+  }
+
+  const manifest = JSON.parse(
+    await manifestFile.async("string"),
+  ) as ZipManifest;
+  if (manifest.exportVersion !== 3 || !Array.isArray(manifest.profiles)) {
+    throw new Error("Invalid or unsupported multi-profile ZIP format.");
+  }
+
+  const results: { profileName: string; result: number | Error }[] = [];
+
+  for (const entry of manifest.profiles) {
+    const profileJsonFile = zip.file(`profiles/${entry.folder}/profile.json`);
+    if (!profileJsonFile) {
+      results.push({
+        profileName: entry.name,
+        result: new Error(`Missing profiles/${entry.folder}/profile.json`),
+      });
+      continue;
+    }
+
+    try {
+      const lean = JSON.parse(
+        await profileJsonFile.async("string"),
+      ) as ProfileExportLean;
+
+      // Reconstruct full export reading audio from the shared root audio/ folder
+      const audioFiles: ProfileExport["audioFiles"] = [];
+      for (const ref of lean.audioFiles) {
+        const audioEntry = zip.file(`audio/${ref.id}`);
+        if (audioEntry) {
+          const buffer = await audioEntry.async("arraybuffer");
+          const blob = new Blob([buffer], { type: ref.type });
+          const data = await blobToBase64(blob);
+          audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
+        } else {
+          console.warn(
+            `Audio file ${ref.id} not found in ZIP for profile ${entry.name}.`,
+          );
+        }
+      }
+
+      const fullExport: ProfileExport = {
+        exportVersion: lean.exportVersion,
+        exportDate: lean.exportDate,
+        profile: lean.profile,
+        padConfigurations: lean.padConfigurations,
+        pageMetadata: lean.pageMetadata,
+        audioFiles,
+      };
+
+      const newId = await importProfile(db, fullExport);
+      results.push({ profileName: entry.name, result: newId });
+    } catch (error) {
+      results.push({
+        profileName: entry.name,
+        result: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Detects the format of an import file.
+ */
+export async function detectImportFormat(
+  file: File,
+): Promise<
+  "zip" | "json-v2-single" | "json-v1-multi" | "impamp2-legacy" | "unknown"
+> {
+  // Check extension first
+  if (file.name.toLowerCase().endsWith(".iaz")) {
+    return "zip";
+  }
+
+  // Check ZIP magic bytes (PK\x03\x04)
+  const header = await file.slice(0, 4).arrayBuffer();
+  const bytes = new Uint8Array(header);
+  if (
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    bytes[2] === 0x03 &&
+    bytes[3] === 0x04
+  ) {
+    return "zip";
+  }
+
+  // Try JSON parsing
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (parsed.exportVersion === 1 && Array.isArray(parsed.profiles))
+      return "json-v1-multi";
+    if (parsed.exportVersion === 2 && parsed.profile) return "json-v2-single";
+    if (
+      parsed.pages &&
+      typeof parsed.pages === "object" &&
+      !parsed.exportVersion
+    )
+      return "impamp2-legacy";
+  } catch {
+    // not JSON
+  }
+
+  return "unknown";
+}

@@ -21,7 +21,9 @@ export default function ProfileManager() {
     importProfileFromJSON,
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
-    exportMultipleProfilesToJSON,
+    exportMultipleProfilesToZip,
+    importProfileFromZip,
+    importMultipleProfilesFromZip,
     isGoogleSignedIn,
     googleUser,
     setGoogleAuthDetails,
@@ -691,16 +693,9 @@ export default function ProfileManager() {
                       alert("Please select at least one profile to export.");
                       return;
                     }
-                    if (!exportMultipleProfilesToJSON) {
-                      console.error(
-                        "exportMultipleProfilesToJSON function is not available in the profile store.",
-                      );
-                      alert("Multi-export functionality is not available.");
-                      return;
-                    }
                     try {
                       setIsExporting(true);
-                      await exportMultipleProfilesToJSON(
+                      await exportMultipleProfilesToZip(
                         Array.from(exportSelectionIds),
                       );
                       setIsExporting(false);
@@ -748,9 +743,8 @@ export default function ProfileManager() {
                     ref={fileInputRef}
                     data-testid="import-profile-file-input"
                     className="hidden"
-                    accept=".json,.iajson"
+                    accept=".iaz,.json,.iajson"
                     onChange={async (e: ChangeEvent<HTMLInputElement>) => {
-                      // Reset states
                       setImportError(null);
                       setImportSuccess(null);
 
@@ -760,151 +754,98 @@ export default function ProfileManager() {
                       try {
                         setIsImporting(true);
 
-                        // Read the file
-                        const reader = new FileReader();
-                        reader.onload = async (event) => {
-                          const content = event.target?.result as string;
-                          if (!content) {
-                            setImportError("Failed to read file content.");
-                            setIsImporting(false);
-                            return;
-                          }
+                        const { detectImportFormat } =
+                          await import("@/lib/importExport");
+                        const format = await detectImportFormat(file);
 
-                          try {
-                            const parsedData = JSON.parse(content);
-
-                            // --- Check for Multi-Profile Format (Version 1) ---
-                            if (
-                              parsedData &&
-                              parsedData.exportVersion === 1 &&
-                              Array.isArray(parsedData.profiles)
-                            ) {
-                              console.log(
-                                "Attempting import as multi-profile format (v1)...",
-                              );
-                              // Check if the function exists before calling
-                              if (!importMultipleProfilesFromJSON) {
-                                console.error(
-                                  "importMultipleProfilesFromJSON function is not available in the profile store.",
-                                );
-                                throw new Error(
-                                  "Multi-import functionality is not available.",
-                                );
-                              }
-                              // Use store function
-                              const results =
-                                await importMultipleProfilesFromJSON(content);
-                              // Add explicit types for filter/map parameters
-                              const successes = results.filter(
-                                (r: { result: number | Error }) =>
-                                  typeof r.result === "number",
-                              ).length;
-                              const failures = results.length - successes;
-                              let message = `Multi-profile import complete: ${successes} succeeded`;
-                              if (failures > 0) {
-                                message += `, ${failures} failed.`;
-                                const failedNames = results
-                                  .filter(
-                                    (r: { result: number | Error }) =>
-                                      r.result instanceof Error,
-                                  )
-                                  .map(
-                                    (r: { profileName: string }) =>
-                                      r.profileName,
-                                  )
-                                  .join(", ");
-                                message += ` Failed profiles: ${failedNames}`;
-                                setImportError(message); // Show summary as error if any failed
-                              } else {
-                                setImportSuccess(message); // Show as success only if all succeeded
-                              }
-                              setIsImporting(false);
-
-                              // --- Check for Single Profile Format (Version 2) ---
-                            } else if (
-                              parsedData &&
-                              parsedData.exportVersion === 2 &&
-                              parsedData.profile
-                            ) {
-                              console.log(
-                                "Attempting import as current single profile format (v2)...",
-                              );
-                              const currentProfileId =
-                                await importProfileFromJSON(content);
-                              setImportSuccess(
-                                `Profile imported successfully! (New ID: ${currentProfileId})`,
-                              );
-                              setIsImporting(false);
-
-                              // --- Check for Legacy Impamp2 Format (heuristic check) ---
-                            } else if (
-                              parsedData &&
-                              parsedData.pages &&
-                              typeof parsedData.pages === "object" &&
-                              !parsedData.exportVersion
-                            ) {
-                              // Heuristic: has 'pages' object, no 'exportVersion'
-                              console.log(
-                                "Attempting import as impamp2 format...",
-                              );
-                              const impamp2ProfileId =
-                                await importProfileFromImpamp2JSON(content);
-                              setImportSuccess(
-                                `Impamp2 profile imported successfully! (New ID: ${impamp2ProfileId})`,
-                              );
-                              setIsImporting(false);
+                        if (format === "zip") {
+                          // Peek inside to decide single vs multi
+                          const JSZip = (await import("jszip")).default;
+                          const zip = await JSZip.loadAsync(file);
+                          if (zip.files["manifest.json"]) {
+                            // Multi-profile ZIP
+                            const results =
+                              await importMultipleProfilesFromZip(file);
+                            const successes = results.filter(
+                              (r) => typeof r.result === "number",
+                            ).length;
+                            const failures = results.length - successes;
+                            let message = `Multi-profile import complete: ${successes} succeeded`;
+                            if (failures > 0) {
+                              message += `, ${failures} failed.`;
+                              const failedNames = results
+                                .filter((r) => r.result instanceof Error)
+                                .map((r) => r.profileName)
+                                .join(", ");
+                              message += ` Failed profiles: ${failedNames}`;
+                              setImportError(message);
                             } else {
-                              // --- Unrecognized format ---
-                              console.error(
-                                "Unrecognized file format.",
-                                parsedData,
-                              );
-                              setImportError(
-                                "Failed to import: Unrecognized or invalid file format.",
-                              );
-                              setIsImporting(false);
+                              setImportSuccess(message);
                             }
-                          } catch (error) {
-                            console.error(
-                              "Error during import processing:",
-                              error,
+                          } else {
+                            // Single-profile ZIP
+                            const profileId = await importProfileFromZip(file);
+                            setImportSuccess(
+                              `Profile imported successfully! (New ID: ${profileId})`,
                             );
-                            let finalErrorMessage =
-                              "Failed to import profile: ";
-                            if (error instanceof SyntaxError) {
-                              finalErrorMessage +=
-                                "Invalid JSON format in file.";
-                            } else if (error instanceof Error) {
-                              finalErrorMessage += error.message; // Use the specific error message
-                            } else {
-                              finalErrorMessage +=
-                                "An unknown error occurred during import.";
-                            }
-                            setImportError(finalErrorMessage);
-                            setIsImporting(false);
-                          } finally {
-                            // Reset the file input regardless of success or failure
-                            if (fileInputRef.current) {
-                              fileInputRef.current.value = "";
-                            }
                           }
-                        };
-
-                        reader.onerror = () => {
-                          setImportError("Failed to read file");
-                          setIsImporting(false);
-                        };
-
-                        reader.readAsText(file);
+                        } else if (format === "json-v1-multi") {
+                          const content = await file.text();
+                          const results =
+                            await importMultipleProfilesFromJSON(content);
+                          const successes = results.filter(
+                            (r: { result: number | Error }) =>
+                              typeof r.result === "number",
+                          ).length;
+                          const failures = results.length - successes;
+                          let message = `Multi-profile import complete: ${successes} succeeded`;
+                          if (failures > 0) {
+                            message += `, ${failures} failed.`;
+                            const failedNames = results
+                              .filter(
+                                (r: { result: number | Error }) =>
+                                  r.result instanceof Error,
+                              )
+                              .map(
+                                (r: { profileName: string }) => r.profileName,
+                              )
+                              .join(", ");
+                            message += ` Failed profiles: ${failedNames}`;
+                            setImportError(message);
+                          } else {
+                            setImportSuccess(message);
+                          }
+                        } else if (format === "json-v2-single") {
+                          const content = await file.text();
+                          const profileId =
+                            await importProfileFromJSON(content);
+                          setImportSuccess(
+                            `Profile imported successfully! (New ID: ${profileId})`,
+                          );
+                        } else if (format === "impamp2-legacy") {
+                          const content = await file.text();
+                          const profileId =
+                            await importProfileFromImpamp2JSON(content);
+                          setImportSuccess(
+                            `Impamp2 profile imported successfully! (New ID: ${profileId})`,
+                          );
+                        } else {
+                          setImportError(
+                            "Failed to import: Unrecognized or invalid file format.",
+                          );
+                        }
                       } catch (error) {
-                        const errorMessage =
+                        console.error("Error during import processing:", error);
+                        const msg =
                           error instanceof Error
                             ? error.message
-                            : "An unknown error occurred";
-                        setImportError(
-                          `Failed to import profile: ${errorMessage}`,
-                        );
+                            : "An unknown error occurred during import.";
+                        setImportError(`Failed to import profile: ${msg}`);
+                      } finally {
                         setIsImporting(false);
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = "";
+                        }
                       }
                     }}
                   />
