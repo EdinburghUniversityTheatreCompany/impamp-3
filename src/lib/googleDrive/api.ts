@@ -82,6 +82,11 @@ async function authenticatedRequest<T>(
       }
     }
 
+    // Handle 404 gracefully — callers like findDriveFileById expect null for missing files
+    if (response.status === 404) {
+      return null;
+    }
+
     // Handle other errors
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
