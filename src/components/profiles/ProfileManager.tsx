@@ -563,8 +563,12 @@ export default function ProfileManager() {
           syncData = await proxyResponse.json();
           forceReadOnly = true; // public proxy = can't write back
         } else {
+          const proxyError = (await proxyResponse.json().catch(() => ({}))) as {
+            error?: string;
+          };
           throw new Error(
-            'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
+            proxyError.error ||
+              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
           );
         }
       }

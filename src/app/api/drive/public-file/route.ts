@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
  * Works for files shared with "anyone with the link" or "anyone on the internet".
  *
  * GET /api/drive/public-file?id=FILE_ID
- * Returns: the raw JSON content of the file, or 403/404 passthrough
+ * Returns: the raw JSON content of the file, or an error response
  */
 export async function GET(request: NextRequest) {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -23,20 +23,24 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${encodeURIComponent(apiKey)}`;
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
     const response = await fetch(url);
 
-    if (response.status === 403 || response.status === 404) {
-      return NextResponse.json(
-        { error: "File not accessible" },
-        { status: response.status },
-      );
-    }
-
     if (!response.ok) {
+      // Try to surface Google's own error message
+      const errorBody = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      const message =
+        errorBody?.error?.message ?? `Drive API error: ${response.status}`;
       return NextResponse.json(
-        { error: `Drive API error: ${response.status}` },
-        { status: 502 },
+        { error: message },
+        {
+          status:
+            response.status === 403 || response.status === 404
+              ? response.status
+              : 502,
+        },
       );
     }
 
