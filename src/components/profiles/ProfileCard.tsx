@@ -10,6 +10,9 @@ import {
   getLocalProfileSyncData,
   getProfileSyncFilename,
 } from "@/hooks/useGoogleDriveSync"; // Import sync hook and helpers
+import { useModal } from "@/hooks/modal/useModal";
+import { ModalType } from "@/components/modals/modalRegistry";
+import { ProfileSyncData } from "@/lib/syncUtils";
 
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -54,7 +57,12 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     shareDriveFile,
     syncStatus: driveHookStatus,
     error: driveHookError,
+    conflicts: driveHookConflicts,
+    conflictData: driveHookConflictData,
+    applyConflictResolution,
   } = useGoogleDriveSync();
+
+  const { openLazyModal, closeModal } = useModal();
 
   const { pauseSync, resumeSync, isSyncPaused, getSyncResumeTime } =
     useProfileStore();
@@ -261,6 +269,48 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   }, [driveHookStatus, driveHookError, cardError]);
 
+  // Open conflict resolution modal when this card's sync detects conflicts
+  useEffect(() => {
+    if (
+      driveHookStatus === "conflict" &&
+      lastSyncInitiatedByThisCard &&
+      driveHookConflictData &&
+      driveHookConflicts.length > 0
+    ) {
+      openLazyModal({
+        title: "Sync Conflict Resolution",
+        modalType: ModalType.CONFLICT_RESOLUTION,
+        modalProps: {
+          conflicts: driveHookConflicts,
+          conflictData: driveHookConflictData,
+          onResolve: (resolvedData: ProfileSyncData) => {
+            applyConflictResolution(
+              resolvedData,
+              driveHookConflictData.fileId,
+              profile.id!,
+            );
+            closeModal();
+          },
+          onCancel: () => {
+            closeModal();
+          },
+        },
+        showConfirmButton: false,
+        showCancelButton: false,
+        size: "xl",
+      });
+    }
+  }, [
+    driveHookStatus,
+    driveHookConflictData,
+    driveHookConflicts,
+    lastSyncInitiatedByThisCard,
+    openLazyModal,
+    closeModal,
+    applyConflictResolution,
+    profile.id,
+  ]);
+
   // Determine what status to show based on global hook status and local interaction
   const displayStatus = useMemo(() => {
     // Authentication expired - show re-auth message
@@ -276,8 +326,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       return { text: "Syncing...", color: "text-blue-600 dark:text-blue-400" };
     if (driveHookStatus === "conflict" && lastSyncInitiatedByThisCard)
       return {
-        text: "Conflict",
-        color: "text-yellow-600 dark:text-yellow-400",
+        text: `Sync conflict (${driveHookConflicts.length} item${driveHookConflicts.length !== 1 ? "s" : ""}) — resolving now`,
+        color: "text-amber-600 dark:text-amber-300",
       };
     // Show global error if it exists, otherwise show local card error
     const errorToShow = driveHookError || cardError;
@@ -297,6 +347,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   }, [
     driveHookStatus,
     driveHookError,
+    driveHookConflicts.length,
     cardError,
     isSyncingNow,
     lastSyncInitiatedByThisCard,
