@@ -10,6 +10,7 @@ import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
+import { blobToBase64 } from "@/lib/importExport";
 
 export default function ProfileManager() {
   const {
@@ -66,6 +67,10 @@ export default function ProfileManager() {
   const [shareUrl, setShareUrl] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [audioDownloadProgress, setAudioDownloadProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -108,6 +113,7 @@ export default function ProfileManager() {
   // Hooks
   const {
     downloadDriveFile,
+    downloadAudioFile,
     listAppFiles,
     syncStatus: driveHookStatus,
     error: driveHookError,
@@ -115,6 +121,44 @@ export default function ProfileManager() {
     conflictData: driveHookConflictData,
     applyConflictResolution,
   } = useGoogleDriveSync();
+
+  /**
+   * Downloads audio blobs for any audio files in syncData that only have a
+   * driveFileId (new format). Shows progress to the user while downloading.
+   * Returns a new syncData with base64 `data` populated on each audio file.
+   */
+  const enrichAudioFiles = async (
+    syncData: ProfileSyncData,
+  ): Promise<ProfileSyncData> => {
+    const needsDownload = (syncData.audioFiles ?? []).filter(
+      (f) => !f.data && f.driveFileId,
+    );
+    if (needsDownload.length === 0) return syncData;
+
+    setAudioDownloadProgress({ current: 0, total: needsDownload.length });
+
+    const enriched = new Map<number, string>();
+    for (let i = 0; i < needsDownload.length; i++) {
+      const ref = needsDownload[i];
+      try {
+        const blob = await downloadAudioFile(ref.driveFileId!);
+        if (blob) {
+          enriched.set(ref.id, await blobToBase64(blob));
+        }
+      } catch (err) {
+        console.warn(`Failed to download audio "${ref.name}":`, err);
+      }
+      setAudioDownloadProgress({ current: i + 1, total: needsDownload.length });
+    }
+
+    setAudioDownloadProgress(null);
+    return {
+      ...syncData,
+      audioFiles: (syncData.audioFiles ?? []).map((f) =>
+        enriched.has(f.id) ? { ...f, data: enriched.get(f.id) } : f,
+      ),
+    };
+  };
 
   const googleLogin = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
@@ -334,9 +378,10 @@ export default function ProfileManager() {
     setDriveActionError(null);
 
     try {
-      const syncData = await downloadDriveFile(fileId);
+      let syncData = await downloadDriveFile(fileId);
 
       if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
+        syncData = await enrichAudioFiles(syncData);
         const exportData = convertSyncToExportFormat(syncData);
         exportData.profile = {
           ...exportData.profile,
@@ -399,11 +444,13 @@ export default function ProfileManager() {
 
     setIsConnecting(true);
     try {
-      const syncData = await downloadDriveFile(fileId);
+      let syncData = await downloadDriveFile(fileId);
 
       if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
         throw new Error("Not a valid ImpAmp profile file.");
       }
+
+      syncData = await enrichAudioFiles(syncData);
 
       // Record existing profile IDs so we can identify the newly created one
       const profileIdsBefore = new Set(profiles.map((p) => p.id));
@@ -1115,7 +1162,9 @@ export default function ProfileManager() {
                                             className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50 transition-colors"
                                           >
                                             {importingFileId === file.id
-                                              ? "Connecting..."
+                                              ? audioDownloadProgress
+                                                ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
+                                                : "Connecting…"
                                               : "Connect"}
                                           </button>
                                         </div>
@@ -1165,7 +1214,11 @@ export default function ProfileManager() {
                               disabled={isConnecting}
                               className="px-3 py-1.5 text-sm bg-teal-500 text-white rounded-md hover:bg-teal-600 transition-colors disabled:opacity-50"
                             >
-                              {isConnecting ? "Connecting..." : "Connect"}
+                              {isConnecting
+                                ? audioDownloadProgress
+                                  ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
+                                  : "Connecting…"
+                                : "Connect"}
                             </button>
                           </div>
                           {connectError && (

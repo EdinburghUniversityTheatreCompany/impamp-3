@@ -25,6 +25,7 @@ import {
   downloadDriveFile,
   uploadDriveFile,
   createFilePermission,
+  downloadAudioFileAsBlob,
 } from "@/lib/googleDrive/api";
 import { syncProfile, applyConflictResolution } from "@/lib/googleDrive/sync";
 import { getLocalProfileSyncData } from "@/lib/googleDrive/dataAccess";
@@ -48,6 +49,7 @@ type UploadDriveFileFn = (
 type FindDriveFileByIdFn = (fileId: string) => Promise<DriveFile | null>;
 type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
 type ShareDriveFileFn = (fileId: string) => Promise<void>;
+type DownloadAudioFileFn = (driveFileId: string) => Promise<Blob | null>;
 
 // Hook return type interface
 interface GoogleDriveSyncHookReturn {
@@ -63,6 +65,7 @@ interface GoogleDriveSyncHookReturn {
   applyConflictResolution: ApplyConflictResolutionFn;
   listAppFiles: ListAppFilesFn;
   downloadDriveFile: DownloadDriveFileFn;
+  downloadAudioFile: DownloadAudioFileFn;
   uploadDriveFile: UploadDriveFileFn;
   findDriveFileById: FindDriveFileByIdFn;
   findDriveFileByName: FindDriveFileByNameFn;
@@ -386,6 +389,17 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [currentTokenInfo, handleTokenRefresh],
   );
 
+  const downloadAudio = useCallback(
+    async (driveFileId: string): Promise<Blob | null> => {
+      return await downloadAudioFileAsBlob(
+        driveFileId,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
   // Return the hook API
   return {
     syncStatus,
@@ -396,6 +410,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     applyConflictResolution: resolveConflict,
     listAppFiles: getAppFiles,
     downloadDriveFile: downloadFile,
+    downloadAudioFile: downloadAudio,
     uploadDriveFile: uploadFile,
     findDriveFileById: findFileById,
     findDriveFileByName: findFileByName,
