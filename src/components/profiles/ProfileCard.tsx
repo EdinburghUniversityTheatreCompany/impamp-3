@@ -17,6 +17,7 @@ import {
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
+import SharingPanel from "./SharingPanel";
 
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -58,7 +59,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const {
     syncProfile,
     uploadDriveFile,
-    shareDriveFile,
     uploadMissingAudioFiles,
     syncStatus: driveHookStatus,
     error: driveHookError,
@@ -81,9 +81,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [lastSyncInitiatedByThisCard, setLastSyncInitiatedByThisCard] =
     useState(false); // Track if this card triggered the last sync
 
-  // Share state
-  const [isSharing, setIsSharing] = useState(false);
-  const [shareCopied, setShareCopied] = useState(false);
+  const [showSharingPanel, setShowSharingPanel] = useState(false);
 
   // Sync pause states
   const [isPausing, setIsPausing] = useState(false);
@@ -252,26 +250,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       setIsUnlinking(false);
     }
   }, [profile.id, profile.name, updateProfile]);
-
-  const handleShareDriveFile = useCallback(async () => {
-    if (!profile.googleDriveFileId) return;
-    setIsSharing(true);
-    setCardError(null);
-    try {
-      await shareDriveFile(profile.googleDriveFileId);
-      const shareUrl = `https://drive.google.com/file/d/${profile.googleDriveFileId}/view`;
-      await navigator.clipboard.writeText(shareUrl);
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 3000);
-    } catch (error) {
-      console.error("Failed to share Drive file:", error);
-      setCardError(
-        error instanceof Error ? error.message : "Failed to share profile.",
-      );
-    } finally {
-      setIsSharing(false);
-    }
-  }, [profile.googleDriveFileId, shareDriveFile]);
 
   // Effect to clear the 'initiated by this card' flag when hook status resets
   useEffect(() => {
@@ -655,17 +633,14 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                   </div>
                 ) : null}
 
-                <button
-                  onClick={handleShareDriveFile}
-                  disabled={isSharing}
-                  className="px-3 py-1 text-xs bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40 disabled:opacity-50"
-                >
-                  {isSharing
-                    ? "Sharing..."
-                    : shareCopied
-                      ? "Link copied!"
-                      : "Share"}
-                </button>
+                {!profile.readOnly && profile.googleDriveFolderId && (
+                  <button
+                    onClick={() => setShowSharingPanel((v) => !v)}
+                    className="px-3 py-1 text-xs bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40"
+                  >
+                    {showSharingPanel ? "Hide Sharing" : "Manage Sharing"}
+                  </button>
+                )}
 
                 <button
                   onClick={handleUnlinkDriveFile}
@@ -677,6 +652,16 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               </>
             )}
           </div>
+
+          {/* Sharing panel — shown for non-read-only profiles with a folder */}
+          {showSharingPanel &&
+            profile.googleDriveFolderId &&
+            profile.googleDriveFileId && (
+              <SharingPanel
+                folderId={profile.googleDriveFolderId}
+                profileFileId={profile.googleDriveFileId}
+              />
+            )}
         </div>
       )}
     </div>

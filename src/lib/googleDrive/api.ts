@@ -3,7 +3,13 @@
  * Handles all API requests and response processing
  */
 
-import { DriveFile, DriveFileList, ProfileSyncData, TokenInfo } from "./types";
+import {
+  DriveFile,
+  DriveFileList,
+  DrivePermission,
+  ProfileSyncData,
+  TokenInfo,
+} from "./types";
 import { checkAndRefreshAuth } from "./auth";
 import { getProfileFolderName } from "./utils";
 
@@ -183,7 +189,9 @@ export const getOrCreateProfileFolder = async (
   }
 
   // Create the sub-folder
-  console.log(`Creating profile folder "${folderName}" inside ${APP_FOLDER_NAME}`);
+  console.log(
+    `Creating profile folder "${folderName}" inside ${APP_FOLDER_NAME}`,
+  );
   const metadata = {
     name: folderName,
     mimeType: "application/vnd.google-apps.folder",
@@ -202,7 +210,9 @@ export const getOrCreateProfileFolder = async (
   );
 
   if (!created?.id) {
-    throw new Error(`Failed to create profile folder "${folderName}" in Google Drive`);
+    throw new Error(
+      `Failed to create profile folder "${folderName}" in Google Drive`,
+    );
   }
 
   console.log(`Created profile folder "${folderName}" with ID: ${created.id}`);
@@ -240,7 +250,10 @@ export const getFolderCapabilities = async (
     if (data.capabilities?.canAddChildren) return "writer";
     return "reader";
   } catch (err) {
-    if (err instanceof Error && (err.message.includes("404") || err.message.includes("403"))) {
+    if (
+      err instanceof Error &&
+      (err.message.includes("404") || err.message.includes("403"))
+    ) {
       return "none";
     }
     throw err;
@@ -280,7 +293,127 @@ export const moveFileToFolder = async (
     url,
     "PATCH",
     tokenInfo,
-    { headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+    refreshCallback,
+  );
+};
+
+/**
+ * List all permissions on a Drive folder
+ */
+export const listFolderPermissions = async (
+  folderId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DrivePermission[]> => {
+  const url = `https://www.googleapis.com/drive/v3/files/${folderId}/permissions?fields=permissions(id,type,role,emailAddress,displayName,photoLink,pendingOwner)`;
+  const data = await authenticatedRequest<{ permissions: DrivePermission[] }>(
+    url,
+    "GET",
+    tokenInfo,
+    {},
+    refreshCallback,
+  );
+  return data?.permissions ?? [];
+};
+
+/**
+ * Set the public link access level on a Drive folder.
+ * Finds any existing "anyone" permission and updates or removes it.
+ */
+export const setPublicLinkAccess = async (
+  folderId: string,
+  access: "off" | "reader" | "writer",
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> => {
+  // Find existing "anyone" permission
+  const permissions = await listFolderPermissions(
+    folderId,
+    tokenInfo,
+    refreshCallback,
+  );
+  const existing = permissions.find((p) => p.type === "anyone");
+
+  if (access === "off") {
+    if (existing) {
+      await authenticatedRequest(
+        `https://www.googleapis.com/drive/v3/files/${folderId}/permissions/${existing.id}`,
+        "DELETE",
+        tokenInfo,
+        {},
+        refreshCallback,
+      );
+    }
+    return;
+  }
+
+  if (existing) {
+    await authenticatedRequest(
+      `https://www.googleapis.com/drive/v3/files/${folderId}/permissions/${existing.id}`,
+      "PATCH",
+      tokenInfo,
+      {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: access }),
+      },
+      refreshCallback,
+    );
+  } else {
+    await authenticatedRequest(
+      `https://www.googleapis.com/drive/v3/files/${folderId}/permissions`,
+      "POST",
+      tokenInfo,
+      {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "anyone", role: access }),
+      },
+      refreshCallback,
+    );
+  }
+};
+
+/**
+ * Invite a specific user to a Drive folder
+ */
+export const inviteUser = async (
+  folderId: string,
+  email: string,
+  role: "reader" | "writer",
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DrivePermission> => {
+  const data = await authenticatedRequest<DrivePermission>(
+    `https://www.googleapis.com/drive/v3/files/${folderId}/permissions?fields=id,type,role,emailAddress,displayName`,
+    "POST",
+    tokenInfo,
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "user", role, emailAddress: email }),
+    },
+    refreshCallback,
+  );
+  if (!data) throw new Error("Failed to invite user");
+  return data;
+};
+
+/**
+ * Remove a permission from a Drive folder
+ */
+export const removePermission = async (
+  folderId: string,
+  permissionId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> => {
+  await authenticatedRequest(
+    `https://www.googleapis.com/drive/v3/files/${folderId}/permissions/${permissionId}`,
+    "DELETE",
+    tokenInfo,
+    {},
     refreshCallback,
   );
 };
@@ -486,7 +619,7 @@ export const uploadDriveFile = async (
   try {
     const parentId = existingFileId
       ? null
-      : (folderId ?? await getOrCreateAppFolder(tokenInfo, refreshCallback));
+      : (folderId ?? (await getOrCreateAppFolder(tokenInfo, refreshCallback)));
 
     const metadata = {
       name: fileName,
@@ -620,7 +753,7 @@ export const uploadAudioFile = async (
   try {
     const parentId = existingDriveId
       ? null
-      : (folderId ?? await getOrCreateAppFolder(tokenInfo, refreshCallback));
+      : (folderId ?? (await getOrCreateAppFolder(tokenInfo, refreshCallback)));
 
     const metadata = {
       name: fileName,

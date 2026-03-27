@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useProfileStore } from "@/store/profileStore";
+import { getProfile } from "@/lib/db";
 
 // Import from our modular structure
 import {
@@ -26,7 +27,12 @@ import {
   uploadDriveFile,
   createFilePermission,
   downloadAudioFileAsBlob,
+  listFolderPermissions,
+  setPublicLinkAccess,
+  inviteUser,
+  removePermission,
 } from "@/lib/googleDrive/api";
+import type { DrivePermission } from "@/lib/googleDrive/types";
 import {
   syncProfile,
   applyConflictResolution,
@@ -55,6 +61,20 @@ type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
 type ShareDriveFileFn = (fileId: string) => Promise<void>;
 type DownloadAudioFileFn = (driveFileId: string) => Promise<Blob | null>;
 type UploadMissingAudioFilesFn = (profileId: number) => Promise<void>;
+type ListFolderPermissionsFn = (folderId: string) => Promise<DrivePermission[]>;
+type SetPublicLinkAccessFn = (
+  folderId: string,
+  access: "off" | "reader" | "writer",
+) => Promise<void>;
+type InviteUserFn = (
+  folderId: string,
+  email: string,
+  role: "reader" | "writer",
+) => Promise<DrivePermission>;
+type RemovePermissionFn = (
+  folderId: string,
+  permissionId: string,
+) => Promise<void>;
 
 // Hook return type interface
 interface GoogleDriveSyncHookReturn {
@@ -76,6 +96,10 @@ interface GoogleDriveSyncHookReturn {
   findDriveFileByName: FindDriveFileByNameFn;
   shareDriveFile: ShareDriveFileFn;
   uploadMissingAudioFiles: UploadMissingAudioFilesFn;
+  listFolderPermissions: ListFolderPermissionsFn;
+  setPublicLinkAccess: SetPublicLinkAccessFn;
+  inviteUser: InviteUserFn;
+  removePermission: RemovePermissionFn;
 }
 
 /**
@@ -308,6 +332,16 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       );
       if (result.status === "success") {
         useProfileStore.getState().incrementPadConfigsVersion();
+        // Re-read the profile from DB so any fields written by sync (e.g.
+        // googleDriveFolderId, readOnly) are reflected in the store's state.
+        const updated = await getProfile(profileId);
+        if (updated) {
+          useProfileStore.setState((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === profileId ? updated : p,
+            ),
+          }));
+        }
       }
       return result;
     },
@@ -423,6 +457,61 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [currentTokenInfo, handleTokenRefresh],
   );
 
+  const listPermissions = useCallback(
+    async (folderId: string): Promise<DrivePermission[]> => {
+      return await listFolderPermissions(
+        folderId,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
+  const setPublicAccess = useCallback(
+    async (
+      folderId: string,
+      access: "off" | "reader" | "writer",
+    ): Promise<void> => {
+      return await setPublicLinkAccess(
+        folderId,
+        access,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
+  const invite = useCallback(
+    async (
+      folderId: string,
+      email: string,
+      role: "reader" | "writer",
+    ): Promise<DrivePermission> => {
+      return await inviteUser(
+        folderId,
+        email,
+        role,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
+  const removePerm = useCallback(
+    async (folderId: string, permissionId: string): Promise<void> => {
+      return await removePermission(
+        folderId,
+        permissionId,
+        currentTokenInfo,
+        handleTokenRefresh,
+      );
+    },
+    [currentTokenInfo, handleTokenRefresh],
+  );
+
   // Return the hook API
   return {
     syncStatus,
@@ -439,6 +528,10 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     findDriveFileByName: findFileByName,
     shareDriveFile: shareFile,
     uploadMissingAudioFiles: uploadMissingAudio,
+    listFolderPermissions: listPermissions,
+    setPublicLinkAccess: setPublicAccess,
+    inviteUser: invite,
+    removePermission: removePerm,
   };
 };
 

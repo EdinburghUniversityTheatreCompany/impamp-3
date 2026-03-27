@@ -1,6 +1,23 @@
 // Re-export types from other files that we need
 import type { ProfileSyncData, ItemConflict } from "@/lib/syncUtils";
 
+// Google Drive Permissions API types
+export interface DrivePermission {
+  id: string;
+  type: "user" | "group" | "domain" | "anyone";
+  role:
+    | "owner"
+    | "organizer"
+    | "fileOrganizer"
+    | "writer"
+    | "commenter"
+    | "reader";
+  emailAddress?: string;
+  displayName?: string;
+  photoLink?: string;
+  pendingOwner?: boolean;
+}
+
 // Google Drive API response types
 export interface DriveFile {
   kind: string;
