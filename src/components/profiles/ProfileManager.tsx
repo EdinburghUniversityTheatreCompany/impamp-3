@@ -320,7 +320,11 @@ export default function ProfileManager() {
       profile: profileWithoutBackupDate,
       padConfigurations: syncData.padConfigurations || [],
       pageMetadata: syncData.pageMetadata || [],
-      audioFiles: syncData.audioFiles || [],
+      // Only include audio files that have base64 data (legacy format).
+      // New-format files have driveFileId instead and will download on first sync.
+      audioFiles: (syncData.audioFiles || []).filter(
+        (f): f is typeof f & { data: string } => typeof f.data === "string",
+      ),
     };
   };
 

@@ -10,6 +10,7 @@ export interface AudioFile {
   name: string;
   type: string;
   createdAt: Date;
+  driveFileId?: string; // Google Drive file ID if this audio file has been uploaded
 }
 
 // Define the structure of profile data
@@ -402,6 +403,31 @@ export async function deleteAudioFile(id: number): Promise<void> {
   await tx.store.delete(id);
   await tx.done;
   console.log(`Deleted audio file with id: ${id}`);
+}
+
+// Get an audio file by name (returns first match)
+export async function getAudioFileByName(
+  name: string,
+): Promise<AudioFile | undefined> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readonly");
+  const results = await tx.store.index("name").getAll(name);
+  await tx.done;
+  return results[0];
+}
+
+// Update the driveFileId on an audio file record
+export async function updateAudioFileDriveId(
+  id: number,
+  driveFileId: string,
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  const existing = await tx.store.get(id);
+  if (existing) {
+    await tx.store.put({ ...existing, driveFileId });
+  }
+  await tx.done;
 }
 
 // Get all audio file IDs referenced by pad configurations for a specific profile

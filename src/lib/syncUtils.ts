@@ -345,7 +345,8 @@ export interface ProfileSyncData {
     id: number;
     name: string;
     type: string;
-    data: string; // Base64 encoded audio data
+    driveFileId?: string; // Google Drive file ID (preferred — separate Drive file per audio)
+    data?: string; // Base64 encoded audio data (legacy fallback for backward compat)
   }[];
 }
 

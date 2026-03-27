@@ -11,7 +11,7 @@ import {
   getAudioFile,
 } from "@/lib/db";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import { blobToBase64, base64ToBlob } from "@/lib/importExport";
+import { base64ToBlob } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
 /**
@@ -53,17 +53,17 @@ export const getLocalProfileSyncData = async (
     }
   });
 
-  // Convert audio blobs to base64
+  // Build audio file references — use driveFileId if available, otherwise omit
+  // (uploadMissingAudioFiles in sync.ts ensures driveFileIds are set before this is called)
   const audioFiles = [];
   for (const audioFileId of audioFileIds) {
     const audioFile = await getAudioFile(audioFileId);
     if (audioFile) {
-      const base64data = await blobToBase64(audioFile.blob);
       audioFiles.push({
         id: audioFileId,
         name: audioFile.name,
         type: audioFile.type,
-        data: base64data,
+        driveFileId: audioFile.driveFileId,
       });
     } else {
       console.warn(
@@ -107,31 +107,43 @@ export const updateLocalData = async (
       const audioStore = audioTx.objectStore("audioFiles");
 
       for (const audioFileData of data.audioFiles) {
-        // Check if audio file already exists
+        // Check if audio file already exists locally by name
         const existingAudioFiles = await audioStore
           .index("name")
           .getAll(audioFileData.name);
         let newAudioId: number;
 
         if (existingAudioFiles.length > 0) {
-          // Use the first matching audio file
           newAudioId = existingAudioFiles[0].id as number;
+          // Persist the driveFileId if we now know it and the record doesn't have it
+          if (audioFileData.driveFileId && !existingAudioFiles[0].driveFileId) {
+            await audioStore.put({
+              ...existingAudioFiles[0],
+              driveFileId: audioFileData.driveFileId,
+            });
+          }
           console.log(`Using existing audio file "${audioFileData.name}"`);
-        } else {
-          // Convert base64 back to blob
+        } else if (audioFileData.data) {
+          // Legacy path: base64-encoded data present — decode and store
           const blob = await base64ToBlob(
             audioFileData.data,
             audioFileData.type,
           );
-
-          // Add new audio file to DB
           newAudioId = await audioStore.add({
             blob,
             name: audioFileData.name,
             type: audioFileData.type,
+            driveFileId: audioFileData.driveFileId,
             createdAt: new Date(),
           });
-          console.log(`Added new audio file "${audioFileData.name}"`);
+          console.log(`Added audio file from base64 "${audioFileData.name}"`);
+        } else {
+          // New path: driveFileId only — file should have been pre-downloaded by downloadMissingAudioFiles
+          // in sync.ts before updateLocalData is called. If it's missing here, skip it.
+          console.warn(
+            `Audio file "${audioFileData.name}" has no local copy and no base64 data — skipping`,
+          );
+          continue;
         }
 
         // Map original ID to new local ID

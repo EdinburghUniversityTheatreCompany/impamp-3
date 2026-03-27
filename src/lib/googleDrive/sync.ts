@@ -3,7 +3,14 @@
  * Handles profile syncing, conflict resolution, and error handling
  */
 
-import { updateProfile, getProfile } from "@/lib/db";
+import {
+  updateProfile,
+  getProfile,
+  getAudioFileIdsForProfile,
+  getAudioFile,
+  addAudioFile,
+  updateAudioFileDriveId,
+} from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import { getLocalProfileSyncData, updateLocalData } from "./dataAccess";
@@ -12,6 +19,8 @@ import {
   findDriveFileById,
   findDriveFileByName,
   uploadDriveFile,
+  uploadAudioFile,
+  downloadAudioFileAsBlob,
 } from "./api";
 import {
   ProfileSyncData,
@@ -20,6 +29,103 @@ import {
   TokenInfo,
   ItemConflict,
 } from "./types";
+
+/**
+ * Upload any audio files for a profile that don't yet have a Drive file ID.
+ * Updates the IndexedDB record with the returned Drive file ID.
+ */
+async function uploadMissingAudioFiles(
+  profileId: number,
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> {
+  const audioFileIds = await getAudioFileIdsForProfile(profileId);
+  for (const id of audioFileIds) {
+    const audioFile = await getAudioFile(id);
+    if (!audioFile) continue;
+    if (audioFile.driveFileId) {
+      console.log(
+        `Audio file "${audioFile.name}" already on Drive — skipping upload`,
+      );
+      continue;
+    }
+    try {
+      const driveFile = await uploadAudioFile(
+        audioFile.name,
+        audioFile.blob,
+        audioFile.type,
+        null,
+        profileId,
+        tokenInfo,
+        refreshCallback,
+      );
+      await updateAudioFileDriveId(id, driveFile.id);
+      console.log(
+        `Uploaded audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
+      );
+    } catch (err) {
+      console.error(`Failed to upload audio file "${audioFile.name}":`, err);
+      // Non-fatal: continue syncing other files; profile JSON will omit driveFileId for this one
+    }
+  }
+}
+
+/**
+ * Download any audio files referenced in remote sync data that are missing locally.
+ * Stores downloaded files in IndexedDB with their Drive file ID set.
+ */
+async function downloadMissingAudioFiles(
+  audioRefs: ProfileSyncData["audioFiles"],
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<void> {
+  if (!audioRefs || audioRefs.length === 0) return;
+
+  const { getDb } = await import("@/lib/db");
+  const db = await getDb();
+
+  for (const ref of audioRefs) {
+    if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
+
+    // Check if a file with this name already exists locally
+    const existing = await db
+      .transaction("audioFiles", "readonly")
+      .store.index("name")
+      .getAll(ref.name);
+
+    if (existing.length > 0) {
+      // Update driveFileId if missing
+      if (!existing[0].driveFileId && existing[0].id !== undefined) {
+        await updateAudioFileDriveId(existing[0].id, ref.driveFileId);
+      }
+      console.log(`Audio file "${ref.name}" already exists locally`);
+      continue;
+    }
+
+    try {
+      const blob = await downloadAudioFileAsBlob(
+        ref.driveFileId,
+        tokenInfo,
+        refreshCallback,
+      );
+      if (blob) {
+        await addAudioFile({
+          blob,
+          name: ref.name,
+          type: ref.type,
+          driveFileId: ref.driveFileId,
+        });
+        console.log(`Downloaded audio file "${ref.name}" from Drive`);
+      }
+    } catch (err) {
+      console.error(
+        `Failed to download audio file "${ref.name}" from Drive:`,
+        err,
+      );
+      // Non-fatal: pad will be silent but sync continues
+    }
+  }
+}
 
 /**
  * Interface for sync status callbacks
@@ -147,7 +253,12 @@ export const syncProfile = async (
       }
     }
 
-    // 1. Get Local Data
+    // 1a. Upload any audio files that don't have a Drive file ID yet
+    if (!localProfile.readOnly) {
+      await uploadMissingAudioFiles(profileId, tokenInfo, refreshCallback);
+    }
+
+    // 1b. Get Local Data (now that audio files have driveFileIds set)
     const localData = await getLocalProfileSyncData(profileId);
     if (!localData) {
       throw new Error("Could not load local profile data.");
@@ -157,6 +268,15 @@ export const syncProfile = async (
     const remoteData = fileId
       ? await downloadDriveFile(fileId, tokenInfo, refreshCallback)
       : null;
+
+    // 2a. Download any audio files referenced in remote data that we don't have locally
+    if (remoteData?.audioFiles) {
+      await downloadMissingAudioFiles(
+        remoteData.audioFiles,
+        tokenInfo,
+        refreshCallback,
+      );
+    }
 
     // 3. Detect Conflicts & Merge
     const {
@@ -282,6 +402,9 @@ export const applyConflictResolution = async (
         error: "Not authenticated with Google Drive",
       };
     }
+
+    // Upload any audio files that don't have a Drive file ID yet
+    await uploadMissingAudioFiles(profileId, tokenInfo, refreshCallback);
 
     // Set a fresh timestamp for the resolution
     resolvedData._lastSyncTimestamp = Date.now();

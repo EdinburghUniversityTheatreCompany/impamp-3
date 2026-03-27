@@ -178,8 +178,8 @@ export const listAppFiles = async (
   }
 
   try {
-    // Using correct Google Drive API property search syntax
-    const query = `appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
+    // Filter by mimeType=application/json to exclude audio files (which have audio MIME types)
+    const query = `appProperties has { key='appIdentifier' and value='ImpAmp3' } and mimeType='application/json' and trashed=false`;
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
 
     const data = await authenticatedRequest<DriveFileList>(
@@ -387,6 +387,168 @@ export const uploadDriveFile = async (
     return result;
   } catch (err) {
     console.error(`Error uploading file ${fileName} to Google Drive:`, err);
+    throw err;
+  }
+};
+
+/**
+ * Upload an audio file to Google Drive (create new or update existing)
+ * @param fileName The audio file name
+ * @param blob The audio blob
+ * @param mimeType The audio MIME type
+ * @param existingDriveId Optional existing Drive file ID to update
+ * @param profileId The profile ID for metadata
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The uploaded file information
+ */
+export const uploadAudioFile = async (
+  fileName: string,
+  blob: Blob,
+  mimeType: string,
+  existingDriveId: string | null,
+  profileId: number,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DriveFile> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const metadata = {
+      name: fileName,
+      mimeType,
+      appProperties: {
+        appIdentifier: "ImpAmp3",
+        fileType: "audioFile",
+        profileId: profileId.toString(),
+      },
+      ...(existingDriveId ? {} : { parents: ["root"] }),
+    };
+
+    const form = new FormData();
+    form.append(
+      "metadata",
+      new Blob([JSON.stringify(metadata)], { type: "application/json" }),
+    );
+    form.append("file", blob);
+
+    let url: string;
+    let method: string;
+
+    if (existingDriveId) {
+      console.log(
+        `Updating existing audio file: ${fileName} (ID: ${existingDriveId})`,
+      );
+      url = `https://www.googleapis.com/upload/drive/v3/files/${existingDriveId}?uploadType=multipart&fields=id,name,mimeType,appProperties,modifiedTime,kind`;
+      method = "PATCH";
+    } else {
+      console.log(`Uploading new audio file: ${fileName}`);
+      url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,appProperties,modifiedTime,kind`;
+      method = "POST";
+    }
+
+    const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
+    const response = await fetch(url, { method, headers, body: form });
+
+    if (response.status === 401) {
+      const { isValid, refreshedTokenInfo } =
+        await checkAndRefreshAuth(tokenInfo);
+      if (isValid && refreshedTokenInfo) {
+        refreshCallback(refreshedTokenInfo);
+        const retryResponse = await fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
+          },
+          body: form,
+        });
+        if (retryResponse.ok) {
+          return (await retryResponse.json()) as DriveFile;
+        }
+        throw new Error(
+          `API Error: ${retryResponse.status} ${retryResponse.statusText}`,
+        );
+      }
+      throw new Error("Authentication expired. Please sign in again.");
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        `Google Drive API Error (${method}): ${response.status} ${errorData?.error?.message || response.statusText}`,
+      );
+    }
+
+    const result = await response.json();
+    console.log(
+      `Audio file ${method === "POST" ? "uploaded" : "updated"}: ${result.name} (ID: ${result.id})`,
+    );
+    return result;
+  } catch (err) {
+    console.error(
+      `Error uploading audio file ${fileName} to Google Drive:`,
+      err,
+    );
+    throw err;
+  }
+};
+
+/**
+ * Download an audio file from Google Drive as a Blob
+ * @param fileId The Drive file ID
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The audio blob or null if not found
+ */
+export const downloadAudioFileAsBlob = async (
+  fileId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<Blob | null> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
+    const response = await fetch(url, { headers });
+
+    if (response.status === 401) {
+      const { isValid, refreshedTokenInfo } =
+        await checkAndRefreshAuth(tokenInfo);
+      if (isValid && refreshedTokenInfo) {
+        refreshCallback(refreshedTokenInfo);
+        const retryResponse = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
+          },
+        });
+        if (retryResponse.ok) return retryResponse.blob();
+        throw new Error(
+          `API Error: ${retryResponse.status} ${retryResponse.statusText}`,
+        );
+      }
+      throw new Error("Authentication expired. Please sign in again.");
+    }
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        `Google Drive API Error: ${response.status} ${errorData?.error?.message || response.statusText}`,
+      );
+    }
+
+    return response.blob();
+  } catch (err) {
+    console.error(
+      `Error downloading audio file ${fileId} from Google Drive:`,
+      err,
+    );
     throw err;
   }
 };
