@@ -1200,6 +1200,117 @@ export async function setPageEmergencyState(
   }
 }
 
+// Find audio file IDs referenced by pads that no longer exist in the audioFiles store
+export interface MissingAudioFile {
+  profileId: number;
+  profileName: string;
+  pageIndex: number;
+  padIndex: number;
+  padName: string;
+  missingAudioFileId: number;
+}
+
+export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
+  const db = await getDb();
+
+  // Get all existing audio file IDs
+  const audioTx = db.transaction("audioFiles", "readonly");
+  const existingIds = new Set<number>(
+    (await audioTx.store.getAllKeys()) as number[],
+  );
+  await audioTx.done;
+
+  // Get all pad configurations
+  const padTx = db.transaction("padConfigurations", "readonly");
+  const allPads = await padTx.store.getAll();
+  await padTx.done;
+
+  // Build profile name map
+  const profiles = await getAllProfiles();
+  const profileNameMap = new Map<number, string>(
+    profiles.map((p) => [p.id!, p.name]),
+  );
+
+  const results: MissingAudioFile[] = [];
+  for (const pad of allPads) {
+    if (!pad.audioFileIds) continue;
+    for (const audioFileId of pad.audioFileIds) {
+      if (!existingIds.has(audioFileId)) {
+        results.push({
+          profileId: pad.profileId,
+          profileName:
+            profileNameMap.get(pad.profileId) ?? `Profile ${pad.profileId}`,
+          pageIndex: pad.pageIndex,
+          padIndex: pad.padIndex,
+          padName: pad.name ?? "",
+          missingAudioFileId: audioFileId,
+        });
+      }
+    }
+  }
+
+  console.log(
+    `[Missing Audio] Found ${results.length} missing audio file references`,
+  );
+  return results;
+}
+
+// Replace a missing audio file reference with a new file
+export async function replaceMissingAudioFile(
+  profileId: number,
+  pageIndex: number,
+  padIndex: number,
+  missingAudioFileId: number,
+  file: File,
+): Promise<void> {
+  const blob = file as Blob;
+  const hash = await computeBlobHash(blob);
+
+  // Store the new audio file
+  const newId = await addAudioFile({
+    name: file.name,
+    type: file.type,
+    blob,
+    hash,
+  });
+
+  // Update the pad configuration to swap the missing ID for the new one
+  const db = await getDb();
+  const tx = db.transaction("padConfigurations", "readwrite");
+  const store = tx.objectStore("padConfigurations");
+  const existing = await store
+    .index("profilePagePad")
+    .get([profileId, pageIndex, padIndex]);
+
+  if (!existing) {
+    await tx.done;
+    throw new Error(
+      `Pad configuration not found for profile ${profileId}, page ${pageIndex}, pad ${padIndex}`,
+    );
+  }
+
+  const updatedIds = existing.audioFileIds.map((id) =>
+    id === missingAudioFileId ? newId : id,
+  );
+  const now = new Date();
+  const syncFields = generateSyncFields(existing);
+  await store.put({
+    ...existing,
+    audioFileIds: updatedIds,
+    updatedAt: now,
+    _modified: syncFields._modified,
+    _fieldsModified: {
+      ...existing._fieldsModified,
+      audioFileIds: now.getTime(),
+    },
+  });
+  await tx.done;
+
+  console.log(
+    `[Missing Audio] Replaced missing file ID ${missingAudioFileId} with new file ID ${newId} in pad ${padIndex} on page ${pageIndex}`,
+  );
+}
+
 // Only initialize the database on the client side
 if (isClient) {
   getDb().catch(console.error);

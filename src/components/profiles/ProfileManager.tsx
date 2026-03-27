@@ -3,7 +3,12 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
-import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
+import {
+  Profile,
+  PadConfiguration,
+  PageMetadata,
+  MissingAudioFile,
+} from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
@@ -71,6 +76,14 @@ export default function ProfileManager() {
     totalAudioFiles: number;
   } | null>(null);
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
+
+  // Missing audio files state
+  const [isScanningMissing, setIsScanningMissing] = useState(false);
+  const [missingScanResult, setMissingScanResult] = useState<
+    MissingAudioFile[] | null
+  >(null);
+  const [replacingIds, setReplacingIds] = useState<Set<string>>(new Set());
+  const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
 
   // Connect to shared profile state
   const [shareUrl, setShareUrl] = useState("");
@@ -511,6 +524,50 @@ export default function ProfileManager() {
       });
     } finally {
       setIsCleaningOrphans(false);
+    }
+  };
+
+  // Missing audio files handlers
+  const handleScanMissing = async () => {
+    setIsScanningMissing(true);
+    setMissingScanResult(null);
+    setReplacingIds(new Set());
+    setReplacedIds(new Set());
+    try {
+      const { findMissingAudioFiles } = await import("@/lib/db");
+      const result = await findMissingAudioFiles();
+      setMissingScanResult(result);
+    } catch (error) {
+      console.error("Failed to scan for missing audio files:", error);
+    } finally {
+      setIsScanningMissing(false);
+    }
+  };
+
+  const handleReplaceMissingFile = async (
+    entry: MissingAudioFile,
+    file: File,
+  ) => {
+    const key = `${entry.profileId}-${entry.pageIndex}-${entry.padIndex}-${entry.missingAudioFileId}`;
+    setReplacingIds((prev) => new Set(prev).add(key));
+    try {
+      const { replaceMissingAudioFile } = await import("@/lib/db");
+      await replaceMissingAudioFile(
+        entry.profileId,
+        entry.pageIndex,
+        entry.padIndex,
+        entry.missingAudioFileId,
+        file,
+      );
+      setReplacedIds((prev) => new Set(prev).add(key));
+    } catch (error) {
+      console.error("Failed to replace missing audio file:", error);
+    } finally {
+      setReplacingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
@@ -1370,6 +1427,143 @@ export default function ProfileManager() {
                             </p>
                           )}
                       </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Missing Audio Files Section */}
+              <section className="mb-8">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
+                  Missing Audio Files
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Scan for pads that reference audio files no longer stored in
+                  this browser. You can supply a replacement file for each
+                  missing reference.
+                </p>
+
+                <div className="space-y-4">
+                  <div>
+                    <button
+                      onClick={handleScanMissing}
+                      disabled={isScanningMissing}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isScanningMissing ? (
+                        <>
+                          <svg
+                            className="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                          Scanning...
+                        </>
+                      ) : (
+                        "Scan for Missing Audio Files"
+                      )}
+                    </button>
+                  </div>
+
+                  {missingScanResult !== null && (
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                      {missingScanResult.length === 0 ? (
+                        <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                          No missing audio files found.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-sm text-orange-600 dark:text-orange-400 font-medium mb-4">
+                            {missingScanResult.length} missing audio file
+                            {missingScanResult.length !== 1 ? "s" : ""} found
+                          </p>
+                          {Array.from(
+                            new Map(
+                              missingScanResult.map((e) => [
+                                e.profileId,
+                                e.profileName,
+                              ]),
+                            ).entries(),
+                          ).map(([profileId, profileName]) => (
+                            <div key={profileId} className="mb-4 last:mb-0">
+                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                {profileName}
+                              </p>
+                              <div className="space-y-2">
+                                {missingScanResult
+                                  .filter((e) => e.profileId === profileId)
+                                  .map((entry) => {
+                                    const key = `${entry.profileId}-${entry.pageIndex}-${entry.padIndex}-${entry.missingAudioFileId}`;
+                                    const isReplacing = replacingIds.has(key);
+                                    const isReplaced = replacedIds.has(key);
+                                    return (
+                                      <div
+                                        key={key}
+                                        className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
+                                      >
+                                        <span className="text-gray-700 dark:text-gray-200">
+                                          Bank {entry.pageIndex + 1} &rsaquo;{" "}
+                                          {entry.padName
+                                            ? `"${entry.padName}"`
+                                            : `Pad ${entry.padIndex + 1}`}
+                                        </span>
+                                        {isReplaced ? (
+                                          <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
+                                            Replaced
+                                          </span>
+                                        ) : (
+                                          <label className="shrink-0">
+                                            <input
+                                              type="file"
+                                              accept="audio/*"
+                                              className="sr-only"
+                                              disabled={isReplacing}
+                                              onChange={(e) => {
+                                                const file =
+                                                  e.target.files?.[0];
+                                                if (file)
+                                                  handleReplaceMissingFile(
+                                                    entry,
+                                                    file,
+                                                  );
+                                              }}
+                                            />
+                                            <span
+                                              className={`cursor-pointer px-3 py-1 text-xs rounded border transition-colors ${
+                                                isReplacing
+                                                  ? "border-gray-300 text-gray-400 cursor-not-allowed"
+                                                  : "border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                              }`}
+                                            >
+                                              {isReplacing
+                                                ? "Replacing…"
+                                                : "Choose replacement…"}
+                                            </span>
+                                          </label>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
