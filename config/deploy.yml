@@ -50,6 +50,7 @@ env:
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: $NEXT_PUBLIC_GOOGLE_CLIENT_ID
   secret:
     - GOOGLE_CLIENT_SECRET
+    - GOOGLE_API_KEY
     # - RAILS_MASTER_KEY
 
 # Aliases are triggered with "bin/kamal <alias>". You can overwrite arguments on invocation:

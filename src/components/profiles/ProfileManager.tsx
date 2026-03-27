@@ -138,6 +138,7 @@ export default function ProfileManager() {
     downloadDriveFile,
     downloadAudioFile,
     listAppFiles,
+    listFilesInFolder,
     syncStatus: driveHookStatus,
     error: driveHookError,
     repairDriveAudio,
@@ -419,11 +420,17 @@ export default function ProfileManager() {
     e.preventDefault();
     setConnectError(null);
 
-    // Extract file ID from a Drive URL, or treat the input as a raw file ID
-    const match = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    const fileId = match ? match[1] : shareUrl.trim();
+    // Extract file or folder ID from a Drive URL, or treat the input as a raw ID
+    const fileMatch = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    const folderMatch = shareUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    let fileId = fileMatch
+      ? fileMatch[1]
+      : folderMatch
+        ? null
+        : shareUrl.trim();
+    const folderId = folderMatch ? folderMatch[1] : null;
 
-    if (!fileId) {
+    if (!fileId && !folderId) {
       setConnectError(
         "Please enter a valid Google Drive share URL or file ID.",
       );
@@ -432,7 +439,39 @@ export default function ProfileManager() {
 
     setIsConnecting(true);
     try {
-      let syncData = await downloadDriveFile(fileId);
+      // If a folder was shared, find the profile JSON file inside it
+      if (folderId) {
+        const files = await listFilesInFolder(folderId);
+        const profileFile = files.find((f) => f.name.endsWith(".json"));
+        if (!profileFile) {
+          throw new Error(
+            "No profile file found in the shared folder. Make sure you're sharing an ImpAmp profile folder.",
+          );
+        }
+        fileId = profileFile.id;
+      }
+
+      // Tier 1: Try authenticated download (works for the user's own files)
+      let syncData: ProfileSyncData | null = null;
+      try {
+        syncData = await downloadDriveFile(fileId!);
+      } catch (err) {
+        if (err instanceof Error && err.message === "DRIVE_403") {
+          // Tier 2: Try public proxy (works for "anyone with link" files)
+          const proxyResponse = await fetch(
+            `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
+          );
+          if (proxyResponse.ok) {
+            syncData = await proxyResponse.json();
+          } else {
+            throw new Error(
+              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported at this time.',
+            );
+          }
+        } else {
+          throw err;
+        }
+      }
 
       if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
         throw new Error("Not a valid ImpAmp profile file.");

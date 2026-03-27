@@ -23,6 +23,7 @@ import {
   findDriveFileById,
   findDriveFileByName,
   listAppFiles,
+  listFilesInFolder,
   downloadDriveFile,
   uploadDriveFile,
   createFilePermission,
@@ -50,6 +51,7 @@ type ApplyConflictResolutionFn = (
   profileId: number,
 ) => Promise<SyncResult>;
 type ListAppFilesFn = () => Promise<DriveFile[]>;
+type ListFilesInFolderFn = (folderId: string) => Promise<DriveFile[]>;
 type DownloadDriveFileFn = (fileId: string) => Promise<ProfileSyncData | null>;
 type UploadDriveFileFn = (
   fileName: string,
@@ -94,6 +96,7 @@ interface GoogleDriveSyncHookReturn {
   syncProfile: SyncProfileFn;
   applyConflictResolution: ApplyConflictResolutionFn;
   listAppFiles: ListAppFilesFn;
+  listFilesInFolder: ListFilesInFolderFn;
   downloadDriveFile: DownloadDriveFileFn;
   downloadAudioFile: DownloadAudioFileFn;
   uploadDriveFile: UploadDriveFileFn;
@@ -390,6 +393,17 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     return await listAppFiles(getFreshTokenInfo(), handleTokenRefresh);
   }, [getFreshTokenInfo, handleTokenRefresh]);
 
+  const getFilesInFolder = useCallback(
+    async (folderId: string): Promise<DriveFile[]> => {
+      return await listFilesInFolder(
+        folderId,
+        getFreshTokenInfo(),
+        handleTokenRefresh,
+      );
+    },
+    [getFreshTokenInfo, handleTokenRefresh],
+  );
+
   const downloadFile = useCallback(
     async (fileId: string): Promise<ProfileSyncData | null> => {
       return await downloadDriveFile(
@@ -558,6 +572,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     syncProfile: synchronizeProfile,
     applyConflictResolution: resolveConflict,
     listAppFiles: getAppFiles,
+    listFilesInFolder: getFilesInFolder,
     downloadDriveFile: downloadFile,
     downloadAudioFile: downloadAudio,
     uploadDriveFile: uploadFile,

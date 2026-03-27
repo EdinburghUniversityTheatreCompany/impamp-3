@@ -72,6 +72,8 @@ async function authenticatedRequest<T>(
 
         if (retryResponse.ok) {
           return (await retryResponse.json()) as T;
+        } else if (retryResponse.status === 403) {
+          throw new Error("DRIVE_403");
         } else {
           throw new Error(
             `API Error: ${retryResponse.status} ${retryResponse.statusText}`,
@@ -85,6 +87,12 @@ async function authenticatedRequest<T>(
     // Handle 404 gracefully — callers like findDriveFileById expect null for missing files
     if (response.status === 404) {
       return null;
+    }
+
+    // Handle 403 with a recognisable sentinel so callers can distinguish
+    // "access denied" from other errors and apply fallback strategies
+    if (response.status === 403) {
+      throw new Error("DRIVE_403");
     }
 
     // Handle other errors
@@ -529,6 +537,36 @@ export const listAppFiles = async (
     console.error("Error listing app files:", err);
     throw err;
   }
+};
+
+/**
+ * List JSON files inside a specific Drive folder
+ * @param folderId The folder ID to list files in
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns Array of file information
+ */
+export const listFilesInFolder = async (
+  folderId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DriveFile[]> => {
+  if (!tokenInfo?.accessToken) {
+    throw new Error("Not authenticated");
+  }
+
+  const query = `'${folderId}' in parents and mimeType='application/json' and trashed=false`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
+
+  const data = await authenticatedRequest<DriveFileList>(
+    url,
+    "GET",
+    tokenInfo,
+    {},
+    refreshCallback,
+  );
+
+  return data?.files || [];
 };
 
 /**
