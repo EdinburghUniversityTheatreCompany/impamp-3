@@ -294,12 +294,16 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
   // API Implementation functions
   const synchronizeProfile = useCallback(
     async (profileId: number): Promise<SyncResult> => {
-      return await syncProfile(
+      const result = await syncProfile(
         profileId,
         currentTokenInfo,
         callbacks,
         handleTokenRefresh,
       );
+      if (result.status === "success") {
+        useProfileStore.getState().incrementPadConfigsVersion();
+      }
+      return result;
     },
     [currentTokenInfo, callbacks, handleTokenRefresh],
   );

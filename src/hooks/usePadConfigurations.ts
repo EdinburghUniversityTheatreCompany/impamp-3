@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getPadConfigurationsForProfilePage, PadConfiguration } from "@/lib/db"; // Assuming PadConfiguration is exported from db.ts
+import { useProfileStore } from "@/store/profileStore";
 
 interface UsePadConfigurationsResult {
   padConfigs: Map<number, PadConfiguration>;
@@ -18,6 +19,7 @@ export function usePadConfigurations(
   profileId: string | null,
   pageIndex: number,
 ): UsePadConfigurationsResult {
+  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
   const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(
     new Map(),
   );
@@ -84,7 +86,7 @@ export function usePadConfigurations(
     } finally {
       setIsLoading(false);
     }
-  }, [profileId, pageIndex]);
+  }, [profileId, pageIndex, padConfigsVersion]);
 
   useEffect(() => {
     fetchConfigs();

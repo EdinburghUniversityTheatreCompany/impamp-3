@@ -37,6 +37,7 @@ interface ProfileState {
   error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
   emergencySoundsVersion: number; // Track changes to emergency sounds configuration
+  padConfigsVersion: number; // Incremented after sync to trigger pad grid refresh
   fadeoutDuration: number; // Duration in seconds for the fadeout effect
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
@@ -45,6 +46,7 @@ interface ProfileState {
   setDeleteMoveMode: (isActive: boolean) => void; // Set delete/move mode
   toggleDeleteMoveMode: () => void; // Toggle delete/move mode
   incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
+  incrementPadConfigsVersion: () => void; // Increment counter after sync to refresh pad grid
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
@@ -139,6 +141,7 @@ export const useProfileStore = create<ProfileState>()(
       error: null,
       isProfileManagerOpen: false, // Profile manager modal is closed by default
       emergencySoundsVersion: 0, // Initial version for emergency sounds tracking
+      padConfigsVersion: 0,
       fadeoutDuration: 3, // Default fadeout duration in seconds
       syncRequestQueue: {},
 
@@ -297,6 +300,10 @@ export const useProfileStore = create<ProfileState>()(
         } else {
           set({ isDeleteMoveMode: newMode });
         }
+      },
+
+      incrementPadConfigsVersion: () => {
+        set((state) => ({ padConfigsVersion: state.padConfigsVersion + 1 }));
       },
 
       incrementEmergencySoundsVersion: () => {
@@ -866,3 +873,8 @@ export const useProfileStore = create<ProfileState>()(
     },
   ),
 );
+
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as Record<string, unknown>).__profileStore =
+    useProfileStore;
+}
