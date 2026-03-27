@@ -31,6 +31,7 @@ export default function ProfileManager() {
     importMultipleProfilesFromZip,
     isGoogleSignedIn,
     googleUser,
+    googleAccessToken,
     setGoogleAuthDetails,
     clearGoogleAuthDetails,
   } = useProfileStore();
@@ -86,6 +87,8 @@ export default function ProfileManager() {
   const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
 
   // Connect to shared profile state
+  const drivePickerRef = useRef<HTMLElement>(null);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -416,14 +419,107 @@ export default function ProfileManager() {
     }
   };
 
-  const handleConnectSharedProfile = async (e: React.FormEvent) => {
+  const connectToFolderById = async (folderId: string) => {
+    setConnectError(null);
+    setIsConnecting(true);
+    try {
+      // Find the profile JSON file inside the shared folder
+      const files = await listFilesInFolder(folderId);
+      const profileFile = files.find((f) => f.name.endsWith(".json"));
+      if (!profileFile) {
+        throw new Error(
+          "No profile file found in the selected folder. Make sure you're selecting an ImpAmp profile folder.",
+        );
+      }
+      const fileId = profileFile.id;
+
+      const syncData: ProfileSyncData | null = await downloadDriveFile(fileId);
+
+      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
+        throw new Error("Not a valid ImpAmp profile file.");
+      }
+
+      const enrichedSyncData = await enrichAudioFiles(syncData);
+
+      // Record existing profile IDs so we can identify the newly created one
+      const profileIdsBefore = new Set(profiles.map((p) => p.id));
+
+      // Convert sync format to export format and import as a new local profile
+      const exportData = convertSyncToExportFormat(enrichedSyncData);
+      exportData.profile = {
+        ...exportData.profile,
+        id: undefined,
+        syncType: "googleDrive",
+      };
+      await importProfileFromJSON(JSON.stringify(exportData));
+
+      // Find the newly created profile and link it to the shared Drive folder
+      const updatedProfiles = useProfileStore.getState().profiles;
+      const newProfile = updatedProfiles.find(
+        (p) => !profileIdsBefore.has(p.id),
+      );
+      if (newProfile?.id) {
+        await updateProfile(newProfile.id, {
+          googleDriveFileId: fileId,
+          googleDriveFolderId: folderId,
+          readOnly: shareConnectReadOnly || undefined,
+        });
+      }
+
+      setConnectSuccess(
+        `"${enrichedSyncData.profile.name}" connected successfully.`,
+      );
+      setShareConnectReadOnly(false);
+    } catch (error) {
+      console.error("Failed to connect to shared profile:", error);
+      setConnectSuccess(null);
+      setConnectError(
+        error instanceof Error
+          ? error.message
+          : "Failed to connect to shared profile.",
+      );
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Load drive-picker web component (client-side only — uses HTMLElement)
+  useEffect(() => {
+    import("@googleworkspace/drive-picker-element");
+  }, []);
+
+  // Wire Picker events and show picker when showDrivePicker becomes true
+  useEffect(() => {
+    if (!showDrivePicker) return;
+    const el = drivePickerRef.current;
+    if (!el) return;
+    (el as HTMLElement & { visible: boolean }).visible = true;
+    const onPicked = (e: Event) => {
+      const docs = (e as CustomEvent).detail?.docs;
+      const doc = docs?.[0];
+      setShowDrivePicker(false);
+      if (doc?.id) connectToFolderById(doc.id);
+    };
+    const onCanceled = () => {
+      setShowDrivePicker(false);
+      setIsConnecting(false);
+    };
+    el.addEventListener("picker:picked", onPicked);
+    el.addEventListener("picker:canceled", onCanceled);
+    return () => {
+      el.removeEventListener("picker:picked", onPicked);
+      el.removeEventListener("picker:canceled", onCanceled);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDrivePicker]);
+
+  const handleConnectFromUrl = async (e: React.FormEvent) => {
     e.preventDefault();
     setConnectError(null);
 
-    // Extract file or folder ID from a Drive URL, or treat the input as a raw ID
     const fileMatch = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
     const folderMatch = shareUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-    let fileId = fileMatch
+    const fileId = fileMatch
       ? fileMatch[1]
       : folderMatch
         ? null
@@ -439,25 +535,18 @@ export default function ProfileManager() {
 
     setIsConnecting(true);
     try {
-      // If a folder was shared, find the profile JSON file inside it
       if (folderId) {
-        const files = await listFilesInFolder(folderId);
-        const profileFile = files.find((f) => f.name.endsWith(".json"));
-        if (!profileFile) {
-          throw new Error(
-            "No profile file found in the shared folder. Make sure you're sharing an ImpAmp profile folder.",
-          );
-        }
-        fileId = profileFile.id;
+        await connectToFolderById(folderId);
+        setShareUrl("");
+        return;
       }
 
-      // Tier 1: Try authenticated download (works for the user's own files)
+      // File link: try authenticated first, then public proxy fallback
       let syncData: ProfileSyncData | null = null;
       try {
         syncData = await downloadDriveFile(fileId!);
       } catch (err) {
         if (err instanceof Error && err.message === "DRIVE_403") {
-          // Tier 2: Try public proxy (works for "anyone with link" files)
           const proxyResponse = await fetch(
             `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
           );
@@ -465,7 +554,7 @@ export default function ProfileManager() {
             syncData = await proxyResponse.json();
           } else {
             throw new Error(
-              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported at this time.',
+              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
             );
           }
         } else {
@@ -477,13 +566,9 @@ export default function ProfileManager() {
         throw new Error("Not a valid ImpAmp profile file.");
       }
 
-      syncData = await enrichAudioFiles(syncData);
-
-      // Record existing profile IDs so we can identify the newly created one
+      const enrichedSyncData = await enrichAudioFiles(syncData);
       const profileIdsBefore = new Set(profiles.map((p) => p.id));
-
-      // Convert sync format to export format and import as a new local profile
-      const exportData = convertSyncToExportFormat(syncData);
+      const exportData = convertSyncToExportFormat(enrichedSyncData);
       exportData.profile = {
         ...exportData.profile,
         id: undefined,
@@ -491,7 +576,6 @@ export default function ProfileManager() {
       };
       await importProfileFromJSON(JSON.stringify(exportData));
 
-      // Find the newly created profile and link it to the shared Drive file
       const updatedProfiles = useProfileStore.getState().profiles;
       const newProfile = updatedProfiles.find(
         (p) => !profileIdsBefore.has(p.id),
@@ -503,7 +587,9 @@ export default function ProfileManager() {
         });
       }
 
-      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
+      setConnectSuccess(
+        `"${enrichedSyncData.profile.name}" connected successfully.`,
+      );
       setShareUrl("");
       setShareConnectReadOnly(false);
     } catch (error) {
@@ -1212,48 +1298,89 @@ export default function ProfileManager() {
                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                           Connect to shared profile
                         </h4>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                          Paste a Google Drive share link from a collaborator.
-                        </p>
-                        <form
-                          onSubmit={handleConnectSharedProfile}
-                          className="space-y-2"
-                        >
-                          <input
-                            type="text"
-                            value={shareUrl}
-                            onChange={(e) => {
-                              setShareUrl(e.target.value);
-                              setConnectSuccess(null);
-                              setConnectError(null);
-                            }}
-                            placeholder="https://drive.google.com/file/d/..."
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
-                            required
-                          />
-                          <div className="flex items-center gap-3">
-                            <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={shareConnectReadOnly}
-                                onChange={(e) =>
-                                  setShareConnectReadOnly(e.target.checked)
+                        <div className="space-y-3">
+                          {/* Picker option — for privately shared profiles */}
+                          <div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                              Select a profile folder shared with you via Google
+                              Drive:
+                            </p>
+                            <div className="flex items-center gap-3">
+                              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={shareConnectReadOnly}
+                                  onChange={(e) =>
+                                    setShareConnectReadOnly(e.target.checked)
+                                  }
+                                  className="rounded"
+                                />
+                                Read-only
+                              </label>
+                              <button
+                                disabled={isConnecting}
+                                onClick={() => {
+                                  setConnectError(null);
+                                  setConnectSuccess(null);
+                                  setShowDrivePicker(true);
+                                }}
+                                className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
+                              >
+                                {isConnecting
+                                  ? audioDownloadProgress
+                                    ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
+                                    : "Connecting…"
+                                  : "Browse shared profiles…"}
+                              </button>
+                            </div>
+                            {showDrivePicker && (
+                              <drive-picker
+                                ref={drivePickerRef}
+                                app-id={process.env.NEXT_PUBLIC_GOOGLE_APP_ID}
+                                developer-key={
+                                  process.env.NEXT_PUBLIC_GOOGLE_API_KEY
                                 }
-                                className="rounded"
-                              />
-                              Read-only
-                            </label>
-                            <button
-                              type="submit"
-                              disabled={isConnecting}
-                              className="px-3 py-1.5 text-sm bg-teal-500 text-white rounded-md hover:bg-teal-600 transition-colors disabled:opacity-50"
+                                oauth-token={googleAccessToken ?? undefined}
+                                max-items={1}
+                              >
+                                <drive-picker-docs-view
+                                  view-id="SHARED_WITH_ME"
+                                  include-folders="true"
+                                  mime-types="application/vnd.google-apps.folder"
+                                />
+                              </drive-picker>
+                            )}
+                          </div>
+                          {/* URL option — for public "anyone with link" profiles */}
+                          <div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                              Or paste a share link for a publicly shared
+                              profile:
+                            </p>
+                            <form
+                              onSubmit={handleConnectFromUrl}
+                              className="space-y-2"
                             >
-                              {isConnecting
-                                ? audioDownloadProgress
-                                  ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
-                                  : "Connecting…"
-                                : "Connect"}
-                            </button>
+                              <input
+                                type="text"
+                                value={shareUrl}
+                                onChange={(e) => {
+                                  setShareUrl(e.target.value);
+                                  setConnectSuccess(null);
+                                  setConnectError(null);
+                                }}
+                                placeholder="https://drive.google.com/file/d/..."
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
+                                required
+                              />
+                              <button
+                                type="submit"
+                                disabled={isConnecting}
+                                className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
+                              >
+                                {isConnecting ? "Connecting…" : "Connect"}
+                              </button>
+                            </form>
                           </div>
                           {connectError && (
                             <p className="text-xs text-red-600 dark:text-red-400">
@@ -1265,7 +1392,7 @@ export default function ProfileManager() {
                               {connectSuccess}
                             </p>
                           )}
-                        </form>
+                        </div>
                       </div>
                     </>
                   )}
