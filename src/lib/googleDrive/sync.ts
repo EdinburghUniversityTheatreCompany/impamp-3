@@ -57,12 +57,13 @@ export async function repairDriveAudioFiles(
     checked++;
 
     let needsUpload = false;
+    const existingDriveId = audioFile.driveFileIds?.[profileId];
 
-    if (!audioFile.driveFileId) {
+    if (!existingDriveId) {
       needsUpload = true;
     } else {
       const existing = await findDriveFileById(
-        audioFile.driveFileId,
+        existingDriveId,
         tokenInfo,
         refreshCallback,
       );
@@ -92,7 +93,7 @@ export async function repairDriveAudioFiles(
         refreshCallback,
         folderId,
       );
-      await updateAudioFileDriveId(id, driveFile.id);
+      await updateAudioFileDriveId(id, driveFile.id, profileId);
       uploaded++;
       console.log(
         `Repaired audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
@@ -121,9 +122,9 @@ export async function uploadMissingAudioFiles(
   for (const id of audioFileIds) {
     const audioFile = await getAudioFile(id);
     if (!audioFile) continue;
-    if (audioFile.driveFileId) {
+    if (audioFile.driveFileIds?.[profileId]) {
       console.log(
-        `Audio file "${audioFile.name}" already on Drive — skipping upload`,
+        `Audio file "${audioFile.name}" already on Drive for profile ${profileId} — skipping upload`,
       );
       continue;
     }
@@ -138,7 +139,7 @@ export async function uploadMissingAudioFiles(
         refreshCallback,
         folderId,
       );
-      await updateAudioFileDriveId(id, driveFile.id);
+      await updateAudioFileDriveId(id, driveFile.id, profileId);
       console.log(
         `Uploaded audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
       );
@@ -210,6 +211,7 @@ async function migrateToFolderLayout(
  */
 async function downloadMissingAudioFiles(
   audioRefs: ProfileSyncData["audioFiles"],
+  profileId: number,
   tokenInfo: TokenInfo,
   refreshCallback: (token: TokenInfo) => void,
 ): Promise<void> {
@@ -243,9 +245,16 @@ async function downloadMissingAudioFiles(
     }
 
     if (existingFile) {
-      // Backfill driveFileId if missing
-      if (!existingFile.driveFileId && existingFile.id !== undefined) {
-        await updateAudioFileDriveId(existingFile.id, ref.driveFileId);
+      // Backfill driveFileId for this profile if missing
+      if (
+        !existingFile.driveFileIds?.[profileId] &&
+        existingFile.id !== undefined
+      ) {
+        await updateAudioFileDriveId(
+          existingFile.id,
+          ref.driveFileId,
+          profileId,
+        );
       }
       console.log(
         `Audio file "${ref.name}" already exists locally (hash match)`,
@@ -265,7 +274,7 @@ async function downloadMissingAudioFiles(
           name: ref.name,
           type: ref.type,
           hash: ref.hash,
-          driveFileId: ref.driveFileId,
+          driveFileIds: { [profileId]: ref.driveFileId },
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       }
@@ -484,6 +493,7 @@ export const syncProfile = async (
     if (remoteData?.audioFiles) {
       await downloadMissingAudioFiles(
         remoteData.audioFiles,
+        profileId,
         tokenInfo,
         refreshCallback,
       );

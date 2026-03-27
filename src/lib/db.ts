@@ -1,7 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
 
 const DB_NAME = "impamp3DB";
-const DB_VERSION = 5; // DB version for audio file hash index
+const DB_VERSION = 6; // DB version for per-profile driveFileIds map
 
 // Define the structure of audio file data
 export interface AudioFile {
@@ -11,7 +11,7 @@ export interface AudioFile {
   type: string;
   hash?: string; // SHA-256 hex digest of blob content
   createdAt: Date;
-  driveFileId?: string; // Google Drive file ID if this audio file has been uploaded
+  driveFileIds?: Record<number, string>; // profileId → Google Drive file ID
 }
 
 // Define the structure of profile data
@@ -306,6 +306,29 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
           }
           console.log("V5 Migration complete.");
         }
+        // V6 Migration: drop single driveFileId — replaced by per-profile driveFileIds map.
+        // Files will be re-uploaded to the correct per-profile folder on next sync.
+        if (oldVersion < 6) {
+          console.log(
+            "Applying V6 migration: removing driveFileId from audioFiles...",
+          );
+          const audioStore = transaction.objectStore("audioFiles");
+          audioStore
+            .openCursor()
+            .then(function iterate(cursor): Promise<void> {
+              if (!cursor) {
+                console.log("V6 Migration complete.");
+                return Promise.resolve();
+              }
+              const record = cursor.value as unknown as Record<string, unknown>;
+              if ("driveFileId" in record) {
+                delete record.driveFileId;
+                cursor.update(record as unknown as AudioFile);
+              }
+              return cursor.continue().then(iterate);
+            })
+            .catch((err) => console.error("V6 Migration error:", err));
+        }
 
         // V1 Seeding (Default Profile)
         if (oldVersion < 1) {
@@ -471,22 +494,30 @@ export async function ensureAudioFileHash(id: number): Promise<string | null> {
   return hash;
 }
 
-// Update the driveFileId on an audio file record
+// Update the Drive file ID for a specific profile on an audio file record
 export async function updateAudioFileDriveId(
   id: number,
   driveFileId: string | null,
+  profileId: number,
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("audioFiles", "readwrite");
   const existing = await tx.store.get(id);
   if (existing) {
-    const updated = { ...existing };
+    const currentMap = existing.driveFileIds ?? {};
     if (driveFileId === null) {
-      delete updated.driveFileId;
+      const newMap = { ...currentMap };
+      delete newMap[profileId];
+      await tx.store.put({
+        ...existing,
+        driveFileIds: Object.keys(newMap).length > 0 ? newMap : undefined,
+      });
     } else {
-      updated.driveFileId = driveFileId;
+      await tx.store.put({
+        ...existing,
+        driveFileIds: { ...currentMap, [profileId]: driveFileId },
+      });
     }
-    await tx.store.put(updated);
   }
   await tx.done;
 }
@@ -497,10 +528,13 @@ export async function clearAudioFileDriveIds(profileId: number): Promise<void> {
   const tx = db.transaction("audioFiles", "readwrite");
   for (const id of audioFileIds) {
     const file = await tx.store.get(id);
-    if (file?.driveFileId) {
-      const updated = { ...file };
-      delete updated.driveFileId;
-      await tx.store.put(updated);
+    if (file?.driveFileIds?.[profileId]) {
+      const newMap = { ...file.driveFileIds };
+      delete newMap[profileId];
+      await tx.store.put({
+        ...file,
+        driveFileIds: Object.keys(newMap).length > 0 ? newMap : undefined,
+      });
     }
   }
   await tx.done;

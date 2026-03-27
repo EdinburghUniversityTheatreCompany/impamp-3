@@ -65,7 +65,7 @@ export const getLocalProfileSyncData = async (
         name: audioFile.name,
         type: audioFile.type,
         hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
-        driveFileId: audioFile.driveFileId,
+        driveFileId: audioFile.driveFileIds?.[profileId],
       });
     } else {
       console.warn(
@@ -117,11 +117,18 @@ export const updateLocalData = async (
 
         if (existingAudioFiles.length > 0) {
           newAudioId = existingAudioFiles[0].id as number;
-          // Persist the driveFileId if we now know it and the record doesn't have it
-          if (audioFileData.driveFileId && !existingAudioFiles[0].driveFileId) {
+          // Persist the driveFileId for this profile if we now know it and it's missing
+          if (
+            audioFileData.driveFileId &&
+            !existingAudioFiles[0].driveFileIds?.[profileId]
+          ) {
+            const currentMap = existingAudioFiles[0].driveFileIds ?? {};
             await audioStore.put({
               ...existingAudioFiles[0],
-              driveFileId: audioFileData.driveFileId,
+              driveFileIds: {
+                ...currentMap,
+                [profileId]: audioFileData.driveFileId,
+              },
             });
           }
           console.log(`Using existing audio file "${audioFileData.name}"`);
@@ -135,7 +142,9 @@ export const updateLocalData = async (
             blob,
             name: audioFileData.name,
             type: audioFileData.type,
-            driveFileId: audioFileData.driveFileId,
+            driveFileIds: audioFileData.driveFileId
+              ? { [profileId]: audioFileData.driveFileId }
+              : undefined,
             createdAt: new Date(),
           });
           console.log(`Added audio file from base64 "${audioFileData.name}"`);

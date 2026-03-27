@@ -233,6 +233,20 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     authState.tokenExpiresAt,
   ]);
 
+  // Read token fresh from the store at call-time to avoid stale closures.
+  // Callbacks that pass tokenInfo to async functions should use this instead
+  // of the closure-captured currentTokenInfo, because React may call the effect
+  // with the old callback before currentTokenInfo has been updated.
+  const getFreshTokenInfo = useCallback((): TokenInfo | null => {
+    const s = useProfileStore.getState();
+    if (!s.isGoogleSignedIn || !s.googleAccessToken) return null;
+    return {
+      accessToken: s.googleAccessToken,
+      refreshToken: s.googleRefreshToken,
+      expiresAt: s.tokenExpiresAt || 0,
+    };
+  }, []);
+
   // Log authentication state for debugging
   useEffect(() => {
     console.log(
@@ -332,7 +346,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     async (profileId: number): Promise<SyncResult> => {
       const result = await syncProfile(
         profileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         callbacks,
         handleTokenRefresh,
       );
@@ -351,7 +365,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       }
       return result;
     },
-    [currentTokenInfo, callbacks, handleTokenRefresh],
+    [getFreshTokenInfo, callbacks, handleTokenRefresh],
   );
 
   const resolveConflict = useCallback(
@@ -364,27 +378,27 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         resolvedData,
         fileId,
         profileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         callbacks,
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, callbacks, handleTokenRefresh],
+    [getFreshTokenInfo, callbacks, handleTokenRefresh],
   );
 
   const getAppFiles = useCallback(async (): Promise<DriveFile[]> => {
-    return await listAppFiles(currentTokenInfo, handleTokenRefresh);
-  }, [currentTokenInfo, handleTokenRefresh]);
+    return await listAppFiles(getFreshTokenInfo(), handleTokenRefresh);
+  }, [getFreshTokenInfo, handleTokenRefresh]);
 
   const downloadFile = useCallback(
     async (fileId: string): Promise<ProfileSyncData | null> => {
       return await downloadDriveFile(
         fileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const uploadFile = useCallback(
@@ -399,68 +413,68 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         jsonData,
         existingFileId,
         profileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const findFileById = useCallback(
     async (fileId: string): Promise<DriveFile | null> => {
       return await findDriveFileById(
         fileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const findFileByName = useCallback(
     async (fileName: string): Promise<DriveFile | null> => {
       return await findDriveFileByName(
         fileName,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const shareFile = useCallback(
     async (fileId: string): Promise<void> => {
       return await createFilePermission(
         fileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const downloadAudio = useCallback(
     async (driveFileId: string): Promise<Blob | null> => {
       return await downloadAudioFileAsBlob(
         driveFileId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const uploadMissingAudio = useCallback(
     async (profileId: number): Promise<void> => {
-      if (!currentTokenInfo)
-        throw new Error("Not authenticated with Google Drive");
+      const tokenInfo = getFreshTokenInfo();
+      if (!tokenInfo) throw new Error("Not authenticated with Google Drive");
       return await uploadMissingAudioFiles(
         profileId,
-        currentTokenInfo,
+        tokenInfo,
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const repairAudio = useCallback(
@@ -468,27 +482,27 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       profileId: number,
       folderId?: string,
     ): Promise<{ checked: number; uploaded: number; errors: string[] }> => {
-      if (!currentTokenInfo)
-        throw new Error("Not authenticated with Google Drive");
+      const tokenInfo = getFreshTokenInfo();
+      if (!tokenInfo) throw new Error("Not authenticated with Google Drive");
       return repairDriveAudioFiles(
         profileId,
-        currentTokenInfo,
+        tokenInfo,
         handleTokenRefresh,
         folderId,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const listPermissions = useCallback(
     async (folderId: string): Promise<DrivePermission[]> => {
       return await listFolderPermissions(
         folderId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const setPublicAccess = useCallback(
@@ -499,11 +513,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       return await setPublicLinkAccess(
         folderId,
         access,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const invite = useCallback(
@@ -516,11 +530,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         folderId,
         email,
         role,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   const removePerm = useCallback(
@@ -528,11 +542,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       return await removePermission(
         folderId,
         permissionId,
-        currentTokenInfo,
+        getFreshTokenInfo(),
         handleTokenRefresh,
       );
     },
-    [currentTokenInfo, handleTokenRefresh],
+    [getFreshTokenInfo, handleTokenRefresh],
   );
 
   // Return the hook API
