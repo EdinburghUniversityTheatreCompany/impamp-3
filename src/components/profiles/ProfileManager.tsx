@@ -1311,100 +1311,87 @@ export default function ProfileManager() {
                         </h4>
                         <div className="space-y-3">
                           {/* Picker option — for privately shared profiles */}
-                          <div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                              Select a profile folder shared with you via Google
-                              Drive:
-                            </p>
-                            <div className="flex items-center gap-3">
-                              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-                                <input
-                                  type="checkbox"
-                                  checked={shareConnectReadOnly}
-                                  onChange={(e) =>
-                                    setShareConnectReadOnly(e.target.checked)
-                                  }
-                                  className="rounded"
-                                />
-                                Read-only
-                              </label>
-                              <button
-                                disabled={isConnecting}
-                                onClick={() => {
-                                  setConnectError(null);
-                                  setConnectSuccess(null);
-                                  setShowDrivePicker(true);
-                                }}
-                                className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
-                              >
-                                {isConnecting
-                                  ? audioDownloadProgress
-                                    ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
-                                    : "Connecting…"
-                                  : "Browse shared profiles…"}
-                              </button>
-                            </div>
-                            {showDrivePicker && (
-                              <drive-picker
-                                ref={drivePickerRef}
-                                app-id={process.env.NEXT_PUBLIC_GOOGLE_APP_ID}
-                                developer-key={
-                                  process.env.NEXT_PUBLIC_GOOGLE_API_KEY
-                                }
-                                oauth-token={googleAccessToken ?? undefined}
-                                max-items={1}
-                              >
-                                <drive-picker-docs-view
-                                  view-id="SHARED_WITH_ME"
-                                  include-folders="true"
-                                  mime-types="application/vnd.google-apps.folder"
-                                />
-                              </drive-picker>
-                            )}
-                          </div>
-                          {/* URL option — for public "anyone with link" profiles */}
-                          <div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                              Or paste a share link for a publicly shared
-                              profile:
-                            </p>
-                            <form
-                              onSubmit={handleConnectFromUrl}
-                              className="space-y-2"
+                          <div className="flex items-center gap-3">
+                            <button
+                              disabled={isConnecting}
+                              onClick={() => {
+                                setConnectError(null);
+                                setConnectSuccess(null);
+                                setShowDrivePicker(true);
+                              }}
+                              className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
                             >
+                              {isConnecting
+                                ? audioDownloadProgress
+                                  ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
+                                  : "Connecting…"
+                                : "Browse shared profiles…"}
+                            </button>
+                            <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
                               <input
-                                type="text"
-                                value={shareUrl}
-                                onChange={(e) => {
-                                  setShareUrl(e.target.value);
-                                  setConnectSuccess(null);
-                                  setConnectError(null);
-                                }}
-                                placeholder="https://drive.google.com/file/d/..."
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
-                                required
+                                type="checkbox"
+                                checked={shareConnectReadOnly}
+                                onChange={(e) =>
+                                  setShareConnectReadOnly(e.target.checked)
+                                }
+                                className="rounded"
                               />
-                              <button
-                                type="submit"
-                                disabled={isConnecting}
-                                className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
-                              >
-                                {isConnecting ? "Connecting…" : "Connect"}
-                              </button>
-                            </form>
+                              Read-only
+                            </label>
                           </div>
+                          {showDrivePicker && (
+                            <drive-picker
+                              ref={drivePickerRef}
+                              app-id={process.env.NEXT_PUBLIC_GOOGLE_APP_ID}
+                              developer-key={
+                                process.env.NEXT_PUBLIC_GOOGLE_API_KEY
+                              }
+                              oauth-token={googleAccessToken ?? undefined}
+                              max-items={1}
+                            >
+                              <drive-picker-docs-view
+                                view-id="SHARED_WITH_ME"
+                                include-folders="true"
+                                mime-types="application/vnd.google-apps.folder"
+                              />
+                            </drive-picker>
+                          )}
+                          {/* URL option — for public "anyone with link" profiles */}
+                          <form
+                            onSubmit={handleConnectFromUrl}
+                            className="flex gap-2"
+                          >
+                            <input
+                              type="text"
+                              value={shareUrl}
+                              onChange={(e) => {
+                                setShareUrl(e.target.value);
+                                setConnectSuccess(null);
+                                setConnectError(null);
+                              }}
+                              placeholder="Or paste a public share link…"
+                              className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
+                            />
+                            <button
+                              type="submit"
+                              disabled={isConnecting || !shareUrl}
+                              className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
+                            >
+                              {isConnecting ? "Connecting…" : "Connect"}
+                            </button>
+                          </form>
                           {/* Open With option — via Google Drive right-click */}
-                          <div className="rounded-md bg-gray-50 dark:bg-gray-700/50 px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
-                            <span className="font-medium text-gray-700 dark:text-gray-300">
-                              Tip:{" "}
-                            </span>
-                            Open the shared folder in Google Drive, right-click
-                            it, and choose{" "}
+                          <p className="text-xs text-gray-400 dark:text-gray-500">
+                            <span className="font-medium text-gray-500 dark:text-gray-400">
+                              Tip:
+                            </span>{" "}
+                            In Google Drive, right-click the shared folder and
+                            choose{" "}
                             <span className="font-medium">
                               Open with → ImpAmp3
-                            </span>{" "}
-                            to connect it directly.
-                          </div>
+                            </span>
+                            .
+                          </p>
                           {connectError && (
                             <p className="text-xs text-red-600 dark:text-red-400">
                               {connectError}
