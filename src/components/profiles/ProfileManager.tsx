@@ -548,19 +548,24 @@ export default function ProfileManager() {
         syncData = await downloadDriveFile(fileId!);
       } catch (err) {
         if (err instanceof Error && err.message === "DRIVE_403") {
-          const proxyResponse = await fetch(
-            `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
-          );
-          if (proxyResponse.ok) {
-            syncData = await proxyResponse.json();
-            forceReadOnly = true; // public proxy = can't write back
-          } else {
-            throw new Error(
-              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
-            );
-          }
+          // syncData stays null; fall through to proxy below
         } else {
           throw err;
+        }
+      }
+
+      // If no data (404/scope-invisible file or DRIVE_403), try public proxy
+      if (!syncData) {
+        const proxyResponse = await fetch(
+          `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
+        );
+        if (proxyResponse.ok) {
+          syncData = await proxyResponse.json();
+          forceReadOnly = true; // public proxy = can't write back
+        } else {
+          throw new Error(
+            'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
+          );
         }
       }
 
