@@ -18,9 +18,12 @@ export const validateAuthState = (tokenInfo: TokenInfo | null): boolean => {
 };
 
 /**
- * Attempts to refresh an expired access token
+ * Attempts to refresh an expired access token via the server-side API route.
+ * Using a server-side route keeps the client secret out of the browser.
+ * Returns null on network failure (offline) so callers can retry later
+ * without marking the user as needing re-authentication.
  * @param refreshToken The refresh token to use
- * @returns New token info or null if refresh failed
+ * @returns New token info, or null if refresh failed or is temporarily unavailable
  */
 export const refreshAccessToken = async (
   refreshToken: string | null,
@@ -28,43 +31,30 @@ export const refreshAccessToken = async (
   if (!refreshToken) return null;
 
   try {
-    // Get client ID from environment variable
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      throw new Error("Google client ID not configured");
-    }
+    console.log("Refreshing access token via server-side route...");
 
-    console.log("Refreshing access token with refresh token...");
-
-    // Form data for token refresh
-    const formData = new URLSearchParams({
-      client_id: clientId,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    });
-
-    // Call Google's OAuth token endpoint
-    const response = await fetch("https://oauth2.googleapis.com/token", {
+    const response = await fetch("/api/auth/google/refresh", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: formData,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
     });
 
     const data = await response.json();
 
+    if (response.status === 503) {
+      // Network failure — treat as temporary, don't invalidate auth
+      console.warn("Token refresh deferred: server could not reach Google.");
+      return null;
+    }
+
     if (!response.ok) {
       console.error("Token refresh failed:", data);
-      throw new Error(
-        data.error_description || data.error || "Token refresh failed",
-      );
+      throw new Error(data.error || "Token refresh failed");
     }
 
     // Calculate token expiration time (expires_in is in seconds)
     const expiresAt = Date.now() + data.expires_in * 1000;
 
-    // Return successful response
     return {
       accessToken: data.access_token,
       refreshToken: refreshToken, // Refresh token typically doesn't change

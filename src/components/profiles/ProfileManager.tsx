@@ -160,16 +160,35 @@ export default function ProfileManager() {
   };
 
   const googleLogin = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      console.log("Google Login Success (hook):", tokenResponse);
+    flow: "auth-code",
+    onSuccess: async ({ code }) => {
+      console.log("Google Login Success (auth-code flow)");
       setGoogleApiError(null);
-      const accessToken = tokenResponse.access_token;
       try {
+        // Exchange the authorization code for tokens server-side so the
+        // client secret is never exposed in the browser.
+        const exchangeResponse = await fetch("/api/auth/google/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+
+        if (!exchangeResponse.ok) {
+          const err = await exchangeResponse.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to exchange authorization code");
+        }
+
+        const {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_in: expiresIn,
+        } = await exchangeResponse.json();
+
+        const expiresAt = Date.now() + expiresIn * 1000;
+
         const userInfoResponse = await fetch(
           "https://www.googleapis.com/oauth2/v3/userinfo",
-          {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          },
+          { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!userInfoResponse.ok) {
           throw new Error(
@@ -179,28 +198,21 @@ export default function ProfileManager() {
         const userInfo: GoogleUserInfo = await userInfoResponse.json();
         console.log("Fetched Google User Info:", userInfo);
 
-        // Calculate token expiration time (usually 1 hour from now for Google)
-        const expiresAt = Date.now() + 3600 * 1000; // 1 hour in milliseconds
-
-        // Get refresh token if available - accessing through type assertion since it's not in the type definitions
-        const refreshToken =
-          ((tokenResponse as Record<string, unknown>)
-            .refresh_token as string) || null;
-
-        // Store Google auth details with refresh token and expiration
-        setGoogleAuthDetails(userInfo, accessToken, refreshToken, expiresAt);
-
-        // Log authentication success to help with testing
+        setGoogleAuthDetails(
+          userInfo,
+          accessToken,
+          refreshToken ?? null,
+          expiresAt,
+        );
         console.log(
           "Google authentication successful and stored in profile store",
         );
-        console.log("Authentication should now persist between page reloads");
       } catch (error) {
-        console.error("Error fetching Google user info:", error);
+        console.error("Error completing Google login:", error);
         setGoogleApiError(
           error instanceof Error
             ? error.message
-            : "Failed to fetch user details after login.",
+            : "Failed to complete Google sign-in.",
         );
       }
     },

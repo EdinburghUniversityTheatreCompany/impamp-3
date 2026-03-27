@@ -8,7 +8,7 @@
 
 import React, { useState, useCallback, useEffect } from "react";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
-import { useGoogleLogin, TokenResponse } from "@react-oauth/google";
+import { useGoogleLogin } from "@react-oauth/google";
 
 interface AuthNotificationProps {
   // Optional class name for styling
@@ -60,20 +60,37 @@ export const AuthNotification: React.FC<AuthNotificationProps> = ({
 
   // Google login handler using the Google OAuth library
   const googleLogin = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
+    flow: "auth-code",
+    onSuccess: async ({ code }) => {
       console.log(
-        "Google Login Success (from AuthNotification):",
-        tokenResponse,
+        "Google Login Success (auth-code flow, from AuthNotification)",
       );
       setGoogleApiError(null);
-      const accessToken = tokenResponse.access_token;
-
       try {
+        // Exchange the authorization code for tokens server-side so the
+        // client secret is never exposed in the browser.
+        const exchangeResponse = await fetch("/api/auth/google/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+
+        if (!exchangeResponse.ok) {
+          const err = await exchangeResponse.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to exchange authorization code");
+        }
+
+        const {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_in: expiresIn,
+        } = await exchangeResponse.json();
+
+        const expiresAt = Date.now() + expiresIn * 1000;
+
         const userInfoResponse = await fetch(
           "https://www.googleapis.com/oauth2/v3/userinfo",
-          {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          },
+          { headers: { Authorization: `Bearer ${accessToken}` } },
         );
 
         if (!userInfoResponse.ok) {
@@ -85,30 +102,21 @@ export const AuthNotification: React.FC<AuthNotificationProps> = ({
         const userInfo: GoogleUserInfo = await userInfoResponse.json();
         console.log("Fetched Google User Info:", userInfo);
 
-        // Calculate token expiration time (usually 1 hour from now for Google)
-        const expiresAt = Date.now() + 3600 * 1000; // 1 hour in milliseconds
-
-        // Define an extended token type that includes refresh_token
-        interface ExtendedTokenResponse extends TokenResponse {
-          refresh_token?: string;
-        }
-
-        // Get refresh token if available
-        const refreshToken =
-          (tokenResponse as ExtendedTokenResponse).refresh_token || null;
-
-        // Store Google auth details with refresh token and expiration
-        setGoogleAuthDetails(userInfo, accessToken, refreshToken, expiresAt);
-
+        setGoogleAuthDetails(
+          userInfo,
+          accessToken,
+          refreshToken ?? null,
+          expiresAt,
+        );
         console.log(
           "Google authentication successful and stored in profile store",
         );
       } catch (error) {
-        console.error("Error fetching Google user info:", error);
+        console.error("Error completing Google login:", error);
         setGoogleApiError(
           error instanceof Error
             ? error.message
-            : "Failed to fetch user details after login.",
+            : "Failed to complete Google sign-in.",
         );
       }
     },
