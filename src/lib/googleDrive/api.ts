@@ -249,7 +249,9 @@ export const listAppFiles = async (
       refreshCallback,
     );
 
-    return data?.files || [];
+    return (data?.files || []).filter(
+      (f) => f.appProperties?.fileType !== "audioFile",
+    );
   } catch (err) {
     console.error("Error listing app files:", err);
     throw err;
