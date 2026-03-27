@@ -389,14 +389,16 @@ export const detectProfileConflicts = (
         !k.startsWith("_") &&
         k !== "id" &&
         k !== "createdAt" &&
-        k !== "updatedAt",
+        k !== "updatedAt" &&
+        k !== "googleDriveFileId",
     ),
     ...Object.keys(remoteProfile).filter(
       (k) =>
         !k.startsWith("_") &&
         k !== "id" &&
         k !== "createdAt" &&
-        k !== "updatedAt",
+        k !== "updatedAt" &&
+        k !== "googleDriveFileId",
     ),
   ]);
 
