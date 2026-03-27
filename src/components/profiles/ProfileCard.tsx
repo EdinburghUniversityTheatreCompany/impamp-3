@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { format, formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
-import { Profile, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
+import {
+  Profile,
+  DEFAULT_BACKUP_REMINDER_PERIOD_MS,
+  clearAudioFileDriveIds,
+} from "@/lib/db";
 import {
   useGoogleDriveSync,
   getLocalProfileSyncData,
@@ -237,6 +241,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     setCardError(null);
     try {
       await updateProfile(profile.id, { googleDriveFileId: null });
+      await clearAudioFileDriveIds(profile.id);
       console.log(`Profile ${profile.id} unlinked from Drive.`);
     } catch (error) {
       console.error("Failed to unlink profile:", error);

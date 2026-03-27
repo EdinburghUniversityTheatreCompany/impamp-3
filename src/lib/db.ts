@@ -473,13 +473,34 @@ export async function ensureAudioFileHash(id: number): Promise<string | null> {
 // Update the driveFileId on an audio file record
 export async function updateAudioFileDriveId(
   id: number,
-  driveFileId: string,
+  driveFileId: string | null,
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("audioFiles", "readwrite");
   const existing = await tx.store.get(id);
   if (existing) {
-    await tx.store.put({ ...existing, driveFileId });
+    const updated = { ...existing };
+    if (driveFileId === null) {
+      delete updated.driveFileId;
+    } else {
+      updated.driveFileId = driveFileId;
+    }
+    await tx.store.put(updated);
+  }
+  await tx.done;
+}
+
+export async function clearAudioFileDriveIds(profileId: number): Promise<void> {
+  const audioFileIds = await getAudioFileIdsForProfile(profileId);
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  for (const id of audioFileIds) {
+    const file = await tx.store.get(id);
+    if (file?.driveFileId) {
+      const updated = { ...file };
+      delete updated.driveFileId;
+      await tx.store.put(updated);
+    }
   }
   await tx.done;
 }
