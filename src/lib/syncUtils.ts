@@ -1,4 +1,9 @@
-import { Profile, PadConfiguration, PageMetadata } from "./db"; // Import main data types
+import {
+  Profile,
+  PadConfiguration,
+  PageMetadata,
+  ensureAudioFileHash,
+} from "./db"; // Import main data types
 
 // Type guard to check if an object has sync fields
 // Exporting Syncable type for use in other modules
@@ -345,6 +350,7 @@ export interface ProfileSyncData {
     id: number;
     name: string;
     type: string;
+    hash?: string; // SHA-256 hex digest of blob content
     driveFileId?: string; // Google Drive file ID (preferred — separate Drive file per audio)
     data?: string; // Base64 encoded audio data (legacy fallback for backward compat)
   }[];
@@ -356,14 +362,14 @@ export interface ProfileSyncData {
  * @param remoteData Remote version of ProfileSyncData.
  * @returns An object containing conflicts and potentially automatically merged data.
  */
-export const detectProfileConflicts = (
+export const detectProfileConflicts = async (
   localData: ProfileSyncData,
   remoteData: ProfileSyncData | null,
-): {
+): Promise<{
   conflicts: ItemConflict[];
   requiresManualResolution: boolean;
   mergedData: ProfileSyncData;
-} => {
+}> => {
   const conflicts: ItemConflict[] = [];
   let requiresManualResolution = false;
 
@@ -508,16 +514,23 @@ export const detectProfileConflicts = (
   // --- Translate remote audio IDs to local IDs in merged pad configs ---
   // audioFileIds are local IndexedDB auto-increment keys (device-specific).
   // When a remote pad config "wins" a field merge, its audioFileIds reference
-  // remote IDs that may not exist locally. Translate them via filename matching.
+  // remote IDs that may not exist locally. Translate them via content hash.
   if (remoteData.audioFiles?.length) {
-    const localAudioByName = new Map(
-      localData.audioFiles.map((f) => [f.name, f.id]),
-    );
+    // Build hash→localId map, computing hashes lazily for local files that lack one
+    const localHashToId = new Map<string, number>();
+    for (const localFile of localData.audioFiles) {
+      if (localFile.id === undefined) continue;
+      const hash = localFile.hash
+        ? localFile.hash
+        : await ensureAudioFileHash(localFile.id);
+      if (hash) localHashToId.set(hash, localFile.id);
+    }
 
-    // Map: remote audio ID → local audio ID (matched by filename)
+    // Map: remote audio ID → local audio ID (matched by content hash)
     const remoteToLocalIdMap = new Map<number, number>();
     for (const remoteFile of remoteData.audioFiles) {
-      const localId = localAudioByName.get(remoteFile.name);
+      if (!remoteFile.hash) continue;
+      const localId = localHashToId.get(remoteFile.hash);
       if (localId !== undefined) {
         remoteToLocalIdMap.set(remoteFile.id, localId);
       }
@@ -549,9 +562,9 @@ export const detectProfileConflicts = (
 
     // Add audio files from remote that don't exist locally so updateLocalData
     // can import them and build the correct ID mapping for new files.
-    const localAudioNames = new Set(localData.audioFiles.map((f) => f.name));
+    const localAudioHashes = new Set([...localHashToId.keys()]);
     for (const remoteFile of remoteData.audioFiles) {
-      if (!localAudioNames.has(remoteFile.name)) {
+      if (!remoteFile.hash || !localAudioHashes.has(remoteFile.hash)) {
         mergedData.audioFiles.push(remoteFile);
       }
     }

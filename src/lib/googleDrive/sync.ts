@@ -10,6 +10,8 @@ import {
   getAudioFile,
   addAudioFile,
   updateAudioFileDriveId,
+  getAudioFileByHash,
+  ensureAudioFileHash,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
@@ -87,18 +89,35 @@ async function downloadMissingAudioFiles(
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
 
-    // Check if a file with this name already exists locally
-    const existing = await db
-      .transaction("audioFiles", "readonly")
-      .store.index("name")
-      .getAll(ref.name);
+    // Hash-first deduplication: check by content hash if available
+    let existingFile = ref.hash
+      ? await getAudioFileByHash(ref.hash)
+      : undefined;
 
-    if (existing.length > 0) {
-      // Update driveFileId if missing
-      if (!existing[0].driveFileId && existing[0].id !== undefined) {
-        await updateAudioFileDriveId(existing[0].id, ref.driveFileId);
+    // If no hash match, scan local files without a hash and compute on the fly
+    if (!existingFile && ref.hash) {
+      const allLocal = await db
+        .transaction("audioFiles", "readonly")
+        .store.getAll();
+      for (const local of allLocal) {
+        if (local.hash) continue; // already has a hash, would have matched above
+        if (local.id === undefined) continue;
+        const computedHash = await ensureAudioFileHash(local.id);
+        if (computedHash === ref.hash) {
+          existingFile = await getAudioFile(local.id);
+          break;
+        }
       }
-      console.log(`Audio file "${ref.name}" already exists locally`);
+    }
+
+    if (existingFile) {
+      // Backfill driveFileId if missing
+      if (!existingFile.driveFileId && existingFile.id !== undefined) {
+        await updateAudioFileDriveId(existingFile.id, ref.driveFileId);
+      }
+      console.log(
+        `Audio file "${ref.name}" already exists locally (hash match)`,
+      );
       continue;
     }
 
@@ -113,6 +132,7 @@ async function downloadMissingAudioFiles(
           blob,
           name: ref.name,
           type: ref.type,
+          hash: ref.hash,
           driveFileId: ref.driveFileId,
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
@@ -283,7 +303,7 @@ export const syncProfile = async (
       conflicts: detectedConflicts,
       requiresManualResolution,
       mergedData,
-    } = detectProfileConflicts(localData, remoteData);
+    } = await detectProfileConflicts(localData, remoteData);
 
     if (requiresManualResolution) {
       console.log(`Sync conflict detected for profile ${profileId}`);

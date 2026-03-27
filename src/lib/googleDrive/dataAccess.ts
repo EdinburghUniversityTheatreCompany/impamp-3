@@ -9,6 +9,7 @@ import {
   getProfile,
   getDb,
   getAudioFile,
+  ensureAudioFileHash,
 } from "@/lib/db";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import { base64ToBlob } from "@/lib/importExport";
@@ -63,6 +64,7 @@ export const getLocalProfileSyncData = async (
         id: audioFileId,
         name: audioFile.name,
         type: audioFile.type,
+        hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
         driveFileId: audioFile.driveFileId,
       });
     } else {

@@ -1,7 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
 
 const DB_NAME = "impamp3DB";
-const DB_VERSION = 4; // DB version for sync fields
+const DB_VERSION = 5; // DB version for audio file hash index
 
 // Define the structure of audio file data
 export interface AudioFile {
@@ -9,6 +9,7 @@ export interface AudioFile {
   blob: Blob;
   name: string;
   type: string;
+  hash?: string; // SHA-256 hex digest of blob content
   createdAt: Date;
   driveFileId?: string; // Google Drive file ID if this audio file has been uploaded
 }
@@ -72,7 +73,11 @@ export interface PageMetadata {
 
 // Define the database schema
 export interface ImpAmpDBSchema extends DBSchema {
-  audioFiles: { key: number; value: AudioFile; indexes: { name: string } };
+  audioFiles: {
+    key: number;
+    value: AudioFile;
+    indexes: { name: string; hash: string };
+  };
   profiles: { key: number; value: Profile; indexes: { name: string } };
   padConfigurations: {
     key: number;
@@ -289,6 +294,17 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
           migrateStoreV4(transaction, "pageMetadata").catch(console.error);
           console.log("V4 Migration queued.");
         }
+        // V5 Migration: add hash index on audioFiles
+        if (oldVersion < 5) {
+          console.log(
+            "Applying V5 migration: adding hash index to audioFiles...",
+          );
+          const audioStore = transaction.objectStore("audioFiles");
+          if (!audioStore.indexNames.contains("hash")) {
+            audioStore.createIndex("hash", "hash");
+          }
+          console.log("V5 Migration complete.");
+        }
 
         // V1 Seeding (Default Profile)
         if (oldVersion < 1) {
@@ -341,6 +357,15 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
 
 // --- Basic CRUD Operations (Updated for Sync Fields) ---
 
+// Compute SHA-256 hash of a Blob, returned as a lowercase hex string
+export async function computeBlobHash(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // Helper to generate sync fields for new/updated records
 const generateSyncFields = (existingRecord?: {
   _created?: number;
@@ -383,8 +408,9 @@ export async function addAudioFile(
   audioFile: Omit<AudioFile, "id" | "createdAt">,
 ): Promise<number> {
   const db = await getDb();
+  const hash = audioFile.hash ?? (await computeBlobHash(audioFile.blob));
   const tx = db.transaction("audioFiles", "readwrite");
-  const id = await tx.store.add({ ...audioFile, createdAt: new Date() });
+  const id = await tx.store.add({ ...audioFile, hash, createdAt: new Date() });
   await tx.done;
   console.log(`Added audio file with id: ${id}`);
   return id;
@@ -414,6 +440,34 @@ export async function getAudioFileByName(
   const results = await tx.store.index("name").getAll(name);
   await tx.done;
   return results[0];
+}
+
+// Get an audio file by content hash (returns first match)
+export async function getAudioFileByHash(
+  hash: string,
+): Promise<AudioFile | undefined> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readonly");
+  const results = await tx.store.index("hash").getAll(hash);
+  await tx.done;
+  return results[0];
+}
+
+// Get the hash for an audio file, computing and saving it if not yet stored
+export async function ensureAudioFileHash(id: number): Promise<string | null> {
+  const db = await getDb();
+  const existing = await db.get("audioFiles", id);
+  if (!existing) return null;
+  if (existing.hash) return existing.hash;
+
+  const hash = await computeBlobHash(existing.blob);
+  const tx = db.transaction("audioFiles", "readwrite");
+  const record = await tx.store.get(id);
+  if (record) {
+    await tx.store.put({ ...record, hash });
+  }
+  await tx.done;
+  return hash;
 }
 
 // Update the driveFileId on an audio file record
