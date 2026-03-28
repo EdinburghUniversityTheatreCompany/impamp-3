@@ -10,6 +10,7 @@ import {
   getDb,
   getAudioFile,
   ensureAudioFileHash,
+  updateAudioFileDriveId,
 } from "@/lib/db";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import { base64ToBlob } from "@/lib/importExport";
@@ -82,6 +83,34 @@ export const getLocalProfileSyncData = async (
     pageMetadata: pageMetadata,
     audioFiles: audioFiles,
   };
+};
+
+/**
+ * Backfills driveFileIds from remote sync data into local audio file records.
+ * Called before uploading so that files already on Drive (per the remote JSON)
+ * are not re-uploaded.
+ */
+export const backfillDriveFileIdsFromRemote = async (
+  audioRefs: { id: number; name: string; driveFileId?: string }[] | undefined,
+  profileId: number,
+): Promise<void> => {
+  if (!audioRefs || audioRefs.length === 0) return;
+
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readonly");
+  const audioStore = tx.objectStore("audioFiles");
+
+  for (const ref of audioRefs) {
+    if (!ref.driveFileId) continue;
+
+    const matches = await audioStore.index("name").getAll(ref.name);
+    if (matches.length === 0) continue;
+
+    const local = matches[0];
+    if (local.id !== undefined && !local.driveFileIds?.[profileId]) {
+      await updateAudioFileDriveId(local.id, ref.driveFileId, profileId);
+    }
+  }
 };
 
 /**

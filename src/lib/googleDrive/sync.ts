@@ -15,7 +15,11 @@ import {
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
-import { getLocalProfileSyncData, updateLocalData } from "./dataAccess";
+import {
+  getLocalProfileSyncData,
+  updateLocalData,
+  backfillDriveFileIdsFromRemote,
+} from "./dataAccess";
 import {
   downloadDriveFile,
   findDriveFileById,
@@ -153,30 +157,6 @@ export async function uploadMissingAudioFiles(
         `Audio file "${audioFile.name}" already on Drive for profile ${profileId} — skipping upload`,
       );
       continue;
-    }
-    // No local Drive ID — check if another browser already uploaded this file
-    if (folderId) {
-      try {
-        const existing = await findAudioFileInDriveFolder(
-          audioFile.name,
-          profileId,
-          folderId,
-          tokenInfo,
-          refreshCallback,
-        );
-        if (existing) {
-          console.log(
-            `Audio file "${audioFile.name}" already exists in Drive folder — recording ID without re-uploading`,
-          );
-          await updateAudioFileDriveId(id, existing.id, profileId);
-          continue;
-        }
-      } catch (err) {
-        console.warn(
-          `Could not check Drive for existing "${audioFile.name}" — will upload:`,
-          err,
-        );
-      }
     }
     try {
       const driveFile = await uploadAudioFile(
@@ -518,7 +498,19 @@ export const syncProfile = async (
       // Non-fatal: fall back to existing readOnly value
     }
 
-    // 1a. Upload any audio files that don't have a Drive file ID yet
+    // 1. Get Remote Data (if file exists)
+    const remoteData = fileId
+      ? await downloadDriveFile(fileId, tokenInfo, refreshCallback)
+      : null;
+
+    // 1a. Backfill driveFileIds from remote JSON into local audio file records so
+    //     that uploadMissingAudioFiles skips files already on Drive without needing
+    //     an extra Drive API search query per file.
+    if (remoteData?.audioFiles) {
+      await backfillDriveFileIdsFromRemote(remoteData.audioFiles, profileId);
+    }
+
+    // 1b. Upload any audio files that still don't have a Drive file ID (genuinely new)
     if (!localProfile.readOnly) {
       await uploadMissingAudioFiles(
         profileId,
@@ -528,18 +520,13 @@ export const syncProfile = async (
       );
     }
 
-    // 1b. Get Local Data (now that audio files have driveFileIds set)
+    // 1c. Get Local Data (now that audio files have driveFileIds set)
     const localData = await getLocalProfileSyncData(profileId);
     if (!localData) {
       throw new Error("Could not load local profile data.");
     }
 
-    // 2. Get Remote Data (if file exists)
-    const remoteData = fileId
-      ? await downloadDriveFile(fileId, tokenInfo, refreshCallback)
-      : null;
-
-    // 2a. Download any audio files referenced in remote data that we don't have locally
+    // 1d. Download any audio files referenced in remote data that we don't have locally
     if (remoteData?.audioFiles) {
       await downloadMissingAudioFiles(
         remoteData.audioFiles,
