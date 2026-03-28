@@ -87,7 +87,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [selectedPauseDuration, setSelectedPauseDuration] =
-    useState<string>("1h");
+    useState<string>("2h");
+  const [customPauseHours, setCustomPauseHours] = useState<number>(1);
   const [showPauseOptions, setShowPauseOptions] = useState(false);
 
   const handleDelete = async () => {
@@ -497,11 +498,10 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
             <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
               <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
-                Sync Paused until{" "}
-                {format(
-                  new Date(getSyncResumeTime(profile.id!) || Date.now()),
-                  "h:mm a, MMM d",
-                )}
+                {(getSyncResumeTime(profile.id!) ?? 0) >=
+                Number.MAX_SAFE_INTEGER - 1
+                  ? "Sync Paused indefinitely"
+                  : `Sync Paused until ${format(new Date(getSyncResumeTime(profile.id!) || Date.now()), "h:mm a, MMM d")}`}
               </p>
               <button
                 onClick={async () => {
@@ -538,6 +538,9 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                 <button
                   onClick={handleManualSync}
                   disabled={isSyncingNow || isSyncPaused(profile.id!)}
+                  title={
+                    isSyncPaused(profile.id!) ? "Syncing disabled" : undefined
+                  }
                   className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
                 >
                   {isSyncingNow
@@ -567,12 +570,33 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                             }
                             className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
                           >
-                            <option value="1h">1 hour</option>
+                            <option value="2h">2 hours</option>
                             <option value="4h">4 hours</option>
                             <option value="8h">8 hours</option>
-                            <option value="1d">Until tomorrow</option>
+                            <option value="1d">1 day</option>
+                            <option value="indefinite">
+                              Until turned on again
+                            </option>
                             <option value="custom">Custom...</option>
                           </select>
+                          {selectedPauseDuration === "custom" && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <input
+                                type="number"
+                                min={1}
+                                value={customPauseHours}
+                                onChange={(e) =>
+                                  setCustomPauseHours(
+                                    Math.max(1, parseInt(e.target.value) || 1),
+                                  )
+                                }
+                                className="w-16 text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
+                              />
+                              <span className="text-xs text-gray-600 dark:text-gray-400">
+                                hours
+                              </span>
+                            </div>
+                          )}
 
                           <div className="flex space-x-1 mt-2">
                             <button
@@ -584,26 +608,25 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                                   // Calculate duration in milliseconds
                                   let durationMs = 0;
                                   switch (selectedPauseDuration) {
-                                    case "1h":
-                                      durationMs = 60 * 60 * 1000; // 1 hour
+                                    case "2h":
+                                      durationMs = 2 * 60 * 60 * 1000;
                                       break;
                                     case "4h":
-                                      durationMs = 4 * 60 * 60 * 1000; // 4 hours
+                                      durationMs = 4 * 60 * 60 * 1000;
                                       break;
                                     case "8h":
-                                      durationMs = 8 * 60 * 60 * 1000; // 8 hours
+                                      durationMs = 8 * 60 * 60 * 1000;
                                       break;
                                     case "1d":
-                                      // Until tomorrow (8am)
-                                      const tomorrow = new Date();
-                                      tomorrow.setDate(tomorrow.getDate() + 1);
-                                      tomorrow.setHours(8, 0, 0, 0);
+                                      durationMs = 24 * 60 * 60 * 1000;
+                                      break;
+                                    case "indefinite":
                                       durationMs =
-                                        tomorrow.getTime() - Date.now();
+                                        Number.MAX_SAFE_INTEGER - Date.now();
                                       break;
                                     case "custom":
-                                      // Could open a modal or prompt here
-                                      durationMs = 4 * 60 * 60 * 1000; // Default to 4 hours if not specified
+                                      durationMs =
+                                        customPauseHours * 60 * 60 * 1000;
                                       break;
                                   }
 
