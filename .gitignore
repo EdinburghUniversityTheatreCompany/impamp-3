@@ -36,6 +36,9 @@ yarn-error.log*
 .env*
 !.env.dist
 
+# fnox — local-only secret references (this repo has non-fnox contributors)
+fnox.toml
+
 # vercel
 .vercel
 
