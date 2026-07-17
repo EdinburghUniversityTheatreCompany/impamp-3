@@ -1,0 +1,99 @@
+# Actions are pinned to a commit SHA with the release tag in a trailing comment (supply-chain
+# safety — see the github-actions skill's security-checklist.md). Bump with `pinact run -u` and
+# verify with scripts/check_action_refs.sh (see SKILL.md › "Keeping GitHub Actions current").
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Default GITHUB_TOKEN to read-only; a job needing more declares its own permissions: block.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Check formatting (prettier)
+        run: npx prettier --check .
+      - name: Executable bits on shipped scripts
+        # Any tracked file whose first line is a shebang must be mode 100755 in the
+        # index — with core.fileMode=false a local chmod never reaches git, and a
+        # 100644 script dies with exit 126 on every fresh clone.
+        # Mirrors the hk `exec-bit-scripts` step so CI and pre-commit agree.
+        run: |
+          bad=$(git ls-files -s | awk -F'\t' '$1 ~ /^100644/ { if ((getline line < $2) > 0 && line ~ /^#!/) print $2; close($2) }')
+          if [ -n "$bad" ]; then
+            echo "Shebang scripts missing the executable bit in the git index. Fix: git update-index --chmod=+x <file>"
+            echo "$bad"
+            exit 1
+          fi
+
+  # Run the MIT-licensed gitleaks CLI (via mise, version-pinned in mise.lock) rather than
+  # gitleaks/gitleaks-action: the action requires a paid GITLEAKS_LICENSE on org-owned repos,
+  # while the CLI is free for all repos and is exactly what the local hk pre-commit hook runs.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # gitleaks git scans the full commit history
+          persist-credentials: false
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - name: Scan git history for secrets
+        run: mise exec -- gitleaks git --redact --no-banner .
+
+  # GitHub Actions workflow checks — mirrors the hk `actionlint` + `zizmor` steps. One job runs
+  # both over the workflow files: actionlint (schema/expression/`needs:` correctness; its
+  # shellcheck-of-run: pass is off, see the hk step) then zizmor (security — credential
+  # persistence, template injection, over-broad GITHUB_TOKEN, …; offline audits only, no token).
+  actions-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - name: Lint workflows (actionlint)
+        run: actionlint -shellcheck=
+      - name: Scan workflows with zizmor
+        run: zizmor --no-progress .github/workflows/
+
+  # Add a `test` job here if the project has a test suite (e.g. `npm test` / `npx vitest run`).
+
+  # Noisier audits — mirror the hk `check` hook.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: lts/*
+      - name: Duplication (jscpd)
+        # -f scopes to code formats; .jscpd.json carries minTokens/threshold/reporters/ignore.
+        # Runner + version policy (latest on a 4-day cooldown, floored at v5 — see
+        # SKILL.md › jscpd version policy) are shared with the hk pre-commit gate via
+        # scripts/run-jscpd.sh; --require keeps CI strict (unrunnable jscpd fails the job).
+        run: bash scripts/run-jscpd.sh --require javascript,typescript,css,scss
+      - name: Large files
+        run: |
+          limit=512000
+          large=$(git ls-files | while read -r f; do
+            s=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            if [ "$s" -gt "$limit" ]; then echo "$f ($s bytes)"; fi
+          done)
+          if [ -n "$large" ]; then echo "Files exceed ${limit} bytes:"; echo "$large"; exit 1; fi

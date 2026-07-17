@@ -1,0 +1,68 @@
+// dev-env standard (dev-hooks:dev-env-setup) — version tracked via DEV_ENV_VERSION in mise.toml.
+// For JS/TypeScript repos.
+amends "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["prettier"] {
+        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.astro", "**/*.css", "**/*.scss", "**/*.mdx", "**/*.json")
+        check = "npx prettier --check {{ files }}"
+        fix = "npx prettier --write {{ files }}"
+    }
+    // Shipped scripts must carry the executable bit IN THE GIT INDEX (mode 100755):
+    // with core.fileMode=false a local chmod +x never reaches git, so clones get
+    // scripts that die with exit 126 "Permission denied". Detects scripts by shebang
+    // (line 1 only) among 100644-mode index entries. Single awk on purpose: hk's
+    // internal `sh` chokes on a while/read loop inside $() (kills the script at the
+    // assignment even when the substitution exits 0), so keep every intermediate
+    // command zero-exit. CI's lint job enforces the same rule (see ci.<stack>.yml),
+    // so the gates can't drift.
+    ["exec-bit-scripts"] {
+        check = "bad=$(git ls-files -s | awk -F'\\t' '$1 ~ /^100644/ { if ((getline line < $2) > 0 && line ~ /^#!/) print $2; close($2) }'); if [ -n \"$bad\" ]; then echo 'Shebang scripts missing the executable bit in the git index. Fix: git update-index --chmod=+x <file>'; echo \"$bad\"; exit 1; fi"
+    }
+    // --- Audits (duplication) ---------------------------------------------------
+    // jscpd 5.x via npx; config in `.jscpd.json`. `-f` scopes to code formats
+    // (no config equivalent) so docs/yaml aren't flagged. (See dev-env-setup SKILL.md.)
+    // The version-cooldown policy (latest on a 4-day cooldown, floored at v5) and the
+    // offline fallback live in scripts/run-jscpd.sh, shared with the CI audit job so the
+    // local and CI gates can't drift.
+    ["jscpd"] {
+        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.css", "**/*.scss")
+        check = "bash scripts/run-jscpd.sh javascript,typescript,css,scss"
+    }
+    // GitHub Actions workflow linter — schema/expression/`needs:` correctness that SHA-pinning
+    // and zizmor don't cover (typo'd keys, bad ${{ }} refs, undefined job deps). hk builtin,
+    // glob-gated to .github/workflows/*.yml|yaml; needs `actionlint` from mise (mise.toml).
+    // `-shellcheck=` turns OFF actionlint's shellcheck-of-`run:` pass: our run: blocks
+    // deliberately word-split (`shellcheck $files`) which trips SC2086, and real *.sh files are
+    // already covered by the dedicated shellcheck step.
+    ["actionlint"] = (Builtins.actionlint) {
+        check = "actionlint -shellcheck= {{ files }}"
+    }
+    // GitHub Actions security static analysis. hk builtin — globs .github/workflows/*.yml,
+    // .github/dependabot.yml and **/action.yml, so it only fires when a workflow/action file
+    // is staged. Flags credential persistence, template injection, over-broad GITHUB_TOKEN
+    // permissions, etc. (see the github-actions skill). Needs `zizmor` from mise (mise.toml).
+    ["zizmor"] = Builtins.zizmor
+    // Secret scanning (defense-in-depth alongside fnox). hk builtin.
+    ["gitleaks"] = Builtins.gitleaks
+    // Block accidentally-committed large files. hk builtin.
+    ["check-added-large-files"] = Builtins.check_added_large_files
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    // `check` is the full suite CI runs. The audits (jscpd) already run on pre-commit;
+    // `check` is just the same set under one name.
+    ["check"] {
+        steps = linters
+    }
+}

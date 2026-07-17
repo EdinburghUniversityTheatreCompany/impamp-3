@@ -1,0 +1,30 @@
+[tools]
+hk = "latest"
+pkl = "latest"
+gitleaks = "latest"
+zizmor = "latest"   # GitHub Actions security static analysis (hk `zizmor` step + CI)
+actionlint = "latest"   # GitHub Actions workflow linter — syntax/expressions (hk `actionlint` step + CI)
+node = "latest"   # JS/TS stack tool; also provides npx, used to run jscpd 5.x
+# jscpd (duplication) runs via npx — see hk.pkl / .jscpd.json (not a mise tool; jscpd 5.x ships
+# as a Rust binary via npm optional platform packages that npx resolves but mise's npm backend
+# does not).
+# pnpm/yarn: pin the version in package.json's `packageManager` field and let corepack provide it
+# (host, CI, and devcontainer all read that one pin) — NOT a mise tool and NOT `npm install -g`.
+# For a devcontainer add `experimental = true` + `[hooks] postinstall = "corepack enable"` so
+# `mise install` enables corepack. See the "Dev container" section in references/standard.md.
+
+[settings]
+# Maintain mise.lock (resolved versions + per-platform checksums) on every install.
+# Tools stay spec'd "latest"; the lock records what that resolved to so installs are
+# reproducible + checksum-verified (aqua-backed tools add Cosign/SLSA). Upgrade with
+# `mise upgrade`, then commit the changed mise.lock.
+lockfile = true
+# Prevent `mise upgrade` from resolving a tool version published in the last 4 days — same
+# supply-chain window as the Bundler/uv/npm dependency cooldowns. `mise install` is unaffected
+# (it always reproduces the locked version from mise.lock).
+minimum_release_age = "4d"
+
+[env]
+# dev-env standard version this repo targets (dev-hooks:dev-env-setup). Do not
+# hand-edit — bump it by running the skill's upgrade path.
+DEV_ENV_VERSION = "21"
