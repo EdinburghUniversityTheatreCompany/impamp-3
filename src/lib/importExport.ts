@@ -11,8 +11,10 @@ import {
   getProfile,
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
+  collectReferencedAudioFileIds,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import { getPadIndexForKey } from "./keyboardUtils";
+import type JSZipType from "jszip";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -160,12 +162,7 @@ export async function exportProfile(profileId: number): Promise<ProfileExport> {
     const pageMetadata = await getAllPageMetadataForProfile(profileId);
 
     // Get all unique audio file IDs referenced by this profile's pads
-    const audioFileIds = new Set<number>();
-    padConfigurations.forEach((pad) => {
-      if (pad.audioFileIds && pad.audioFileIds.length > 0) {
-        pad.audioFileIds.forEach((id) => audioFileIds.add(id));
-      }
-    });
+    const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
 
     // Convert audio blobs to base64
     const audioFiles = [];
@@ -479,8 +476,7 @@ async function importPadConfigurations(
 
     // Map audioTrimSettings keys (old audioFileId -> new audioFileId)
     let mappedTrimSettings:
-      | Record<number, { trimStart: number; trimEnd: number }>
-      | undefined;
+      Record<number, { trimStart: number; trimEnd: number }> | undefined;
     if (pad.audioTrimSettings) {
       mappedTrimSettings = {};
       for (const [oldIdStr, trimValue] of Object.entries(
@@ -1083,12 +1079,7 @@ async function collectProfileDataForZip(profileId: number): Promise<{
   const padConfigurations = await getAllPadConfigurationsForProfile(profileId);
   const pageMetadata = await getAllPageMetadataForProfile(profileId);
 
-  const audioFileIds = new Set<number>();
-  padConfigurations.forEach((pad) => {
-    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
-      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
-    }
-  });
+  const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
 
   const audioFiles: AudioFileRef[] = [];
   const audioBlobs = new Map<
@@ -1208,6 +1199,29 @@ export async function exportMultipleProfilesToZip(
   });
 }
 
+// Reads the audio files referenced in `refs` out of a ZIP's `audio/<id>` entries,
+// base64-encoding each so the result can feed into the ProfileExport shape.
+// Missing entries are skipped with a console warning built from `warnSuffix`.
+async function readZipAudioFilesAsBase64(
+  zip: JSZipType,
+  refs: AudioFileRef[],
+  warnSuffix: string,
+): Promise<ProfileExport["audioFiles"]> {
+  const audioFiles: ProfileExport["audioFiles"] = [];
+  for (const ref of refs) {
+    const entry = zip.file(`audio/${ref.id}`);
+    if (entry) {
+      const buffer = await entry.async("arraybuffer");
+      const blob = new Blob([buffer], { type: ref.type });
+      const data = await blobToBase64(blob);
+      audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
+    } else {
+      console.warn(`Audio file ${ref.id} ${warnSuffix}`);
+    }
+  }
+  return audioFiles;
+}
+
 /**
  * Imports a single-profile ZIP (containing profile.json + audio/<id>).
  */
@@ -1228,20 +1242,11 @@ export async function importProfileFromZip(
   ) as ProfileExportLean;
 
   // Reconstruct full ProfileExport by reading audio files from the ZIP
-  const audioFiles: ProfileExport["audioFiles"] = [];
-  for (const ref of lean.audioFiles) {
-    const entry = zip.file(`audio/${ref.id}`);
-    if (entry) {
-      const buffer = await entry.async("arraybuffer");
-      const blob = new Blob([buffer], { type: ref.type });
-      const data = await blobToBase64(blob);
-      audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
-    } else {
-      console.warn(
-        `Audio file ${ref.id} referenced in profile.json but not found in ZIP.`,
-      );
-    }
-  }
+  const audioFiles = await readZipAudioFilesAsBase64(
+    zip,
+    lean.audioFiles,
+    "referenced in profile.json but not found in ZIP.",
+  );
 
   const fullExport: ProfileExport = {
     exportVersion: lean.exportVersion,
@@ -1295,20 +1300,11 @@ export async function importMultipleProfilesFromZip(
       ) as ProfileExportLean;
 
       // Reconstruct full export reading audio from the shared root audio/ folder
-      const audioFiles: ProfileExport["audioFiles"] = [];
-      for (const ref of lean.audioFiles) {
-        const audioEntry = zip.file(`audio/${ref.id}`);
-        if (audioEntry) {
-          const buffer = await audioEntry.async("arraybuffer");
-          const blob = new Blob([buffer], { type: ref.type });
-          const data = await blobToBase64(blob);
-          audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
-        } else {
-          console.warn(
-            `Audio file ${ref.id} not found in ZIP for profile ${entry.name}.`,
-          );
-        }
-      }
+      const audioFiles = await readZipAudioFilesAsBase64(
+        zip,
+        lean.audioFiles,
+        `not found in ZIP for profile ${entry.name}.`,
+      );
 
       const fullExport: ProfileExport = {
         exportVersion: lean.exportVersion,

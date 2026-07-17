@@ -110,20 +110,34 @@ interface ProfileState {
 
 // --- Private Helper Function ---
 // Encapsulates the logic for creating a blob and triggering a download
+const _downloadBlob = (blob: Blob, filename: string): void => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+};
+
+const _triggerBlobDownload = (blob: Blob, filename: string): boolean => {
+  try {
+    _downloadBlob(blob, filename);
+    return true;
+  } catch (error) {
+    console.error("Error triggering blob download:", error);
+    return false;
+  }
+};
+
 const _triggerDownload = (
   jsonDataString: string,
   filename: string,
 ): boolean => {
   try {
     const blob = new Blob([jsonDataString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 100); // Clean up URL object
+    _downloadBlob(blob, filename);
     return true;
   } catch (error) {
     console.error("Error triggering download:", error);
@@ -132,21 +146,52 @@ const _triggerDownload = (
 };
 // --- End Helper Function ---
 
-const _triggerBlobDownload = (blob: Blob, filename: string): boolean => {
-  try {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 100);
-    return true;
-  } catch (error) {
-    console.error("Error triggering blob download:", error);
-    return false;
+// Builds the export filename: the single profile's sanitized name, or a
+// generic multi-profile name when exporting more than one at once.
+const _buildExportFilename = (
+  profileIds: number[],
+  profiles: Profile[],
+  extension: string,
+): string => {
+  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  if (profileIds.length === 1) {
+    const profile = profiles.find((p) => p.id === profileIds[0]);
+    const profileName = profile?.name || "profile";
+    const sanitizedName = profileName.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+    return `impamp-${sanitizedName}-${date}.${extension}`;
   }
+  return `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.${extension}`;
+};
+
+type ProfileSetState = (
+  partial:
+    Partial<ProfileState> | ((state: ProfileState) => Partial<ProfileState>),
+) => void;
+
+// Stamps lastBackedUpAt on the given profiles, both in the DB and in store state.
+const _markProfilesBackedUpNow = async (
+  set: ProfileSetState,
+  profileIds: number[],
+): Promise<number> => {
+  const nowMs = Date.now();
+  const updateDbPromises = profileIds.map((id) =>
+    updateProfile(id, { lastBackedUpAt: nowMs }),
+  );
+  await Promise.all(updateDbPromises);
+
+  set((state) => ({
+    profiles: state.profiles.map((p) =>
+      profileIds.includes(p.id!)
+        ? {
+            ...p,
+            lastBackedUpAt: nowMs,
+            updatedAt: new Date(nowMs),
+          }
+        : p,
+    ),
+  }));
+
+  return nowMs;
 };
 
 export const useProfileStore = create<ProfileState>()(
@@ -445,19 +490,11 @@ export const useProfileStore = create<ProfileState>()(
           const jsonString = JSON.stringify(exportData, null, 2);
 
           // Create filename
-          const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-          let filename: string;
-          if (profileIds.length === 1) {
-            // Try to get the single profile name for a more specific filename
-            const profile = get().profiles.find((p) => p.id === profileIds[0]);
-            const profileName = profile?.name || "profile";
-            const sanitizedName = profileName
-              .replace(/[^a-z0-9]/gi, "-")
-              .toLowerCase();
-            filename = `impamp-${sanitizedName}-${date}.json`;
-          } else {
-            filename = `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.json`;
-          }
+          const filename = _buildExportFilename(
+            profileIds,
+            get().profiles,
+            "json",
+          );
 
           // Use helper to trigger download
           const success = _triggerDownload(jsonString, filename);
@@ -467,26 +504,8 @@ export const useProfileStore = create<ProfileState>()(
             console.log(
               `Successfully triggered download for ${profileIds.length} profiles. Now updating timestamps...`,
             );
-            const nowMs = Date.now();
             try {
-              // Update DB for all profiles
-              const updateDbPromises = profileIds.map((id) =>
-                updateProfile(id, { lastBackedUpAt: nowMs }),
-              );
-              await Promise.all(updateDbPromises);
-
-              // Update state for all profiles
-              set((state) => ({
-                profiles: state.profiles.map((p) =>
-                  profileIds.includes(p.id!) // Check if this profile was exported
-                    ? {
-                        ...p,
-                        lastBackedUpAt: nowMs,
-                        updatedAt: new Date(nowMs),
-                      }
-                    : p,
-                ),
-              }));
+              await _markProfilesBackedUpNow(set, profileIds);
               console.log(
                 `Successfully updated lastBackedUpAt for ${profileIds.length} profiles in DB and state.`,
               );
@@ -663,39 +682,17 @@ export const useProfileStore = create<ProfileState>()(
             await import("../lib/importExport");
           const zipBlob = await exportMultipleProfilesToZip(profileIds);
 
-          const date = new Date().toISOString().split("T")[0];
-          let filename: string;
-          if (profileIds.length === 1) {
-            const profile = get().profiles.find((p) => p.id === profileIds[0]);
-            const profileName = profile?.name || "profile";
-            const sanitizedName = profileName
-              .replace(/[^a-z0-9]/gi, "-")
-              .toLowerCase();
-            filename = `impamp-${sanitizedName}-${date}.iaz`;
-          } else {
-            filename = `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.iaz`;
-          }
+          const filename = _buildExportFilename(
+            profileIds,
+            get().profiles,
+            "iaz",
+          );
 
           const success = _triggerBlobDownload(zipBlob, filename);
 
           if (success) {
-            const nowMs = Date.now();
             try {
-              const updateDbPromises = profileIds.map((id) =>
-                updateProfile(id, { lastBackedUpAt: nowMs }),
-              );
-              await Promise.all(updateDbPromises);
-              set((state) => ({
-                profiles: state.profiles.map((p) =>
-                  profileIds.includes(p.id!)
-                    ? {
-                        ...p,
-                        lastBackedUpAt: nowMs,
-                        updatedAt: new Date(nowMs),
-                      }
-                    : p,
-                ),
-              }));
+              await _markProfilesBackedUpNow(set, profileIds);
             } catch (updateError) {
               set({
                 error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,

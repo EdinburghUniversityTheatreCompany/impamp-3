@@ -540,6 +540,19 @@ export async function clearAudioFileDriveIds(profileId: number): Promise<void> {
   await tx.done;
 }
 
+// Collects the unique audio file IDs referenced across a set of pad configurations.
+export function collectReferencedAudioFileIds(
+  padConfigurations: Pick<PadConfiguration, "audioFileIds">[],
+): Set<number> {
+  const audioFileIds = new Set<number>();
+  padConfigurations.forEach((pad) => {
+    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
+      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
+    }
+  });
+  return audioFileIds;
+}
+
 // Get all audio file IDs referenced by pad configurations for a specific profile
 export async function getAudioFileIdsForProfile(
   profileId: number,
@@ -551,12 +564,7 @@ export async function getAudioFileIdsForProfile(
   const padConfigs = await index.getAll(profileId);
   await tx.done;
 
-  const audioFileIds = new Set<number>();
-  padConfigs.forEach((pad) => {
-    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
-      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
-    }
-  });
+  const audioFileIds = collectReferencedAudioFileIds(padConfigs);
 
   console.log(
     `Found ${audioFileIds.size} unique audio file IDs for profile ${profileId}`,
@@ -584,12 +592,7 @@ export async function findOrphanedAudioFiles(): Promise<{
   const allPadConfigs = await padStore.getAll();
   await padTx.done;
 
-  const referencedIds = new Set<number>();
-  allPadConfigs.forEach((pad) => {
-    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
-      pad.audioFileIds.forEach((id) => referencedIds.add(id));
-    }
-  });
+  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
 
   // Find orphaned IDs (exist in audioFiles but not referenced by any pad)
   const orphanedIds = new Set<number>();

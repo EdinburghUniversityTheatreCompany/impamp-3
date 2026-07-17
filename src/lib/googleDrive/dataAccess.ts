@@ -11,6 +11,7 @@ import {
   getAudioFile,
   ensureAudioFileHash,
   updateAudioFileDriveId,
+  collectReferencedAudioFileIds,
 } from "@/lib/db";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import { base64ToBlob } from "@/lib/importExport";
@@ -48,12 +49,7 @@ export const getLocalProfileSyncData = async (
   );
 
   // Get all unique audio file IDs
-  const audioFileIds = new Set<number>();
-  padConfigurations.forEach((pad) => {
-    if (pad.audioFileIds && pad.audioFileIds.length > 0) {
-      pad.audioFileIds.forEach((id) => audioFileIds.add(id));
-    }
-  });
+  const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
 
   // Build audio file references — use driveFileId if available, otherwise omit
   // (uploadMissingAudioFiles in sync.ts ensures driveFileIds are set before this is called)

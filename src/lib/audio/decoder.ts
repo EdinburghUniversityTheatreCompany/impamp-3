@@ -413,6 +413,34 @@ export interface LoadingState {
 export type LoadingStateCallback = (state: LoadingState) => void;
 
 /**
+ * Fetches an audio file's blob from IndexedDB, reporting an "error" state and
+ * caching the miss if it's not found or has no blob.
+ */
+async function getAudioFileBlobOrFail(
+  audioFileId: number,
+  startTime: number,
+  onStateChange?: LoadingStateCallback,
+) {
+  const audioFileData = await getAudioFile(audioFileId);
+  if (!audioFileData?.blob) {
+    console.warn(
+      `[Audio Decoder] Audio file with ID ${audioFileId} not found or has no blob.`,
+    );
+    cacheAudioBuffer(audioFileId, null);
+
+    onStateChange?.({
+      audioFileId,
+      status: "error",
+      error: "Audio file not found or has no data",
+      startTime,
+    });
+
+    return null;
+  }
+  return audioFileData;
+}
+
+/**
  * Enhanced load and decode with instant response and progress feedback
  *
  * @param audioFileId - ID of the audio file to load and decode
@@ -481,20 +509,12 @@ export async function loadAndDecodeAudioEnhanced(
       startTime,
     });
 
-    const audioFileData = await getAudioFile(audioFileId);
-    if (!audioFileData?.blob) {
-      console.warn(
-        `[Audio Decoder] Audio file with ID ${audioFileId} not found or has no blob.`,
-      );
-      cacheAudioBuffer(audioFileId, null);
-
-      onStateChange?.({
-        audioFileId,
-        status: "error",
-        error: "Audio file not found or has no data",
-        startTime,
-      });
-
+    const audioFileData = await getAudioFileBlobOrFail(
+      audioFileId,
+      startTime,
+      onStateChange,
+    );
+    if (!audioFileData) {
       return null;
     }
 
@@ -669,20 +689,12 @@ export async function loadAndDecodeAudioInstant(
       startTime,
     });
 
-    const audioFileData = await getAudioFile(audioFileId);
-    if (!audioFileData?.blob) {
-      console.warn(
-        `[Audio Decoder] Audio file with ID ${audioFileId} not found or has no blob.`,
-      );
-      cacheAudioBuffer(audioFileId, null);
-
-      onStateChange?.({
-        audioFileId,
-        status: "error",
-        error: "Audio file not found or has no data",
-        startTime,
-      });
-
+    const audioFileData = await getAudioFileBlobOrFail(
+      audioFileId,
+      startTime,
+      onStateChange,
+    );
+    if (!audioFileData) {
       return null;
     }
 
