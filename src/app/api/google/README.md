@@ -29,7 +29,7 @@ For the Google Picker API, there are some specific limitations:
 
 ## How It Works
 
-1. Client requests configuration from our secure endpoint 
+1. Client requests configuration from our secure endpoint
 2. Server validates the request and returns the minimal configuration needed
 3. Client uses this configuration to create a picker
 4. All interactions between the client and Google services are authenticated with the user's OAuth token

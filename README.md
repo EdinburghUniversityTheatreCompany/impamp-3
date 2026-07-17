@@ -12,12 +12,12 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Track Arming**: Ctrl+Click to arm tracks for later playback, press F9 to play the next armed track
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
 - **Multi-Sound Pads**: Assign multiple sounds to a single pad with different playback modes:
-    - *Sequential*: Plays sounds in order.
-    - *Random*: Plays a random sound each time.
-    - *Round-Robin*: Plays sounds randomly without repeating until all have played.
+  - _Sequential_: Plays sounds in order.
+  - _Random_: Plays a random sound each time.
+  - _Round-Robin_: Plays sounds randomly without repeating until all have played.
 - **Edit Mode**: Shift key activates edit mode for renaming pads and banks.
-    - *Single Sound Pads*: Remove sound via "X" button or Delete+click.
-    - *Multi-Sound Pads*: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
+  - _Single Sound Pads_: Remove sound via "X" button or Delete+click.
+  - _Multi-Sound Pads_: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
 - **Bulk Import**: In delete/swap mode, use the bulk import feature to assign multiple audio files to empty pads at once with a visual mapping interface.
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
@@ -36,17 +36,20 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 ### Installation
 
 1. Clone the repository
+
    ```bash
    git clone https://github.com/edinburghuniversitytheatrecompany/impamp-3.git
    cd impamp-3
    ```
 
 2. Install dependencies
+
    ```bash
    npm install
    ```
 
 3. Start the development server
+
    ```bash
    npm run dev
    ```
@@ -58,6 +61,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 To build the application for production deployment with PWA support:
 
 1. Build the application
+
    ```bash
    npm run pwa-build
    # or
@@ -65,6 +69,7 @@ To build the application for production deployment with PWA support:
    ```
 
 2. Start the production server
+
    ```bash
    npm run start
    ```
@@ -80,22 +85,24 @@ ImpAmp3 can be deployed using Docker for easier deployment and consistent enviro
 The docker-compose.yml file is configured with profiles to allow you to run only the production container in production environments:
 
 1. Direct Docker run (without compose):
+
    ```bash
    # Build the image
    docker build -t impamp3:latest .
-   
+
    # Run the container (defaults to port 3025)
    docker run -p 3025:3000 impamp3:latest
-   
+
    # Or specify a custom port
    docker run -p 8080:3000 impamp3:latest
    ```
 
 2. Using Docker Compose:
+
    ```bash
    # Start only the production app (binds to port 3025 by default)
    docker-compose up app
-   
+
    # Start with custom port
    HOST_PORT=8080 docker-compose up app
    ```
@@ -145,22 +152,22 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 4. **Edit Mode**: Hold Shift to enter edit mode
    - Shift+click on banks to rename them or toggle emergency status.
    - Shift+click on pads to edit them:
-     - *Empty/Single Sound Pads*: Opens a simple rename prompt (or the full editor if preferred).
-     - *Multi-Sound Pads*: Opens the full pad editor to manage sounds (add, remove, reorder) and playback mode.
-   - Click the red "X" button or use Delete+click on *single-sound* pads to remove the sound (resets name). For multi-sound pads, this action opens the editor.
+     - _Empty/Single Sound Pads_: Opens a simple rename prompt (or the full editor if preferred).
+     - _Multi-Sound Pads_: Opens the full pad editor to manage sounds (add, remove, reorder) and playback mode.
+   - Click the red "X" button or use Delete+click on _single-sound_ pads to remove the sound (resets name). For multi-sound pads, this action opens the editor.
 5. **Arming Tracks**:
    - Hold Ctrl and click on a pad to arm it for later playback
    - Armed tracks appear in the Armed Tracks panel
    - Press F9 to play the next armed track in the queue
    - You can also click the Play button on any armed track in the panel
-5. **Managing Profiles**:
+6. **Managing Profiles**:
    - Use the profile selector in the top-right corner to switch between profiles
    - Click "Manage Profiles" to open the full profile manager
    - Create new profiles with custom names
    - Edit or delete existing profiles
    - Configure backup reminder frequency per profile by setting the number of days, or disable reminders entirely.
    - Each profile has its own set of sounds and bank configurations
-6. **Importing/Exporting Profiles**:
+7. **Importing/Exporting Profiles**:
    - Open the Profile Manager and go to the "Import / Export" tab.
    - **Export:** Select one or more profiles from the list using the checkboxes, then click "Export Selected". A single JSON file containing all selected profiles will be downloaded. Exporting profiles updates their "last backed up" timestamp.
    - **Import:** Click "Select File to Import" and choose a previously exported JSON file (supports single, multi-profile, and legacy ImpAmp2 formats).
@@ -189,10 +196,12 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 [MIT](LICENSE)
 
 ## Contributing
+
 Open an issue if you find an error or have an idea for an improvement. Preferably do this before opening a pull request so we can discuss the implementation.
 
 ### Prefixes
-feat: For new features 
+
+feat: For new features
 content: For content updates  
 fix: For small changes
 bug: For bugfixes  
@@ -200,6 +209,7 @@ dep: For dependency updates
 doc: Updating documentation
 
 ### Versioning
+
 Major: proper releases  
 Minor: Feature updates  
 Patch: Content changes and bugfixes

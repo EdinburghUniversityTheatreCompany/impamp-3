@@ -19,12 +19,14 @@ This document outlines a comprehensive plan for refactoring the ImpAmp3 codebase
 After reviewing the codebase, we've identified several areas that could benefit from improvement:
 
 ### Strengths
+
 - Well-structured project with clear separation between components, hooks, and utilities
 - Good use of TypeScript for type safety
 - Effective use of React hooks and functional components
 - Comprehensive end-to-end testing
 
 ### Areas for Improvement
+
 - The audio.ts file is large (~800 lines) and handles multiple responsibilities
 - Some components have high coupling with audio functionality
 - Inconsistent naming conventions, especially for boolean variables and functions
@@ -37,11 +39,13 @@ After reviewing the codebase, we've identified several areas that could benefit 
 ### Audio Module Restructuring
 
 **Current Issues:**
+
 - The audio.ts file handles multiple concerns: audio context management, audio loading, playback control, and playback state management.
 - Circular dependencies between audio.ts and playbackStore.ts.
 - Playback type logic (sequential, random, round-robin) is implemented with switch statements.
 
 **Proposed Structure:**
+
 ```
 src/lib/audio/
 ├── context.ts       # AudioContext management
@@ -58,24 +62,32 @@ src/lib/audio/
 ```
 
 **Key Changes:**
+
 1. **Implement Strategy Pattern for Playback Types:**
+
    ```typescript
    // types.ts
    export interface PlaybackStrategy {
-     selectNextSound(audioFileIds: number[]): { audioFileId: number, index: number };
+     selectNextSound(audioFileIds: number[]): {
+       audioFileId: number;
+       index: number;
+     };
      updateState(playedIndex: number): void;
    }
 
    // strategies/sequential.ts
    export class SequentialStrategy implements PlaybackStrategy {
      private nextIndex: number = 0;
-     
-     selectNextSound(audioFileIds: number[]): { audioFileId: number, index: number } {
+
+     selectNextSound(audioFileIds: number[]): {
+       audioFileId: number;
+       index: number;
+     } {
        const index = this.nextIndex % audioFileIds.length;
        const audioFileId = audioFileIds[index];
        return { audioFileId, index };
      }
-     
+
      updateState(playedIndex: number, audioFileIds: number[]): void {
        this.nextIndex = (playedIndex + 1) % audioFileIds.length;
      }
@@ -83,6 +95,7 @@ src/lib/audio/
    ```
 
 2. **Extract AudioContext Management:**
+
    ```typescript
    // context.ts
    const isClient = typeof window !== "undefined";
@@ -94,14 +107,15 @@ src/lib/audio/
      }
 
      if (!audioContext) {
-       audioContext = new (window.AudioContext || 
-         (window as any).webkitAudioContext)();
+       audioContext = new (
+         window.AudioContext || (window as any).webkitAudioContext
+       )();
      }
-     
+
      if (audioContext.state === "suspended") {
        audioContext.resume();
      }
-     
+
      return audioContext;
    }
 
@@ -119,11 +133,16 @@ src/lib/audio/
    // cache.ts
    const audioBufferCache = new Map<number, AudioBuffer | null>();
 
-   export function getCachedAudioBuffer(audioFileId: number): AudioBuffer | null | undefined {
+   export function getCachedAudioBuffer(
+     audioFileId: number,
+   ): AudioBuffer | null | undefined {
      return audioBufferCache.get(audioFileId);
    }
 
-   export function cacheAudioBuffer(audioFileId: number, buffer: AudioBuffer | null): void {
+   export function cacheAudioBuffer(
+     audioFileId: number,
+     buffer: AudioBuffer | null,
+   ): void {
      audioBufferCache.set(audioFileId, buffer);
    }
 
@@ -135,11 +154,14 @@ src/lib/audio/
 ### UI Component Restructuring
 
 **Current Issues:**
+
 - Duplication between ArmedTracksPanel and ActiveTracksPanel
 - Direct coupling between UI components and audio functionality
 
 **Proposed Changes:**
+
 1. **Create Shared Track Panel Components:**
+
    ```
    src/components/shared/
    ├── TrackItem.tsx       # Common track item component
@@ -154,7 +176,8 @@ src/lib/audio/
    export function useTrackControls() {
      return {
        stopTrack: (key: string) => stopAudio(key),
-       fadeOutTrack: (key: string, duration: number) => fadeOutAudio(key, duration),
+       fadeOutTrack: (key: string, duration: number) =>
+         fadeOutAudio(key, duration),
        // Other common track control functions
      };
    }
@@ -165,44 +188,73 @@ src/lib/audio/
 ### Break Down Large Functions
 
 **Current Issues:**
+
 - `triggerAudioForPad()` in audio.ts is 100+ lines and has multiple responsibilities
 - `_playBuffer()` in audio.ts handles source creation, gain node setup, and event handling
 - Playback type selection logic is complex and duplicated
 
 **Proposed Changes:**
+
 1. **Split triggerAudioForPad:**
+
    ```typescript
    // playback.ts
-   export async function triggerAudioForPad(args: TriggerAudioArgs): Promise<void> {
-     const { padIndex, audioFileIds, playbackType, activeProfileId, currentPageIndex, name } = args;
-     
+   export async function triggerAudioForPad(
+     args: TriggerAudioArgs,
+   ): Promise<void> {
+     const {
+       padIndex,
+       audioFileIds,
+       playbackType,
+       activeProfileId,
+       currentPageIndex,
+       name,
+     } = args;
+
      if (!audioFileIds || audioFileIds.length === 0) {
        console.log(`Pad index ${padIndex} has no audio files configured.`);
        return;
      }
 
-     const playbackKey = generatePlaybackKey(activeProfileId, currentPageIndex, padIndex);
-     
+     const playbackKey = generatePlaybackKey(
+       activeProfileId,
+       currentPageIndex,
+       padIndex,
+     );
+
      if (isTrackPlaying(playbackKey)) {
-       handleActivePadTrigger(playbackKey, playbackType, activeProfileId, audioFileIds);
+       handleActivePadTrigger(
+         playbackKey,
+         playbackType,
+         activeProfileId,
+         audioFileIds,
+       );
        return;
      }
-     
-     const audioSelection = selectAudioFileToPlay(audioFileIds, playbackType, playbackKey);
+
+     const audioSelection = selectAudioFileToPlay(
+       audioFileIds,
+       playbackType,
+       playbackKey,
+     );
      await loadAndPlayAudio(audioSelection, playbackKey, {
        name: name || `Pad ${padIndex + 1}`,
-       padInfo: { profileId: activeProfileId, pageIndex: currentPageIndex, padIndex }
+       padInfo: {
+         profileId: activeProfileId,
+         pageIndex: currentPageIndex,
+         padIndex,
+       },
      });
    }
 
    function handleActivePadTrigger(
-     playbackKey: string, 
+     playbackKey: string,
      playbackType: PlaybackType,
      activeProfileId: number,
-     audioFileIds: number[]
+     audioFileIds: number[],
    ): void {
      const activePadBehavior = getActivePadBehavior(activeProfileId);
-     
+
      switch (activePadBehavior) {
        case "continue":
          return; // Do nothing
@@ -220,8 +272,8 @@ src/lib/audio/
    ```typescript
    function createAudioSource(
      buffer: AudioBuffer,
-     volume: number = 1.0
-   ): { source: AudioBufferSourceNode, gainNode: GainNode } {
+     volume: number = 1.0,
+   ): { source: AudioBufferSourceNode; gainNode: GainNode } {
      const context = getAudioContext();
      const source = context.createBufferSource();
      source.buffer = buffer;
@@ -229,12 +281,12 @@ src/lib/audio/
      const gainNode = context.createGain();
      gainNode.gain.setValueAtTime(
        Math.max(0, Math.min(1, volume)),
-       context.currentTime
+       context.currentTime,
      );
 
      source.connect(gainNode);
      gainNode.connect(context.destination);
-     
+
      return { source, gainNode };
    }
    ```
@@ -242,11 +294,14 @@ src/lib/audio/
 ### Apply Composition Over Mutation
 
 **Current Issues:**
+
 - Some functions modify variables step-by-step rather than composing final values
 - State updates sometimes modify existing objects directly
 
 **Proposed Changes:**
+
 1. **Use Immutable Patterns Consistently:**
+
    ```typescript
    // Before
    const track = activeTracks.get(playbackKey);
@@ -260,7 +315,7 @@ src/lib/audio/
    if (track) {
      const updatedTrack = {
        ...track,
-       isFading: true
+       isFading: true,
        // Other changes composed here
      };
      activeTracks.set(playbackKey, updatedTrack);
@@ -283,11 +338,14 @@ src/lib/audio/
 ### Extract Repeated Logic
 
 **Current Issues:**
+
 - Track management logic is duplicated across components
 - Formatting and rendering patterns are repeated
 
 **Proposed Changes:**
+
 1. **Create Utility Functions:**
+
    ```typescript
    // utils/formatters.ts
    export function formatTime(seconds: number): string {
@@ -310,7 +368,7 @@ src/lib/audio/
        },
        isTrackFading: (key: string) => {
          return isTrackFading(key);
-       }
+       },
      };
    }
    ```
@@ -320,10 +378,12 @@ src/lib/audio/
 ### Standardize Boolean Variables and Functions
 
 **Current Issues:**
+
 - Inconsistent naming for boolean variables (some with is/has/can prefixes, some without)
 - Some function names don't clearly express their purpose
 
 **Proposed Changes:**
+
 1. **Rename Boolean Variables/Functions:**
    - `fading` → `isFading`
    - `deleteMode` → `isDeleteMode`
@@ -338,10 +398,12 @@ src/lib/audio/
 ### Create Consistent Terminology
 
 **Current Issues:**
+
 - Terminology varies across components (e.g., "sound" vs "track" vs "audio")
 - Naming for similar concepts isn't consistent (e.g., "remove" vs "delete")
 
 **Proposed Changes:**
+
 1. **Standardize Domain Terminology:**
    - **Bank/Page:** A collection of pads (with banks 1-20)
    - **Pad:** A clickable interface element that can be assigned audio
@@ -358,31 +420,35 @@ src/lib/audio/
 ## Documentation and Comments
 
 **Current Issues:**
+
 - Comments often explain "how" instead of "why"
 - Some public functions lack appropriate JSDoc
 - File headers missing in some files
 
 **Proposed Changes:**
+
 1. **Add File Headers:**
+
    ```typescript
    /**
     * Audio Module - Core Audio Management
-    * 
+    *
     * Manages audio context, decoding, caching, and playback for the application.
     * Interfaces with IndexedDB for loading audio files and WebAudio API for playback.
-    * 
+    *
     * @module lib/audio
     */
    ```
 
 2. **Improve JSDoc Comments:**
+
    ```typescript
    /**
     * Triggers playback for a pad's configured audio.
-    * 
+    *
     * Handles pad behavior (continue/stop/restart) based on profile settings.
     * Selects the appropriate audio file based on playback type (sequential, random, or round-robin).
-    * 
+    *
     * @param args - Configuration object for audio triggering
     * @param args.padIndex - Index of the pad within the grid
     * @param args.audioFileIds - Array of audio file IDs assigned to the pad
@@ -392,12 +458,15 @@ src/lib/audio/
     * @param args.name - Optional display name for the track
     * @returns Promise that resolves once audio playback has started
     */
-   export async function triggerAudioForPad(args: TriggerAudioArgs): Promise<void> {
+   export async function triggerAudioForPad(
+     args: TriggerAudioArgs,
+   ): Promise<void> {
      // Implementation
    }
    ```
 
 3. **Focus on "Why" in Comments:**
+
    ```typescript
    // Bad ❌
    // Get all profiles from the database
@@ -411,7 +480,7 @@ src/lib/audio/
 4. **Add TODO and FIXME Tags:**
    ```typescript
    // TODO: Implement caching for profile configs to reduce db reads
-   
+
    // FIXME: Current implementation might have race conditions with multiple
    // audio file loads happening simultaneously
    ```
@@ -419,25 +488,28 @@ src/lib/audio/
 ## Code Layout and Organization
 
 **Current Issues:**
+
 - Inconsistent import ordering
 - Some components mix rendering logic with state management
 - Large files handling multiple concerns
 
 **Proposed Changes:**
+
 1. **Standardize Import Order:**
+
    ```typescript
    // 1. React/Next.js imports
    import React, { useState, useEffect } from "react";
    import { useRouter } from "next/router";
-   
+
    // 2. Third-party libraries
    import { create } from "zustand";
    import clsx from "clsx";
-   
+
    // 3. Internal components, hooks, contexts
    import { PadGrid } from "@/components/PadGrid";
    import { useAudioPlayback } from "@/hooks/useAudioPlayback";
-   
+
    // 4. Utilities, types, constants
    import { formatTime } from "@/utils/formatters";
    import type { PlaybackState } from "@/types";
@@ -445,22 +517,37 @@ src/lib/audio/
    ```
 
 2. **Group Related Functions:**
+
    ```typescript
    // --- AudioContext Management ---
-   
-   function getAudioContext() { /* ... */ }
-   function resumeAudioContext() { /* ... */ }
-   
+
+   function getAudioContext() {
+     /* ... */
+   }
+   function resumeAudioContext() {
+     /* ... */
+   }
+
    // --- Audio Decoding ---
-   
-   async function decodeAudioBlob(blob: Blob) { /* ... */ }
-   async function loadAndDecodeAudio(audioFileId: number) { /* ... */ }
-   
+
+   async function decodeAudioBlob(blob: Blob) {
+     /* ... */
+   }
+   async function loadAndDecodeAudio(audioFileId: number) {
+     /* ... */
+   }
+
    // --- Playback Control ---
-   
-   function playAudio(key: string, buffer: AudioBuffer) { /* ... */ }
-   function stopAudio(key: string) { /* ... */ }
-   function fadeOutAudio(key: string, duration: number) { /* ... */ }
+
+   function playAudio(key: string, buffer: AudioBuffer) {
+     /* ... */
+   }
+   function stopAudio(key: string) {
+     /* ... */
+   }
+   function fadeOutAudio(key: string, duration: number) {
+     /* ... */
+   }
    ```
 
 3. **Split Large Components:**
@@ -469,7 +556,7 @@ src/lib/audio/
    const SomeComponent = () => {
      // 100+ lines of component logic, rendering, etc.
    };
-   
+
    // After: Split into smaller components
    const SomeComponent = () => {
      return (
@@ -480,42 +567,63 @@ src/lib/audio/
        </div>
      );
    };
-   
-   const Header = () => { /* ... */ };
-   const Content = () => { /* ... */ };
-   const Footer = () => { /* ... */ };
+
+   const Header = () => {
+     /* ... */
+   };
+   const Content = () => {
+     /* ... */
+   };
+   const Footer = () => {
+     /* ... */
+   };
    ```
 
 ## Testing Improvements
 
 **Current Issues:**
+
 - Some test helper functions could be refactored for DRY principle
 - Test organization could be improved
 
 **Proposed Changes:**
+
 1. **Extract Test Utilities:**
+
    ```typescript
    // test-helpers.ts
    export async function setupTestAudio(page: Page): Promise<void> {
      // Common audio setup logic used across tests
    }
-   
-   export async function createTestTrack(page: Page, options: CreateTrackOptions): Promise<void> {
+
+   export async function createTestTrack(
+     page: Page,
+     options: CreateTrackOptions,
+   ): Promise<void> {
      // Create and configure a test track with given options
    }
    ```
 
 2. **Organize Tests by Feature:**
+
    ```typescript
-   describe('Audio Playback', () => {
-     describe('Basic Playback', () => {
-       test('plays audio when pad is clicked', async () => { /* ... */ });
-       test('stops audio when stop button is clicked', async () => { /* ... */ });
+   describe("Audio Playback", () => {
+     describe("Basic Playback", () => {
+       test("plays audio when pad is clicked", async () => {
+         /* ... */
+       });
+       test("stops audio when stop button is clicked", async () => {
+         /* ... */
+       });
      });
-     
-     describe('Multi-Sound Playback', () => {
-       test('sequential mode plays sounds in order', async () => { /* ... */ });
-       test('random mode plays a random sound each time', async () => { /* ... */ });
+
+     describe("Multi-Sound Playback", () => {
+       test("sequential mode plays sounds in order", async () => {
+         /* ... */
+       });
+       test("random mode plays a random sound each time", async () => {
+         /* ... */
+       });
      });
    });
    ```
@@ -523,10 +631,14 @@ src/lib/audio/
 3. **Use Descriptive Test Names:**
    ```typescript
    // Before
-   test('test sequential mode', async () => { /* ... */ });
-   
+   test("test sequential mode", async () => {
+     /* ... */
+   });
+
    // After
-   test('sequential mode should play sounds in order and cycle back to the beginning', async () => { /* ... */ });
+   test("sequential mode should play sounds in order and cycle back to the beginning", async () => {
+     /* ... */
+   });
    ```
 
 ## Implementation Plan
@@ -595,6 +707,7 @@ The changes will be implemented incrementally, ensuring that the application con
 ### Completed Tasks
 
 #### Phase 1: Audio Module Restructuring
+
 - ✅ Created audio module directory structure
 - ✅ Implemented PlaybackStrategy interface for Strategy pattern
 - ✅ Created concrete strategy implementations (Sequential, Random, Round-Robin)
@@ -606,6 +719,7 @@ The changes will be implemented incrementally, ensuring that the application con
 - ✅ Provided clean exports through index.ts
 
 #### Phase 2: UI Component Refactoring
+
 - ✅ Created formatter utility functions (formatTime)
 - ✅ Implemented useTrackControls hook for common track operations
 - ✅ Created shared UI components:
@@ -616,6 +730,7 @@ The changes will be implemented incrementally, ensuring that the application con
 - ✅ Refactored ActiveTracksPanel to use shared components
 
 #### Phase 3: Implementation Refinements (In Progress)
+
 - ✅ Created modular pad-related hooks:
   - ✅ usePadInteractions - Handling pad interactions (remove, edit, playback, arm)
   - ✅ usePadSwap - Managing pad swapping in delete/move mode
@@ -643,6 +758,7 @@ The changes will be implemented incrementally, ensuring that the application con
 - 🔄 Continue applying DRY principle and consistent patterns
 
 #### UI Component Organization (Latest Updates - 05/03/2025)
+
 - ✅ Completed overall application search functionality improvements:
   - ✅ Created a proper SearchProvider context in its own directory
   - ✅ Moved SearchButton and SearchModal to the search directory
@@ -661,6 +777,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - ✅ Implemented consistent round button styling with appropriate state indicators
 
 #### Provider and Context Improvements
+
 - ✅ Fixed provider nesting issues:
   - ✅ Refactored KeyboardListenerWrapper to properly use SearchProvider
   - ✅ Removed redundant SearchProvider from ClientLayout component
@@ -668,6 +785,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - ✅ Updated hooks to use the new provider structure
 
 #### Form Modal Pattern Implementation (Latest Updates - 05/05/2025)
+
 - ✅ Implemented reusable form components:
   - ✅ FormField - Standardized container for form controls with labels and error display
   - ✅ TextInput - Text input with built-in error handling and focus management
@@ -694,6 +812,7 @@ The changes will be implemented incrementally, ensuring that the application con
 ### Next Steps
 
 #### 1. Complete Form Modal Pattern for Additional Forms (Completed 05/05/2025)
+
 - ✅ Profile Editor:
   - ✅ Created ProfileEditForm component with standardized layout
   - ✅ Implemented useProfileEdit hook for managing profile editing
@@ -707,6 +826,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - ✅ Standardized validation and error handling across all forms
 
 #### 2. Create Consistent Event Handling Patterns
+
 - Drag and Drop Events:
   - Refactor the drag/drop handling into hooks
   - Create useDragDrop hook for consistent drag and drop handling
@@ -714,6 +834,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - Improve accessibility for drag and drop interactions
 
 #### 3. Complete Keyboard Navigation
+
 - Bank Navigation:
   - Ensure keyboard shortcuts for bank switching work consistently
   - Standardize key mappings for bank navigation
@@ -726,6 +847,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - Implement focus trapping within modals
 
 #### 4. Apply Naming Conventions Consistently
+
 - Boolean Variables/Functions:
   - Ensure they have is/has/can prefixes
   - Audit codebase for boolean variables missing proper prefixes
@@ -744,6 +866,7 @@ The changes will be implemented incrementally, ensuring that the application con
   - Organize files logically within directory structure
 
 #### 5. Documentation Improvements
+
 - File Headers:
   - Add/improve headers for all files
   - Ensure every file has a descriptive header explaining its purpose

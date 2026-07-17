@@ -6,12 +6,7 @@ export interface DrivePermission {
   id: string;
   type: "user" | "group" | "domain" | "anyone";
   role:
-    | "owner"
-    | "organizer"
-    | "fileOrganizer"
-    | "writer"
-    | "commenter"
-    | "reader";
+    "owner" | "organizer" | "fileOrganizer" | "writer" | "commenter" | "reader";
   emailAddress?: string;
   displayName?: string;
   photoLink?: string;
