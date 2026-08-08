@@ -60,7 +60,13 @@ local linters = new Mapping<String, Step> {
     // Secret scanning (defense-in-depth alongside fnox). hk builtin.
     ["gitleaks"] = Builtins.gitleaks
     // Block accidentally-committed large files. hk builtin.
-    ["check-added-large-files"] = Builtins.check_added_large_files
+    // docs/original-impamp-code.txt is an intentional full-text reference dump of the legacy
+    // ImpAmp2 codebase (kept for the V1 import/migration logic), not a binary or build
+    // artifact. CI's own large-file step already exempts it; without the same exemption here
+    // `hk check --all` could never pass, so the local and CI gates disagreed.
+    ["check-added-large-files"] = (Builtins.check_added_large_files) {
+        exclude = List("docs/original-impamp-code.txt")
+    }
 }
 
 hooks {
