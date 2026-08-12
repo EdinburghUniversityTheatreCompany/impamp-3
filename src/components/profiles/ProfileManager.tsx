@@ -90,10 +90,12 @@ export default function ProfileManager() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [exportProgress, setExportProgress] =
-    useState<TransferProgress | null>(null);
-  const [importProgress, setImportProgress] =
-    useState<TransferProgress | null>(null);
+  const [exportProgress, setExportProgress] = useState<TransferProgress | null>(
+    null,
+  );
+  const [importProgress, setImportProgress] = useState<TransferProgress | null>(
+    null,
+  );
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(

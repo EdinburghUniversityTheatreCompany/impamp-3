@@ -105,7 +105,10 @@ export function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Helper function to convert Base64 string to Blob
-export async function base64ToBlob(base64: string, type: string): Promise<Blob> {
+export async function base64ToBlob(
+  base64: string,
+  type: string,
+): Promise<Blob> {
   // fetch() decodes data URLs natively and streams the result, which is far
   // faster and lighter on memory than a manual atob() loop for large files.
   try {
