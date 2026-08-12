@@ -14,6 +14,52 @@ import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import { blobToBase64 } from "@/lib/importExport";
+import type { TransferProgress } from "@/lib/importExport";
+
+/**
+ * Progress bar shown while a ZIP export/import streams audio files.
+ */
+function TransferProgressBar({
+  progress,
+  verb,
+}: {
+  progress: TransferProgress;
+  verb: string;
+}) {
+  const percent =
+    progress.totalBytes > 0
+      ? Math.min(
+          100,
+          Math.round((progress.processedBytes / progress.totalBytes) * 100),
+        )
+      : progress.phase === "finalizing"
+        ? 100
+        : 0;
+  const label =
+    progress.phase === "preparing"
+      ? "Preparing…"
+      : progress.phase === "finalizing"
+        ? "Finalizing…"
+        : `${verb} ${progress.fileName ?? "audio"} (${Math.min(
+            progress.processedFiles + 1,
+            progress.totalFiles,
+          )}/${progress.totalFiles})`;
+
+  return (
+    <div className="mt-3" data-testid="transfer-progress">
+      <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+        <span className="truncate pr-2">{label}</span>
+        <span className="shrink-0">{percent}%</span>
+      </div>
+      <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-blue-500 rounded-full transition-[width] duration-150"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export default function ProfileManager() {
   const {
@@ -27,8 +73,7 @@ export default function ProfileManager() {
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
-    importProfileFromZip,
-    importMultipleProfilesFromZip,
+    importProfilesFromZip,
     isGoogleSignedIn,
     googleUser,
     googleAccessToken,
@@ -45,6 +90,10 @@ export default function ProfileManager() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [exportProgress, setExportProgress] =
+    useState<TransferProgress | null>(null);
+  const [importProgress, setImportProgress] =
+    useState<TransferProgress | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(
@@ -947,20 +996,26 @@ export default function ProfileManager() {
                     }
                     try {
                       setIsExporting(true);
-                      await exportMultipleProfilesToZip(
+                      const success = await exportMultipleProfilesToZip(
                         Array.from(exportSelectionIds),
+                        setExportProgress,
                       );
-                      setIsExporting(false);
-                      setExportSelectionIds(new Set()); // Clear selection after export
+                      if (success) {
+                        setExportSelectionIds(new Set()); // Clear selection after export
+                      }
+                      // success === false with no throw means the user
+                      // cancelled the save dialog — keep the selection.
                     } catch (error) {
                       console.error(
                         "Failed to export selected profiles:",
                         error,
                       );
-                      setIsExporting(false);
                       alert(
                         "Failed to export selected profiles. Please try again.",
                       );
+                    } finally {
+                      setIsExporting(false);
+                      setExportProgress(null);
                     }
                   }}
                   disabled={isExporting || exportSelectionIds.size === 0}
@@ -978,6 +1033,13 @@ export default function ProfileManager() {
                     ? "Exporting..."
                     : `Export Selected (${exportSelectionIds.size})`}
                 </button>
+
+                {isExporting && exportProgress && (
+                  <TransferProgressBar
+                    progress={exportProgress}
+                    verb="Exporting"
+                  />
+                )}
               </section>
 
               {/* Import Profile Section */}
@@ -1011,36 +1073,39 @@ export default function ProfileManager() {
                         const format = await detectImportFormat(file);
 
                         if (format === "zip") {
-                          // Peek inside to decide single vs multi
-                          const JSZip = (await import("jszip")).default;
-                          const zip = await JSZip.loadAsync(file);
-                          if (zip.files["manifest.json"]) {
-                            // Multi-profile ZIP
-                            const results =
-                              await importMultipleProfilesFromZip(file);
-                            const successes = results.filter(
-                              (r) => typeof r.result === "number",
-                            ).length;
-                            const failures = results.length - successes;
-                            let message = `Multi-profile import complete: ${successes} succeeded`;
-                            if (failures > 0) {
-                              message += `, ${failures} failed.`;
-                              const failedNames = results
-                                .filter((r) => r.result instanceof Error)
-                                .map((r) => r.profileName)
-                                .join(", ");
-                              message += ` Failed profiles: ${failedNames}`;
-                              setImportError(message);
-                            } else {
-                              setImportSuccess(message);
-                            }
-                          } else {
-                            // Single-profile ZIP
-                            const profileId = await importProfileFromZip(file);
+                          // Handles both single- and multi-profile archives;
+                          // audio streams straight from the file to IndexedDB.
+                          const results = await importProfilesFromZip(
+                            file,
+                            setImportProgress,
+                          );
+                          const successes = results.filter(
+                            (r) => typeof r.result === "number",
+                          ).length;
+                          const failures = results.length - successes;
+                          if (failures > 0) {
+                            const failedNames = results
+                              .filter((r) => r.result instanceof Error)
+                              .map((r) => r.profileName)
+                              .join(", ");
+                            setImportError(
+                              `Import complete: ${successes} succeeded, ${failures} failed. Failed profiles: ${failedNames}`,
+                            );
+                          } else if (successes === 1) {
                             setImportSuccess(
-                              `Profile imported successfully! (New ID: ${profileId})`,
+                              `Profile "${results[0].profileName}" imported successfully!`,
+                            );
+                          } else {
+                            setImportSuccess(
+                              `Import complete: ${successes} profiles imported successfully.`,
                             );
                           }
+                        } else if (format === "json-too-large") {
+                          setImportError(
+                            "This JSON export is too large for the browser to import. " +
+                              "Please re-export it as a .iaz archive (the current export format), " +
+                              "which supports files of any size.",
+                          );
                         } else if (format === "json-v1-multi") {
                           const content = await file.text();
                           const results =
@@ -1095,6 +1160,7 @@ export default function ProfileManager() {
                         setImportError(`Failed to import profile: ${msg}`);
                       } finally {
                         setIsImporting(false);
+                        setImportProgress(null);
                         if (fileInputRef.current) {
                           fileInputRef.current.value = "";
                         }
@@ -1125,6 +1191,14 @@ export default function ProfileManager() {
                   >
                     {isImporting ? "Importing..." : "Select File to Import"}
                   </button>
+
+                  {isImporting && importProgress && (
+                    <TransferProgressBar
+                      progress={importProgress}
+                      verb="Importing"
+                    />
+                  )}
+
                   <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
                     Only import files that were previously exported from ImpAmp2
                     or ImpAmp3.
