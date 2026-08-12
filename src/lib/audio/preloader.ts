@@ -33,6 +33,10 @@ interface PreloadTask {
   maxAttempts: number;
 }
 
+// Number of tasks processed per batch before re-checking the queue, so
+// newly requested higher-priority work can jump ahead of background loading
+const BATCH_CHUNK_SIZE = 12;
+
 interface PreloadStats {
   totalRequested: number;
   totalCompleted: number;
@@ -212,6 +216,12 @@ class AudioPreloader {
 
   /**
    * Process the preload queue using parallel loading for better performance
+   *
+   * Works through the queue in small chunks, always taking the
+   * highest-priority tasks first. Because the queue is re-checked between
+   * chunks, urgent work queued while a chunk is in flight (e.g. IMMEDIATE
+   * tasks after a page switch) jumps ahead of remaining background work
+   * instead of waiting for the whole backlog to finish.
    */
   private async processQueue(): Promise<void> {
     if (this.isProcessing || this.taskQueue.length === 0) {
@@ -221,52 +231,47 @@ class AudioPreloader {
     this.isProcessing = true;
 
     try {
-      // Group tasks by priority for batch processing
-      const taskGroups = new Map<PreloadPriority, PreloadTask[]>();
-
-      // Process all tasks, grouping by priority
       while (this.taskQueue.length > 0) {
-        const task = this.taskQueue.shift()!;
+        this.sortTaskQueue();
+        const priority = this.taskQueue[0].priority;
+        const chunk: PreloadTask[] = [];
 
-        // Skip if already cached
-        if (isAudioBufferCached(task.audioFileId)) {
-          this.stats.cacheHitRate++;
-          this.stats.totalCompleted++;
-          continue;
+        // Take a chunk of tasks that share the current highest priority
+        while (
+          chunk.length < BATCH_CHUNK_SIZE &&
+          this.taskQueue.length > 0 &&
+          this.taskQueue[0].priority === priority
+        ) {
+          const task = this.taskQueue.shift()!;
+
+          // Skip if already cached
+          if (isAudioBufferCached(task.audioFileId)) {
+            this.stats.cacheHitRate++;
+            this.stats.totalCompleted++;
+            continue;
+          }
+
+          chunk.push(task);
         }
 
-        if (!taskGroups.has(task.priority)) {
-          taskGroups.set(task.priority, []);
-        }
-        taskGroups.get(task.priority)!.push(task);
-      }
-
-      // Process groups in priority order
-      const priorities = [
-        PreloadPriority.IMMEDIATE,
-        PreloadPriority.HIGH,
-        PreloadPriority.MEDIUM,
-        PreloadPriority.LOW,
-      ];
-
-      for (const priority of priorities) {
-        const tasks = taskGroups.get(priority);
-        if (!tasks || tasks.length === 0) continue;
+        if (chunk.length === 0) continue;
 
         // For low priority tasks, wait for idle time
         if (priority === PreloadPriority.LOW && this.isIdleCallbackSupported) {
           await this.waitForIdleTime();
         }
 
-        await this.processBatch(tasks, priority);
-
-        // Small delay between priority groups
-        if (priority !== PreloadPriority.IMMEDIATE && taskGroups.size > 1) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+        await this.processBatch(chunk, priority);
       }
     } finally {
       this.isProcessing = false;
+    }
+
+    // Tasks queued while the processing flag was still set (or retries
+    // re-queued during the final batch) would otherwise be stranded until
+    // the next preload request comes in.
+    if (this.taskQueue.length > 0) {
+      this.processQueue();
     }
   }
 
@@ -291,7 +296,7 @@ class AudioPreloader {
       const results = await loadAndDecodeAudioPipelined(
         audioFileIds,
         priority === PreloadPriority.IMMEDIATE ? 8 : 6, // Higher load concurrency for immediate tasks
-        priority === PreloadPriority.IMMEDIATE ? 6 : 4, // Higher decode concurrency for immediate tasks
+        this.getDecodeConcurrency(priority),
       );
 
       const endTime = performance.now();
@@ -364,12 +369,28 @@ class AudioPreloader {
   }
 
   /**
-   * Wait for idle time before processing low-priority tasks
+   * Determine how many simultaneous decode operations to run.
+   * decodeAudioData runs off the main thread, so scale with available
+   * cores while leaving headroom for the UI and audio rendering threads.
+   */
+  private getDecodeConcurrency(priority: PreloadPriority): number {
+    const cores =
+      typeof navigator !== "undefined" && navigator.hardwareConcurrency
+        ? navigator.hardwareConcurrency
+        : 4;
+    const max = priority === PreloadPriority.IMMEDIATE ? 8 : 6;
+    return Math.min(Math.max(cores - 2, 2), max);
+  }
+
+  /**
+   * Wait for idle time before processing low-priority tasks.
+   * The timeout is kept short so background preloading keeps moving on
+   * busy pages instead of stalling between every chunk.
    */
   private waitForIdleTime(): Promise<void> {
     return new Promise((resolve) => {
       if (typeof requestIdleCallback !== "undefined") {
-        requestIdleCallback(() => resolve(), { timeout: 5000 });
+        requestIdleCallback(() => resolve(), { timeout: 2000 });
       } else {
         // Fallback for browsers without requestIdleCallback
         setTimeout(resolve, 0);

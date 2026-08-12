@@ -13,6 +13,7 @@ import {
   preloadAllConfiguredFiles,
 } from "@/lib/audio";
 import { usePlaybackStore, useArmedTracks } from "@/store/playbackStore";
+import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
@@ -207,7 +208,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
   // Intelligent preload audio files for current page and background loading
   useEffect(() => {
-    if (activeProfileId === null || padConfigs.size === 0) return;
+    if (activeProfileId === null) return;
 
     const configsArray = Array.from(padConfigs.values());
     if (configsArray.length > 0) {
@@ -220,11 +221,27 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         activeProfileId,
         currentPageIndex,
       );
-
-      // Background preload all configured files (lower priority)
-      // This will intelligently prioritize recently played files
-      preloadAllConfiguredFiles(configsArray, activeProfileId);
     }
+
+    // Background preload every configured file across all banks (lower
+    // priority) so pads are ready to play before their page is visited
+    let cancelled = false;
+    getAllPadConfigurationsForProfile(activeProfileId)
+      .then((allConfigs) => {
+        if (!cancelled && allConfigs.length > 0) {
+          preloadAllConfiguredFiles(allConfigs, activeProfileId);
+        }
+      })
+      .catch((err) => {
+        console.error(
+          "[PadGrid Preload] Failed to fetch configs for background preload:",
+          err,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
   // Delete key state tracking
