@@ -241,33 +241,49 @@ export interface ImportAudioProgress {
   totalBytes: number;
 }
 
-// Imports audio files one at a time: each file is materialized, written in a
-// short transaction, then released — memory stays bounded by the largest
-// single file rather than the whole export.
+// Imports audio files with bounded memory: each file is materialized,
+// written in a short transaction, then released — memory stays bounded by
+// `concurrency` files at once rather than the whole export.
+//
+// concurrency = 1 (default) also enables byte-level progress within each
+// file. Higher values run sources through a small worker pool — useful for
+// latency-bound sources like Google Drive downloads, pointless for local
+// ZIP extraction — reporting per-file completion progress instead (bytes
+// from interleaved files would not be meaningful).
 async function importAudioSources(
   db: IDBPDatabase<ImpAmpDBSchema>,
   audioSources: ImportAudioSource[],
   now: Date,
   onProgress?: (progress: ImportAudioProgress) => void,
+  concurrency = 1,
 ): Promise<Map<number, number>> {
   const audioIdMap = new Map<number, number>();
   const totalBytes = audioSources.reduce((sum, s) => sum + (s.size ?? 0), 0);
   let processedBytes = 0;
+  let completedFiles = 0;
 
-  console.log(`Starting import of ${audioSources.length} audio files`);
+  console.log(
+    `Starting import of ${audioSources.length} audio files (concurrency: ${concurrency})`,
+  );
 
-  for (let i = 0; i < audioSources.length; i++) {
-    const source = audioSources[i];
+  const importOne = async (
+    source: ImportAudioSource,
+    reportBytes: boolean,
+  ): Promise<void> => {
     try {
-      const blob = await source.getBlob((bytesDone) => {
-        onProgress?.({
-          fileName: source.name,
-          processedFiles: i,
-          totalFiles: audioSources.length,
-          processedBytes: processedBytes + bytesDone,
-          totalBytes,
-        });
-      });
+      const blob = await source.getBlob(
+        reportBytes
+          ? (bytesDone) => {
+              onProgress?.({
+                fileName: source.name,
+                processedFiles: completedFiles,
+                totalFiles: audioSources.length,
+                processedBytes: processedBytes + bytesDone,
+                totalBytes,
+              });
+            }
+          : undefined,
+      );
       const audioTx = db.transaction("audioFiles", "readwrite");
       const newAudioId = await audioTx.objectStore("audioFiles").add({
         blob,
@@ -284,14 +300,33 @@ async function importAudioSources(
       );
       // Skip this file, but continue with others
     }
+    completedFiles++;
     processedBytes += source.size ?? 0;
     onProgress?.({
       fileName: source.name,
-      processedFiles: i + 1,
+      processedFiles: completedFiles,
       totalFiles: audioSources.length,
       processedBytes,
       totalBytes,
     });
+  };
+
+  if (concurrency <= 1) {
+    for (const source of audioSources) {
+      await importOne(source, true);
+    }
+  } else {
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(concurrency, audioSources.length) },
+      async () => {
+        while (nextIndex < audioSources.length) {
+          const source = audioSources[nextIndex++];
+          await importOne(source, false);
+        }
+      },
+    );
+    await Promise.all(workers);
   }
 
   console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
@@ -445,6 +480,7 @@ async function importProfileCore(
   exportData: ProfileImportMeta,
   audioSources: ImportAudioSource[],
   onAudioProgress?: (progress: ImportAudioProgress) => void,
+  audioConcurrency = 1,
 ): Promise<number> {
   let profileId: number | undefined = undefined;
   const now = new Date();
@@ -512,6 +548,7 @@ async function importProfileCore(
       audioSources,
       now,
       onAudioProgress,
+      audioConcurrency,
     );
     console.log(`Imported ${audioIdMap.size} audio files`);
 
@@ -570,10 +607,16 @@ export async function importProfile(
   return importProfileCore(db, exportData, audioSources);
 }
 
+// Number of Google Drive audio downloads to run concurrently when
+// connecting a synced profile. Drive requests are latency-dominated, so a
+// small pool gives a large speedup on many-file profiles without straining
+// API rate limits or memory (at most this many files are in flight).
+const DRIVE_DOWNLOAD_CONCURRENCY = 4;
+
 /**
  * Imports a profile directly from Google Drive sync data, streaming each
  * audio file (downloaded blob, or legacy embedded base64) straight into
- * IndexedDB one at a time.
+ * IndexedDB, downloading a few files concurrently.
  *
  * This replaces the old connect flow that base64-encoded every downloaded
  * blob and round-tripped the whole profile through one giant JSON string —
@@ -639,7 +682,16 @@ export async function importProfileFromSyncData(
     }
   }
 
-  return importProfileCore(db, meta, audioSources, onProgress);
+  // Drive downloads are latency-bound (many small HTTP requests), so a
+  // small worker pool speeds up connects considerably. Kept modest to stay
+  // well within Drive API rate limits.
+  return importProfileCore(
+    db,
+    meta,
+    audioSources,
+    onProgress,
+    DRIVE_DOWNLOAD_CONCURRENCY,
+  );
 }
 
 /**
