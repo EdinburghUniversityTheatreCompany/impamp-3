@@ -10,10 +10,8 @@ import {
   stopAllAudio,
   fadeOutAllAudio,
   preloadCurrentPageIntelligent,
-  preloadAllConfiguredFiles,
 } from "@/lib/audio";
 import { usePlaybackStore, useArmedTracks } from "@/store/playbackStore";
-import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
@@ -206,13 +204,14 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     }
   }, [isLoadingConfigs, configError]);
 
-  // Intelligent preload audio files for current page and background loading
+  // Preload decoded buffers for the current page only. Pads on other pages
+  // play instantly too — they stream directly from the stored blob until a
+  // decoded buffer is available, so no whole-profile preload is needed.
   useEffect(() => {
-    if (activeProfileId === null) return;
+    if (activeProfileId === null || padConfigs.size === 0) return;
 
     const configsArray = Array.from(padConfigs.values());
     if (configsArray.length > 0) {
-      // Immediate preload for current page with highest priority
       console.log(
         `[PadGrid Preload] Intelligent preload for page ${currentPageIndex}`,
       );
@@ -222,26 +221,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         currentPageIndex,
       );
     }
-
-    // Background preload every configured file across all banks (lower
-    // priority) so pads are ready to play before their page is visited
-    let cancelled = false;
-    getAllPadConfigurationsForProfile(activeProfileId)
-      .then((allConfigs) => {
-        if (!cancelled && allConfigs.length > 0) {
-          preloadAllConfiguredFiles(allConfigs, activeProfileId);
-        }
-      })
-      .catch((err) => {
-        console.error(
-          "[PadGrid Preload] Failed to fetch configs for background preload:",
-          err,
-        );
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
   // Delete key state tracking
