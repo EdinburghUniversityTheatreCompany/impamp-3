@@ -18,7 +18,9 @@ import type {
   MultiProfileExport,
   TransferProgressCallback,
   ZipImportResult,
+  ImportAudioProgress,
 } from "../lib/importExport";
+import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
@@ -79,7 +81,6 @@ interface ProfileState {
   deleteProfile: (id: number) => Promise<void>;
 
   // Import/Export functionality
-  exportMultipleProfilesToJSON: (profileIds: number[]) => Promise<boolean>;
   exportMultipleProfilesToZip: (
     profileIds: number[],
     onProgress?: TransferProgressCallback,
@@ -93,6 +94,11 @@ interface ProfileState {
     zipBlob: Blob,
     onProgress?: TransferProgressCallback,
   ) => Promise<ZipImportResult[]>;
+  importProfileFromSyncData: (
+    syncData: ProfileSyncData,
+    downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+    onProgress?: (progress: ImportAudioProgress) => void,
+  ) => Promise<number>; // For Google Drive connect flows
 
   // Profile manager UI state
   openProfileManager: () => void;
@@ -139,19 +145,6 @@ const _triggerBlobDownload = (blob: Blob, filename: string): boolean => {
   }
 };
 
-const _triggerDownload = (
-  jsonDataString: string,
-  filename: string,
-): boolean => {
-  try {
-    const blob = new Blob([jsonDataString], { type: "application/json" });
-    _downloadBlob(blob, filename);
-    return true;
-  } catch (error) {
-    console.error("Error triggering download:", error);
-    return false;
-  }
-};
 // --- End Helper Function ---
 
 // Builds the export filename: the single profile's sanitized name, or a
@@ -483,70 +476,6 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       // Import/Export functionality
-      exportMultipleProfilesToJSON: async (profileIds: number[]) => {
-        if (!profileIds || profileIds.length === 0) {
-          console.warn("No profile IDs provided for multi-export.");
-          return false;
-        }
-        try {
-          // Dynamically import the export functions to reduce bundle size
-          const { exportMultipleProfiles } =
-            await import("../lib/importExport");
-          const exportData = await exportMultipleProfiles(profileIds);
-
-          // Convert to JSON string
-          const jsonString = JSON.stringify(exportData, null, 2);
-
-          // Create filename
-          const filename = _buildExportFilename(
-            profileIds,
-            get().profiles,
-            "json",
-          );
-
-          // Use helper to trigger download
-          const success = _triggerDownload(jsonString, filename);
-
-          // --- Update lastBackedUpAt timestamp for all exported profiles ---
-          if (success) {
-            console.log(
-              `Successfully triggered download for ${profileIds.length} profiles. Now updating timestamps...`,
-            );
-            try {
-              await _markProfilesBackedUpNow(set, profileIds);
-              console.log(
-                `Successfully updated lastBackedUpAt for ${profileIds.length} profiles in DB and state.`,
-              );
-            } catch (updateError) {
-              console.error(
-                `Failed to update lastBackedUpAt for one or more profiles (${profileIds.join(", ")}) after successful export:`,
-                updateError,
-              );
-              // Set error state, but don't throw, as download succeeded
-              set({
-                error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-              });
-            }
-          } else {
-            console.error(
-              `Failed to trigger download for ${profileIds.length} profiles.`,
-            );
-            set({ error: `Failed to trigger download for profile export.` });
-          }
-          // --- End timestamp update ---
-
-          return success;
-        } catch (error) {
-          console.error("Failed to export multiple profiles:", error);
-          const errorMessage =
-            error instanceof Error
-              ? error.message
-              : "An unknown error occurred";
-          set({ error: `Failed to export profiles: ${errorMessage}` });
-          throw error; // Re-throw for UI handling
-        }
-      },
-
       importMultipleProfilesFromJSON: async (jsonData: string) => {
         try {
           // Parse the JSON data
@@ -784,6 +713,42 @@ export const useProfileStore = create<ProfileState>()(
               ? error.message
               : "An unknown error occurred";
           set({ error: `Failed to export profiles: ${errorMessage}` });
+          throw error;
+        }
+      },
+
+      importProfileFromSyncData: async (
+        syncData: ProfileSyncData,
+        downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+        onProgress?: (progress: ImportAudioProgress) => void,
+      ) => {
+        try {
+          const { importProfileFromSyncData } =
+            await import("../lib/importExport");
+          const { getDb } = await import("@/lib/db");
+          const db = await getDb();
+          const newProfileId = await importProfileFromSyncData(
+            db,
+            syncData,
+            downloadAudioBlob,
+            onProgress,
+          );
+
+          const newProfile = await getProfile(newProfileId);
+          if (newProfile) {
+            set((state) => ({ profiles: [...state.profiles, newProfile] }));
+          } else {
+            await get().fetchProfiles();
+          }
+
+          return newProfileId;
+        } catch (error) {
+          console.error("Failed to import profile from sync data:", error);
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "An unknown error occurred";
+          set({ error: `Failed to connect profile: ${errorMessage}` });
           throw error;
         }
       },

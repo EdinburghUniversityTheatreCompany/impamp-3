@@ -14,6 +14,7 @@ import {
   collectReferencedAudioFileIds,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import { getPadIndexForKey } from "./keyboardUtils";
+import type { ProfileSyncData } from "./syncUtils";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -82,27 +83,11 @@ export interface MultiProfileExport {
   profiles: ProfileExport[]; // An array of individual profile exports
 }
 
-// Helper function to convert Blob to Base64 string
-export function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      // Ensure the result is a string and contains the expected prefix
-      if (typeof dataUrl === "string" && dataUrl.includes(",")) {
-        const base64 = dataUrl.split(",")[1];
-        resolve(base64);
-      } else {
-        reject(new Error("Failed to read blob as data URL or invalid format"));
-      }
-    };
-    reader.onerror = (error) => {
-      console.error("FileReader error:", error);
-      reject(new Error("Failed to convert blob to base64"));
-    };
-    reader.readAsDataURL(blob);
-  });
-}
+// Note: blobToBase64 is intentionally gone — nothing in the app encodes
+// audio to base64 anymore. Audio travels as blobs/original files everywhere
+// (ZIP archives, IndexedDB, separate Drive files). base64ToBlob below is
+// decode-only support for reading legacy formats (old JSON exports, impamp2
+// files, and legacy Drive sync data).
 
 // Helper function to convert Base64 string to Blob
 export async function base64ToBlob(
@@ -142,7 +127,7 @@ export async function base64ToBlob(
   }
 }
 
-// Helper function to get all pad configurations for a profile (Needed by exportProfile)
+// Helper function to get all pad configurations for a profile (used by ZIP export)
 export async function getAllPadConfigurationsForProfile(
   profileId: number,
 ): Promise<PadConfiguration[]> {
@@ -155,110 +140,10 @@ export async function getAllPadConfigurationsForProfile(
   return index.getAll(profileId);
 }
 
-// Export a profile to a JSON object
-export async function exportProfile(profileId: number): Promise<ProfileExport> {
-  try {
-    // Get the profile data
-    const profile = await getProfile(profileId);
-    if (!profile) {
-      throw new Error(`Profile with ID ${profileId} not found`);
-    }
-
-    // Get all pad configurations for this profile
-    const padConfigurations =
-      await getAllPadConfigurationsForProfile(profileId);
-
-    // Get all page metadata for this profile
-    const pageMetadata = await getAllPageMetadataForProfile(profileId);
-
-    // Get all unique audio file IDs referenced by this profile's pads
-    const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
-
-    // Convert audio blobs to base64
-    const audioFiles = [];
-    for (const audioFileId of audioFileIds) {
-      const audioFile = await getAudioFile(audioFileId);
-      if (audioFile) {
-        const base64data = await blobToBase64(audioFile.blob);
-        audioFiles.push({
-          id: audioFileId, // Keep original ID for reference in export, map on import
-          name: audioFile.name,
-          type: audioFile.type,
-          data: base64data,
-        });
-      } else {
-        console.warn(
-          `Audio file with ID ${audioFileId} referenced in profile but not found in DB.`,
-        );
-      }
-    }
-
-    // Create the export object, explicitly excluding lastBackedUpAt
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { lastBackedUpAt, ...profileToExport } = profile; // Destructure to omit lastBackedUpAt
-
-    const exportData: ProfileExport = {
-      exportVersion: 2, // Mark as new version
-      exportDate: new Date().toISOString(),
-      profile: profileToExport, // Use the cloned profile data without lastBackedUpAt
-      padConfigurations, // Already contains the new structure
-      pageMetadata,
-      audioFiles,
-    };
-
-    return exportData;
-  } catch (error) {
-    console.error("Failed to export profile:", error);
-    throw error;
-  }
-}
-
-/**
- * Exports multiple profiles into a single structure.
- * @param profileIds An array of profile IDs to export.
- * @returns A Promise resolving to the MultiProfileExport object.
- */
-export async function exportMultipleProfiles(
-  profileIds: number[],
-): Promise<MultiProfileExport> {
-  console.log(`Starting export for ${profileIds.length} profiles...`);
-  const profileExports: ProfileExport[] = [];
-  const errors: { profileId: number; error: Error }[] = []; // Use Error type instead of any
-
-  for (const profileId of profileIds) {
-    try {
-      console.log(`Exporting profile ID: ${profileId}`);
-      const singleExport = await exportProfile(profileId); // Reuse existing function
-      profileExports.push(singleExport);
-      console.log(`Successfully exported profile ID: ${profileId}`);
-    } catch (error) {
-      console.error(`Failed to export profile ID ${profileId}:`, error);
-      // Ensure the caught object is an Error before pushing
-      errors.push({
-        profileId,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-      // Continue exporting other profiles even if one fails
-    }
-  }
-
-  if (errors.length > 0) {
-    // Log a warning if some profiles failed to export
-    console.warn(
-      `Export completed with ${errors.length} errors for profile IDs: ${errors.map((e) => e.profileId).join(", ")}`,
-    );
-    // Depending on requirements, we might want to throw here or return partial data with error info
-  }
-
-  const multiExportData: MultiProfileExport = {
-    exportVersion: 1, // Version for the multi-export format
-    exportDate: new Date().toISOString(),
-    profiles: profileExports,
-  };
-
-  console.log(`Finished exporting ${profileExports.length} profiles.`);
-  return multiExportData;
-}
+// Note: the old base64/JSON export path (exportProfile /
+// exportMultipleProfiles) was removed — exports are ZIP-only now
+// (exportProfilesToZip below). Importing legacy JSON files is still
+// supported for backward compatibility.
 
 // --- Profile Import Logic ---
 
@@ -340,7 +225,11 @@ export interface ImportAudioSource {
   type: string;
   /** Uncompressed size in bytes, if known (used for progress reporting). */
   size?: number;
-  getBlob: () => Promise<Blob>;
+  /**
+   * Materializes the audio blob. Sources that can report progress mid-file
+   * (e.g. ZIP extraction) invoke onBytes with the number of bytes done so far.
+   */
+  getBlob: (onBytes?: (bytesDone: number) => void) => Promise<Blob>;
 }
 
 /** Progress information reported while importing audio files. */
@@ -370,7 +259,15 @@ async function importAudioSources(
   for (let i = 0; i < audioSources.length; i++) {
     const source = audioSources[i];
     try {
-      const blob = await source.getBlob();
+      const blob = await source.getBlob((bytesDone) => {
+        onProgress?.({
+          fileName: source.name,
+          processedFiles: i,
+          totalFiles: audioSources.length,
+          processedBytes: processedBytes + bytesDone,
+          totalBytes,
+        });
+      });
       const audioTx = db.transaction("audioFiles", "readwrite");
       const newAudioId = await audioTx.objectStore("audioFiles").add({
         blob,
@@ -671,6 +568,78 @@ export async function importProfile(
   );
 
   return importProfileCore(db, exportData, audioSources);
+}
+
+/**
+ * Imports a profile directly from Google Drive sync data, streaming each
+ * audio file (downloaded blob, or legacy embedded base64) straight into
+ * IndexedDB one at a time.
+ *
+ * This replaces the old connect flow that base64-encoded every downloaded
+ * blob and round-tripped the whole profile through one giant JSON string —
+ * which held all audio in memory at once and hit V8's ~512 MB string cap
+ * for large profiles.
+ *
+ * The caller links the imported profile to Drive (file/folder IDs,
+ * read-only flag) using the returned profile ID.
+ *
+ * @param downloadAudioBlob Downloads the blob for a driveFileId (typically
+ *   useGoogleDriveSync().downloadAudioFile).
+ */
+export async function importProfileFromSyncData(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  syncData: ProfileSyncData,
+  downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+  onProgress?: (progress: ImportAudioProgress) => void,
+): Promise<number> {
+  // Strip fields the import must not carry over (a fresh id is assigned and
+  // lastBackedUpAt is stamped by the import itself).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id, lastBackedUpAt, ...profileRest } = syncData.profile;
+
+  const meta: ProfileImportMeta = {
+    exportVersion: 2,
+    exportDate: new Date().toISOString(),
+    profile: { ...profileRest, syncType: "googleDrive" },
+    padConfigurations: syncData.padConfigurations ?? [],
+    pageMetadata: syncData.pageMetadata ?? [],
+  };
+
+  const audioSources: ImportAudioSource[] = [];
+  for (const ref of syncData.audioFiles ?? []) {
+    if (ref.driveFileId) {
+      const driveFileId = ref.driveFileId;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        getBlob: async () => {
+          const blob = await downloadAudioBlob(driveFileId);
+          if (!blob) {
+            throw new Error(
+              `Failed to download audio "${ref.name}" from Google Drive.`,
+            );
+          }
+          return blob;
+        },
+      });
+    } else if (typeof ref.data === "string") {
+      // Legacy sync format: audio embedded as base64
+      const data = ref.data;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        getBlob: () => base64ToBlob(data, ref.type),
+      });
+    } else {
+      console.warn(
+        `Audio file "${ref.name}" (ID ${ref.id}) has neither driveFileId nor embedded data — skipping.`,
+      );
+    }
+  }
+
+  return importProfileCore(db, meta, audioSources, onProgress);
 }
 
 /**
@@ -1416,7 +1385,14 @@ export async function importProfilesFromZip(
             name: ref.name,
             type: ref.type,
             size: entry.uncompressedSize,
-            getBlob: () => getData(new zipjs.BlobWriter(ref.type)),
+            getBlob: (onBytes) =>
+              getData(new zipjs.BlobWriter(ref.type), {
+                onprogress: onBytes
+                  ? async (bytesDone: number) => {
+                      onBytes(bytesDone);
+                    }
+                  : undefined,
+              }),
           });
         }
 

@@ -3,17 +3,11 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
-import {
-  Profile,
-  PadConfiguration,
-  PageMetadata,
-  MissingAudioFile,
-} from "@/lib/db";
+import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import { blobToBase64 } from "@/lib/importExport";
 import type { TransferProgress } from "@/lib/importExport";
 
 /**
@@ -74,6 +68,7 @@ export default function ProfileManager() {
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
     importProfilesFromZip,
+    importProfileFromSyncData,
     isGoogleSignedIn,
     googleUser,
     googleAccessToken,
@@ -199,41 +194,25 @@ export default function ProfileManager() {
   } = useGoogleDriveSync();
 
   /**
-   * Downloads audio blobs for any audio files in syncData that only have a
-   * driveFileId (new format). Shows progress to the user while downloading.
-   * Returns a new syncData with base64 `data` populated on each audio file.
+   * Imports Drive sync data as a new local profile, streaming each audio
+   * file (Drive download or legacy embedded base64) straight into IndexedDB
+   * one at a time — no base64 round-trip, no whole-profile JSON string.
+   * Shows download progress while audio is fetched. Returns the new
+   * profile's ID so the caller can link it to Drive.
    */
-  const enrichAudioFiles = async (
+  const connectSyncedProfile = async (
     syncData: ProfileSyncData,
-  ): Promise<ProfileSyncData> => {
-    const needsDownload = (syncData.audioFiles ?? []).filter(
-      (f) => !f.data && f.driveFileId,
-    );
-    if (needsDownload.length === 0) return syncData;
-
-    setAudioDownloadProgress({ current: 0, total: needsDownload.length });
-
-    const enriched = new Map<number, string>();
-    for (let i = 0; i < needsDownload.length; i++) {
-      const ref = needsDownload[i];
-      try {
-        const blob = await downloadAudioFile(ref.driveFileId!);
-        if (blob) {
-          enriched.set(ref.id, await blobToBase64(blob));
-        }
-      } catch (err) {
-        console.warn(`Failed to download audio "${ref.name}":`, err);
-      }
-      setAudioDownloadProgress({ current: i + 1, total: needsDownload.length });
+  ): Promise<number> => {
+    try {
+      return await importProfileFromSyncData(syncData, downloadAudioFile, (p) =>
+        setAudioDownloadProgress({
+          current: p.processedFiles,
+          total: p.totalFiles,
+        }),
+      );
+    } finally {
+      setAudioDownloadProgress(null);
     }
-
-    setAudioDownloadProgress(null);
-    return {
-      ...syncData,
-      audioFiles: (syncData.audioFiles ?? []).map((f) =>
-        enriched.has(f.id) ? { ...f, data: enriched.get(f.id) } : f,
-      ),
-    };
   };
 
   const googleLogin = useGoogleLogin({
@@ -360,91 +339,22 @@ export default function ProfileManager() {
     }
   };
 
-  /**
-   * Interface for audio file data in sync/export formats
-   */
-  interface AudioFileData {
-    id: number;
-    name: string;
-    type: string;
-    data: string; // Base64 encoded audio data
-  }
-
-  /**
-   * Defines the structure for export format data used by importProfileFromJSON
-   */
-  interface ProfileExportData {
-    exportVersion: number;
-    exportDate: string;
-    profile: Profile & { [key: string]: unknown };
-    padConfigurations: PadConfiguration[];
-    pageMetadata: PageMetadata[];
-    audioFiles: AudioFileData[];
-  }
-
-  /**
-   * Converts Google Drive sync format to profile export format
-   * This is necessary because the sync format and export format are different
-   */
-  const convertSyncToExportFormat = (
-    syncData: ProfileSyncData,
-  ): ProfileExportData => {
-    // Create a copy of the profile
-    const profileCopy = { ...syncData.profile };
-
-    // Create a profile object with lastBackedUpAt set to current time
-    // Profile type requires lastBackedUpAt to be a number
-    const profileWithoutBackupDate = {
-      ...profileCopy,
-      // Set lastBackedUpAt to current time instead of undefined
-      lastBackedUpAt: Date.now(),
-    } as Profile & { [key: string]: unknown };
-
-    // Create export format object
-    return {
-      exportVersion: 2, // Use current export version
-      exportDate: new Date().toISOString(),
-      profile: profileWithoutBackupDate,
-      padConfigurations: syncData.padConfigurations || [],
-      pageMetadata: syncData.pageMetadata || [],
-      // Only include audio files that have base64 data (legacy format).
-      // New-format files have driveFileId instead and will download on first sync.
-      audioFiles: (syncData.audioFiles || []).filter(
-        (f): f is typeof f & { data: string } => typeof f.data === "string",
-      ),
-    };
-  };
-
   const handleImportFromDrive = async (fileId: string, readOnly = false) => {
     setImportingFileId(fileId);
     setDriveActionStatus("loading");
     setDriveActionError(null);
 
     try {
-      let syncData = await downloadDriveFile(fileId);
+      const syncData = await downloadDriveFile(fileId);
 
       if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
-        syncData = await enrichAudioFiles(syncData);
-        const exportData = convertSyncToExportFormat(syncData);
-        exportData.profile = {
-          ...exportData.profile,
-          id: undefined,
-          syncType: "googleDrive",
-        };
-
-        const profileIdsBefore = new Set(profiles.map((p) => p.id));
-        await importProfileFromJSON(JSON.stringify(exportData));
+        const newProfileId = await connectSyncedProfile(syncData);
 
         // Link the newly created profile to the Drive file for ongoing sync
-        const newProfile = useProfileStore
-          .getState()
-          .profiles.find((p) => !profileIdsBefore.has(p.id));
-        if (newProfile?.id) {
-          await updateProfile(newProfile.id, {
-            googleDriveFileId: fileId,
-            readOnly: readOnly || undefined,
-          });
-        }
+        await updateProfile(newProfileId, {
+          googleDriveFileId: fileId,
+          readOnly: readOnly || undefined,
+        });
 
         console.log(
           `Successfully connected profile "${syncData.profile.name}" from Google Drive.`,
@@ -490,36 +400,15 @@ export default function ProfileManager() {
         throw new Error("Not a valid ImpAmp profile file.");
       }
 
-      const enrichedSyncData = await enrichAudioFiles(syncData);
+      // Import as a new local profile and link it to the shared Drive folder
+      const newProfileId = await connectSyncedProfile(syncData);
+      await updateProfile(newProfileId, {
+        googleDriveFileId: fileId,
+        googleDriveFolderId: folderId,
+        readOnly: shareConnectReadOnly || undefined,
+      });
 
-      // Record existing profile IDs so we can identify the newly created one
-      const profileIdsBefore = new Set(profiles.map((p) => p.id));
-
-      // Convert sync format to export format and import as a new local profile
-      const exportData = convertSyncToExportFormat(enrichedSyncData);
-      exportData.profile = {
-        ...exportData.profile,
-        id: undefined,
-        syncType: "googleDrive",
-      };
-      await importProfileFromJSON(JSON.stringify(exportData));
-
-      // Find the newly created profile and link it to the shared Drive folder
-      const updatedProfiles = useProfileStore.getState().profiles;
-      const newProfile = updatedProfiles.find(
-        (p) => !profileIdsBefore.has(p.id),
-      );
-      if (newProfile?.id) {
-        await updateProfile(newProfile.id, {
-          googleDriveFileId: fileId,
-          googleDriveFolderId: folderId,
-          readOnly: shareConnectReadOnly || undefined,
-        });
-      }
-
-      setConnectSuccess(
-        `"${enrichedSyncData.profile.name}" connected successfully.`,
-      );
+      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
       setShareConnectReadOnly(false);
     } catch (error) {
       console.error("Failed to connect to shared profile:", error);
@@ -628,30 +517,13 @@ export default function ProfileManager() {
         throw new Error("Not a valid ImpAmp profile file.");
       }
 
-      const enrichedSyncData = await enrichAudioFiles(syncData);
-      const profileIdsBefore = new Set(profiles.map((p) => p.id));
-      const exportData = convertSyncToExportFormat(enrichedSyncData);
-      exportData.profile = {
-        ...exportData.profile,
-        id: undefined,
-        syncType: "googleDrive",
-      };
-      await importProfileFromJSON(JSON.stringify(exportData));
+      const newProfileId = await connectSyncedProfile(syncData);
+      await updateProfile(newProfileId, {
+        googleDriveFileId: fileId,
+        readOnly: forceReadOnly || shareConnectReadOnly || undefined,
+      });
 
-      const updatedProfiles = useProfileStore.getState().profiles;
-      const newProfile = updatedProfiles.find(
-        (p) => !profileIdsBefore.has(p.id),
-      );
-      if (newProfile?.id) {
-        await updateProfile(newProfile.id, {
-          googleDriveFileId: fileId,
-          readOnly: forceReadOnly || shareConnectReadOnly || undefined,
-        });
-      }
-
-      setConnectSuccess(
-        `"${enrichedSyncData.profile.name}" connected successfully.`,
-      );
+      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
       setShareUrl("");
       setShareConnectReadOnly(false);
     } catch (error) {
