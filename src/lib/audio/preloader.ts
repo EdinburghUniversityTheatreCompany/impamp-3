@@ -149,6 +149,26 @@ class AudioPreloader {
   }
 
   /**
+   * Preload the sounds behind a track the user has just armed
+   *
+   * An armed track is a cue that can be fired at any moment (F9), so its
+   * sounds are at least as urgent as the current page's — and unlike the
+   * current page they may live on a bank that is never visited before the
+   * cue goes out. Every sound of the pad is preloaded, because the pad's
+   * playback strategy decides which one plays only at trigger time.
+   */
+  public preloadArmedTrack(
+    audioFileIds: number[],
+    context: { profileId: number; pageIndex: number; padIndex: number },
+  ): void {
+    const uniqueIds = [...new Set(audioFileIds)].filter(Boolean);
+
+    if (uniqueIds.length > 0) {
+      this.preloadFiles(uniqueIds, PreloadPriority.IMMEDIATE, context);
+    }
+  }
+
+  /**
    * Track recently played files for intelligent preloading
    */
   public trackPlayedFile(audioFileId: number): void {

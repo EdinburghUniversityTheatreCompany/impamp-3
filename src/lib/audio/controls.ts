@@ -710,6 +710,20 @@ export function preloadOnHover(
 }
 
 /**
+ * Preload the sounds of a track that was just armed, so firing the cue hits
+ * the cached-buffer fast path instead of loading on the spot
+ *
+ * @param audioFileIds - Audio file IDs of the armed pad
+ * @param context - Context information for the preload
+ */
+export function preloadArmedTrack(
+  audioFileIds: number[],
+  context: { profileId: number; pageIndex: number; padIndex: number },
+): void {
+  audioPreloader.preloadArmedTrack(audioFileIds, context);
+}
+
+/**
  * Background preload of all configured audio files across all pages
  *
  * @param allPadConfigs - All pad configurations across all pages
