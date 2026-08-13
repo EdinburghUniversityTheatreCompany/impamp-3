@@ -134,12 +134,20 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-  # Firefox and WebKit, reporting but NOT gating.
+  # Firefox and WebKit, reporting but NOT gating — deliberately, and for good.
   #
-  # These have never been run green, so gating on them would block every merge
-  # on failures nobody has triaged yet. Running them non-gating is how we find
-  # out what actually breaks — read the artifact, fix what's real, then delete
-  # `continue-on-error` to make this a gate.
+  # Both have been run to completion and triaged; see docs/cross-browser-e2e.md.
+  # Neither red run reflects a bug a user would hit:
+  #
+  #   webkit  — Playwright's Linux WebKit build cannot write ANY Blob to
+  #             IndexedDB, so no pad ever gets a sound and 38 tests cascade.
+  #             Released Safari has no such problem.
+  #   firefox — 64/64 green on a developer machine. The 17 CI failures are all
+  #             "playback never starts", because the runner has no audio device.
+  #
+  # So do not delete `continue-on-error` expecting a green gate. Read that doc
+  # first — making either one gate means changing the app's storage schema or
+  # the runner's audio setup, not fixing a test.
   #
   # It is a separate job so it runs in parallel with the chromium gate rather
   # than doubling that job's wall-clock, and it is not run locally by default:
