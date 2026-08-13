@@ -171,8 +171,7 @@ let pageIndexRequestToken = 0;
 
 type ProfileSetState = (
   partial:
-    | Partial<ProfileState>
-    | ((state: ProfileState) => Partial<ProfileState>),
+    Partial<ProfileState> | ((state: ProfileState) => Partial<ProfileState>),
 ) => void;
 
 // Stamps lastBackedUpAt on the given profiles, both in the DB and in store state.

@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useDropzone, Accept } from "react-dropzone";
+import { fromEvent } from "file-selector";
+import { COMMON_MIME_TYPES } from "file-selector/mime";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
 import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
@@ -178,6 +180,12 @@ const Pad: React.FC<PadProps> = ({
   } = useDropzone({
     onDrop: handleAudioDrop,
     accept: { "audio/*": [] } as Accept, // Accept all audio types
+    // file-selector (via react-dropzone 18+) no longer bundles its full
+    // extension->MIME table, so a File the browser left typeless — routine for
+    // the less common audio containers — would fail the `audio/*` filter above
+    // and the drop would be discarded silently. Pull the full table back in.
+    getFilesFromEvent: (event) =>
+      fromEvent(event, { mimeTypes: COMMON_MIME_TYPES }),
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
@@ -343,6 +351,14 @@ const Pad: React.FC<PadProps> = ({
       // Only inert in the modes where the click would have played the pad. In
       // edit / delete-move mode the pad is still an actionable target — that is
       // how it gets re-enabled — so it must not report itself as disabled.
+      //
+      // Keep this AFTER the {...rootProps} spread: since react-dropzone 17 it
+      // stamps its own `aria-disabled` on the root whenever the dropzone is
+      // disabled — which here means every special pad, and every pad while
+      // delete/move mode is on, all of them still clickable. This line is what
+      // overrides that. Drop it and those pads report themselves disabled to
+      // assistive tech, and become unclickable to anything honouring the
+      // attribute (Playwright included).
       aria-disabled={isDisabled && !isEditMode && !isDeleteMoveMode}
       aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}${isDisabled ? ", disabled" : ""}`}
       title={isDisabled ? `${name} (disabled)` : undefined}

@@ -48,11 +48,7 @@ export interface ServerUser {
 }
 
 export type ServerSyncStatus =
-  | "idle"
-  | "syncing"
-  | "success"
-  | "error"
-  | "conflict";
+  "idle" | "syncing" | "success" | "error" | "conflict";
 
 export type ServerSyncResult =
   | {

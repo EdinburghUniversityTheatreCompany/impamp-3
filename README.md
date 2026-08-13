@@ -185,13 +185,19 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
 
 ## Tech Stack
 
-- **Framework**: Next.js (App Router)
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **State Management**: Zustand
-- **Local Storage**: IndexedDB (via idb)
+Versions are the ones currently resolved in `package-lock.json`; refresh them
+whenever dependencies are upgraded.
+
+- **Framework**: Next.js 16 (App Router)
+- **Language**: TypeScript 6
+- **UI**: React 19
+- **Styling**: Tailwind CSS 4
+- **State Management**: Zustand 5
+- **Local Storage**: IndexedDB (via idb 8)
 - **Audio**: Web Audio API
-- **File Handling**: react-dropzone
+- **File Handling**: react-dropzone 20
+- **Testing**: Playwright 1.62 (chromium is what CI gates on)
+- **Linting**: ESLint 9 + eslint-config-next 16, Prettier 3.9
 
 ## License
 

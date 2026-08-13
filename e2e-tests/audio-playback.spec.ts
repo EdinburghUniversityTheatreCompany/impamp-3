@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { readFile } from "fs/promises";
 import {
   createTestAudioFilePath,
   prepareAudioContext,
@@ -83,6 +84,50 @@ test.describe("ImpAmp3 Audio Playback", () => {
         .locator('[data-testid="active-tracks-panel"]')
         .getByText(expectedFileName),
     ).toBeVisible();
+  });
+
+  // file-selector v4 (react-dropzone's file source, since react-dropzone 18)
+  // stopped bundling its full extension->MIME table; the main entry now ships
+  // only ~37 defaults and the 1199-entry table sits behind the
+  // `file-selector/mime` subpath. file-selector fills in a File's `type` from
+  // that table only when the browser left it empty, which is what happens for
+  // any container the OS/browser has no mapping for (.caf, .amr, .s3m, .xm and
+  // friends — plus anything on a Linux box with a thin shared-mime-info). Such
+  // a File then fails the dropzone's `audio/*` accept filter and the drop is
+  // silently discarded. Pad.tsx restores the full table via getFilesFromEvent.
+  //
+  // This has to go through a real drag-drop with an in-page File: Chromium
+  // infers a type from the extension itself when Playwright's setInputFiles is
+  // handed mimeType "", so the input path cannot reproduce a typeless File.
+  test("Accepts a dropped audio file the browser could not assign a MIME type", async ({
+    page,
+  }) => {
+    const expectedFileName = "TypelessDrop";
+    // Real WAV bytes — the file name is what's under test, and decodeAudioData
+    // sniffs content rather than the extension. Kept to 1s: the bytes have to
+    // cross into the page, and the default 60s clip is ~5MB of base64.
+    const wavPath = await createTestAudioFilePath(expectedFileName, 1);
+    const wavBase64 = (await readFile(wavPath)).toString("base64");
+
+    const pad = page.locator('[id^="pad-"]').first();
+
+    const dataTransfer = await page.evaluateHandle(
+      ([name, b64]) => {
+        const binary = atob(b64);
+        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+        const dt = new DataTransfer();
+        // Empty `type` is exactly what a browser hands over for an extension it
+        // cannot map. .caf is absent from file-selector's bundled defaults.
+        dt.items.add(new File([bytes], name, { type: "" }));
+        return dt;
+      },
+      [`${expectedFileName}.caf`, wavBase64],
+    );
+
+    await pad.dispatchEvent("dragenter", { dataTransfer });
+    await pad.dispatchEvent("drop", { dataTransfer });
+
+    await expect(pad).toContainText(expectedFileName, { timeout: 5000 });
   });
 
   test("Clicking Active Track entry stops that specific track", async ({

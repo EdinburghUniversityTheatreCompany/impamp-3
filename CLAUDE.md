@@ -115,12 +115,25 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 
 ## Development Guidelines
 
+### Key package versions
+
+As resolved in `package-lock.json` — keep in sync when upgrading dependencies:
+Next.js 16, React 19, TypeScript 6, Tailwind CSS 4, Zustand 5, idb 8,
+react-dropzone 20, Playwright 1.62, ESLint 9 with eslint-config-next 16,
+Prettier 3.9.
+
+Two upgrades are deliberately held back, with the reasons and retry conditions
+in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
+7 API) and ESLint 10 (eslint-plugin-react has no ESLint 10 release).
+
 ### Code Style
 
 - TypeScript strict mode enabled
 - Path aliases: `@/*` maps to `src/*`
 - Tailwind CSS version 4 for styling (without a config file and with opacity using the / notation)
-- ESLint configuration with Next.js rules
+- ESLint configuration with Next.js rules. `npm run lint` calls `eslint .`
+  directly — `next lint` was removed in Next 16 — so `eslint.config.mjs` owns
+  the ignore list that `next lint` used to supply
 
 ### Testing Strategy
 

@@ -37,6 +37,43 @@ Each entry: what, where, why it matters.
   combination Next says is unsupported. Either drop `standalone` (the
   Dockerfile needs it) or point both at the standalone server.
 
+## Dependencies
+
+- **15 react-hooks findings are demoted to warnings, not fixed.**
+  `eslint-config-next` 16 turns on the React Compiler-era rules, which flag
+  long-standing patterns across the codebase. `eslint.config.mjs` sets the four
+  new rules to `"warn"` so CI stays green on pre-existing code; promote each
+  back to `"error"` as it is cleared.
+
+  | Rule                                   | Sites                                                                                                                                                                                                                                         |
+  | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `react-hooks/set-state-in-effect` (10) | `app/drive/open/page.tsx`, `AuthNotification.tsx`, `ClientSideInitializer.tsx`, `BulkImportModalContent.tsx`, `ProfileCard.tsx`, `ProfileManager.tsx`, `SharingPanel.tsx`, `useGoogleDriveSync.ts`, `usePadConfigurations.ts`, `useSearch.ts` |
+  | `react-hooks/immutability` (2)         | `WaveformTrimmer.tsx`, `hooks/pad/usePadInteractions.ts`                                                                                                                                                                                      |
+  | `react-hooks/refs` (2)                 | `WaveformTrimmer.tsx`, `useKeyboardListener.ts`                                                                                                                                                                                               |
+  | `react-hooks/purity` (1)               | `ProfileCard.tsx`                                                                                                                                                                                                                             |
+
+  `set-state-in-effect` is the one worth real attention: each site writes state
+  during an effect, the pattern React Compiler refuses to optimise. That is a
+  refactor of the audio/profile/sync paths, not a lint sweep.
+
+- **Two upgrades are held back deliberately** — TypeScript 7 and ESLint 10, both
+  blocked on lint tooling that has no compatible release yet. Reasons and retry
+  conditions in `plans/deferred-upgrades.md`.
+
+- **`@types/gapi` and `@types/google.picker` may be droppable.** No `gapi.` or
+  `google.picker` reference survives in `src/` — the Drive picker is used via
+  the `@googleworkspace/drive-picker-element` web component. They are _ambient_
+  packages contributing globals rather than imports, though, so absence of
+  import sites is not proof they are unused; read `src/types/drive-picker.d.ts`
+  first. (`uuid`, `@types/uuid`, `jwt-decode` and
+  `google-api-javascript-client` were removed on the same grounds — see Done.)
+
+- **Node version pins disagree three ways:** `Dockerfile` runs `node:22-alpine`,
+  CI uses `node-version: lts/*` (24), `mise.toml` says `node = "latest"` (26).
+  `scripts/check_version_sync.sh` misses it because it only compares pins naming
+  a concrete version. Node 22 is also the floor for `node:sqlite`, so the
+  Dockerfile cannot go below it. Worth settling on one version everywhere.
+
 ## Code
 
 - **`Checkbox` hard-codes an `emergency-checkbox` class** in
@@ -77,3 +114,8 @@ Each entry: what, where, why it matters.
   `c4de6b7`, along with the two unused-import errors it had been hiding.
 - ~~The e2e port is hard-coded to 3000~~ — fixed on main in `4508931`.
 - ~~No unit-test layer at all~~ — Vitest added in `46c5046`.
+- ~~`sharp` carried four libvips CVEs~~ — closed by the 0.35.3 upgrade;
+  `npm audit` went from 7 high to 0.
+- ~~Four dependencies with no import sites~~ — `uuid`, `@types/uuid` (a
+  deprecated stub), `jwt-decode` and `google-api-javascript-client` (an
+  abandoned v0.1.0 npm mirror) removed in the dependency-upgrade pass.
