@@ -8,7 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm run dev` - Start development server with Turbopack (localhost:3000)
 - `npm run build` - Build for production (requires prebuild step)
-- `npm run start` - Start production server
+- `npm run start` - Serve the production build. Runs `.next/standalone/server.js`
+  (via `scripts/start-standalone.js`) — the same server the Docker image runs.
+  `next start` is unsupported with `output: standalone`. Reads `PORT`; a
+  `--port` argument is translated to it.
 - `npm run lint` - Run ESLint
 
 ### Testing

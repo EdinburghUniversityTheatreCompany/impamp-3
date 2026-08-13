@@ -19,9 +19,13 @@ ROOT="$PWD"
 # Skipping this lets the new server die with EADDRINUSE while the readiness
 # probe below happily succeeds against the stale one, and the tests then run
 # against stale code while looking green.
+#
+# The standalone server chdir's into .next/standalone, so accept that too —
+# matching only $ROOT would leave our own previous server running.
 for pid in $(ss -lptnH "sport = :$PORT" 2>/dev/null |
   grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
-  if [ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" = "$ROOT" ]; then
+  cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
+  if [ "$cwd" = "$ROOT" ] || [ "$cwd" = "$ROOT/.next/standalone" ]; then
     kill "$pid" 2>/dev/null || true
   else
     echo "port $PORT is held by pid $pid from another directory:" >&2
@@ -42,7 +46,9 @@ npm run build >"/tmp/e2e-build-$PORT.log" 2>&1 || {
   exit 1
 }
 
-setsid nohup npx next start --port "$PORT" \
+# `npm start` runs the standalone server, the same one the Docker image runs —
+# `next start` is unsupported with `output: standalone`.
+setsid nohup npm start -- --port "$PORT" \
   >"/tmp/e2e-server-$PORT.log" 2>&1 </dev/null &
 
 for _ in $(seq 1 60); do

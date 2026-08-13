@@ -7,7 +7,7 @@
     "prebuild": "node scripts/generate-favicon.js && node scripts/generate-build-info.js",
     "build": "next build",
     "dev": "next dev --turbopack",
-    "start": "next start",
+    "start": "node scripts/start-standalone.js",
     "lint": "eslint .",
     "analyze": "ANALYZE=true npm run build",
     "analyze:server": "BUNDLE_ANALYZE=server npm run build",

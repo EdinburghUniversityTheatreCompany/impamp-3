@@ -19,11 +19,6 @@ Each entry: what, where, why it matters.
   also swing from 30 s to 1.2 min on the same machine, which points at
   contention rather than a specific test. Worth fixing the underlying race or
   capping workers for that file.
-- **`npm start` contradicts `output: standalone`.** `next start` prints
-  `"next start" does not work with "output: standalone" configuration`. It does
-  currently serve, but both `npm start` and the Playwright config depend on a
-  combination Next says is unsupported. Either drop `standalone` (the
-  Dockerfile needs it) or point both at the standalone server.
 
 ## Dependencies
 
