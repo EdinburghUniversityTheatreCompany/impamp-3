@@ -19,6 +19,7 @@ export {
   ensureAudioContextActive,
   preloadCurrentPageIntelligent,
   preloadOnHover,
+  preloadArmedTrack,
   preloadAllConfiguredFiles,
   getPreloadingStats,
 } from "./controls";

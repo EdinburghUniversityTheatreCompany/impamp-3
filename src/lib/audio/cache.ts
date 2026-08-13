@@ -7,6 +7,8 @@
  * @module lib/audio/cache
  */
 
+import { exposeE2EHook } from "../testHooks";
+
 interface CacheEntry {
   buffer: AudioBuffer | null;
   lastAccessed: number;
@@ -94,6 +96,12 @@ const audioBufferCache = new Map<number, CacheEntry>();
 let totalMemoryUsage = 0;
 let cleanupIntervalId: number | null = null;
 
+// Files that must survive LRU eviction, mapped to a reference count so that
+// several holders (e.g. two armed pads sharing a sound) can pin the same file
+// independently. Kept separate from the cache itself so a file can be pinned
+// before its buffer has finished decoding.
+const pinnedAudioFileIds = new Map<number, number>();
+
 /**
  * Calculate estimated memory usage of an AudioBuffer
  */
@@ -171,12 +179,21 @@ function performCleanup(trigger: "manual" | "interval" | "limit"): number {
   }
 
   // Then remove oldest successful entries if we still need to clean up
+  let pinnedSkipped = 0;
   for (const [id, entry] of successfulEntries) {
     if (
       totalMemoryUsage <= targetMemory &&
       audioBufferCache.size <= targetEntries
     ) {
       break;
+    }
+
+    // Never evict a pinned buffer. Armed tracks pin their sounds so an
+    // eviction can't turn a cued sound back into a slow load right before
+    // the operator fires it.
+    if (pinnedAudioFileIds.has(id)) {
+      pinnedSkipped++;
+      continue;
     }
 
     // Skip very recently accessed entries (within last 30 seconds) unless we're really over limit
@@ -192,9 +209,19 @@ function performCleanup(trigger: "manual" | "interval" | "limit"): number {
 
   console.log(
     `[Audio Cache] Cleanup (${trigger}): Removed ${removedCount}/${initialSize} entries ` +
-      `(${failedEntries.length} failed, ${removedCount - failedEntries.length} successful), ` +
+      `(${failedEntries.length} failed, ${removedCount - failedEntries.length} successful, ` +
+      `${pinnedSkipped} pinned kept), ` +
       `${(initialMemory / 1024 / 1024).toFixed(1)}MB → ${(totalMemoryUsage / 1024 / 1024).toFixed(1)}MB`,
   );
+
+  // Pinned buffers can hold the cache above its target. That is intended,
+  // but worth surfacing: it means armed tracks alone are near the memory cap.
+  if (pinnedSkipped > 0 && totalMemoryUsage > targetMemory) {
+    console.warn(
+      `[Audio Cache] Cleanup could not reach its target: ${pinnedSkipped} pinned ` +
+        `entries are holding ${(totalMemoryUsage / 1024 / 1024).toFixed(1)}MB in memory`,
+    );
+  }
 
   return removedCount;
 }
@@ -282,6 +309,65 @@ export function isAudioBufferCached(audioFileId: number): boolean {
 }
 
 /**
+ * Pin an audio file so its cached buffer is never evicted by LRU cleanup
+ *
+ * Pins are reference counted: every `pinAudioBuffer` call must be matched by
+ * an `unpinAudioBuffer` call. A file can be pinned before it is cached — the
+ * pin then applies as soon as the decoded buffer arrives.
+ *
+ * @param audioFileId - ID of the audio file to protect from eviction
+ */
+export function pinAudioBuffer(audioFileId: number): void {
+  const count = (pinnedAudioFileIds.get(audioFileId) ?? 0) + 1;
+  pinnedAudioFileIds.set(audioFileId, count);
+
+  if (count === 1) {
+    console.log(`[Audio Cache] Pinned audio buffer for ID: ${audioFileId}`);
+  }
+}
+
+/**
+ * Release one pin on an audio file, making it evictable again once no
+ * holders remain. Unpinning a file that was never pinned is a no-op.
+ *
+ * @param audioFileId - ID of the audio file to release
+ */
+export function unpinAudioBuffer(audioFileId: number): void {
+  const count = pinnedAudioFileIds.get(audioFileId);
+  if (count === undefined) return;
+
+  if (count <= 1) {
+    pinnedAudioFileIds.delete(audioFileId);
+    console.log(`[Audio Cache] Unpinned audio buffer for ID: ${audioFileId}`);
+  } else {
+    pinnedAudioFileIds.set(audioFileId, count - 1);
+  }
+}
+
+/**
+ * Check whether an audio file is currently pinned against eviction
+ *
+ * @param audioFileId - ID of the audio file to check
+ */
+export function isAudioBufferPinned(audioFileId: number): boolean {
+  return pinnedAudioFileIds.has(audioFileId);
+}
+
+/**
+ * Release every pin at once. Holders normally unpin what they pinned; this is
+ * the reset hatch, used to isolate tests from each other.
+ * @internal
+ */
+export function clearAudioBufferPins(): void {
+  const count = pinnedAudioFileIds.size;
+  pinnedAudioFileIds.clear();
+
+  if (count > 0) {
+    console.log(`[Audio Cache] Released all ${count} audio buffer pins`);
+  }
+}
+
+/**
  * Clear a specific audio buffer from the cache
  *
  * @param audioFileId - ID of the audio file to remove from cache
@@ -332,6 +418,7 @@ export function getAudioCacheStats(): {
   totalEntries: number;
   successfulDecodes: number;
   failedDecodes: number;
+  pinnedEntries: number;
   memoryUsageMB: number;
   memoryUsagePercent: number;
   maxMemoryMB: number;
@@ -340,15 +427,20 @@ export function getAudioCacheStats(): {
 } {
   let successfulDecodes = 0;
   let failedDecodes = 0;
+  let pinnedEntries = 0;
   let oldestAccess = Infinity;
   let newestAccess = 0;
   const now = Date.now();
 
-  audioBufferCache.forEach((entry) => {
+  audioBufferCache.forEach((entry, audioFileId) => {
     if (entry.buffer === null) {
       failedDecodes++;
     } else {
       successfulDecodes++;
+    }
+
+    if (pinnedAudioFileIds.has(audioFileId)) {
+      pinnedEntries++;
     }
 
     oldestAccess = Math.min(oldestAccess, entry.lastAccessed);
@@ -361,6 +453,7 @@ export function getAudioCacheStats(): {
     totalEntries: audioBufferCache.size,
     successfulDecodes,
     failedDecodes,
+    pinnedEntries,
     memoryUsageMB: Number((totalMemoryUsage / 1024 / 1024).toFixed(2)),
     memoryUsagePercent: Number(
       ((totalMemoryUsage / config.maxMemoryBytes) * 100).toFixed(1),
@@ -382,6 +475,14 @@ export function getAudioCacheStats(): {
 export function forceCleanup(): number {
   return performCleanup("manual");
 }
+
+// Which sounds are decoded and which are pinned against eviction is invisible
+// in the UI, so the armed-track tests read it through this hook. See
+// lib/testHooks.
+exposeE2EHook("__impampAudioCache", () => ({
+  cachedIds: Array.from(audioBufferCache.keys()),
+  pinnedIds: Array.from(pinnedAudioFileIds.keys()),
+}));
 
 /**
  * Reset cache configuration for testing purposes
