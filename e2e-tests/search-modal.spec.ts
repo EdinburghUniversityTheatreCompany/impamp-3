@@ -1,13 +1,13 @@
 import { test, expect } from "@playwright/test";
-import { createTestAudioFilePath, prepareAudioContext } from "./test-helpers";
+import {
+  createTestAudioFilePath,
+  prepareAudioContext,
+  gotoApp,
+} from "./test-helpers";
 
 test.describe("Search Modal", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto("/");
-
-    // Wait for the app to fully load
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);

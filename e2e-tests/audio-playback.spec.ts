@@ -8,6 +8,7 @@ import {
   savePadEditModal,
   setPlaybackModeInModal,
   triggerAndReadSoundIndex,
+  gotoApp,
 } from "./test-helpers";
 import { ActivePadBehavior, PlaybackType } from "../src/lib/db";
 
@@ -39,11 +40,7 @@ async function setActivePadBehaviorSetting(
 
 test.describe("ImpAmp3 Audio Playback", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the home page
-    await page.goto("/");
-
-    // Wait for the app to load properly
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);

@@ -7,6 +7,7 @@ import {
   openEditPadModal,
   addSoundsToPadModal,
   savePadEditModal,
+  gotoApp,
 } from "./test-helpers";
 
 test.describe("Profile export/import round-trip", () => {
@@ -21,8 +22,7 @@ test.describe("Profile export/import round-trip", () => {
       });
     });
 
-    await page.goto("/");
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
   });
 
   test("exports a profile as .iaz and imports it back", async ({ page }) => {

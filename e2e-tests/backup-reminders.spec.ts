@@ -1,5 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
-import { prepareAudioContext } from "./test-helpers";
+import { prepareAudioContext, gotoApp, waitForAppReady } from "./test-helpers";
 import { DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "../src/lib/db";
 
 // Updates the named profile's backup-related fields directly in IndexedDB, so
@@ -109,7 +109,7 @@ async function makeBackupOverdueAndReload(
   });
 
   await page.reload();
-  await page.waitForSelector('[id^="pad-"]');
+  await waitForAppReady(page);
 }
 
 // Opens the Profile Manager. When the reminder banner is showing it offers its
@@ -171,10 +171,7 @@ test.describe("Backup Reminders", () => {
   const twoMonthsMs = 2 * oneMonthMs;
 
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto("/");
-    // Wait for the app to fully load
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
     // Prepare the audio context
     await prepareAudioContext(page);
 
@@ -228,7 +225,7 @@ test.describe("Backup Reminders", () => {
 
     // Reload the page
     await page.reload();
-    await page.waitForSelector('[id^="pad-"]'); // Wait for load
+    await waitForAppReady(page);
 
     // --- Verify the reminder notification is NOT visible ---
     const reminderBanner = page.locator(
@@ -255,7 +252,7 @@ test.describe("Backup Reminders", () => {
     );
 
     await page.reload();
-    await page.waitForSelector('[id^="pad-"]');
+    await waitForAppReady(page);
 
     const reminderBanner = page.locator(
       '[data-testid="backup-reminder-banner"]',
@@ -300,7 +297,7 @@ test.describe("Backup Reminders", () => {
 
     // Reload page
     await page.reload();
-    await page.waitForSelector('[id^="pad-"]');
+    await waitForAppReady(page);
 
     const reminderBanner = page.locator(
       '[data-testid="backup-reminder-banner"]',
