@@ -5,11 +5,7 @@ import {
   loadingStoreActions,
   generatePadLoadingKey,
 } from "@/store/loadingStore";
-import {
-  pinAudioBuffer,
-  unpinAudioBuffer,
-  clearAudioBufferPins,
-} from "@/lib/audio/cache";
+import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
@@ -184,8 +180,9 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
 
     // Action to clear all armed tracks
     clearAllArmedTracks: () => {
-      clearAudioBufferPins();
+      const armed = Array.from(get().armedTracks.values());
       set({ armedTracks: new Map() });
+      armed.forEach((track) => track.audioFileIds.forEach(unpinAudioBuffer));
     },
 
     // Action to play the next armed track

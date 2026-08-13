@@ -354,7 +354,9 @@ export function isAudioBufferPinned(audioFileId: number): boolean {
 }
 
 /**
- * Release every pin at once (e.g. when all armed tracks are cleared)
+ * Release every pin at once. Holders normally unpin what they pinned; this is
+ * the reset hatch, used to isolate tests from each other.
+ * @internal
  */
 export function clearAudioBufferPins(): void {
   const count = pinnedAudioFileIds.size;
