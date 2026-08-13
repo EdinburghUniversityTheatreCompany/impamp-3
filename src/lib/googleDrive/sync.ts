@@ -240,16 +240,17 @@ async function migrateToFolderLayout(
 /**
  * Download any audio files referenced in remote sync data that are missing locally.
  * Stores downloaded files in IndexedDB with their Drive file ID set.
- * @returns Warnings for every file that could not be downloaded
+ * @returns Warnings about files gone from Drive, plus any retryable failures
  */
 async function downloadMissingAudioFiles(
   audioRefs: ProfileSyncData["audioFiles"],
   profileId: number,
   tokenInfo: TokenInfo,
   refreshCallback: (token: TokenInfo) => void,
-): Promise<string[]> {
+): Promise<{ warnings: string[]; retryable: string[] }> {
   const warnings: string[] = [];
-  if (!audioRefs || audioRefs.length === 0) return warnings;
+  const retryable: string[] = [];
+  if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
   // Hashes for local files that predate hashing, built once and only if a
   // reference actually misses the hash index — the blobs are read one at a
@@ -318,6 +319,7 @@ async function downloadMissingAudioFiles(
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       } else {
+        // Gone from Drive for good — pads referencing it lose the reference
         warnings.push(
           `Audio file "${ref.name}" is no longer available in Drive`,
         );
@@ -328,12 +330,12 @@ async function downloadMissingAudioFiles(
         `Failed to download audio file "${ref.name}" from Drive:`,
         err,
       );
-      // Non-fatal: pads referencing it are cleared, but sync continues
-      warnings.push(`Could not download audio file "${ref.name}": ${msg}`);
+      // Could succeed later; the caller aborts rather than dropping the pad audio
+      retryable.push(`"${ref.name}": ${msg}`);
     }
   }
 
-  return warnings;
+  return { warnings, retryable };
 }
 
 /**
@@ -576,14 +578,21 @@ const performProfileSync = async (
     // 1d. Download any audio files referenced in remote data that we don't have locally
     const warnings: string[] = [];
     if (remoteData?.audioFiles) {
-      warnings.push(
-        ...(await downloadMissingAudioFiles(
-          remoteData.audioFiles,
-          profileId,
-          tokenInfo,
-          refreshCallback,
-        )),
+      const downloads = await downloadMissingAudioFiles(
+        remoteData.audioFiles,
+        profileId,
+        tokenInfo,
+        refreshCallback,
       );
+      warnings.push(...downloads.warnings);
+
+      // Merging now would clear every pad pointing at a file we failed to fetch,
+      // and the next sync would push that loss to Drive. Retry instead.
+      if (downloads.retryable.length > 0) {
+        throw new Error(
+          `Could not download ${downloads.retryable.length} audio file(s) from Drive — sync postponed: ${downloads.retryable.join("; ")}`,
+        );
+      }
     }
 
     // 3. Detect Conflicts & Merge

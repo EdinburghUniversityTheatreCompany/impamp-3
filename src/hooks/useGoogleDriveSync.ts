@@ -19,6 +19,7 @@ import {
   ItemConflict,
   SyncResult,
 } from "@/lib/googleDrive/types";
+import { isTokenValid } from "@/lib/googleDrive/utils";
 import { checkAndRefreshAuth } from "@/lib/googleDrive/auth";
 import {
   findDriveFileById,
@@ -128,6 +129,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     conflicts,
     conflictData,
     needsReauthSet: false, // Track if we've already set needsReauth
+    lastRefreshAttempt: 0, // Throttle for automatic token refreshes
   });
 
   // Update ref when state changes
@@ -304,10 +306,17 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     const validateToken = async () => {
       const tokenInfo = getFreshTokenInfo();
       if (!tokenInfo || stateRef.current.needsReauthSet) return;
+      if (isTokenValid(tokenInfo.accessToken, tokenInfo.expiresAt)) return;
 
       // Offline: the refresh can't succeed and the token isn't necessarily bad
       if (typeof navigator !== "undefined" && navigator.onLine === false)
         return;
+
+      // Each refresh updates the store, which re-runs this effect — don't let
+      // a short-lived token turn that into a refresh loop
+      const now = Date.now();
+      if (now - stateRef.current.lastRefreshAttempt < 60 * 1000) return;
+      stateRef.current.lastRefreshAttempt = now;
 
       const { isValid, refreshedTokenInfo } =
         await checkAndRefreshAuth(tokenInfo);

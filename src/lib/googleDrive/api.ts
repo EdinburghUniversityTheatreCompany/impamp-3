@@ -14,15 +14,6 @@ import { checkAndRefreshAuth } from "./auth";
 import { getProfileFolderName } from "./utils";
 
 /**
- * Performs an authenticated request to the Google Drive API
- * @param url The API endpoint URL
- * @param method The HTTP method
- * @param tokenInfo Current token information
- * @param options Additional fetch options
- * @param refreshCallback Callback to update token if refreshed
- * @returns The response data or null on error
- */
-/**
  * Escapes a value for safe interpolation into a Drive API query string.
  * Drive query literals are single-quoted, so backslashes and apostrophes
  * must be escaped or the query is rejected with a 400.
@@ -43,6 +34,15 @@ async function parseDriveResponse<T>(response: Response): Promise<T | null> {
   return JSON.parse(text) as T;
 }
 
+/**
+ * Performs an authenticated request to the Google Drive API
+ * @param url The API endpoint URL
+ * @param method The HTTP method
+ * @param tokenInfo Current token information
+ * @param options Additional fetch options
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns The response data or null on error
+ */
 async function authenticatedRequest<T>(
   url: string,
   method: string,
