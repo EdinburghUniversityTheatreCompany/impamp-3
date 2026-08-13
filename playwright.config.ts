@@ -1,11 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
-import { resolve } from "node:path";
+import { E2E_DB_PATH, E2E_SIGNIN_SECRET, e2eServerEnv } from "./e2e-tests/env";
 
-/** Throwaway server-sync database for the E2E run. Shared with the specs. */
-export const E2E_DB_PATH = resolve(process.cwd(), "data/e2e.db");
-
-/** Unlocks the test-only sign-in route for this run. */
-export const E2E_SIGNIN_SECRET = "e2e-local-only-secret";
+// Re-exported because the specs import them from here.
+export { E2E_DB_PATH, E2E_SIGNIN_SECRET };
 
 // Port is configurable so a git worktree (or a second checkout) can build and
 // serve its own copy of the app without colliding with the 3000 a developer
@@ -56,22 +53,7 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 300 * 1000, // 5 minutes — a cold production build is included
-    env: {
-      PORT: port,
-      // Compiles in the window hooks the suite reads internal state through
-      // (see src/lib/testHooks.ts); a real deploy leaves this unset.
-      NEXT_PUBLIC_E2E_HOOKS: "1",
-      NEXT_PUBLIC_GOOGLE_CLIENT_ID:
-        process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
-        "e2e-placeholder.apps.googleusercontent.com",
-      // Server sync writes to its own throwaway database during E2E, kept out
-      // of the developer's ./data/impamp.db. server-sync.spec.ts opens the
-      // same file directly to mint a session, which is the only way to sign in
-      // without a real Google account.
-      IMPAMP_DB_PATH: E2E_DB_PATH,
-      // Enables /api/test/session, the suite's only way to sign in without a
-      // real Google account. Unset everywhere else, so the route 404s.
-      IMPAMP_E2E_SIGNIN_SECRET: E2E_SIGNIN_SECRET,
-    },
+    // Shared with scripts/e2e-server.sh — see e2e-tests/env.js.
+    env: { PORT: port, ...e2eServerEnv },
   },
 });

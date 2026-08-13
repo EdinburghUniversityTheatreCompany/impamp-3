@@ -6,12 +6,24 @@
 set -euo pipefail
 
 PORT="${1:-${E2E_PORT:-3100}}"
-export NEXT_PUBLIC_E2E_HOOKS=1
-export NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-e2e-placeholder.apps.googleusercontent.com}"
 
 cd "$(dirname "$0")/.."
 
 ROOT="$PWD"
+
+# Take the server environment from e2e-tests/env.js — the same module
+# playwright.config.ts feeds its `webServer.env` from. Setting it here by hand
+# is how this script came to start a server with the test sign-in route
+# disabled, pointed at the developer's real database: every server-sync spec
+# then failed no matter what the app did.
+while IFS='=' read -r key value; do
+  [ -n "$key" ] || continue
+  export "$key=$value"
+done < <(node -e '
+  import("./e2e-tests/env.js").then(({ e2eServerEnv }) => {
+    for (const [k, v] of Object.entries(e2eServerEnv)) console.log(`${k}=${v}`);
+  });
+')
 
 # Free the port before building. `next start` is a grandchild of the shell that
 # launched it, so tracking a pid is unreliable — find whoever actually holds the
