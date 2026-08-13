@@ -210,7 +210,7 @@ export async function activatePad(
 
   // Look for the progress bar on the pad
   const progressBar = padLocator.locator(".bg-green-500");
-  await expect(progressBar).toBeVisible({ timeout: 5000 });
+  await expect(progressBar).toBeVisible();
 
   console.log("Pad playing verified");
 }
@@ -406,10 +406,8 @@ export async function openEditPadModal(page: Page, padIndex: number) {
 export async function addSoundsToPadModal(page: Page, filePaths: string[]) {
   const fileInput = page.locator("#addSoundsInput"); // Use the ID we added
   await fileInput.setInputFiles(filePaths);
-  // Wait for sounds to potentially appear in the list (adjust selector/timeout if needed)
-  await page.waitForSelector(`[data-testid^="edit-pad-sound-item-"]`, {
-    timeout: 5000,
-  });
+  // Wait for sounds to potentially appear in the list
+  await page.waitForSelector(`[data-testid^="edit-pad-sound-item-"]`);
   console.log(`[Test Helper] Added ${filePaths.length} sounds via modal`);
 }
 
@@ -437,9 +435,7 @@ export async function setPadActiveInModal(page: Page, active: boolean) {
 
 // Asserts that no audio is currently playing.
 export async function expectNothingPlaying(page: Page) {
-  await expect(page.locator("text=Nothing playing")).toBeVisible({
-    timeout: 5000,
-  });
+  await expect(page.locator("text=Nothing playing")).toBeVisible();
 }
 
 // Helper to remove a specific sound from the modal list

@@ -203,7 +203,6 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await padInput.setInputFiles(filePath);
     await expect(page.locator('[id^="pad-"][id$="-1"]')).toContainText(
       fileName,
-      { timeout: 5000 },
     );
 
     await openEditPadModal(page, 1); // Open modal for second pad
@@ -291,7 +290,6 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await padInput.setInputFiles(initialFilePath);
     await expect(page.locator('[id^="pad-"][id$="-4"]')).toContainText(
       initialName,
-      { timeout: 5000 },
     );
 
     // Rename it

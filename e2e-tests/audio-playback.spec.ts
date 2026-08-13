@@ -69,8 +69,8 @@ test.describe("ImpAmp3 Audio Playback", () => {
     // Add audio to the pad using setInputFiles
     await firstPadInput.setInputFiles(audioFilePath);
 
-    // Verify the pad shows the file name (adjust timeout if needed)
-    await expect(firstPad).toContainText(expectedFileName, { timeout: 5000 });
+    // Verify the pad shows the file name
+    await expect(firstPad).toContainText(expectedFileName);
 
     // Click the pad to play the sound
     await firstPad.click();
@@ -127,7 +127,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
     await pad.dispatchEvent("dragenter", { dataTransfer });
     await pad.dispatchEvent("drop", { dataTransfer });
 
-    await expect(pad).toContainText(expectedFileName, { timeout: 5000 });
+    await expect(pad).toContainText(expectedFileName);
   });
 
   test("Clicking Active Track entry stops that specific track", async ({
@@ -153,10 +153,8 @@ test.describe("ImpAmp3 Audio Playback", () => {
     await secondPadInput.setInputFiles(secondAudioFilePath);
 
     // Verify both pads show the file name
-    await expect(firstPad).toContainText(firstAudioFileName, { timeout: 5000 });
-    await expect(secondPad).toContainText(secondAudioFileName, {
-      timeout: 5000,
-    });
+    await expect(firstPad).toContainText(firstAudioFileName);
+    await expect(secondPad).toContainText(secondAudioFileName);
 
     // Play both pads
     await firstPad.click();
@@ -216,7 +214,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
     await padInput.setInputFiles(audioFilePath);
 
     // Verify the pad now shows the file name instead of "Empty Pad"
-    await expect(emptyPad).toContainText(expectedFileName, { timeout: 5000 });
+    await expect(emptyPad).toContainText(expectedFileName);
     await expect(emptyPad).not.toContainText("Empty Pad");
   });
 
@@ -243,7 +241,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
 
     // Load audio
     await padInput.setInputFiles(audioFilePath);
-    await expect(pad).toContainText(fileName, { timeout: 5000 });
+    await expect(pad).toContainText(fileName);
 
     // Play
     await pad.click();

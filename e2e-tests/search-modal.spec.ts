@@ -28,8 +28,8 @@ test.describe("Search Modal", () => {
     // Add audio to the pad using setInputFiles
     await firstPadInput.setInputFiles(audioFilePath);
 
-    // Verify the pad shows the file name (adjust timeout if needed)
-    await expect(firstPad).toContainText(expectedFileName, { timeout: 10000 }); // Increased timeout
+    // Verify the pad shows the file name
+    await expect(firstPad).toContainText(expectedFileName);
 
     // --- Open Search Modal ---
     const searchButtonSelector = '[data-testid="search-button"]';
@@ -50,7 +50,7 @@ test.describe("Search Modal", () => {
     const firstResult = page.locator(searchResultSelector).first();
 
     // Wait for the result to be visible before clicking
-    await expect(firstResult).toBeVisible({ timeout: 10000 });
+    await expect(firstResult).toBeVisible();
     await firstResult.click();
 
     // --- Verify Modal is Closed ---
@@ -62,6 +62,6 @@ test.describe("Search Modal", () => {
       page
         .locator('[data-testid="active-tracks-panel"]')
         .getByText(expectedFileName),
-    ).toBeVisible({ timeout: 10000 }); // Increased timeout
+    ).toBeVisible();
   });
 });

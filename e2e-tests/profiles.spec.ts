@@ -158,7 +158,7 @@ test.describe("ImpAmp3 Profile Management", () => {
     await expect(successMessage).toContainText(
       /Impamp2 profile imported successfully!/i,
     );
-    await expect(successMessage).toBeVisible({ timeout: 10000 });
+    await expect(successMessage).toBeVisible();
 
     // Switch back to Profiles tab
     await page.getByRole("button", { name: "Profiles" }).click();

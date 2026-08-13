@@ -177,7 +177,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
 
     // Load audio
     await padInput.setInputFiles(audioFilePath);
-    await expect(pad).toContainText(fileName, { timeout: 5000 });
+    await expect(pad).toContainText(fileName);
 
     // Arm the pad using Ctrl+Click
     await armPad(page, 0);
@@ -221,9 +221,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
 
     // Load audio
     await padInput.setInputFiles(audioFilePath);
-    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
-      timeout: 5000,
-    });
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName);
 
     // Arm the pad
     await armPad(page, 0);
@@ -300,9 +298,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
 
     // Load audio
     await padInput.setInputFiles(audioFilePath);
-    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
-      timeout: 5000,
-    });
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName);
 
     // Arm the pad
     await armPad(page, 0);
@@ -339,7 +335,6 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
       await padInput.setInputFiles(filePaths[i]);
       await expect(page.locator(`[id^="pad-"][id$="-${i}"]`)).toContainText(
         fileNames[i],
-        { timeout: 5000 },
       );
     }
 
@@ -487,9 +482,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await padInput.setInputFiles(audioFilePath);
 
     // Wait for the track to be loaded
-    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
-      timeout: 5000,
-    });
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName);
 
     // Open search and arm the track from search results
     await armTrackFromSearch(page, fileName);

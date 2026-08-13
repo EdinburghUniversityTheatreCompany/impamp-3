@@ -13,6 +13,20 @@ const baseURL = `http://localhost:${port}`;
 export default defineConfig({
   testDir: "./e2e-tests",
   fullyParallel: true,
+  // Playwright's defaults are 30 s per test and 5 s per expect. Both are too
+  // tight for this suite under parallel load: assigning a sound reads a file,
+  // decodes it, writes a Blob to IndexedDB and re-renders, and with several
+  // workers competing that comfortably exceeds 5 s on a busy machine. That was
+  // the whole of the "edit-mode is flaky" report — assertions timing out, no
+  // race in the app. Raising the ceiling costs nothing on a passing run, since
+  // expect polls and returns the moment it matches; it only changes how long a
+  // slow step is given before it is called a failure.
+  //
+  // So: don't reintroduce per-assertion `{ timeout: 5000 }`. That is the old
+  // default written out longhand, and pinning an assertion back down to it is
+  // what made these tests flaky. Only pass a timeout to raise it above this.
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,

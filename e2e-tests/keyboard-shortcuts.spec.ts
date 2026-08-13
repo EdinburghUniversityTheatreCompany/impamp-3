@@ -29,19 +29,17 @@ test.describe("ImpAmp3 Keyboard Shortcuts", () => {
     await firstPadInput.setInputFiles(audioFilePath);
 
     // Verify pad shows the name
-    await expect(firstPad).toContainText(expectedFileName, { timeout: 5000 });
+    await expect(firstPad).toContainText(expectedFileName);
 
     // Activate the pad and verify it's playing
     await activatePad(page, firstPad, "q");
 
     // Wait for the pad to show it's playing
     const progressBar = firstPad.locator(".bg-green-500");
-    await expect(progressBar).toBeVisible({ timeout: 5000 });
+    await expect(progressBar).toBeVisible();
 
     // Verify the active tracks panel shows the sound
-    await expect(page.locator("text=Nothing playing")).toBeHidden({
-      timeout: 5000,
-    });
+    await expect(page.locator("text=Nothing playing")).toBeHidden();
     const activeTracksPanel = page.locator(
       '[data-testid="active-tracks-panel"]',
     );
@@ -61,7 +59,7 @@ test.describe("ImpAmp3 Keyboard Shortcuts", () => {
     await firstPadInput.setInputFiles(audioFilePath);
 
     // Verify pad shows the name
-    await expect(firstPad).toContainText(expectedFileName, { timeout: 5000 });
+    await expect(firstPad).toContainText(expectedFileName);
 
     // Activate the pad and verify it's playing
     await activatePad(page, firstPad);
@@ -70,9 +68,7 @@ test.describe("ImpAmp3 Keyboard Shortcuts", () => {
     await page.keyboard.press("Escape");
 
     // Verify the sound stopped (check panel and pad progress bar)
-    await expect(page.locator("text=Nothing playing")).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator("text=Nothing playing")).toBeVisible();
     const activeTracksPanel = page.locator(
       '[data-testid="active-tracks-panel"]',
     );

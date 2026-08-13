@@ -205,7 +205,7 @@ test.describe("Backup Reminders", () => {
     const reminderBanner = page.locator(
       '[data-testid="backup-reminder-banner"]',
     ); // Use data-testid
-    await expect(reminderBanner).toBeVisible({ timeout: 10000 }); // Wait longer if needed
+    await expect(reminderBanner).toBeVisible();
     await expect(reminderBanner).toContainText("Backup Recommended");
     await expect(reminderBanner).toContainText(profileName);
 

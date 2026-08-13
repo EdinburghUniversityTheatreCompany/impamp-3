@@ -5,16 +5,6 @@ Each entry: what, where, why it matters.
 
 ## Tooling
 
-- **The edit-mode E2E suite is flaky under parallel load.** About two runs in
-  five, one edit-mode test fails on a timeout in the 7-worker chromium run — a
-  different test each time ("Can mark a bank as emergency", "Can rename pads in
-  edit mode", "opens edit modal on Shift+click", "Armed track is visually
-  indicated on the pad"). Measured on `d3ccd34` as well as on the server-sync
-  branch, at the same rate, so it is not a regression from either. Run times
-  also swing from 30 s to 1.2 min on the same machine, which points at
-  contention rather than a specific test. Worth fixing the underlying race or
-  capping workers for that file.
-
 ## Dependencies
 
 - **15 react-hooks findings are demoted to warnings, not fixed.**
