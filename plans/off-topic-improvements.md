@@ -103,6 +103,11 @@ Each entry: what, where, why it matters.
   using selector-based subscriptions, would cut redundant work on every state
   change.
 
+- **`clearAllArmedTracks` has no callers.** Switching profiles leaves the
+  previous profile's cues armed in `playbackStore`, so the Armed Tracks panel
+  keeps listing pads that belong to a profile that is no longer open (and F9
+  fires them). Either wire the action into the profile switch or drop it.
+
 ## Docs
 
 - **README structure fails the audit**: four `<h1>`s (should be exactly one)
