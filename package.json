@@ -13,6 +13,8 @@
     "analyze:server": "BUNDLE_ANALYZE=server npm run build",
     "analyze:client": "BUNDLE_ANALYZE=client npm run build",
     "generate-favicon": "node scripts/generate-favicon.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:audio": "playwright test audio-playback.spec.ts",
     "test:e2e:profiles": "playwright test profiles.spec.ts",
@@ -53,6 +55,7 @@
     "prettier": "3.8.1",
     "sharp": "^0.34.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
