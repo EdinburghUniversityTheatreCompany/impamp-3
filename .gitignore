@@ -55,3 +55,4 @@ public/workbox-*.js
 /src/generated
 
 certificates
+.e2e-server-*.pid
