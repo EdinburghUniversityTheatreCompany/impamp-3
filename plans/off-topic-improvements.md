@@ -30,11 +30,6 @@ Each entry: what, where, why it matters.
 
 ## Code
 
-- **`EditPadModalContent` fakes `FormModalRenderProps`** rather than using
-  `useFormModal`, hard-coding `errors: {}` and `isSubmitting: false`. The pad
-  editor therefore has no validation at all, and
-  `src/examples/FormModalUsage.tsx` documents the intended pattern that is not
-  actually used.
 - **`ClientSideInitializer` holds four separate store subscriptions** (auth,
   sync queue, edit mode, server-sync streams), each firing on _every_
   `useProfileStore` mutation and filtering afterwards. Consolidating them, or

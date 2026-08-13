@@ -14,8 +14,6 @@ export enum ModalType {
   BULK_IMPORT = "bulkImport",
   CONFLICT_RESOLUTION = "conflictResolution",
   HELP = "help",
-  EDIT_BANK = "editBank",
-  EDIT_PAD = "editPad",
 }
 
 // Lazy load all modal components
@@ -29,8 +27,6 @@ const modalComponents = {
     })),
   ),
   [ModalType.HELP]: lazy(() => import("./HelpModalContent")),
-  [ModalType.EDIT_BANK]: lazy(() => import("./EditBankModalContent")),
-  [ModalType.EDIT_PAD]: lazy(() => import("./EditPadModalContent")),
 } as const;
 
 /**

@@ -409,6 +409,26 @@ test.describe("ImpAmp3 Edit Mode", () => {
     ).toBeChecked();
   });
 
+  test("refuses to save a pad with a blank name", async ({ page }) => {
+    // The pad editor used to fabricate its own render props with a hard-coded
+    // `errors: {}`, so no validation could run and a blank name saved happily.
+    await openEditPadModal(page, 5);
+    await page.locator('[data-testid="edit-pad-name-input"]').fill("   ");
+    await page.locator('[data-testid="modal-confirm-button"]').click();
+
+    // The modal stays open, showing why
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
+    await expect(page.getByText("Pad name is required")).toBeVisible();
+
+    // A real name gets through
+    await page.locator('[data-testid="edit-pad-name-input"]').fill("Named Pad");
+    await page.locator('[data-testid="modal-confirm-button"]').click();
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
+    await expect(page.locator('[id^="pad-"][id$="-5"]')).toContainText(
+      "Named Pad",
+    );
+  });
+
   test("edit mode borders a multi-sound pad in amber too", async ({ page }) => {
     // A pad with more than one sound refuses drops (isDropDisabled), which
     // switches off the default border. The amber edit-mode border has to

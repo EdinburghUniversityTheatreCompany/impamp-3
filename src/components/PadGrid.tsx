@@ -14,7 +14,6 @@ import {
 import { useArmedTracks } from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
-import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
@@ -158,7 +157,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
   // Refs
   const hasInteracted = useRef(false);
-  const editModalRef = useRef<EditPadModalContentRef>(null);
 
   // Use the hook to get pad configurations
   const {
@@ -184,7 +182,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     currentPageIndex,
     padConfigs,
     refreshPadConfigs,
-    editModalRef: editModalRef as React.RefObject<EditPadModalContentRef>,
     hasInteracted,
   });
 

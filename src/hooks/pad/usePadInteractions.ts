@@ -26,8 +26,12 @@ import {
   generatePadLoadingKey,
 } from "@/store/loadingStore";
 import EditPadModalContent, {
-  EditPadModalContentRef,
+  createPadEditSession,
 } from "@/components/modals/EditPadModalContent";
+import { useFormModal } from "@/hooks/modal/useFormModal";
+import type { FormErrors } from "@/hooks/modal/useFormModal";
+import type { PadFormValues } from "@/types/forms";
+import { DEFAULT_PAD_NAME } from "@/lib/constants";
 import ConfirmModalContent from "@/components/modals/ConfirmModalContent";
 import React from "react";
 
@@ -35,7 +39,6 @@ interface PadInteractionsParams {
   currentPageIndex: number;
   padConfigs: Map<number, PadConfiguration>;
   refreshPadConfigs: () => void;
-  editModalRef: React.RefObject<EditPadModalContentRef>;
   hasInteracted: React.RefObject<boolean>;
 }
 
@@ -46,13 +49,8 @@ interface PadInteractionsParams {
  * @returns Object containing handlers for pad interactions
  */
 export function usePadInteractions(params: PadInteractionsParams) {
-  const {
-    currentPageIndex,
-    padConfigs,
-    refreshPadConfigs,
-    editModalRef,
-    hasInteracted,
-  } = params;
+  const { currentPageIndex, padConfigs, refreshPadConfigs, hasInteracted } =
+    params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
@@ -62,6 +60,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
   );
   const requestSync = useProfileStore((state) => state.requestSync);
   const { openModal, closeModal } = useUIStore();
+  const { openFormModal } = useFormModal();
 
   /**
    * Handles opening the edit modal for multi-sound configuration
@@ -75,37 +74,59 @@ export function usePadInteractions(params: PadInteractionsParams) {
       }
 
       const padConfig = padConfigs.get(padIndex);
+      const session = createPadEditSession();
 
-      // Create a default config if editing an empty pad
-      const initialConfig: PadConfiguration = padConfig ?? {
-        profileId: activeProfileId,
-        pageIndex: currentPageIndex,
-        padIndex: padIndex,
-        audioFileIds: [],
-        playbackType: DEFAULT_PLAYBACK_TYPE,
-        createdAt: new Date(), // Temporary, won't be saved like this
-        updatedAt: new Date(), // Temporary
-        // name and keyBinding will be handled by EditPadModalContent defaults/state
-      };
+      openFormModal<PadFormValues>({
+        title: "Edit Pad",
+        confirmText: "Save Changes",
+        initialValues: {
+          name: padConfig?.name || DEFAULT_PAD_NAME,
+          playbackType: padConfig?.playbackType ?? DEFAULT_PLAYBACK_TYPE,
+          audioFileIds: padConfig?.audioFileIds ?? [],
+          audioTrimSettings: padConfig?.audioTrimSettings,
+          isDisabled: padConfig?.isDisabled ?? false,
+        },
+        renderForm: (props) =>
+          React.createElement(EditPadModalContent, {
+            ...props,
+            profileId: activeProfileId,
+            session,
+          }),
+        validate: (values) => {
+          const errors: FormErrors<PadFormValues> = {};
+          if (!values.name.trim()) {
+            errors.name = "Pad name is required";
+          }
+          return errors;
+        },
+        onSubmit: async (values) => {
+          const updatedPadConfigData = {
+            profileId: activeProfileId,
+            pageIndex: currentPageIndex,
+            padIndex,
+            name: values.name,
+            playbackType: values.playbackType,
+            audioFileIds: values.audioFileIds,
+            audioTrimSettings: values.audioTrimSettings,
+            isDisabled: values.isDisabled,
+            keyBinding: padConfig?.keyBinding, // Preserve original keybinding
+          };
 
-      // Handler for save confirmation
-      const handleSaveConfirm = async () => {
-        if (!editModalRef.current) {
-          console.error("Edit modal ref not available on confirm.");
-          closeModal(); // Close modal even on error
-          return;
-        }
-
-        try {
-          // Get the latest state from the modal content via the ref
-          const updatedPadConfigData = editModalRef.current.getCurrentState();
-
-          // Upsert the configuration with the data from the modal state
-          await upsertPadConfiguration(updatedPadConfigData);
+          try {
+            await upsertPadConfiguration(updatedPadConfigData);
+          } catch (error) {
+            console.error(`Failed to save changes for pad ${padIndex}:`, error);
+            alert(
+              `Failed to save changes for pad ${padIndex}. Please try again.`,
+            );
+            // Rethrown so useFormModal keeps the modal open rather than
+            // closing on a save that did not happen.
+            throw error;
+          }
 
           // The sounds added in this session are now referenced by a saved
           // pad, so the modal must not discard them when it unmounts.
-          editModalRef.current.markSaved();
+          session.savedFileIds = values.audioFileIds;
 
           // A disabled pad must not stay queued as an armed cue, or F9 would
           // still fire it. Any sound already playing is left alone — disabling
@@ -118,44 +139,12 @@ export function usePadInteractions(params: PadInteractionsParams) {
 
           refreshPadConfigs(); // Refresh the grid display
           incrementPadConfigsVersion(); // Refresh keyboard bindings too
-          if (activeProfileId !== null) requestSync(activeProfileId);
-          console.log(
-            `Saved changes for pad ${padIndex}`,
-            updatedPadConfigData,
-          );
+          requestSync(activeProfileId);
 
-          const isEmergency = await isEmergencyPage(
-            activeProfileId,
-            currentPageIndex,
-          );
-          if (isEmergency) {
+          if (await isEmergencyPage(activeProfileId, currentPageIndex)) {
             incrementEmergencySoundsVersion();
-            console.log(
-              `Pad renamed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`,
-            );
           }
-        } catch (error) {
-          console.error(`Failed to save changes for pad ${padIndex}:`, error);
-          alert(
-            `Failed to save changes for pad ${padIndex}. Please try again.`,
-          );
-        } finally {
-          closeModal(); // Close the modal regardless of success/error
-        }
-      };
-
-      // Open the modal with the Edit Pad component content
-      openModal({
-        title: "Edit Pad",
-        content: React.createElement(EditPadModalContent, {
-          ref: editModalRef,
-          initialPadConfig: initialConfig,
-          profileId: activeProfileId,
-          pageIndex: currentPageIndex,
-          padIndex: padIndex,
-        }),
-        confirmText: "Save Changes",
-        onConfirm: handleSaveConfirm,
+        },
       });
     },
     [
@@ -166,9 +155,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
       incrementEmergencySoundsVersion,
       incrementPadConfigsVersion,
       requestSync,
-      openModal,
-      closeModal,
-      editModalRef,
+      openFormModal,
     ],
   );
 
