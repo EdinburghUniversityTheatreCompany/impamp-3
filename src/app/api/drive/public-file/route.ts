@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getProxyRequestParams, driveErrorResponse } from "../proxyUtils";
 
 /**
  * Downloads a publicly shared Google Drive file using a server-side API key.
@@ -7,41 +8,27 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * GET /api/drive/public-file?id=FILE_ID
  * Returns: the raw JSON content of the file, or an error response
+ *
+ * GET /api/drive/public-file?id=FILE_ID&meta=1
+ * Returns: file metadata (name, mimeType, size, modifiedTime, version) instead
+ * of content — used by the client to cheaply detect remote changes on public
+ * profiles without downloading the whole file.
  */
 export async function GET(request: NextRequest) {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Google API key not configured on server" },
-      { status: 500 },
-    );
-  }
+  const params = getProxyRequestParams(request);
+  if (params.errorResponse) return params.errorResponse;
+  const { apiKey, fileId } = params;
 
-  const fileId = request.nextUrl.searchParams.get("id");
-  if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-    return NextResponse.json({ error: "Invalid file ID" }, { status: 400 });
-  }
+  const wantMeta = request.nextUrl.searchParams.get("meta") === "1";
 
   try {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
+    const url = wantMeta
+      ? `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,size,modifiedTime,version&key=${apiKey}`
+      : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
     const response = await fetch(url);
 
     if (!response.ok) {
-      // Try to surface Google's own error message
-      const errorBody = (await response.json().catch(() => null)) as {
-        error?: { message?: string };
-      } | null;
-      const message =
-        errorBody?.error?.message ?? `Drive API error: ${response.status}`;
-      return NextResponse.json(
-        { error: message },
-        {
-          status:
-            response.status === 403 || response.status === 404
-              ? response.status
-              : 502,
-        },
-      );
+      return driveErrorResponse(response);
     }
 
     const data = await response.json();

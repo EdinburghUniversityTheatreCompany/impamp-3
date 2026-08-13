@@ -508,7 +508,7 @@ export default function ProfileManager() {
           };
           throw new Error(
             proxyError.error ||
-              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be imported via URL.',
+              'This file is not publicly accessible. Only profiles shared with "anyone with the link" can be connected via URL — for privately shared profiles, ask to be invited and use "Browse shared profiles…" instead.',
           );
         }
       }

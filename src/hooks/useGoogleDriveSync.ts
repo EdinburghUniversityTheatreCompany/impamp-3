@@ -22,6 +22,7 @@ import { isTokenValid } from "@/lib/googleDrive/utils";
 import {
   findDriveFileById,
   findDriveFileByName,
+  getDriveFileVersionToken,
   listAppFiles,
   listFilesInFolder,
   downloadDriveFile,
@@ -63,6 +64,7 @@ type FindDriveFileByIdFn = (fileId: string) => Promise<DriveFile | null>;
 type FindDriveFileByNameFn = (fileName: string) => Promise<DriveFile | null>;
 type ShareDriveFileFn = (fileId: string) => Promise<void>;
 type DownloadAudioFileFn = (driveFileId: string) => Promise<Blob | null>;
+type GetRemoteVersionTokenFn = (fileId: string) => Promise<string | null>;
 type UploadMissingAudioFilesFn = (profileId: number) => Promise<void>;
 type RepairDriveAudioFn = (
   profileId: number,
@@ -99,6 +101,7 @@ interface GoogleDriveSyncHookReturn {
   listFilesInFolder: ListFilesInFolderFn;
   downloadDriveFile: DownloadDriveFileFn;
   downloadAudioFile: DownloadAudioFileFn;
+  getRemoteVersionToken: GetRemoteVersionTokenFn;
   uploadDriveFile: UploadDriveFileFn;
   findDriveFileById: FindDriveFileByIdFn;
   findDriveFileByName: FindDriveFileByNameFn;
@@ -415,6 +418,17 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [getFreshTokenInfo, handleTokenRefresh],
   );
 
+  const getVersionToken = useCallback(
+    async (fileId: string): Promise<string | null> => {
+      return await getDriveFileVersionToken(
+        fileId,
+        getFreshTokenInfo(),
+        handleTokenRefresh,
+      );
+    },
+    [getFreshTokenInfo, handleTokenRefresh],
+  );
+
   const uploadFile = useCallback(
     async (
       fileName: string,
@@ -575,6 +589,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     listFilesInFolder: getFilesInFolder,
     downloadDriveFile: downloadFile,
     downloadAudioFile: downloadAudio,
+    getRemoteVersionToken: getVersionToken,
     uploadDriveFile: uploadFile,
     findDriveFileById: findFileById,
     findDriveFileByName: findFileByName,
