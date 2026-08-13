@@ -39,6 +39,7 @@ export interface PlaybackStrategy {
  */
 export interface ActiveTrack {
   source: AudioBufferSourceNode;
+  gainNode: GainNode;
   name: string;
   startTime: number;
   duration: number;

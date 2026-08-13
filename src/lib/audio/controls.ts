@@ -27,6 +27,7 @@ import {
   isTrackPlaying,
   isTrackFading,
   getActivePlaybackKeys,
+  getStopGeneration,
 } from "./playback";
 import { resumeAudioContext, getAudioContext } from "./context";
 import { TriggerAudioArgs, generatePlaybackKey } from "./types";
@@ -290,14 +291,16 @@ export async function triggerAudioForPadInstant(
     currentPageIndex,
     padIndex,
   );
-  const isAlreadyPlaying = isTrackPlaying(playbackKey);
+  // A fading track is on its way out, so it must not block a new trigger
+  const isFadingOut = isTrackFading(playbackKey);
+  const isAlreadyPlaying = isTrackPlaying(playbackKey) && !isFadingOut;
 
   // Get the active pad behavior from the profile store
   const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
 
   console.log(
     `[Audio Controls] [Instant] Triggering pad ${padIndex}, key: ${playbackKey}, ` +
-      `Is Playing: ${isAlreadyPlaying}, Behavior: ${activePadBehavior}, ` +
+      `Is Playing: ${isAlreadyPlaying}, Is Fading: ${isFadingOut}, Behavior: ${activePadBehavior}, ` +
       `Playback Type: ${playbackType}, Audio Files: ${audioFileIds.length}`,
   );
 
@@ -330,7 +333,16 @@ export async function triggerAudioForPadInstant(
         );
         return;
     }
+  } else if (isFadingOut) {
+    // Hard stop the outgoing instance so the new one owns the playback key
+    console.log(
+      `[Audio Controls] [Instant] Stopping fading instance before re-trigger for key: ${playbackKey}`,
+    );
+    stopTrack(playbackKey);
   }
+
+  // Capture the stop generation so a stop during loading cancels this trigger
+  const triggerGeneration = getStopGeneration();
 
   try {
     // Use the strategy pattern to select which audio file to play
@@ -363,6 +375,14 @@ export async function triggerAudioForPadInstant(
         onLoadingStateChange,
         onError,
       );
+    }
+
+    // Bail out if a stop was requested while we were loading
+    if (getStopGeneration() !== triggerGeneration) {
+      console.log(
+        `[Audio Controls] [Instant] Load cancelled by a stop request for key: ${playbackKey}`,
+      );
+      return;
     }
 
     if (buffer) {

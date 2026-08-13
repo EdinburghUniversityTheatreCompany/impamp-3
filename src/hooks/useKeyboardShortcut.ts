@@ -65,6 +65,14 @@ function areKeysPressed(event: KeyboardEvent, keys: string[]): boolean {
     Meta: "metaKey",
   };
 
+  // Any modifier held that is not part of the combo means this is a different
+  // shortcut (e.g. Ctrl+Shift+F must not match Ctrl+F)
+  const hasUnlistedModifier = Object.entries(modifierMap).some(
+    ([modifier, property]) =>
+      !keys.includes(modifier) && (event[property] as boolean),
+  );
+  if (hasUnlistedModifier) return false;
+
   // For each key in the shortcut, check if it's pressed
   return keys.every((key) => {
     // Check for modifier keys first

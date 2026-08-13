@@ -99,6 +99,9 @@ let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
 
 // Helper function to iterate and update records within an upgrade transaction
 // We need to use a generic transaction type to handle the versionchange transaction
+// `migrateV3Shape` folds the V3 reshape (single audioFileId -> audioFileIds +
+// playbackType) into this same cursor pass, so a store is never walked by two
+// concurrent cursors within the upgrade transaction.
 const migrateStoreV4 = (
   transaction: IDBPTransaction<
     ImpAmpDBSchema,
@@ -106,6 +109,7 @@ const migrateStoreV4 = (
     "versionchange"
   >,
   storeName: "profiles" | "padConfigurations" | "pageMetadata",
+  migrateV3Shape = false,
 ) => {
   console.log(`V4 Migration: Starting update for store "${storeName}"...`);
   const store = transaction.objectStore(storeName);
@@ -128,6 +132,22 @@ const migrateStoreV4 = (
       _modified: record._modified ?? updatedAtMs,
       _fieldsModified: record._fieldsModified ?? {},
     };
+
+    // Handle the V3 pad shape if this upgrade also crosses version 3
+    if (migrateV3Shape && storeName === "padConfigurations") {
+      const padUpdateData = updateData as unknown as Record<string, unknown>;
+      const legacyAudioFileId = padUpdateData.audioFileId;
+      padUpdateData.audioFileIds =
+        legacyAudioFileId !== undefined && legacyAudioFileId !== null
+          ? [legacyAudioFileId as number]
+          : ((padUpdateData.audioFileIds as number[] | undefined) ?? []);
+      padUpdateData.playbackType =
+        (padUpdateData.playbackType as PlaybackType | undefined) ??
+        "round-robin";
+      if ("audioFileId" in padUpdateData) {
+        delete padUpdateData.audioFileId;
+      }
+    }
 
     // Handle profile-specific fields if this is a profile record
     if (storeName === "profiles") {

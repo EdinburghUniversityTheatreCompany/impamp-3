@@ -28,15 +28,28 @@ export interface DriveFileList {
   kind: string;
   incompleteSearch: boolean;
   files: DriveFile[];
+  nextPageToken?: string;
 }
 
 // Sync-related types
 export type SyncStatus = "idle" | "syncing" | "conflict" | "error" | "success";
 
+// Data handed to the conflict resolution UI. `merged` is the automatically
+// merged result (remote wins and remote-only additions already applied) and is
+// the base the resolution must build on; `local` and `remote` are kept for
+// display purposes only.
+export interface SyncConflictData {
+  local: ProfileSyncData;
+  remote: ProfileSyncData;
+  merged: ProfileSyncData;
+  fileId: string;
+}
+
 // These interfaces are part of the SyncResult type union
 export interface SyncResultSuccess {
   status: "success";
   data: ProfileSyncData;
+  warnings?: string[];
 }
 
 export interface SyncResultError {

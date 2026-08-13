@@ -14,11 +14,17 @@ import { playbackStoreActions } from "@/store/playbackStore";
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
 
+// Incremented whenever playback is stopped, so in-flight triggers can be cancelled
+let stopGeneration = 0;
+
+// Duration of the de-click ramp applied when hard stopping a track
+const HARD_STOP_FADE_SECONDS = 0.02;
+
 // rAF loop ID
 let rAFId: number | null = null;
 
 // Previous playback state for change detection
-let previousPlaybackState = new Map<
+const previousPlaybackState = new Map<
   string,
   {
     progress: number;
@@ -61,6 +67,30 @@ function createAudioSource(
 }
 
 /**
+ * Returns the current stop generation counter
+ *
+ * Callers that await asynchronous work before starting playback can capture this
+ * value and compare it afterwards to detect that a stop was requested meanwhile.
+ *
+ * @returns The current stop generation
+ */
+export function getStopGeneration(): number {
+  return stopGeneration;
+}
+
+/**
+ * Removes all bookkeeping for a track and stops the monitoring loop if idle
+ *
+ * @param playbackKey - The unique key for the playback
+ */
+function clearTrackState(playbackKey: string): void {
+  activeTracks.delete(playbackKey);
+  previousPlaybackState.delete(playbackKey); // Clean up change detection state
+  playbackStoreActions.removeTrack(playbackKey);
+  stopPlaybackLoopIfIdle();
+}
+
+/**
  * Plays an audio buffer with the specified parameters
  *
  * @param buffer - The audio buffer to play
@@ -80,23 +110,29 @@ export function playBuffer(
     console.log(`[Audio Playback] Starting playback for key: ${playbackKey}`);
 
     // Create audio source
-    const { source } = createAudioSource(buffer, volume);
+    const { source, gainNode } = createAudioSource(buffer, volume);
 
-    // Set up onended handler for cleanup
-    source.onended = () => {
-      // Clean up when playback finishes naturally
-      console.log(
-        `[Audio Playback] Playback naturally finished for key: ${playbackKey}`,
-      );
-      activeTracks.delete(playbackKey);
-      previousPlaybackState.delete(playbackKey); // Clean up change detection state
-      playbackStoreActions.removeTrack(playbackKey);
-      stopPlaybackLoop(); // Check if loop should stop
-    };
+    // Apply trim settings, falling back to the full buffer when invalid
+    let trimStart = params.trimStart ?? 0;
+    if (!Number.isFinite(trimStart) || trimStart < 0) {
+      trimStart = 0;
+    }
+    trimStart = Math.min(trimStart, buffer.duration);
 
-    // Apply trim settings
-    const trimStart = params.trimStart ?? 0;
-    const trimEnd = params.trimEnd ?? buffer.duration;
+    let trimEnd = params.trimEnd ?? buffer.duration;
+    if (
+      !Number.isFinite(trimEnd) ||
+      trimEnd <= trimStart ||
+      trimEnd > buffer.duration
+    ) {
+      trimEnd = buffer.duration;
+    }
+
+    if (trimEnd <= trimStart) {
+      trimStart = 0;
+      trimEnd = buffer.duration;
+    }
+
     const trimmedDuration = trimEnd - trimStart;
 
     // Start playback with trim offset and duration
@@ -105,6 +141,7 @@ export function playBuffer(
     // Store track information
     const track: ActiveTrack = {
       source,
+      gainNode,
       name: params.name,
       startTime: context.currentTime,
       duration: trimmedDuration,
@@ -119,6 +156,17 @@ export function playBuffer(
     };
 
     activeTracks.set(playbackKey, track);
+
+    // Set up onended handler for cleanup
+    source.onended = () => {
+      // Only clean up if this track is still the active one for this key
+      if (activeTracks.get(playbackKey) !== track) return;
+
+      console.log(
+        `[Audio Playback] Playback naturally finished for key: ${playbackKey}`,
+      );
+      clearTrackState(playbackKey);
+    };
 
     // Add to playback store (UI state)
     const initialState = {
@@ -207,23 +255,12 @@ export function fadeOutTrack(
   try {
     const context = getAudioContext();
     const source = track.source;
+    const gain = track.gainNode.gain;
 
-    // Disconnect the source from its current destination to insert the gain node
-    source.disconnect();
-
-    // Create a gain node for the fade
-    const gainNode = context.createGain();
-    // Start at current volume (assume 1)
-    gainNode.gain.setValueAtTime(1, context.currentTime);
-    // Fade to 0 over the specified duration
-    gainNode.gain.linearRampToValueAtTime(
-      0,
-      context.currentTime + durationInSeconds,
-    );
-
-    // Connect source -> gain -> destination
-    source.connect(gainNode);
-    gainNode.connect(context.destination);
+    // Fade the track's own gain node from its current level down to silence
+    gain.cancelScheduledValues(context.currentTime);
+    gain.setValueAtTime(gain.value, context.currentTime);
+    gain.linearRampToValueAtTime(0, context.currentTime + durationInSeconds);
 
     // Mark track as fading
     track.isFading = true;
@@ -235,30 +272,23 @@ export function fadeOutTrack(
 
     // Clean up after the fade completes
     setTimeout(() => {
-      // Only clean up if the track is still the one we started fading
-      const currentTrack = activeTracks.get(playbackKey);
-      if (currentTrack === track) {
-        try {
-          // Stop the source node after the fade
-          source.stop(0);
-        } catch (error) {
-          // Ignore errors if already stopped (e.g., due to natural end)
-          if ((error as DOMException).name !== "InvalidStateError") {
-            console.warn(
-              `[Audio Playback] Error stopping source during fade cleanup for key ${playbackKey}:`,
-              error,
-            );
-          }
-        } finally {
-          // Always remove state after fade attempt
-          activeTracks.delete(playbackKey);
-          previousPlaybackState.delete(playbackKey); // Clean up change detection state
-          playbackStoreActions.removeTrack(playbackKey);
-          stopPlaybackLoop(); // Check if loop should stop
-          console.log(
-            `[Audio Playback] Fade completed for key: ${playbackKey}`,
+      // Always stop the faded source, even if the key now holds another track
+      try {
+        source.stop(0);
+      } catch (error) {
+        // Ignore errors if already stopped (e.g., due to natural end)
+        if ((error as DOMException).name !== "InvalidStateError") {
+          console.warn(
+            `[Audio Playback] Error stopping source during fade cleanup for key ${playbackKey}:`,
+            error,
           );
         }
+      }
+
+      // Only remove state if the track is still the one we started fading
+      if (activeTracks.get(playbackKey) === track) {
+        clearTrackState(playbackKey);
+        console.log(`[Audio Playback] Fade completed for key: ${playbackKey}`);
       } else {
         console.log(
           `[Audio Playback] Fade cleanup skipped for key ${playbackKey} as track changed or was removed.`,
@@ -280,10 +310,7 @@ export function fadeOutTrack(
           `[Audio Playback] Fade initiation failed for key ${playbackKey}. Attempting fallback immediate stop.`,
         );
         track.source.stop(0);
-        activeTracks.delete(playbackKey);
-        previousPlaybackState.delete(playbackKey); // Clean up change detection state
-        playbackStoreActions.removeTrack(playbackKey);
-        stopPlaybackLoop();
+        clearTrackState(playbackKey);
       }
     } catch (stopError) {
       console.error(
@@ -297,14 +324,48 @@ export function fadeOutTrack(
 }
 
 /**
- * Stops playback of a track immediately with a short fade-out
+ * Stops playback of a track immediately, cancelling any fade in progress
  *
  * @param playbackKey - The unique key for the playback
  * @returns True if the track was stopped successfully
  */
 export function stopTrack(playbackKey: string): boolean {
   console.log(`[Audio Playback] Requesting stop for key: ${playbackKey}`);
-  return fadeOutTrack(playbackKey, 0.1); // Very short fade to avoid clicks
+
+  const track = activeTracks.get(playbackKey);
+  if (!track) return false;
+
+  // Invalidate any trigger that is still waiting on an async load
+  stopGeneration++;
+
+  try {
+    const context = getAudioContext();
+    const gain = track.gainNode.gain;
+
+    // Override any scheduled automation (e.g. an in-progress fade) with a
+    // very short ramp to silence to avoid clicks
+    gain.cancelScheduledValues(context.currentTime);
+    gain.setValueAtTime(gain.value, context.currentTime);
+    gain.linearRampToValueAtTime(
+      0,
+      context.currentTime + HARD_STOP_FADE_SECONDS,
+    );
+
+    track.source.stop(context.currentTime + HARD_STOP_FADE_SECONDS);
+  } catch (error) {
+    // Ignore errors if already stopped (e.g., due to natural end)
+    if ((error as DOMException).name !== "InvalidStateError") {
+      console.warn(
+        `[Audio Playback] Error stopping source for key ${playbackKey}:`,
+        error,
+      );
+    }
+  }
+
+  // Remove state immediately so the track can no longer block re-triggering
+  clearTrackState(playbackKey);
+
+  return true;
 }
 
 /**
@@ -315,6 +376,9 @@ export function stopTrack(playbackKey: string): boolean {
 export function stopAllTracks(): number {
   // Get all keys from activeTracks
   const keys = Array.from(activeTracks.keys());
+
+  // Invalidate in-flight triggers even when nothing is currently playing
+  stopGeneration++;
 
   // Stop each track
   let stoppedCount = 0;
@@ -460,14 +524,18 @@ function playbackLoopTick() {
     });
   });
 
-  // Update previous state for next comparison
-  previousPlaybackState = newPreviousState;
-
   // Only update Zustand store if something actually changed
-  if (currentPlaybackState.size > 0) {
-    if (hasAnyChanges) {
-      playbackStoreActions.setPlaybackState(currentPlaybackState);
-    }
+  if (currentPlaybackState.size > 0 && hasAnyChanges) {
+    playbackStoreActions.setPlaybackState(currentPlaybackState);
+
+    // Only advance the comparison baseline for the state we just published,
+    // otherwise small per-frame deltas never accumulate past the thresholds
+    newPreviousState.forEach((state, key) => {
+      previousPlaybackState.set(key, state);
+    });
+  }
+
+  if (activeTracks.size > 0) {
     // Always schedule next frame regardless of changes (tracks are still playing)
     rAFId = requestAnimationFrame(playbackLoopTick);
   } else {
@@ -489,6 +557,15 @@ function startPlaybackLoop() {
   ) {
     console.log("[Audio Playback] Starting playback monitoring loop...");
     rAFId = requestAnimationFrame(playbackLoopTick);
+  }
+}
+
+/**
+ * Stops the playback monitoring loop, but only if no tracks remain active
+ */
+function stopPlaybackLoopIfIdle() {
+  if (activeTracks.size === 0) {
+    stopPlaybackLoop();
   }
 }
 

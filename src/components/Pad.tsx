@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import { useDropzone, Accept } from "react-dropzone";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
-import { preloadOnHover } from "@/lib/audio";
+import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
+import { usePadPlaybackState } from "@/store/playbackStore";
 import PadProgressBar from "./PadProgressBar"; // Import the new component
 
 interface PadProps {
@@ -15,10 +16,6 @@ interface PadProps {
   isConfigured: boolean; // Still useful for basic styling/remove button
   soundCount: number; // Number of sounds configured for this pad
   audioFileIds?: number[]; // Audio file IDs for intelligent preloading
-  isPlaying: boolean;
-  isFading?: boolean; // Prop to indicate if the sound is fading out
-  playProgress?: number; // Prop to show play progress (0 to 1)
-  remainingTime?: number; // Prop for remaining time in seconds
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   isDeleteMoveMode?: boolean; // Whether we're in delete/move mode
   isSpecialPad?: boolean; // Whether this is a special control pad (Stop All, Fade Out All) that can't be deleted or moved
@@ -41,10 +38,6 @@ const Pad: React.FC<PadProps> = ({
   keyBinding,
   name = "Empty Pad",
   isConfigured,
-  isPlaying,
-  isFading = false, // Default to false
-  playProgress = 0,
-  remainingTime,
   isEditMode,
   isDeleteMoveMode = false,
   isSpecialPad = false, // Default to false
@@ -68,10 +61,20 @@ const Pad: React.FC<PadProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isOver, setIsOver] = useState(false);
 
+  // Subscribe to this pad's own playback slice only (special pads never play)
+  const playbackKey =
+    profileId !== null && !isSpecialPad
+      ? generatePlaybackKey(profileId, pageIndex, padIndex)
+      : null;
+  const playbackState = usePadPlaybackState(playbackKey);
+  const isPlaying = playbackState !== null;
+  const isFading = playbackState?.isFading ?? false;
+  const playProgress = playbackState?.progress ?? 0;
+
   // Calculate remaining seconds (rounded) if playing and time is available
   const remainingSeconds =
-    isPlaying && typeof remainingTime === "number"
-      ? Math.max(0, Math.round(remainingTime))
+    isPlaying && typeof playbackState.remainingTime === "number"
+      ? Math.max(0, Math.round(playbackState.remainingTime))
       : null;
 
   // Get the default key binding for this pad position if no custom binding is set
