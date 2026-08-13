@@ -13,11 +13,21 @@ import {
  */
 async function armPad(page: Page, padIndex: number): Promise<void> {
   const pad = page.locator(`[id^="pad-"][id$="-${padIndex}"]`);
+
+  // Ctrl+Click only arms a pad that already holds sound: Pad's click handler
+  // requires isConfigured && soundCount > 0, and on a pad that has not picked
+  // up its configuration yet the modifier is ignored and the click *plays* the
+  // pad instead. Loading a file and arming in the same breath is therefore a
+  // race, so wait for the pad to stop being empty first.
+  await expect(pad).not.toContainText("Empty Pad");
+
   await page.keyboard.down("Control");
   await pad.click();
   await page.keyboard.up("Control");
-  // Wait for any UI updates to complete
-  await page.waitForTimeout(200);
+
+  // Confirm the pad really is armed — the star indicator — rather than
+  // assuming a fixed delay was long enough.
+  await expect(pad.locator(".text-amber-500")).toBeVisible();
   console.log(`[Test Helper] Armed pad ${padIndex}`);
 }
 
@@ -77,11 +87,10 @@ async function armTrackFromSearch(
   const searchInput = searchModal.locator('input[type="text"]');
   await searchInput.fill(searchTerm);
 
-  // Wait for results to appear
-  await page.waitForTimeout(500);
-
-  // Get search result items
+  // Wait for the result itself rather than a fixed delay — search runs against
+  // every bank, so how long it takes depends on how much is loaded.
   const searchResults = page.locator('[data-testid="search-result-item"]');
+  await expect(searchResults.nth(resultIndex)).toBeVisible();
 
   // Arm the specified result using Ctrl+Click
   await page.keyboard.down("Control");
