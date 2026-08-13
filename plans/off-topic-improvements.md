@@ -35,9 +35,6 @@ Each entry: what, where, why it matters.
   editor therefore has no validation at all, and
   `src/examples/FormModalUsage.tsx` documents the intended pattern that is not
   actually used.
-- **Uploads are not rolled back on cancel.** `EditPadForm.handleFileChange`
-  calls `addAudioFile` immediately, so audio blobs are written to IndexedDB
-  even if the user then cancels the modal.
 - **`ClientSideInitializer` holds four separate store subscriptions** (auth,
   sync queue, edit mode, server-sync streams), each firing on _every_
   `useProfileStore` mutation and filtering afterwards. Consolidating them, or

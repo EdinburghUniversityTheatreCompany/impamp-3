@@ -32,6 +32,12 @@ const WaveformTrimmer = lazy(() => import("@/components/WaveformTrimmer"));
 // Extension of the render props to include profile ID which is needed for sound uploads
 interface EditPadFormProps extends FormModalRenderProps<PadFormValues> {
   profileId: number;
+  /**
+   * Reports audio files this form has just written to IndexedDB. They exist
+   * before the pad is saved, so the caller has to know which ones to discard
+   * if the edit is abandoned.
+   */
+  onSoundsAdded?: (fileIds: number[]) => void;
 }
 
 // Internal state for managing sound display
@@ -50,6 +56,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
   errors,
   isSubmitting,
   profileId: _profileId, // eslint-disable-line @typescript-eslint/no-unused-vars
+  onSoundsAdded,
 }) => {
   const [sounds, setSounds] = useState<SoundListItem[]>([]);
   const [isLoadingNames, setIsLoadingNames] = useState<boolean>(false);
@@ -199,6 +206,8 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
       ) {
         updateValue("name", firstFileName);
       }
+
+      onSoundsAdded?.(newSounds.map((sound) => sound.fileId));
 
       // Combine existing sounds with new ones and update the form state
       const updatedSounds = [...sounds, ...newSounds];

@@ -103,6 +103,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
           // Upsert the configuration with the data from the modal state
           await upsertPadConfiguration(updatedPadConfigData);
 
+          // The sounds added in this session are now referenced by a saved
+          // pad, so the modal must not discard them when it unmounts.
+          editModalRef.current.markSaved();
+
           // A disabled pad must not stay queued as an armed cue, or F9 would
           // still fire it. Any sound already playing is left alone — disabling
           // blocks future triggers rather than cutting a live cue.
