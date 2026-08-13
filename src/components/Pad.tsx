@@ -16,6 +16,7 @@ interface PadProps {
   isConfigured: boolean; // Still useful for basic styling/remove button
   soundCount: number; // Number of sounds configured for this pad
   audioFileIds?: number[]; // Audio file IDs for intelligent preloading
+  isDisabled?: boolean; // Whether the pad is disabled (configured, but refuses to play)
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   isDeleteMoveMode?: boolean; // Whether we're in delete/move mode
   isSpecialPad?: boolean; // Whether this is a special control pad (Stop All, Fade Out All) that can't be deleted or moved
@@ -38,6 +39,7 @@ const Pad: React.FC<PadProps> = ({
   keyBinding,
   name = "Empty Pad",
   isConfigured,
+  isDisabled = false,
   isEditMode,
   isDeleteMoveMode = false,
   isSpecialPad = false, // Default to false
@@ -104,9 +106,10 @@ const Pad: React.FC<PadProps> = ({
 
   // Hover handler for intelligent preloading
   const handleMouseEnter = React.useCallback(() => {
-    // Only preload if pad is configured and we have audio file IDs
+    // Only preload if pad is configured, enabled, and we have audio file IDs
     if (
       isConfigured &&
+      !isDisabled &&
       audioFileIds &&
       audioFileIds.length > 0 &&
       profileId !== null
@@ -117,7 +120,7 @@ const Pad: React.FC<PadProps> = ({
         padIndex,
       });
     }
-  }, [isConfigured, audioFileIds, profileId, pageIndex, padIndex]);
+  }, [isConfigured, isDisabled, audioFileIds, profileId, pageIndex, padIndex]);
 
   // Drag and drop handlers for delete/move mode
   const handleDragStart = (e: React.DragEvent) => {
@@ -158,7 +161,12 @@ const Pad: React.FC<PadProps> = ({
     }
   };
 
-  // Disable dropzone if soundCount > 1
+  // A pad holding more than one sound refuses drops — you pick which sound to
+  // replace in the edit modal instead. The dropzone stays *active* so react-
+  // dropzone still reports isDragActive and the "Cannot drop here" overlay
+  // below can explain the refusal; handleAudioDrop is what actually rejects
+  // the file. Disabling the dropzone here would suppress isDragActive and the
+  // overlay would never render.
   const isDropDisabled = soundCount > 1;
 
   const {
@@ -173,7 +181,9 @@ const Pad: React.FC<PadProps> = ({
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
-    disabled: isDropDisabled || isDeleteMoveMode, // Disable dropzone based on sound count or in delete/move mode
+    // Special pads (Stop All, Fade Out All) take no audio at all, and there is
+    // no edit modal to send the user to, so they stay fully disabled.
+    disabled: isSpecialPad || isDeleteMoveMode,
   });
 
   // --- Styling with clsx ---
@@ -190,10 +200,20 @@ const Pad: React.FC<PadProps> = ({
         "justify-center",
         "p-2",
         "text-center",
-        "cursor-pointer",
         "transition-all",
         "duration-150",
         "overflow-hidden",
+        {
+          // A disabled pad is inert in normal mode, but still editable in the
+          // modes that act on the pad itself rather than on its sound.
+          "cursor-not-allowed": isDisabled && !isEditMode && !isDeleteMoveMode,
+          "cursor-pointer": !isDisabled || isEditMode || isDeleteMoveMode,
+        },
+        {
+          // Dimmed so it reads as "off" at a glance, but not so far that the
+          // name stops being readable — you still have to find it to re-enable.
+          "opacity-60": isDisabled,
+        },
         {
           // Base background/hover based on configuration
           "bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600":
@@ -241,15 +261,19 @@ const Pad: React.FC<PadProps> = ({
             isEditMode && isDropDisabled,
         },
         {
-          // Dropzone accept/reject background/border
+          // Dropzone accept/reject background/border. A pad that will refuse
+          // the file must not turn green, so accept styling also requires the
+          // drop to actually be allowed.
           "bg-green-100 dark:bg-green-900 border-green-500":
-            isDragAccept && !isDeleteMoveMode,
+            isDragAccept && !isDropDisabled && !isDeleteMoveMode,
           "bg-red-100 dark:bg-red-900 border-red-500":
-            isDragReject && !isDeleteMoveMode,
+            (isDragReject || (isDragActive && isDropDisabled)) &&
+            !isDeleteMoveMode,
         },
       ),
     [
       isConfigured,
+      isDisabled,
       isEditMode,
       isDeleteMoveMode,
       isPlaying,
@@ -316,13 +340,33 @@ const Pad: React.FC<PadProps> = ({
       }}
       role="button"
       tabIndex={0} // Make it focusable
-      aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}`}
+      // Only inert in the modes where the click would have played the pad. In
+      // edit / delete-move mode the pad is still an actionable target — that is
+      // how it gets re-enabled — so it must not report itself as disabled.
+      aria-disabled={isDisabled && !isEditMode && !isDeleteMoveMode}
+      aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}${isDisabled ? ", disabled" : ""}`}
+      title={isDisabled ? `${name} (disabled)` : undefined}
     >
       {/* Input element required by react-dropzone - add data-testid */}
       <input {...getInputProps()} data-testid={`pad-drop-input-${padIndex}`} />
 
+      {/* Disabled badge - makes an "off" pad unmistakable mid-show */}
+      {isDisabled && !isDeleteMoveMode && (
+        <span
+          className="absolute top-1 left-1 text-[10px] font-bold uppercase tracking-wide bg-gray-600 text-white px-1 rounded z-10 dark:bg-gray-500"
+          data-testid="pad-disabled-indicator"
+        >
+          Off
+        </span>
+      )}
+
       {/* Pad Name Display - with better wrapping and edit mode indicator */}
-      <span className="text-sm font-medium break-all w-full text-center z-10">
+      <span
+        className={clsx(
+          "text-sm font-medium break-all w-full text-center z-10",
+          isDisabled && "line-through",
+        )}
+      >
         {name}
         {isArmed && <span className="ml-1 text-amber-500">★</span>}
       </span>

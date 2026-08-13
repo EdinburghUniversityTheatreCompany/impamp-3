@@ -13,7 +13,7 @@ test.describe("ImpAmp3 Profile Management", () => {
     await prepareAudioContext(page);
   });
 
-  test.fixme("Can create a new profile and switch to it", async ({ page }) => {
+  test("Can create a new profile and switch to it", async ({ page }) => {
     // Find and click profile selector
     const profileSelector = await page.getByRole("button", {
       name: /profile/i,
@@ -28,8 +28,8 @@ test.describe("ImpAmp3 Profile Management", () => {
     const nameInput = page.getByRole("textbox", { name: "Profile Name" });
     await nameInput.fill("Test Profile");
 
-    // Select local sync type
-    page.getByLabel("Storage Type").selectOption("Local Only");
+    // No storage-type control any more: the manager creates local profiles,
+    // and linking one to Google Drive is a separate action on the profile card.
 
     // Click save
     const createProfileButton = page.getByRole("button", {

@@ -15,6 +15,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
   - _Sequential_: Plays sounds in order.
   - _Random_: Plays a random sound each time.
   - _Round-Robin_: Plays sounds randomly without repeating until all have played.
+- **Disable Pads**: Untick "Pad active" in the pad editor to stop a pad playing without deleting it — useful for taking a sound out of the show without losing it. Disabled pads are dimmed and marked "OFF", and ignore clicks, keys, armed cues, emergency playback and search.
 - **Edit Mode**: Shift key activates edit mode for renaming pads and banks.
   - _Single Sound Pads_: Remove sound via "X" button or Delete+click.
   - _Multi-Sound Pads_: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
@@ -155,6 +156,7 @@ For installation instructions on different devices, refer to the [PWA Usage Guid
      - _Empty/Single Sound Pads_: Opens a simple rename prompt (or the full editor if preferred).
      - _Multi-Sound Pads_: Opens the full pad editor to manage sounds (add, remove, reorder) and playback mode.
    - Click the red "X" button or use Delete+click on _single-sound_ pads to remove the sound (resets name). For multi-sound pads, this action opens the editor.
+   - Untick "Pad active" in the pad editor to disable a pad. It keeps its sounds and name but will not play from any trigger until you tick the box again.
 5. **Arming Tracks**:
    - Hold Ctrl and click on a pad to arm it for later playback
    - Armed tracks appear in the Armed Tracks panel

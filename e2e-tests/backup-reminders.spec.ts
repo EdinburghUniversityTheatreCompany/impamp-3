@@ -112,6 +112,59 @@ async function makeBackupOverdueAndReload(
   await page.waitForSelector('[id^="pad-"]');
 }
 
+// Opens the Profile Manager. When the reminder banner is showing it offers its
+// own "Manage Profiles" button, and a /profile/i lookup would match both that
+// and the header button, so go through whichever one is actually on screen.
+async function openProfileManager(page: Page) {
+  const banner = page.locator('[data-testid="backup-reminder-banner"]');
+  if (await banner.isVisible()) {
+    await banner.getByRole("button", { name: "Manage Profiles" }).click();
+  } else {
+    await page.getByRole("button", { name: /profile/i }).click();
+    await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
+  }
+  await expect(
+    page.getByRole("heading", { name: "Profile Manager" }),
+  ).toBeVisible();
+}
+
+async function closeProfileManager(page: Page) {
+  await page.getByLabel("Close").click();
+  await expect(
+    page.getByRole("heading", { name: "Profile Manager" }),
+  ).toBeHidden();
+}
+
+// Edits one profile's backup reminder through the Profile Manager. Pass a
+// number of days, or "never" to tick "Disable Reminders". Assumes the Profile
+// Manager is already open.
+async function setBackupReminder(
+  page: Page,
+  profileName: string,
+  days: number | "never",
+) {
+  const card = page.locator(
+    `[data-testid="profile-card"][data-profile-name="${profileName}"]`,
+  );
+  await card.getByRole("button", { name: "Edit Profile" }).click();
+  await expect(page.locator('[data-testid="modal-title"]')).toContainText(
+    `Edit Profile: ${profileName}`,
+  );
+
+  const disableReminders = page.locator("#disableReminders");
+  if (days === "never") {
+    await disableReminders.check();
+  } else {
+    // The period input ignores edits while the profile is disabled, so clear
+    // the checkbox before typing.
+    await disableReminders.uncheck();
+    await page.locator("#backupReminderPeriod").fill(String(days));
+  }
+
+  await page.locator('[data-testid="modal-confirm-button"]').click();
+  await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
+}
+
 test.describe("Backup Reminders", () => {
   const profileName = "Backup Test Profile";
   const oneMonthMs = DEFAULT_BACKUP_REMINDER_PERIOD_MS;
@@ -210,9 +263,7 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeHidden();
   });
 
-  test.fixme('Reminder does not appear when set to "Never"', async ({
-    page,
-  }) => {
+  test('Reminder does not appear when set to "Never"', async ({ page }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue, and reload ---
     await makeBackupOverdueAndReload(
       page,
@@ -226,28 +277,10 @@ test.describe("Backup Reminders", () => {
       page.locator('[data-testid="backup-reminder-banner"]'),
     ).toBeVisible();
 
-    // --- Open profile manager and set reminder to "Never" ---
-    await page.getByRole("button", { name: "Manage Profiles" }).click();
-    await expect(page.getByText(/Profile Manager/i)).toBeVisible();
-
-    // Find the profile card and click Edit
-    // TODO: Uncertain if this is the best way to find the edit button for the right profile.
-    await page
-      .locator("div")
-      .filter({ hasText: /^Edit$/ })
-      .getByRole("button")
-      .click();
-
-    // Find and check the "Disable Reminder" checkbox
-    await page.getByRole("checkbox", { name: "Disable Reminder" }).check();
-
-    // Save changes
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("button", { name: "Save" })).toBeHidden(); // Wait for edit mode to close
-
-    // Close manager
-    await page.getByLabel("Close").click();
-    await expect(page.getByText(/Profile Manager/i)).toBeHidden();
+    // --- Turn the reminder off for this profile ---
+    await openProfileManager(page);
+    await setBackupReminder(page, profileName, "never");
+    await closeProfileManager(page);
 
     // --- Verify the reminder notification is NOT visible ---
     // No reload needed here, the hook should react
@@ -257,9 +290,7 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeHidden();
   });
 
-  test.fixme("Reminder appears/disappears on setting change", async ({
-    page,
-  }) => {
+  test("Reminder appears/disappears on setting change", async ({ page }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue ---
     await setProfileBackupState(page, profileName, {
       lastBackedUpAt: Date.now() - twoMonthsMs, // Overdue
@@ -273,58 +304,39 @@ test.describe("Backup Reminders", () => {
 
     const reminderBanner = page.locator(
       '[data-testid="backup-reminder-banner"]',
-    ); // Use data-testid
+    );
     await expect(reminderBanner).toBeHidden(); // Should initially be hidden (set to Never)
 
-    // --- Open profile manager and set reminder to "1 Month" ---
-    await page.getByRole("button", { name: /profile/i }).click();
-    await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
-    const profileCard = page
-      .locator(".border")
-      .filter({ hasText: profileName })
-      .first();
-    await profileCard.getByRole("button", { name: "Edit" }).click();
-    const reminderDaysInput = page.getByPlaceholder("e.g.,");
-
-    // Uncheck the disable box and set days to 30 (equivalent to 1 Month)
-    await page.getByRole("checkbox", { name: "Disable Reminder" }).uncheck();
-
-    await reminderDaysInput.fill("30");
-
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("button", { name: "Save" })).toBeHidden(); // Wait for edit mode to close
-    await page.getByLabel("Close").click();
+    // --- Set the reminder to 30 days, which the backup is well past ---
+    await openProfileManager(page);
+    await setBackupReminder(page, profileName, 30);
+    await closeProfileManager(page);
 
     // --- Verify reminder IS visible ---
     await expect(reminderBanner).toBeVisible();
     await expect(reminderBanner).toContainText(profileName);
 
-    // --- Open profile manager and set reminder back to "Never" ---
-    await page.getByRole("button", { name: "Manage Profiles" }).click();
-
-    // Start editing the profile again
-    // TODO: This might accidentally edit the wrong profile. Need to ensure the right one is selected, but not sure how.
-    await page
-      .locator("div")
-      .filter({ hasText: /^Edit$/ })
-      .getByRole("button")
-      .click();
-    const disableCheckboxAgain = page.locator(
-      'input[id^="backupReminderDisable-"]',
-    );
-
-    // Check the disable box again
-    await disableCheckboxAgain.check();
-
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("button", { name: "Save" })).toBeHidden();
-    await page.getByLabel("Close").click();
+    // --- Set the reminder back to "Never" ---
+    await openProfileManager(page);
+    await setBackupReminder(page, profileName, "never");
+    await closeProfileManager(page);
 
     // --- Verify reminder is hidden again ---
     await expect(reminderBanner).toBeHidden();
   });
 
-  test.fixme("Reminder disappears after export", async ({ page }) => {
+  test("Reminder disappears after export", async ({ page }) => {
+    // Force the in-memory blob download fallback: the File System Access API
+    // save dialog is a native dialog Playwright cannot drive, while the
+    // fallback surfaces as an ordinary download event. Registered before the
+    // reload below so it is in place when the page next loads.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "showSaveFilePicker", {
+        value: undefined,
+        configurable: true,
+      });
+    });
+
     // --- Modify the profile in IndexedDB to make the backup overdue, and reload ---
     await makeBackupOverdueAndReload(
       page,
@@ -339,25 +351,26 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeVisible(); // Verify it's initially visible
 
     // --- Export the profile ---
-    await page.getByRole("button", { name: "Manage Profiles" }).click();
+    await openProfileManager(page);
     await page.getByRole("button", { name: "Import / Export" }).click();
 
-    // Select the profile to export
-    const exportProfileSelect = await page.locator("select#exportProfile");
-    await expect(exportProfileSelect).toBeVisible();
-    await exportProfileSelect.selectOption("2");
+    // Select this profile in the export list. The active profile's label
+    // carries an "(Active)" suffix, so match on the name as a substring.
+    const exportSection = page.locator("section", {
+      hasText: "Export Profiles",
+    });
+    await exportSection.getByRole("checkbox", { name: profileName }).check();
 
     // Click the export button and wait for download
     const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export Profile" }).click();
+    await page.getByRole("button", { name: /Export Selected/ }).click();
     await downloadPromise; // Wait for the download to start, but don't need the result
-    // Optional: Assert download filename if needed
 
-    // Close manager
-    await page.getByLabel("Close").click();
+    await closeProfileManager(page);
 
     // --- Verify the reminder notification is NOT visible after export ---
-    // No reload needed, store update should trigger hook update
+    // Exporting stamps lastBackedUpAt, so the store update alone should hide
+    // the banner — no reload.
     await expect(reminderBanner).toBeHidden();
   });
 });

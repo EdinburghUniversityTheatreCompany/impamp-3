@@ -43,6 +43,7 @@ const EditPadModalContent = React.forwardRef<
     playbackType: initialPadConfig.playbackType || "sequential",
     audioFileIds: initialPadConfig.audioFileIds || [],
     audioTrimSettings: initialPadConfig.audioTrimSettings,
+    isDisabled: initialPadConfig.isDisabled ?? false,
   });
 
   // Memoized padState to prevent unnecessary recalculations
@@ -56,6 +57,7 @@ const EditPadModalContent = React.forwardRef<
       playbackType: formValues.playbackType,
       audioFileIds: formValues.audioFileIds,
       audioTrimSettings: formValues.audioTrimSettings,
+      isDisabled: formValues.isDisabled,
     }),
     [formValues, initialPadConfig, profileId, pageIndex, padIndex],
   );
@@ -91,6 +93,7 @@ const EditPadModalContent = React.forwardRef<
       playbackType: padState.playbackType,
       audioFileIds: padState.audioFileIds,
       audioTrimSettings: padState.audioTrimSettings,
+      isDisabled: padState.isDisabled,
       keyBinding: initialPadConfig.keyBinding, // Preserve original keybinding
     }),
   }));

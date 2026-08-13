@@ -272,11 +272,20 @@ export async function triggerAudioForPadInstant(
     currentPageIndex,
     name,
     audioTrimSettings,
+    isDisabled,
     onLoadingStateChange,
     onInstantFeedback,
     onAudioReady,
     onError,
   } = args;
+
+  // A disabled pad never plays, whatever triggered it. Checked before the
+  // AudioContext resume and before any user feedback so a disabled pad is
+  // completely inert.
+  if (isDisabled) {
+    console.log(`[Audio Controls] Pad ${padIndex} is disabled, ignoring.`);
+    return;
+  }
 
   // Ensure AudioContext is active before any playback attempt
   await ensureAudioContextActive();

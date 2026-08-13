@@ -30,6 +30,8 @@ export interface SearchResult {
   playbackType: PlaybackType;
   /** Trim settings per audio file */
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  /** Whether the pad is disabled and so cannot be played or armed */
+  isDisabled: boolean;
   /** Original filename of the first audio file */
   originalFileName: string;
   /** Display name of the bank containing this pad */
@@ -162,6 +164,7 @@ export function useSearch(searchOptions: SearchOptions = {}) {
               audioFileIds: pad.audioFileIds,
               playbackType: pad.playbackType,
               audioTrimSettings: pad.audioTrimSettings,
+              isDisabled: pad.isDisabled ?? false,
               originalFileName: displayFileName,
               bankName:
                 bankNames.get(pad.pageIndex) ||

@@ -119,6 +119,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
         isConfigured={soundCount > 0}
         soundCount={soundCount}
         audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
+        isDisabled={config?.isDisabled ?? false}
         isEditMode={isEditMode}
         isDeleteMoveMode={isDeleteMoveMode}
         isArmed={isArmed}

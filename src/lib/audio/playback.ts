@@ -10,6 +10,7 @@
 import { getAudioContext } from "./context";
 import { ActiveTrack, PlayAudioParams, TrackSource } from "./types";
 import { playbackStoreActions } from "@/store/playbackStore";
+import { exposeE2EHook } from "@/lib/testHooks";
 
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
@@ -608,6 +609,20 @@ export function getActivePlaybackKeys(): string[] {
 export function getActiveTrack(playbackKey: string): ActiveTrack | null {
   return activeTracks.get(playbackKey) || null;
 }
+
+// Which sound a multi-sound pad picked is invisible in the UI — the Active
+// Tracks panel shows the pad's name, not the selected file's — so the playback
+// mode tests read the selection through this hook. See lib/testHooks.
+exposeE2EHook("__impampActiveSounds", () =>
+  Array.from(activeTracks.entries()).map(([key, track]) => ({
+    key,
+    name: track.name,
+    playbackType: track.playbackType,
+    currentAudioFileId: track.currentAudioFileId,
+    currentAudioIndex: track.currentAudioIndex,
+    allAudioFileIds: track.allAudioFileIds,
+  })),
+);
 
 /**
  * Initiates a fade-out for a track
