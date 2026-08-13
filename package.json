@@ -45,7 +45,7 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@types/gapi": "^0.0.47",
     "@types/google.picker": "^0.0.50",
-    "@types/node": "^20.19.43",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.5",
