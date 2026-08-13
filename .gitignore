@@ -55,3 +55,6 @@ public/workbox-*.js
 /src/generated
 
 certificates
+
+# git worktrees (dev-hooks worktree-per-agent workflow) — never tracked
+/.worktrees/
