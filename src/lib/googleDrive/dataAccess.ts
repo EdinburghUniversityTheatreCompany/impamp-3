@@ -283,7 +283,9 @@ export const updateLocalData = async (
         data.profile.googleDriveFileId,
       syncPausedUntil:
         existingLocalProfile?.syncPausedUntil ?? data.profile.syncPausedUntil,
-      createdAt: toDate(existingLocalProfile?.createdAt ?? data.profile.createdAt),
+      createdAt: toDate(
+        existingLocalProfile?.createdAt ?? data.profile.createdAt,
+      ),
       updatedAt: toDate(data.profile.updatedAt),
     };
     await profileStore.put(profileWithId);

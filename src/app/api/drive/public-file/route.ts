@@ -68,7 +68,10 @@ export async function GET(request: NextRequest) {
     }
 
     const declaredLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_RESPONSE_BYTES
+    ) {
       return NextResponse.json(
         { error: "File is too large to import" },
         { status: 413 },
