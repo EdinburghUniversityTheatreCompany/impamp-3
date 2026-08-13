@@ -49,6 +49,12 @@ export interface PadConfiguration {
   audioFileIds: number[];
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   playbackType: PlaybackType;
+  /**
+   * When true the pad keeps its sounds but refuses to play from any trigger
+   * (click, key, armed cue, emergency round-robin, search). Undefined means
+   * enabled, so records written before this field existed need no migration.
+   */
+  isDisabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
   // Sync Timestamps
@@ -1077,7 +1083,7 @@ export async function upsertPadConfiguration(
 // Key bindings are deliberately excluded: they belong to the pad position.
 type PadContent = Pick<
   PadConfiguration,
-  "audioFileIds" | "audioTrimSettings" | "playbackType" | "name"
+  "audioFileIds" | "audioTrimSettings" | "playbackType" | "name" | "isDisabled"
 >;
 
 // Swap the contents of two pads on the same page in a single transaction, so a
@@ -1113,12 +1119,14 @@ export async function swapPadConfigurations(
       audioTrimSettings: fromExisting.audioTrimSettings,
       playbackType: fromExisting.playbackType ?? "round-robin",
       name: fromExisting.name,
+      isDisabled: fromExisting.isDisabled ?? false,
     };
     const toContent: PadContent = {
       audioFileIds: toExisting?.audioFileIds ?? [],
       audioTrimSettings: toExisting?.audioTrimSettings,
       playbackType: toExisting?.playbackType ?? "round-robin",
       name: toExisting?.name,
+      isDisabled: toExisting?.isDisabled ?? false,
     };
 
     const writePad = async (
