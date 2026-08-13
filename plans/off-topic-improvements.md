@@ -19,12 +19,6 @@ Each entry: what, where, why it matters.
   also swing from 30 s to 1.2 min on the same machine, which points at
   contention rather than a specific test. Worth fixing the underlying race or
   capping workers for that file.
-- **Next.js infers the wrong workspace root.** Every build warns that it
-  selected `/home/mick` as the root because of a stray `~/package-lock.json`.
-  That is why `output: standalone` writes its server to
-  `.next/standalone/Stack/Programmeren/impamp-2/…` rather than
-  `.next/standalone/server.js`. Setting `outputFileTracingRoot` in
-  `next.config.ts` would pin it and make the documented start command work.
 - **`npm start` contradicts `output: standalone`.** `next start` prints
   `"next start" does not work with "output: standalone" configuration`. It does
   currently serve, but both `npm start` and the Playwright config depend on a
