@@ -16,6 +16,12 @@ interface CheckboxProps {
   description?: string;
   error?: string;
   className?: string;
+  /**
+   * Forwarded to the underlying <input>. Declared explicitly because
+   * hyphenated JSX attributes bypass prop-type checking, so an unforwarded
+   * data-testid is dropped silently rather than failing the build.
+   */
+  "data-testid"?: string;
 }
 
 /**
@@ -29,12 +35,14 @@ export const Checkbox: React.FC<CheckboxProps> = ({
   description,
   error,
   className = "",
+  "data-testid": dataTestId,
 }) => {
   return (
     <div className={`flex items-start ${className}`}>
       <div className="flex items-center h-5">
         <input
           id={id}
+          data-testid={dataTestId}
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}

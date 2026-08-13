@@ -245,8 +245,12 @@ export async function setPlaybackModeInModal(page: Page, mode: string) {
 
 // Helper to remove a specific sound from the modal list
 export async function removeSoundFromModal(page: Page, soundName: string) {
-  // Locate the remove button directly using its aria-label which includes the sound name
-  const removeButton = page.locator(`button[aria-label="Remove ${soundName}"]`);
+  // Locate the remove button by its aria-label, which is built from the sound's
+  // stored name — that keeps the file extension ("soundToRemove.wav") while
+  // callers pass the bare name, so match on the prefix rather than exactly.
+  const removeButton = page.locator(
+    `button[aria-label^="Remove ${soundName}"]`,
+  );
   await expect(removeButton).toBeVisible();
   await removeButton.click();
   console.log(`[Test Helper] Clicked remove for sound "${soundName}" in modal`);

@@ -682,6 +682,11 @@ export function useKeyboardListener() {
     setEditMode(false);
   }, [setEditMode]);
 
+  // Kept in a ref so the unmount-only effect below can call the latest version
+  // without taking it as a dependency (which would defeat the point).
+  const clearShiftEditModeRef = useRef(clearShiftEditMode);
+  clearShiftEditModeRef.current = clearShiftEditMode;
+
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback(
     (event: KeyboardEvent) => {
@@ -719,8 +724,19 @@ export function useKeyboardListener() {
       console.log("[KeyboardListener] Removing event listeners.");
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      // Ensure Shift-held edit mode is turned off when component unmounts
-      clearShiftEditMode();
     };
-  }, [handleKeyDown, handleKeyUp, clearShiftEditMode]); // Re-attach listeners if callbacks change
+  }, [handleKeyDown, handleKeyUp]); // Re-attach listeners if callbacks change
+
+  // Ensure Shift-held edit mode is turned off when the component unmounts.
+  //
+  // This deliberately lives in its own mount-only effect rather than in the
+  // listener cleanup above: that effect re-runs whenever handleKeyDown changes
+  // — on profile load, bank switch, sync (padConfigsVersion) and modal state —
+  // and clearing there would drop edit mode while Shift is still physically
+  // held down.
+  useEffect(() => {
+    return () => {
+      clearShiftEditModeRef.current();
+    };
+  }, []);
 }
