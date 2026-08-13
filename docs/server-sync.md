@@ -42,7 +42,7 @@ The server needs one environment variable and one persistent volume:
   IMPAMP_ALLOWED_EMAILS="me@example.com,@bedlamtheatre.co.uk"
   ```
 
-  Leave it unset and *any* Google account that reaches the app can sign in and
+  Leave it unset and _any_ Google account that reaches the app can sign in and
   store profiles. That is fine on a private or trusted-network deployment and
   a poor idea on a public host — **set it before exposing server sync
   publicly.** It gates server sync only; Drive sync needs no account here and
