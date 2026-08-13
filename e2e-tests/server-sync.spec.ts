@@ -228,6 +228,52 @@ test.describe("server sync UI", () => {
   });
 });
 
+/**
+ * Hosted audio is opt-in infrastructure: the E2E server sets no IMPAMP_S3_*
+ * variables, so this asserts the promise that a deployment which configures
+ * nothing hosts nothing — and says so rather than half-working.
+ */
+test.describe("hosted audio, unconfigured", () => {
+  test("every audio route reports the feature is off", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "audio-off@example.com");
+    await signIn(page, token);
+    const cookie = `${SESSION_COOKIE}=${token}`;
+
+    const library = await request.get("/api/audio", { headers: { cookie } });
+    expect(library.status()).toBe(501);
+
+    // 404, not 501: the admin check runs first, so an ordinary account cannot
+    // learn whether the deployment hosts audio — or that the surface exists.
+    const admin = await request.get("/api/admin/audio", {
+      headers: { cookie },
+    });
+    expect(admin.status()).toBe(404);
+
+    const upload = await request.post("/api/audio/upload-url", {
+      headers: { cookie },
+      data: {
+        hash: "a".repeat(64),
+        sizeBytes: 1024,
+        contentType: "audio/wav",
+        extension: "wav",
+      },
+    });
+    expect(upload.status()).toBe(501);
+  });
+
+  test("the storage page still loads and explains itself", async ({ page }) => {
+    await page.goto("/server/storage");
+    await expect(
+      page.getByRole("heading", { name: "Server audio storage" }),
+    ).toBeVisible();
+    // No allowance bar for a feature that is not switched on.
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+  });
+});
+
 /** Read back the session cookie the browser is carrying. */
 async function sessionCookieOf(page: Page): Promise<string> {
   const cookies = await page.context().cookies();
