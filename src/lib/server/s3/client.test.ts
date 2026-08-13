@@ -17,8 +17,15 @@ const config: AudioHostingConfig = {
 
 const HASH = "a".repeat(64);
 
+/**
+ * A `fetch` stand-in that always answers `status`. The parameters are declared
+ * so `mock.calls` stays typed and the assertions below can read the request.
+ */
 function respond(status: number, headers: Record<string, string> = {}) {
-  return vi.fn(async () => new Response(null, { status, headers }));
+  return vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(null, { status, headers }),
+  );
 }
 
 describe("objectKeyForHash", () => {
