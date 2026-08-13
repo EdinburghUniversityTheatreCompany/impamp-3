@@ -3,6 +3,7 @@ import {
   createTestAudioFilePath,
   prepareAudioContext,
   createMultipleTestAudioFiles,
+  gotoApp,
 } from "./test-helpers";
 
 // ------ Helper Functions for Arming Tests ------
@@ -142,11 +143,7 @@ async function clickRemoveOnArmedTrack(
 
 test.describe("ImpAmp3 Track Arming Feature", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the home page
-    await page.goto("/");
-
-    // Wait for the app to load properly
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);
