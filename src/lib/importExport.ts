@@ -414,8 +414,7 @@ async function importPadConfigurations(
 
     // Map audioTrimSettings keys (old audioFileId -> new audioFileId)
     let mappedTrimSettings:
-      | Record<number, { trimStart: number; trimEnd: number }>
-      | undefined;
+      Record<number, { trimStart: number; trimEnd: number }> | undefined;
     if (pad.audioTrimSettings) {
       mappedTrimSettings = {};
       for (const [oldIdStr, trimValue] of Object.entries(
