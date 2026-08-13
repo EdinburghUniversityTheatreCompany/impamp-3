@@ -17,7 +17,7 @@ async function setActivePadBehaviorSetting(
   behavior: ActivePadBehavior,
 ) {
   const settingsButton = page.locator(
-    '[data-testid="active-tracks-panel"] button[aria-label="Fadeout settings"]',
+    '[data-testid="active-tracks-panel"] button[aria-label="Playback settings"]',
   );
   await settingsButton.click();
 

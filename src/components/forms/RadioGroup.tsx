@@ -23,6 +23,18 @@ interface RadioGroupProps<T extends string> {
   error?: string;
   horizontal?: boolean;
   className?: string;
+  /**
+   * Forwarded to the radiogroup container. Declared explicitly because
+   * hyphenated JSX attributes bypass prop-type checking, so an unforwarded
+   * data-testid is dropped silently rather than failing the build.
+   */
+  "data-testid"?: string;
+  /**
+   * When set, each option's radio input gets
+   * `data-testid="{optionTestIdPrefix}-{option.value}"`, so individual options
+   * can be targeted without depending on generated element ids.
+   */
+  optionTestIdPrefix?: string;
 }
 
 /**
@@ -37,6 +49,8 @@ export const RadioGroup = <T extends string>({
   error,
   horizontal = false,
   className = "",
+  "data-testid": dataTestId,
+  optionTestIdPrefix,
 }: RadioGroupProps<T>) => {
   return (
     <div className={className}>
@@ -44,6 +58,7 @@ export const RadioGroup = <T extends string>({
         className={`${horizontal ? "space-x-4 flex items-center" : "space-y-4"}`}
         role="radiogroup"
         aria-labelledby={`${id}-label`}
+        data-testid={dataTestId}
       >
         {options.map((option) => (
           <div
@@ -53,6 +68,11 @@ export const RadioGroup = <T extends string>({
             <div className="flex items-center h-5">
               <input
                 id={`${id}-${option.value}`}
+                data-testid={
+                  optionTestIdPrefix
+                    ? `${optionTestIdPrefix}-${option.value}`
+                    : undefined
+                }
                 name={name}
                 type="radio"
                 value={option.value}

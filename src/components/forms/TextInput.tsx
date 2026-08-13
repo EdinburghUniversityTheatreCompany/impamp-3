@@ -19,6 +19,12 @@ interface TextInputProps {
   selectOnFocus?: boolean;
   className?: string;
   disabled?: boolean;
+  /**
+   * Forwarded to the underlying <input>. Declared explicitly because
+   * hyphenated JSX attributes bypass prop-type checking, so an unforwarded
+   * data-testid is dropped silently rather than failing the build.
+   */
+  "data-testid"?: string;
 }
 
 /**
@@ -36,6 +42,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   selectOnFocus = false,
   className = "",
   disabled = false,
+  "data-testid": dataTestId,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +59,7 @@ export const TextInput: React.FC<TextInputProps> = ({
     <input
       ref={inputRef}
       id={id}
+      data-testid={dataTestId}
       type={type}
       value={value}
       onChange={(e) => onChange(e.target.value)}

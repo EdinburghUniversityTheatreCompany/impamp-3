@@ -263,6 +263,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           error={errors.playbackType}
           horizontal
           data-testid="edit-pad-playback-mode-group"
+          optionTestIdPrefix="edit-pad-playback-mode"
         />
       </FormField>
 
