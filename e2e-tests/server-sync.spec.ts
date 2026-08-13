@@ -26,6 +26,12 @@ const SESSION_COOKIE = "impamp_session";
 function mintSession(email: string): string {
   const db = new DatabaseSync(E2E_DB_PATH);
   try {
+    // Playwright runs these files in parallel processes, and the app server is
+    // a writer too. Without a busy timeout a worker that finds the write lock
+    // held fails outright with "database is locked" — the server sets the same
+    // pragma for exactly this reason.
+    db.exec("PRAGMA busy_timeout = 5000");
+
     const sub = `e2e-${email}`;
     const now = Date.now();
 
@@ -92,6 +98,11 @@ const SAMPLE = {
   padConfigurations: [],
   pageMetadata: [],
 };
+
+// These tests all write to the one server-sync database. Running them serially
+// keeps that contention to the app server versus a single test process, rather
+// than several test processes competing with it as well.
+test.describe.configure({ mode: "serial" });
 
 test.describe("server sync API", () => {
   test.beforeEach(async ({ request }) => {
