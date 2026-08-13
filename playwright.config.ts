@@ -51,6 +51,9 @@ export default defineConfig({
     timeout: 300 * 1000, // 5 minutes — a cold production build is included
     env: {
       PORT: port,
+      // Compiles in the window hooks the suite reads internal state through
+      // (see src/lib/testHooks.ts); a real deploy leaves this unset.
+      NEXT_PUBLIC_E2E_HOOKS: "1",
       NEXT_PUBLIC_GOOGLE_CLIENT_ID:
         process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
         "e2e-placeholder.apps.googleusercontent.com",
