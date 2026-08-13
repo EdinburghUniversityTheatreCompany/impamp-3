@@ -88,6 +88,47 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
   });
 }
 
+/**
+ * Set who may host audio and how much they get. Both fields are optional:
+ * only what is passed changes, so approving a user does not silently reset an
+ * allowance an admin set earlier.
+ *
+ * Returns the updated row, or undefined when there is no such user.
+ */
+export function setAudioPermissions(
+  userId: number,
+  {
+    canUploadAudio,
+    audioQuotaBytes,
+  }: {
+    canUploadAudio?: boolean;
+    /** `null` puts the user back on the deployment default. */
+    audioQuotaBytes?: number | null;
+  },
+): UserRow | undefined {
+  if (!getUserById(userId)) return undefined;
+
+  if (canUploadAudio !== undefined) {
+    execute(
+      "UPDATE users SET can_upload_audio = ?, updated_at = ? WHERE id = ?",
+      canUploadAudio ? 1 : 0,
+      Date.now(),
+      userId,
+    );
+  }
+
+  if (audioQuotaBytes !== undefined) {
+    execute(
+      "UPDATE users SET audio_quota_bytes = ?, updated_at = ? WHERE id = ?",
+      audioQuotaBytes,
+      Date.now(),
+      userId,
+    );
+  }
+
+  return getUserById(userId);
+}
+
 /** Shape returned to clients — never leaks internal columns wholesale. */
 export interface PublicUser {
   id: number;

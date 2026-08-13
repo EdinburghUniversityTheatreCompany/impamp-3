@@ -4,12 +4,16 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { closeDb, getDb } from "@/lib/server/db";
 import { createSession } from "@/lib/server/session";
 import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createProfile } from "@/lib/server/profiles";
 import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
+import {
+  makeApiRequest as makeRequest,
+  routeParams,
+  type ApiRequestOptions,
+} from "@/lib/server/testSupport";
 
 import { GET as listProfiles, POST as postProfile } from "./route";
 import {
@@ -35,38 +39,6 @@ const signIn = (n: number) => {
   });
   return { user, token: createSession(user.id) };
 };
-
-interface RequestOptions {
-  method?: string;
-  sessionToken?: string;
-  body?: unknown;
-  headers?: Record<string, string>;
-  query?: string;
-}
-
-function makeRequest(path: string, options: RequestOptions = {}): NextRequest {
-  const headers = new Headers(options.headers);
-  if (options.sessionToken) {
-    headers.set("cookie", `impamp_session=${options.sessionToken}`);
-  }
-  if (options.body !== undefined) {
-    headers.set("content-type", "application/json");
-  }
-
-  return new NextRequest(
-    `http://localhost${path}${options.query ? `?${options.query}` : ""}`,
-    {
-      method: options.method ?? "GET",
-      headers,
-      body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
-    },
-  );
-}
-
-const routeParams = <T extends object>(params: T) => ({
-  params: Promise.resolve(params),
-});
 
 const sampleData = { _syncFormatVersion: 1, padConfigurations: [] };
 
@@ -222,7 +194,7 @@ describe("PUT /api/profiles/:id", () => {
     token: string | undefined,
     version: string | null,
     data: unknown,
-    extra: RequestOptions = {},
+    extra: ApiRequestOptions = {},
   ) =>
     makeRequest(`/api/profiles/${id}`, {
       method: "PUT",
