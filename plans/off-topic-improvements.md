@@ -39,8 +39,6 @@ Each entry: what, where, why it matters.
 
 ## Docs
 
-- **README structure fails the audit**: four `<h1>`s (should be exactly one)
-  and no table of contents for a ~1300-word file.
 
 ## Done
 

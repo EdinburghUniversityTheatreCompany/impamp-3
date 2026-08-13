@@ -2,6 +2,24 @@
 
 A modern, web-based soundboard application built with Next.js, TypeScript, IndexedDB, and Web Audio API. ImpAmp3 allows users to map locally stored audio files to keyboard shortcuts and trigger them instantly via keyboard or mouse clicks.
 
+## Contents
+
+- [Features](#features)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Building for Production](#building-for-production)
+  - [Docker Deployment](#docker-deployment)
+  - [PWA Features](#pwa-features)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Tech Stack](#tech-stack)
+- [License](#license)
+- [Contributing](#contributing)
+  - [Prefixes](#prefixes)
+  - [Versioning](#versioning)
+- [Acknowledgements](#acknowledgements)
+
 ## Features
 
 - **Offline-First PWA**: Operates fully offline after initial load using PWA techniques
@@ -64,8 +82,6 @@ To build the application for production deployment with PWA support:
 1. Build the application
 
    ```bash
-   npm run pwa-build
-   # or
    npm run build
    ```
 
@@ -74,6 +90,9 @@ To build the application for production deployment with PWA support:
    ```bash
    npm run start
    ```
+
+   This serves `.next/standalone/server.js`, the same server the Docker image
+   runs. It reads `PORT`; pass `--port` and it is translated for you.
 
 3. The app is now available with full PWA capabilities
 
