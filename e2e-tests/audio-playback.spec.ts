@@ -261,8 +261,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
   });
 
   // --- Tests for Multi-Sound Drag and Drop --
-  // TODO: This feature currently doesn't seem to work
-  test.fixme("prevents dropping onto pad with >1 sound", async ({ page }) => {
+  test("prevents dropping onto pad with >1 sound", async ({ page }) => {
     const fileNames = ["multiDropA", "multiDropB"];
     const filePaths = await createMultipleTestAudioFiles(fileNames);
     const thirdSound = "multiDropC";

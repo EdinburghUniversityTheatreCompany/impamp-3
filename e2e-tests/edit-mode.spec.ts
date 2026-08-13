@@ -410,7 +410,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     ).toBeChecked();
   });
 
-  test.fixme("X button / Delete+click opens modal for multi-sound pad", async ({
+  test("Delete/Move mode click opens the edit modal for a multi-sound pad", async ({
     page,
   }) => {
     const fileNames = ["multiSoundX1", "multiSoundX2"];
@@ -421,27 +421,30 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await addSoundsToPadModal(page, filePaths);
     await savePadEditModal(page);
 
-    // Enter edit mode
-    await page.keyboard.down("Shift");
-    await page.waitForTimeout(200);
+    // Removing a sound is no longer an "X" button on the pad in edit mode:
+    // it is a click on the pad in Delete/Move mode, toggled from the toolbar.
+    await page
+      .getByRole("button", { name: "Toggle delete and move mode" })
+      .click();
 
-    // Click the 'X' button on the pad itself
     const pad = page.locator('[id^="pad-"][id$="-7"]');
-    const xButton = pad.locator('button[aria-label="Remove sound"]');
-    await expect(xButton).toBeVisible();
-    await xButton.click();
+    await pad.click();
 
-    // Verify the EDIT modal opened, not the confirmation modal
+    // A pad holding more than one sound can't guess which sound to drop, so
+    // it opens the edit modal rather than a "Remove Sound" confirmation.
     await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
     await expect(page.locator('[data-testid="modal-title"]')).toContainText(
       "Edit Pad",
-    ); // Not "Remove Sound"
+    );
     await expect(
       page.locator('[data-testid="edit-pad-sounds-list"]'),
-    ).toBeVisible(); // Check for edit content
+    ).toBeVisible();
+    // Both sounds are offered for individual removal
+    await expect(
+      page.locator('[data-testid^="edit-pad-sound-item-"]'),
+    ).toHaveCount(2);
 
-    // Close modal and release shift
-    await page.locator('[data-testid="modal-cancel-button"]').click(); // Assuming cancel exists
-    await page.keyboard.up("Shift");
+    await page.locator('[data-testid="modal-cancel-button"]').click();
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
   });
 });

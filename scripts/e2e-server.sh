@@ -11,12 +11,30 @@ export NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-e2e-placeho
 
 cd "$(dirname "$0")/.."
 
-# Stop whatever this script started last time, if it is still listening.
-if [ -f ".e2e-server-$PORT.pid" ]; then
-  kill "$(cat ".e2e-server-$PORT.pid")" 2>/dev/null || true
-  rm -f ".e2e-server-$PORT.pid"
+ROOT="$PWD"
+
+# Free the port before building. `next start` is a grandchild of the shell that
+# launched it, so tracking a pid is unreliable — find whoever actually holds the
+# listening socket instead, and only kill it if it is serving *this* checkout.
+# Skipping this lets the new server die with EADDRINUSE while the readiness
+# probe below happily succeeds against the stale one, and the tests then run
+# against stale code while looking green.
+for pid in $(ss -lptnH "sport = :$PORT" 2>/dev/null |
+  grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+  if [ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" = "$ROOT" ]; then
+    kill "$pid" 2>/dev/null || true
+  else
+    echo "port $PORT is held by pid $pid from another directory:" >&2
+    echo "  $(readlink -f "/proc/$pid/cwd" 2>/dev/null || echo unknown)" >&2
+    echo "stop it first, or pass a different port." >&2
+    exit 1
+  fi
+done
+
+for _ in $(seq 1 20); do
+  curl -fsS -o /dev/null --max-time 1 "http://localhost:$PORT/up" 2>/dev/null || break
   sleep 1
-fi
+done
 
 npm run build >"/tmp/e2e-build-$PORT.log" 2>&1 || {
   echo "build failed — see /tmp/e2e-build-$PORT.log" >&2
@@ -26,12 +44,15 @@ npm run build >"/tmp/e2e-build-$PORT.log" 2>&1 || {
 
 setsid nohup npx next start --port "$PORT" \
   >"/tmp/e2e-server-$PORT.log" 2>&1 </dev/null &
-echo $! >".e2e-server-$PORT.pid"
 
 for _ in $(seq 1 60); do
-  if curl -fsS -o /dev/null "http://localhost:$PORT/up"; then
-    echo "e2e server listening on $PORT (pid $(cat ".e2e-server-$PORT.pid"))"
+  if curl -fsS -o /dev/null "http://localhost:$PORT/up" 2>/dev/null; then
+    echo "e2e server listening on $PORT"
     exit 0
+  fi
+  if grep -q EADDRINUSE "/tmp/e2e-server-$PORT.log" 2>/dev/null; then
+    echo "server failed to bind $PORT (EADDRINUSE)" >&2
+    exit 1
   fi
   sleep 1
 done
