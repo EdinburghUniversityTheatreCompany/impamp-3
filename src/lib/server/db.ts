@@ -25,8 +25,26 @@ export interface UserRow {
   picture: string | null;
   is_admin: number;
   can_upload_audio: number;
+  /** NULL means "use the deployment-wide default". */
+  audio_quota_bytes: number | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface AudioObjectRow {
+  hash: string;
+  size_bytes: number;
+  content_type: string;
+  extension: string;
+  created_at: number;
+}
+
+export interface AudioReferenceRow {
+  id: number;
+  user_id: number;
+  hash: string;
+  name: string;
+  created_at: number;
 }
 
 export interface ProfileRow {
@@ -103,6 +121,38 @@ const MIGRATIONS: string[] = [
   CREATE UNIQUE INDEX profile_shares_email_idx
     ON profile_shares(profile_id, email) WHERE email IS NOT NULL;
   CREATE INDEX profile_shares_profile_idx ON profile_shares(profile_id);
+  `,
+
+  // 2 — hosted audio (optional, gated on users.can_upload_audio)
+  `
+  -- One row per distinct blob, keyed by the SHA-256 of its bytes. Two people
+  -- uploading the same sound share one object, and the bucket key is derived
+  -- from the hash, so this table is the record of what exists in the bucket.
+  CREATE TABLE audio_objects (
+    hash         TEXT    PRIMARY KEY,
+    size_bytes   INTEGER NOT NULL,
+    content_type TEXT    NOT NULL,
+    extension    TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL
+  );
+
+  -- One row per user per object: who is holding a reference, and therefore
+  -- who is charged for it. An object with no references left is deleted from
+  -- the bucket, so a shared blob only disappears once nobody holds it.
+  CREATE TABLE audio_references (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hash       TEXT    NOT NULL REFERENCES audio_objects(hash) ON DELETE CASCADE,
+    name       TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX audio_references_user_hash_idx
+    ON audio_references(user_id, hash);
+  CREATE INDEX audio_references_hash_idx ON audio_references(hash);
+
+  -- NULL means "use the deployment-wide default", so raising the default
+  -- lifts everyone who has not been given a specific allowance.
+  ALTER TABLE users ADD COLUMN audio_quota_bytes INTEGER;
   `,
 ];
 
