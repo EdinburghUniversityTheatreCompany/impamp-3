@@ -35,6 +35,18 @@ The server needs one environment variable and one persistent volume:
 - `IMPAMP_DB_PATH` — where the SQLite database lives. Defaults to
   `./data/impamp.db`, which is fine for local development. Production sets
   `/data/impamp.db`, backed by the `impamp_data` volume in `config/deploy.yml`.
+- `IMPAMP_ALLOWED_EMAILS` — **who may hold a server-sync account.** Optional,
+  comma-separated, accepting full addresses and `@domain` suffixes:
+
+  ```
+  IMPAMP_ALLOWED_EMAILS="me@example.com,@bedlamtheatre.co.uk"
+  ```
+
+  Leave it unset and *any* Google account that reaches the app can sign in and
+  store profiles. That is fine on a private or trusted-network deployment and
+  a poor idea on a public host — **set it before exposing server sync
+  publicly.** It gates server sync only; Drive sync needs no account here and
+  is unaffected.
 
 There is nothing to install. Storage uses Node's built-in `node:sqlite`, so
 there is no native module to compile and no extra image build tooling. The
@@ -56,7 +68,8 @@ kamal app exec --reuse 'sqlite3 /data/impamp.db ".backup /data/backup.db"'
 
 1. Sign in with Google as usual. The code exchange already happens
    server-side, so the same sign-in also establishes a server session — there
-   is no second consent screen.
+   is no second consent screen. (If `IMPAMP_ALLOWED_EMAILS` is set and the
+   account isn't on it, no session is created and only Drive sync is offered.)
 2. On a local profile, press **Sync to ImpAmp server**. The first sync uploads
    the profile as-is and records the ID the server assigns.
 3. Share it: invite an email address, or mint a share link. Invited people get
@@ -140,6 +153,9 @@ gates on `is_admin` yet; it exists for the hosted-audio feature.
 - **Audio hosting is not implemented.** Audio remains in Drive for everyone.
   The gated Wasabi option — approved users, a global cap, per-user metering —
   is a separate piece of work.
+- **No storage quota.** Nothing caps how many profiles a user creates or how
+  large a profile blob may be. `IMPAMP_ALLOWED_EMAILS` is the only limit on
+  who can consume space.
 - **Not true concurrent editing.** Two people editing the same pad within the
   same second still produce a conflict for a human to resolve; they just no
   longer silently overwrite one another.

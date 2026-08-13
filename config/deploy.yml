@@ -51,6 +51,10 @@ env:
     NEXT_PUBLIC_GOOGLE_API_KEY: $NEXT_PUBLIC_GOOGLE_FILE_PICKER_API_KEY
     # Server-sync database, on the persistent volume declared below.
     IMPAMP_DB_PATH: /data/impamp.db
+    # Who may hold a server-sync account. UNSET MEANS ANY Google account can
+    # sign in and store profiles — set this before exposing server sync on a
+    # public host. Accepts addresses and @domain suffixes, comma-separated.
+    # IMPAMP_ALLOWED_EMAILS: "@bedlamtheatre.co.uk"
   secret:
     - GOOGLE_CLIENT_SECRET
     - GOOGLE_API_KEY

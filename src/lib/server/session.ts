@@ -6,7 +6,7 @@
  * anyone a working session.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { execute, queryOne, type UserRow } from "./db";
 import { getUserById } from "./users";
@@ -77,15 +77,4 @@ export function sessionCookieOptions() {
 export async function getCurrentUser(): Promise<UserRow | null> {
   const store = await cookies();
   return getSessionUser(store.get(SESSION_COOKIE)?.value);
-}
-
-/**
- * Constant-time comparison for share tokens supplied in a URL, so a caller
- * can't learn a valid token from response timing.
- */
-export function tokensMatch(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
 }

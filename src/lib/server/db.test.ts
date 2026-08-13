@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, getDb } from "./db";
 import { getUserByEmail, toPublicUser, upsertUserFromGoogle } from "./users";
 import {
@@ -8,6 +8,7 @@ import {
   listProfilesForUser,
   updateProfile,
 } from "./profiles";
+import { isSignupAllowed } from "./signupPolicy";
 import {
   canWrite,
   createLinkShare,
@@ -325,5 +326,41 @@ describe("access resolution", () => {
     expect(canWrite("editor")).toBe(true);
     expect(canWrite("viewer")).toBe(false);
     expect(canWrite(null)).toBe(false);
+  });
+});
+
+describe("signup policy", () => {
+  const original = process.env.IMPAMP_ALLOWED_EMAILS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.IMPAMP_ALLOWED_EMAILS;
+    else process.env.IMPAMP_ALLOWED_EMAILS = original;
+  });
+
+  it("allows anyone when no policy is configured", () => {
+    delete process.env.IMPAMP_ALLOWED_EMAILS;
+    expect(isSignupAllowed("stranger@anywhere.com")).toBe(true);
+  });
+
+  it("allows a named address and refuses everyone else", () => {
+    process.env.IMPAMP_ALLOWED_EMAILS = "me@example.com";
+    expect(isSignupAllowed("me@example.com")).toBe(true);
+    expect(isSignupAllowed("someone@example.com")).toBe(false);
+  });
+
+  it("allows a whole domain via an @suffix entry", () => {
+    process.env.IMPAMP_ALLOWED_EMAILS = "@bedlamtheatre.co.uk";
+    expect(isSignupAllowed("cast@bedlamtheatre.co.uk")).toBe(true);
+    expect(isSignupAllowed("outsider@example.com")).toBe(false);
+  });
+
+  it("does not let a lookalike domain slip past a named address", () => {
+    process.env.IMPAMP_ALLOWED_EMAILS = "me@example.com";
+    expect(isSignupAllowed("me@example.com.evil.test")).toBe(false);
+  });
+
+  it("compares case- and whitespace-insensitively", () => {
+    process.env.IMPAMP_ALLOWED_EMAILS = " Me@Example.COM , @Team.test ";
+    expect(isSignupAllowed("me@example.com")).toBe(true);
+    expect(isSignupAllowed("Someone@TEAM.test")).toBe(true);
   });
 });

@@ -54,21 +54,19 @@ export type UpdateProfileResult =
  * version. A stale `expectedVersion` returns `conflict` along with the current
  * row so the caller can merge and retry.
  *
- * `expectedVersion` of `null` means "overwrite regardless" — used only by the
- * initial adoption path, where the client is establishing the profile.
+ * There is deliberately no "overwrite regardless" mode: an unconditional write
+ * is the silent-clobber failure this whole backend exists to remove. A client
+ * establishing a profile for the first time calls `createProfile` instead.
  */
 export function updateProfile(
   id: string,
-  input: { name: string; data: unknown; expectedVersion: number | null },
+  input: { name: string; data: unknown; expectedVersion: number },
 ): UpdateProfileResult {
   return transaction(() => {
     const current = getProfileById(id);
     if (!current) return { status: "not_found" as const };
 
-    if (
-      input.expectedVersion !== null &&
-      current.version !== input.expectedVersion
-    ) {
+    if (current.version !== input.expectedVersion) {
       return { status: "conflict" as const, profile: current };
     }
 

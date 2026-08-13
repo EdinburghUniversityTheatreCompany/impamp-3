@@ -8,6 +8,7 @@
 
 import type { NextResponse } from "next/server";
 import { fetchGoogleIdentity } from "./googleIdentity";
+import { isSignupAllowed } from "./signupPolicy";
 import { upsertUserFromGoogle, toPublicUser, type PublicUser } from "./users";
 import { createSession, SESSION_COOKIE, sessionCookieOptions } from "./session";
 
@@ -31,6 +32,13 @@ export async function establishSession(
   try {
     const identity = await fetchGoogleIdentity(accessToken);
     if (!identity) return null;
+
+    if (!isSignupAllowed(identity.email)) {
+      console.warn(
+        `Refusing a server-sync session for ${identity.email}: not in IMPAMP_ALLOWED_EMAILS`,
+      );
+      return null;
+    }
 
     const user = upsertUserFromGoogle(identity);
     return { user: toPublicUser(user), token: createSession(user.id) };
