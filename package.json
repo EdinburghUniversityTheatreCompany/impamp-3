@@ -25,7 +25,7 @@
     "@hello-pangea/dnd": "^18.0.1",
     "@react-oauth/google": "^0.13.5",
     "@types/uuid": "^10.0.0",
-    "@zip.js/zip.js": "^2.8.46",
+    "@zip.js/zip.js": "^2.8.47",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "file-selector": "^4.1.0",
