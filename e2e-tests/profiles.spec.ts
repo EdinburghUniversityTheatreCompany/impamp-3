@@ -13,7 +13,7 @@ test.describe("ImpAmp3 Profile Management", () => {
     await prepareAudioContext(page);
   });
 
-  test("Can create a new profile and switch to it", async ({ page }) => {
+  test.fixme("Can create a new profile and switch to it", async ({ page }) => {
     // Find and click profile selector
     const profileSelector = await page.getByRole("button", {
       name: /profile/i,

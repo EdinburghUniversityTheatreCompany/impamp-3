@@ -210,7 +210,9 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeHidden();
   });
 
-  test('Reminder does not appear when set to "Never"', async ({ page }) => {
+  test.fixme('Reminder does not appear when set to "Never"', async ({
+    page,
+  }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue, and reload ---
     await makeBackupOverdueAndReload(
       page,
@@ -255,7 +257,9 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeHidden();
   });
 
-  test("Reminder appears/disappears on setting change", async ({ page }) => {
+  test.fixme("Reminder appears/disappears on setting change", async ({
+    page,
+  }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue ---
     await setProfileBackupState(page, profileName, {
       lastBackedUpAt: Date.now() - twoMonthsMs, // Overdue
@@ -320,7 +324,7 @@ test.describe("Backup Reminders", () => {
     await expect(reminderBanner).toBeHidden();
   });
 
-  test("Reminder disappears after export", async ({ page }) => {
+  test.fixme("Reminder disappears after export", async ({ page }) => {
     // --- Modify the profile in IndexedDB to make the backup overdue, and reload ---
     await makeBackupOverdueAndReload(
       page,

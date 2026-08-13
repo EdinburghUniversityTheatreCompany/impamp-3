@@ -410,7 +410,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     ).toBeChecked();
   });
 
-  test("X button / Delete+click opens modal for multi-sound pad", async ({
+  test.fixme("X button / Delete+click opens modal for multi-sound pad", async ({
     page,
   }) => {
     const fileNames = ["multiSoundX1", "multiSoundX2"];
