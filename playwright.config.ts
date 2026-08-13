@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 /** Throwaway server-sync database for the E2E run. Shared with the specs. */
 export const E2E_DB_PATH = resolve(process.cwd(), "data/e2e.db");
 
+/** Unlocks the test-only sign-in route for this run. */
+export const E2E_SIGNIN_SECRET = "e2e-local-only-secret";
+
 // Port is configurable so a git worktree (or a second checkout) can build and
 // serve its own copy of the app without colliding with the 3000 a developer
 // already has running.
@@ -66,6 +69,9 @@ export default defineConfig({
       // same file directly to mint a session, which is the only way to sign in
       // without a real Google account.
       IMPAMP_DB_PATH: E2E_DB_PATH,
+      // Enables /api/test/session, the suite's only way to sign in without a
+      // real Google account. Unset everywhere else, so the route 404s.
+      IMPAMP_E2E_SIGNIN_SECRET: E2E_SIGNIN_SECRET,
     },
   },
 });

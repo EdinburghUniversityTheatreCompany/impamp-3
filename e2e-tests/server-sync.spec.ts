@@ -4,82 +4,39 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
-import { DatabaseSync } from "node:sqlite";
-import { createHash, randomBytes } from "node:crypto";
-import { E2E_DB_PATH } from "../playwright.config";
+import { E2E_SIGNIN_SECRET } from "../playwright.config";
 
 /**
  * End-to-end coverage for server sync.
  *
  * Signing in normally needs a real Google account, which no test can do, so
- * these tests mint a session straight into the server's database — the same
- * row `/api/auth/google/exchange` would have written. Everything after that
- * point is the real server: real routes, real SQLite, real SSE.
+ * these tests use the server's test-only sign-in route (see
+ * `src/app/api/test/session/route.ts`, which only exists when the suite hands
+ * it a secret). Everything after that point is the real server: real routes,
+ * real SQLite, real SSE.
+ *
+ * The sign-in deliberately goes *through the server* rather than writing a
+ * session row into the SQLite file directly. `node:sqlite` is synchronous, so
+ * a second writer competing for the lock blocks the server's whole event loop
+ * and stalls unrelated specs.
  */
 
 const SESSION_COOKIE = "impamp_session";
 
-/**
- * Create a user (if new) and a session for it, returning the raw cookie value.
- * The server stores only a hash, so the token has to be generated here.
- */
-function mintSession(email: string): string {
-  const db = new DatabaseSync(E2E_DB_PATH);
-  try {
-    // Playwright runs these files in parallel processes, and the app server is
-    // a writer too. Without a busy timeout a worker that finds the write lock
-    // held fails outright with "database is locked" — the server sets the same
-    // pragma for exactly this reason.
-    db.exec("PRAGMA busy_timeout = 5000");
-
-    const sub = `e2e-${email}`;
-    const now = Date.now();
-
-    let user = db
-      .prepare("SELECT id FROM users WHERE google_sub = ?")
-      .get(sub) as { id: number } | undefined;
-
-    if (!user) {
-      const { count } = db
-        .prepare("SELECT COUNT(*) AS count FROM users")
-        .get() as { count: number };
-      db.prepare(
-        `INSERT INTO users (google_sub, email, name, picture, is_admin, can_upload_audio, created_at, updated_at)
-         VALUES (?, ?, ?, NULL, ?, 0, ?, ?)`,
-      ).run(sub, email, email, count === 0 ? 1 : 0, now, now);
-      user = db
-        .prepare("SELECT id FROM users WHERE google_sub = ?")
-        .get(sub) as {
-        id: number;
-      };
-    }
-
-    const token = randomBytes(32).toString("base64url");
-    db.prepare(
-      `INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?)`,
-    ).run(
-      createHash("sha256").update(token).digest("hex"),
-      user.id,
-      now,
-      now + 3600_000,
-    );
-
-    return token;
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * The database is created lazily on the first request that touches it, so the
- * tables may not exist until the app has been asked something. One anonymous
- * request with a cookie is enough to force the migrations to run.
- */
-async function ensureDatabaseReady(request: APIRequestContext): Promise<void> {
-  await request.get("/api/auth/session", {
-    headers: { cookie: `${SESSION_COOKIE}=force-init` },
+/** Sign in as `email`, returning the raw session token. */
+async function mintSession(
+  request: APIRequestContext,
+  email: string,
+): Promise<string> {
+  const response = await request.post("/api/test/session", {
+    headers: { "x-impamp-e2e-secret": E2E_SIGNIN_SECRET },
+    data: { email },
   });
+  expect(
+    response.status(),
+    "test sign-in route should be enabled during E2E",
+  ).toBe(200);
+  return (await response.json()).token as string;
 }
 
 async function signIn(page: Page, token: string): Promise<void> {
@@ -99,23 +56,14 @@ const SAMPLE = {
   pageMetadata: [],
 };
 
-// These tests all write to the one server-sync database. Running them serially
-// keeps that contention to the app server versus a single test process, rather
-// than several test processes competing with it as well.
-test.describe.configure({ mode: "serial" });
-
 test.describe("server sync API", () => {
-  test.beforeEach(async ({ request }) => {
-    await ensureDatabaseReady(request);
-  });
-
   test("refuses anonymous callers", async ({ request }) => {
     expect((await request.get("/api/profiles")).status()).toBe(401);
     expect((await request.get("/api/auth/session")).status()).toBe(401);
   });
 
   test("round-trips a profile with ETag and If-Match", async ({ request }) => {
-    const token = mintSession("etag@example.com");
+    const token = await mintSession(request, "etag@example.com");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const created = await request.post("/api/profiles", {
@@ -147,7 +95,7 @@ test.describe("server sync API", () => {
   test("rejects a stale write and hands back the winning data", async ({
     request,
   }) => {
-    const token = mintSession("conflict@example.com");
+    const token = await mintSession(request, "conflict@example.com");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const { id } = await (
@@ -183,7 +131,7 @@ test.describe("server sync API", () => {
   test("share links let an anonymous viewer read but not write", async ({
     request,
   }) => {
-    const token = mintSession("sharer@example.com");
+    const token = await mintSession(request, "sharer@example.com");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const { id } = await (
@@ -218,8 +166,8 @@ test.describe("server sync API", () => {
   });
 
   test("hides profiles the caller has no grant on", async ({ request }) => {
-    const owner = mintSession("owner2@example.com");
-    const stranger = mintSession("stranger@example.com");
+    const owner = await mintSession(request, "owner2@example.com");
+    const stranger = await mintSession(request, "stranger@example.com");
 
     const { id } = await (
       await request.post("/api/profiles", {
@@ -237,10 +185,6 @@ test.describe("server sync API", () => {
 });
 
 test.describe("server sync UI", () => {
-  test.beforeEach(async ({ request }) => {
-    await ensureDatabaseReady(request);
-  });
-
   test("a broken share link explains itself", async ({ page }) => {
     await page.goto("/server/open");
     await expect(page.getByText(/missing its profile or token/i)).toBeVisible();
@@ -250,7 +194,7 @@ test.describe("server sync UI", () => {
     page,
     request,
   }) => {
-    await signIn(page, mintSession("ui@example.com"));
+    await signIn(page, await mintSession(request, "ui@example.com"));
     await page.goto("/");
 
     await page
