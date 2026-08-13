@@ -5,6 +5,11 @@ import {
   loadingStoreActions,
   generatePadLoadingKey,
 } from "@/store/loadingStore";
+import {
+  pinAudioBuffer,
+  unpinAudioBuffer,
+  clearAudioBufferPins,
+} from "@/lib/audio/cache";
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
@@ -58,6 +63,31 @@ interface PlaybackStoreState {
     clearAllArmedTracks: () => void;
     playNextArmedTrack: () => void;
   };
+}
+
+/**
+ * Queue an armed track's sounds for high-priority preloading.
+ *
+ * The audio module is imported lazily: it imports this store (playback.ts),
+ * so a static import here would close the circle.
+ */
+function preloadArmedTrackSounds(trackInfo: ArmedTrackState): void {
+  if (typeof window === "undefined") return;
+
+  import("@/lib/audio")
+    .then(({ preloadArmedTrack }) => {
+      preloadArmedTrack(trackInfo.audioFileIds, {
+        profileId: trackInfo.padInfo.profileId,
+        pageIndex: trackInfo.padInfo.pageIndex,
+        padIndex: trackInfo.padInfo.padIndex,
+      });
+    })
+    .catch((error) => {
+      console.error(
+        `[PlaybackStore] Failed to preload armed track "${trackInfo.name}":`,
+        error,
+      );
+    });
 }
 
 export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
@@ -115,25 +145,48 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
     // --- Armed Tracks Actions ---
 
     // Action to arm a track
-    armTrack: (key, trackInfo) =>
+    //
+    // Arming is a promise of an instant cue, so the sounds are pinned in the
+    // audio cache (LRU eviction can't take them back) and queued for
+    // preloading at the highest priority. Both are undone on disarm.
+    armTrack: (key, trackInfo) => {
+      // Re-arming the same pad: release the previous pins before taking new
+      // ones, so the reference counts stay balanced
+      const previous = get().armedTracks.get(key);
+      if (previous) {
+        previous.audioFileIds.forEach(unpinAudioBuffer);
+      }
+      trackInfo.audioFileIds.forEach(pinAudioBuffer);
+
       set((state) => {
         const newMap = new Map(state.armedTracks);
         newMap.set(key, trackInfo);
         return { armedTracks: newMap };
-      }),
+      });
+
+      preloadArmedTrackSounds(trackInfo);
+    },
 
     // Action to remove an armed track
-    removeArmedTrack: (key) =>
+    removeArmedTrack: (key) => {
+      const removed = get().armedTracks.get(key);
+      if (!removed) return; // Nothing armed under this key
+
       set((state) => {
         const newMap = new Map(state.armedTracks);
-        if (newMap.delete(key)) {
-          return { armedTracks: newMap };
-        }
-        return state; // Return original state if key wasn't found
-      }),
+        newMap.delete(key);
+        return { armedTracks: newMap };
+      });
+
+      // The cue is gone, so its sounds are ordinary cache entries again
+      removed.audioFileIds.forEach(unpinAudioBuffer);
+    },
 
     // Action to clear all armed tracks
-    clearAllArmedTracks: () => set({ armedTracks: new Map() }),
+    clearAllArmedTracks: () => {
+      clearAudioBufferPins();
+      set({ armedTracks: new Map() });
+    },
 
     // Action to play the next armed track
     playNextArmedTrack: () => {

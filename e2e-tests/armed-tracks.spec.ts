@@ -3,6 +3,8 @@ import {
   createTestAudioFilePath,
   prepareAudioContext,
   createMultipleTestAudioFiles,
+  getActiveSounds,
+  getAudioCacheState,
   gotoApp,
 } from "./test-helpers";
 
@@ -508,5 +510,134 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
 
     // Verify track is no longer armed
     await expect(armedPanel).not.toBeVisible();
+  });
+});
+
+// ------ Armed tracks and the audio cache ------
+
+test.describe("Armed tracks keep their sounds in the audio cache", () => {
+  test.beforeEach(async ({ page }) => {
+    await gotoApp(page);
+    await prepareAudioContext(page);
+  });
+
+  /**
+   * Loads a sound onto pad 0 and waits for the pad to show it.
+   */
+  async function loadSoundOnFirstPad(
+    page: Page,
+    fileName: string,
+  ): Promise<void> {
+    const audioFilePath = await createTestAudioFilePath(fileName);
+    await page
+      .locator('[data-testid="pad-drop-input-0"]')
+      .setInputFiles(audioFilePath);
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
+      timeout: 5000,
+    });
+  }
+
+  test("Arming a pad pins its sound and preloads it into the cache", async ({
+    page,
+  }) => {
+    await loadSoundOnFirstPad(page, "pin-on-arm");
+
+    // Nothing is armed yet, so nothing should be protected from eviction
+    expect((await getAudioCacheState(page)).pinnedIds).toEqual([]);
+
+    await armPad(page, 0);
+
+    // The pin is taken as the track is armed; the decode that backs it may
+    // land a moment later.
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length, {
+        timeout: 10000,
+      })
+      .toBe(1);
+
+    await expect
+      .poll(
+        async () => {
+          const { cachedIds, pinnedIds } = await getAudioCacheState(page);
+          return pinnedIds.every((id) => cachedIds.includes(id));
+        },
+        { timeout: 10000 },
+      )
+      .toBe(true);
+  });
+
+  test("Firing an armed track plays the cached buffer and releases the pin", async ({
+    page,
+  }) => {
+    // The instant trigger logs which path it took: a cached buffer plays
+    // sample-accurately, anything else falls back to streaming or decoding.
+    const consoleMessages: string[] = [];
+    page.on("console", (message) => consoleMessages.push(message.text()));
+
+    await loadSoundOnFirstPad(page, "cached-on-fire");
+    await armPad(page, 0);
+
+    // Wait until the armed sound is actually decoded before firing
+    await expect
+      .poll(
+        async () => {
+          const { cachedIds, pinnedIds } = await getAudioCacheState(page);
+          return (
+            pinnedIds.length === 1 &&
+            pinnedIds.every((id) => cachedIds.includes(id))
+          );
+        },
+        { timeout: 10000 },
+      )
+      .toBe(true);
+
+    const { pinnedIds } = await getAudioCacheState(page);
+
+    await page.keyboard.press("F9");
+
+    const activeTracksPanel = page.locator(
+      '[data-testid="active-tracks-panel"]',
+    );
+    await expect(activeTracksPanel.getByText("cached-on-fire")).toBeVisible();
+
+    // The sound that played is the one that was pinned
+    const activeSounds = await getActiveSounds(page);
+    expect(activeSounds).toHaveLength(1);
+    expect(pinnedIds).toContain(activeSounds[0].currentAudioFileId);
+
+    // ...and it came from the cache, not from a load at trigger time
+    expect(
+      consoleMessages.some((text) =>
+        text.includes(
+          `[Audio Controls] [Instant] Playing cached buffer for ID: ${activeSounds[0].currentAudioFileId}`,
+        ),
+      ),
+      `no cached-buffer playback logged; saw:\n${consoleMessages.join("\n")}`,
+    ).toBe(true);
+
+    // Firing the cue disarms it, which must release the pin
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length)
+      .toBe(0);
+  });
+
+  test("Removing an armed track releases its pin", async ({ page }) => {
+    await loadSoundOnFirstPad(page, "unpin-on-remove");
+    await armPad(page, 0);
+
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length, {
+        timeout: 10000,
+      })
+      .toBe(1);
+
+    await clickRemoveOnArmedTrack(page, "unpin-on-remove");
+    await expect(
+      page.locator('[data-testid="armed-tracks-panel"]'),
+    ).not.toBeVisible();
+
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length)
+      .toBe(0);
   });
 });

@@ -281,6 +281,40 @@ export async function getActiveSounds(page: Page): Promise<ActiveSoundInfo[]> {
 }
 
 /**
+ * What the audio buffer cache is holding, as reported by the
+ * __impampAudioCache test hook.
+ */
+export interface AudioCacheState {
+  /** Audio file IDs with a decoded buffer (or a failed-decode marker) */
+  cachedIds: number[];
+  /** Audio file IDs protected from LRU eviction, e.g. by an armed track */
+  pinnedIds: number[];
+}
+
+/**
+ * Reads which sounds are decoded and which are pinned against eviction.
+ *
+ * Neither is visible in the UI, so the armed-track cache tests read them
+ * through the hook src/lib/audio/cache.ts installs.
+ */
+export async function getAudioCacheState(page: Page): Promise<AudioCacheState> {
+  return page.evaluate(() => {
+    const read = (
+      window as unknown as {
+        __impampAudioCache?: () => AudioCacheState;
+      }
+    ).__impampAudioCache;
+    if (typeof read !== "function") {
+      throw new Error(
+        "__impampAudioCache hook is missing — the server under test must be " +
+          "built with NEXT_PUBLIC_E2E_HOOKS=1 (playwright.config.ts sets it).",
+      );
+    }
+    return read();
+  }) as Promise<AudioCacheState>;
+}
+
+/**
  * Index, within the pad's own sound list, of the sound currently playing.
  * Asserts exactly one track is active so a stray track can't be read silently.
  */
