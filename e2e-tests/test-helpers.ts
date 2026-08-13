@@ -10,10 +10,14 @@ import * as os from "os";
  */
 export async function createTestAudioFilePath(
   fileName: string,
+  // Most specs want a clip long enough to still be playing while they assert on
+  // it. Pass something short when the file has to cross into the page (a 60s
+  // mono WAV is ~5MB, and marshalling that through page.evaluate is slow enough
+  // to blow the test timeout on its own).
+  durationSeconds: number = 60,
 ): Promise<string> {
   // Generate raw audio data (simple sine wave)
   const sampleRate = 44100;
-  const durationSeconds = 60; // Shorter duration for tests
   const numChannels = 1; // Mono
   const numSamples = sampleRate * durationSeconds;
   const audioData = new Float32Array(numSamples);

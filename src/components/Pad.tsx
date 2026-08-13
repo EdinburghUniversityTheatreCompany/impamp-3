@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useDropzone, Accept } from "react-dropzone";
+import { fromEvent } from "file-selector";
+import { COMMON_MIME_TYPES } from "file-selector/mime";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
 import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
@@ -170,6 +172,12 @@ const Pad: React.FC<PadProps> = ({
   } = useDropzone({
     onDrop: handleAudioDrop,
     accept: { "audio/*": [] } as Accept, // Accept all audio types
+    // file-selector (via react-dropzone 18+) no longer bundles its full
+    // extension->MIME table, so a File the browser left typeless — routine for
+    // the less common audio containers — would fail the `audio/*` filter above
+    // and the drop would be discarded silently. Pull the full table back in.
+    getFilesFromEvent: (event) =>
+      fromEvent(event, { mimeTypes: COMMON_MIME_TYPES }),
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
@@ -269,6 +277,14 @@ const Pad: React.FC<PadProps> = ({
     // Spread dropzone props onto the root div
     <div
       {...rootProps}
+      // react-dropzone marks its root `aria-disabled` whenever the dropzone is
+      // disabled, but here that root div is also the pad's play button
+      // (role="button", with its own onClick). `disabled` on the dropzone only
+      // means "no file drops" — a pad holding 2+ sounds, or one in delete/move
+      // mode, is still very much clickable. Letting the attribute through would
+      // announce a working pad as disabled to assistive tech, and makes it
+      // unclickable to anything that honours it (Playwright included).
+      aria-disabled={undefined}
       id={id} // Use the passed unique ID
       className={padClasses} // Use clsx generated classes
       onMouseEnter={handleMouseEnter} // Add hover preloading
