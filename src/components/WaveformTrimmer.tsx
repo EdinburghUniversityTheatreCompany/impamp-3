@@ -12,7 +12,6 @@ import { createPortal } from "react-dom";
 import { getWaveformPeaks, WaveformPeak } from "@/lib/audio/waveform";
 import { getAudioFile } from "@/lib/db";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
-import { getAudioContext } from "@/lib/audio/context";
 import { playBuffer, stopTrack } from "@/lib/audio/playback";
 
 interface WaveformTrimmerProps {

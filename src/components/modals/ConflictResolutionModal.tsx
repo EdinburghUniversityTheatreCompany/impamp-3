@@ -147,6 +147,13 @@ export const ConflictResolutionModal: React.FC<
       const resolution = resolutions[keyStr];
       if (!resolution) return;
 
+      // Conflicting items are held back from the merged base, so they have to
+      // be seeded from their local version before the choices are applied
+      const seedFromLocal = (): Syncable | null => {
+        const source = conflict.localItem ?? conflict.remoteItem;
+        return source ? (deepClone(source) as Syncable) : null;
+      };
+
       switch (conflict.type) {
         case "field_conflict": {
           const fieldResolutions = resolution as FieldResolutions;
@@ -156,8 +163,18 @@ export const ConflictResolutionModal: React.FC<
             targetItem = resolved.profile;
           } else if (conflict.storeName === "padConfigurations") {
             targetItem = resolvedPadConfigs.get(keyStr);
+            if (!targetItem) {
+              targetItem = seedFromLocal();
+              if (targetItem)
+                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
+            }
           } else if (conflict.storeName === "pageMetadata") {
             targetItem = resolvedPageMeta.get(keyStr);
+            if (!targetItem) {
+              targetItem = seedFromLocal();
+              if (targetItem)
+                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+            }
           }
 
           if (targetItem) {
@@ -224,14 +241,16 @@ export const ConflictResolutionModal: React.FC<
               resolvedPageMeta.delete(keyStr);
             }
           }
-          // If 'keep', it's already in the local base, ensure its timestamp reflects this sync
+          // If 'keep', restore the local item and mark it as touched by this sync
           else if (resolution === "keep") {
-            let targetItem: Syncable | undefined | null = null;
-            if (conflict.storeName === "padConfigurations")
-              targetItem = resolvedPadConfigs.get(keyStr);
-            else if (conflict.storeName === "pageMetadata")
-              targetItem = resolvedPageMeta.get(keyStr);
-            if (targetItem) targetItem._modified = now; // Mark as touched by this sync
+            const targetItem = seedFromLocal();
+            if (targetItem) {
+              targetItem._modified = now;
+              if (conflict.storeName === "padConfigurations")
+                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
+              else if (conflict.storeName === "pageMetadata")
+                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+            }
           }
           break;
         }
