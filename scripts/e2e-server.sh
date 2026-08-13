@@ -32,16 +32,19 @@ done < <(node -e '
 # probe below happily succeeds against the stale one, and the tests then run
 # against stale code while looking green.
 #
-# The standalone server chdir's into .next/standalone, so accept that too —
-# matching only $ROOT would leave our own previous server running.
+# Match on *anything under* $ROOT rather than $ROOT exactly: the standalone
+# server chdir's into .next/standalone, and if that directory was removed while
+# it ran (a `rm -rf .next`, or the rebuild below) the kernel reports the cwd as
+# "…/.next/standalone (deleted)". Both are still our own server, and refusing
+# to kill either leaves the rebuild to die on EADDRINUSE.
 for pid in $(ss -lptnH "sport = :$PORT" 2>/dev/null |
   grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
-  cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
-  if [ "$cwd" = "$ROOT" ] || [ "$cwd" = "$ROOT/.next/standalone" ]; then
+  cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+  if [ "$cwd" = "$ROOT" ] || [ "${cwd#"$ROOT"/}" != "$cwd" ]; then
     kill "$pid" 2>/dev/null || true
   else
     echo "port $PORT is held by pid $pid from another directory:" >&2
-    echo "  $(readlink -f "/proc/$pid/cwd" 2>/dev/null || echo unknown)" >&2
+    echo "  ${cwd:-unknown}" >&2
     echo "stop it first, or pass a different port." >&2
     exit 1
   fi
