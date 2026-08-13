@@ -180,29 +180,6 @@ export async function prepareAudioContext(page: Page) {
 }
 
 /**
- * Helper function to get the names of currently playing tracks from the Active Tracks Panel.
- */
-export async function getPlayingSoundNames(page: Page): Promise<string[]> {
-  const activeTracksPanel = page.locator('[data-testid="active-tracks-panel"]');
-  // Wait for the panel to potentially update after an action
-  await activeTracksPanel.waitFor({ state: "visible", timeout: 1000 }); // Short wait
-
-  // Each playing track renders as a TrackItem whose accessible name is
-  // "Stop playing <name>" — read the name off that rather than the visible
-  // text, which also carries the "fading out..." badge and the timer.
-  const trackItems = activeTracksPanel.locator(
-    '[data-testid="active-track-item"]',
-  );
-  const labels = await trackItems.evaluateAll((nodes) =>
-    nodes.map((node) => node.getAttribute("aria-label") ?? ""),
-  );
-
-  return labels
-    .map((label) => label.replace(/^Stop playing /, "").trim())
-    .filter((name) => name.length > 0);
-}
-
-/**
  * A currently-playing track, as reported by the __impampActiveSounds test hook.
  */
 export interface ActiveSoundInfo {

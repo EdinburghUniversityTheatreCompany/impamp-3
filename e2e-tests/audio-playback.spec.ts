@@ -7,7 +7,6 @@ import {
   addSoundsToPadModal,
   savePadEditModal,
   setPlaybackModeInModal,
-  getPlayingSoundNames,
   triggerAndReadSoundIndex,
 } from "./test-helpers";
 import { ActivePadBehavior, PlaybackType } from "../src/lib/db";

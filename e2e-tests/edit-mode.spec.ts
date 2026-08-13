@@ -1,4 +1,4 @@
-import { test, expect, Page } from "@playwright/test"; // Added Page type
+import { test, expect } from "@playwright/test";
 import {
   prepareAudioContext,
   createTestAudioFilePath,
@@ -11,7 +11,6 @@ import {
   savePadEditModal,
   createNewBankViaUi,
 } from "./test-helpers";
-import { PlaybackType } from "../src/lib/db"; // Added PlaybackType
 
 // Helper definitions moved to test-helpers.ts
 
