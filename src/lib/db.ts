@@ -43,6 +43,16 @@ export interface Profile {
 export type ActivePadBehavior = "continue" | "stop" | "restart";
 export type PlaybackType = "sequential" | "random" | "round-robin";
 
+/**
+ * What a pad plays with when nothing says otherwise.
+ *
+ * Anywhere a pad can arrive without a playbackType — a drop, a paste, an
+ * import of a file that predates the field — must use this. The import paths
+ * used to default to "sequential" instead, so importing a profile quietly
+ * changed how those pads played.
+ */
+export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
+
 // Define the structure of pad configuration data
 export interface PadConfiguration {
   id?: number;
@@ -154,7 +164,7 @@ const migrateStoreV4 = (
           : ((padUpdateData.audioFileIds as number[] | undefined) ?? []);
       padUpdateData.playbackType =
         (padUpdateData.playbackType as PlaybackType | undefined) ??
-        "round-robin";
+        DEFAULT_PLAYBACK_TYPE;
       if ("audioFileId" in padUpdateData) {
         delete padUpdateData.audioFileId;
       }
@@ -1127,14 +1137,14 @@ export async function swapPadConfigurations(
     const fromContent: PadContent = {
       audioFileIds: fromExisting.audioFileIds ?? [],
       audioTrimSettings: fromExisting.audioTrimSettings,
-      playbackType: fromExisting.playbackType ?? "round-robin",
+      playbackType: fromExisting.playbackType ?? DEFAULT_PLAYBACK_TYPE,
       name: fromExisting.name,
       isDisabled: fromExisting.isDisabled ?? false,
     };
     const toContent: PadContent = {
       audioFileIds: toExisting?.audioFileIds ?? [],
       audioTrimSettings: toExisting?.audioTrimSettings,
-      playbackType: toExisting?.playbackType ?? "round-robin",
+      playbackType: toExisting?.playbackType ?? DEFAULT_PLAYBACK_TYPE,
       name: toExisting?.name,
       isDisabled: toExisting?.isDisabled ?? false,
     };

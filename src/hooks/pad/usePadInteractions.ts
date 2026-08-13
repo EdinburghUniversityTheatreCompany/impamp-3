@@ -11,6 +11,7 @@ import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
 import {
   PadConfiguration,
+  DEFAULT_PLAYBACK_TYPE,
   isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
@@ -81,7 +82,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         pageIndex: currentPageIndex,
         padIndex: padIndex,
         audioFileIds: [],
-        playbackType: "round-robin",
+        playbackType: DEFAULT_PLAYBACK_TYPE,
         createdAt: new Date(), // Temporary, won't be saved like this
         updatedAt: new Date(), // Temporary
         // name and keyBinding will be handled by EditPadModalContent defaults/state
@@ -213,7 +214,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
             padIndex: padIndex,
             name: undefined, // Reset name to default
             audioFileIds: [], // Clear the sounds
-            playbackType: "round-robin", // Reset playback type
+            playbackType: DEFAULT_PLAYBACK_TYPE, // Reset playback type
             isDisabled: false, // An emptied pad should not stay marked "Off"
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
@@ -379,7 +380,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           padIndex: padIndex,
         },
         audioFileIds: config.audioFileIds,
-        playbackType: config.playbackType || "round-robin",
+        playbackType: config.playbackType || DEFAULT_PLAYBACK_TYPE,
         audioTrimSettings: config.audioTrimSettings,
       });
 

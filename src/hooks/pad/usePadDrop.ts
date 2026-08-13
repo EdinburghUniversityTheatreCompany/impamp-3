@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import {
   addAudioFile,
+  DEFAULT_PLAYBACK_TYPE,
   isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
@@ -74,7 +75,7 @@ export function usePadDrop(
           pageIndex: currentPageIndex,
           padIndex: padIndex,
           audioFileIds: [audioFileId], // Single audio file in array
-          playbackType: "round-robin", // Default playback type for single drop
+          playbackType: DEFAULT_PLAYBACK_TYPE,
           name: file.name.replace(/\.[^/.]+$/, ""), // Set default name (without extension)
         });
 

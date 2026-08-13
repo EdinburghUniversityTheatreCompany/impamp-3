@@ -3,7 +3,7 @@ import {
   AudioFile,
   Profile,
   PadConfiguration,
-  // PlaybackType, // Removed unused import (it's part of PadConfiguration)
+  DEFAULT_PLAYBACK_TYPE,
   PageMetadata,
   SyncType,
   ImpAmpDBSchema,
@@ -437,7 +437,7 @@ async function importPadConfigurations(
       name: pad.name,
       audioFileIds: mappedAudioFileIds, // Use the mapped array
       audioTrimSettings: mappedTrimSettings,
-      playbackType: pad.playbackType || "sequential", // Use imported type or default
+      playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
       createdAt: now,
       updatedAt: now,
@@ -524,7 +524,7 @@ async function importProfileCore(
           keyBinding: oldPad.keyBinding,
           name: oldPad.name,
           audioFileIds: audioFileIds,
-          playbackType: "sequential", // Default for old format
+          playbackType: DEFAULT_PLAYBACK_TYPE, // V1 pads predate the field
           createdAt: oldPad.createdAt || now, // Use existing or new date
           updatedAt: oldPad.updatedAt || now, // Use existing or new date
         };
@@ -982,7 +982,7 @@ export async function importImpamp2Profile(
             keyBinding: key,
             name: padData.name || padData.filename || `Pad ${padIndex}`,
             audioFileIds: [], // Initialize with empty array
-            playbackType: "sequential", // Initialize with default
+            playbackType: DEFAULT_PLAYBACK_TYPE,
           },
           audioOriginalKey, // Link pad to prepared audio
         });
@@ -1050,7 +1050,7 @@ export async function importImpamp2Profile(
         const finalPadData: Omit<PadConfiguration, "id"> = {
           ...item.data,
           audioFileIds: audioFileId !== undefined ? [audioFileId] : [], // Set as array
-          playbackType: "sequential", // Default for impamp2 import
+          playbackType: DEFAULT_PLAYBACK_TYPE, // impamp2 files predate the field
           createdAt: now,
           updatedAt: now,
         };
