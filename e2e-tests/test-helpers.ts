@@ -4,6 +4,67 @@ import * as path from "path";
 import * as os from "os";
 
 /**
+ * Navigates to the app and waits until it is actually ready to be driven.
+ *
+ * Waiting for a pad element to exist is not enough, and is what made this
+ * suite flaky under parallel load. The pad grid mounts before the active
+ * profile resolves and before the bank tabs render, and anything done in that
+ * window is dropped on the floor without an error:
+ *
+ *  - handleDropAudio() returns early while activeProfileId is null, so a file
+ *    set on a pad's input never lands and the pad stays "Empty Pad";
+ *  - the bank tabs are still absent, so counting them returns 0.
+ *
+ * Under one worker the gap closes before the first action; under ten it does
+ * not, which is why these failures looked like CPU contention.
+ */
+export async function gotoApp(page: Page) {
+  await page.goto("/");
+  await waitForAppReady(page);
+}
+
+/**
+ * Waits for a freshly loaded (or reloaded) app to be ready to drive.
+ * See gotoApp for why each of these waits is needed.
+ */
+export async function waitForAppReady(page: Page) {
+  await page.waitForSelector('[id^="pad-"]');
+
+  // A real profile must be active before any pad write will persist.
+  await page.waitForFunction(() => {
+    const store = (
+      window as unknown as {
+        __profileStore?: { getState(): { activeProfileId: number | null } };
+      }
+    ).__profileStore;
+    return !!store && store.getState().activeProfileId !== null;
+  });
+
+  // Bank tabs render from page metadata, loaded separately from the pads.
+  await expect(page.locator('[role="tab"]').first()).toBeVisible();
+}
+
+/**
+ * Holds Shift and waits for edit mode to actually engage.
+ *
+ * The keyboard listener detaches and re-attaches as app state changes, so the
+ * delay between the keypress and edit mode turning on is not fixed. Waiting a
+ * flat 200-300ms instead — as this suite used to — means the following click
+ * sometimes lands in normal mode and plays the pad rather than opening the
+ * edit modal.
+ */
+export async function enterEditMode(page: Page) {
+  await page.keyboard.down("Shift");
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
+}
+
+/** Releases Shift and waits for edit mode to actually disengage. */
+export async function exitEditMode(page: Page) {
+  await page.keyboard.up("Shift");
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeHidden();
+}
+
+/**
  * Helper function to create a test audio file path for testing.
  * Generates a simple sine wave audio buffer, formats it as WAV,
  * saves it to a temporary file, and returns the file path.
@@ -184,42 +245,91 @@ export async function prepareAudioContext(page: Page) {
 }
 
 /**
- * Helper function to get the names of currently playing tracks from the Active Tracks Panel.
+ * A currently-playing track, as reported by the __impampActiveSounds test hook.
  */
-export async function getPlayingSoundNames(page: Page): Promise<string[]> {
-  const activeTracksPanel = page.locator('[data-testid="active-tracks-panel"]');
-  // Wait for the panel to potentially update after an action
-  await activeTracksPanel.waitFor({ state: "visible", timeout: 1000 }); // Short wait
+export interface ActiveSoundInfo {
+  key: string;
+  name: string;
+  playbackType?: string;
+  currentAudioFileId?: number;
+  currentAudioIndex?: number;
+  allAudioFileIds?: number[];
+}
 
-  // Check if "Nothing playing" is visible
-  const nothingPlayingVisible = await page
-    .locator("text=Nothing playing")
-    .isVisible();
-  if (nothingPlayingVisible) {
-    return []; // Return empty array if nothing is playing
-  }
-
-  // Get all list items within the panel
-  const trackItems = activeTracksPanel.locator("li"); // Assuming each track is an <li>
-  const count = await trackItems.count();
-  const names: string[] = [];
-  for (let i = 0; i < count; i++) {
-    // Extract the text content, which should be the sound name
-    // Adjust locator if the name is within a specific child element
-    const name = await trackItems.nth(i).locator("span").first().textContent(); // Assuming name is in the first span
-    if (name) {
-      names.push(name.trim());
+/**
+ * Reads the audio module's live track list.
+ *
+ * Which sound a multi-sound pad selected is deliberately invisible in the UI —
+ * the Active Tracks panel shows the pad's name — so tests that care about
+ * selection order read it through the hook src/lib/testHooks.ts installs.
+ */
+export async function getActiveSounds(page: Page): Promise<ActiveSoundInfo[]> {
+  return page.evaluate(() => {
+    const read = (
+      window as unknown as {
+        __impampActiveSounds?: () => ActiveSoundInfo[];
+      }
+    ).__impampActiveSounds;
+    if (typeof read !== "function") {
+      throw new Error(
+        "__impampActiveSounds hook is missing — the server under test must be " +
+          "built with NEXT_PUBLIC_E2E_HOOKS=1 (playwright.config.ts sets it).",
+      );
     }
-  }
-  return names;
+    return read();
+  }) as Promise<ActiveSoundInfo[]>;
+}
+
+/**
+ * Index, within the pad's own sound list, of the sound currently playing.
+ * Asserts exactly one track is active so a stray track can't be read silently.
+ */
+export async function getPlayingSoundIndex(page: Page): Promise<number> {
+  const active = await getActiveSounds(page);
+  expect(active).toHaveLength(1);
+  const index = active[0].currentAudioIndex;
+  expect(
+    index,
+    "active track carries no currentAudioIndex",
+  ).not.toBeUndefined();
+  return index as number;
+}
+
+/**
+ * Stops the single playing track by clicking its entry in the Active Tracks
+ * panel, and waits for the panel to fall back to "Nothing playing".
+ *
+ * Multi-sound pads need this between triggers: the default activePadBehavior is
+ * "continue", so re-triggering a pad that is already playing is a no-op and the
+ * playback strategy never advances.
+ */
+export async function stopPlayingTrack(page: Page) {
+  await page.locator('[data-testid="active-track-item"]').first().click();
+  await expect(page.locator("text=Nothing playing")).toBeVisible();
+}
+
+/**
+ * Triggers a pad, waits for playback to register, reads which sound the
+ * playback strategy picked, then stops it again. Returns the sound's index.
+ */
+export async function triggerAndReadSoundIndex(
+  page: Page,
+  pad: Locator,
+): Promise<number> {
+  await pad.click();
+  await expect(page.locator('[data-testid="active-track-item"]')).toHaveCount(
+    1,
+  );
+  const index = await getPlayingSoundIndex(page);
+  await stopPlayingTrack(page);
+  return index;
 }
 
 // --- Helpers for Edit Pad Modal ---
 
 // Helper to open the edit modal for a specific pad
 export async function openEditPadModal(page: Page, padIndex: number) {
-  await page.keyboard.down("Shift");
-  await page.waitForTimeout(200); // Short delay for shift state
+  await enterEditMode(page);
   await page.locator(`[id^="pad-"][id$="-${padIndex}"]`).click(); // Click the specific pad
   await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
   await expect(page.locator('[data-testid="modal-title"]')).toContainText(
@@ -289,13 +399,19 @@ export async function removeSoundFromModal(page: Page, soundName: string) {
 // resulting modal, and waits for the new tab to appear. Returns the bank
 // count *before* the new bank was added. Leaves Shift held down.
 export async function createNewBankViaUi(page: Page): Promise<number> {
-  await page.keyboard.down("Shift");
-  await page.waitForTimeout(300);
+  await enterEditMode(page);
 
   const addBankButton = page.getByRole("button", { name: "Add new bank" });
   await expect(addBankButton).toBeVisible();
 
-  const initialBanks = await page.locator('[role="tab"]').count();
+  // The "Add new bank" button appears with edit mode, but the tabs beside it
+  // render from the profile's bank names, which load separately. count() is
+  // the one locator call that does *not* auto-wait, so reading it in that gap
+  // silently returns 0 — and then every expectation below is off by the real
+  // bank count ("Bank 1" vs the app's "Bank 11"). Wait for the tabs first.
+  const bankTabs = page.locator('[role="tab"]');
+  await expect(bankTabs.first()).toBeVisible();
+  const initialBanks = await bankTabs.count();
 
   await addBankButton.click();
 
@@ -320,7 +436,5 @@ export async function savePadEditModal(page: Page) {
   await page.locator('[data-testid="modal-confirm-button"]').click();
   await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
   console.log(`[Test Helper] Saved pad edit modal`);
-  // Release shift if needed after modal closes
-  await page.keyboard.up("Shift");
-  await page.waitForTimeout(200);
+  await exitEditMode(page);
 }

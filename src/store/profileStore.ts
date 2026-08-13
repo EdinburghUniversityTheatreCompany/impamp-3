@@ -24,6 +24,7 @@ import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
+import { exposeE2EHook } from "@/lib/testHooks";
 
 // Define a type for the decoded Google user info (adjust as needed)
 // Export this type so it can be used elsewhere (like in ProfileManager)
@@ -1028,7 +1029,4 @@ export const useProfileStore = create<ProfileState>()(
   ),
 );
 
-if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
-  (window as unknown as Record<string, unknown>).__profileStore =
-    useProfileStore;
-}
+exposeE2EHook("__profileStore", useProfileStore);

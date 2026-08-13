@@ -8,6 +8,7 @@ import {
   setPadActiveInModal,
   expectNothingPlaying,
   activatePad,
+  gotoApp,
 } from "./test-helpers";
 
 /**
@@ -34,8 +35,7 @@ async function setUpPad(
 
 test.describe("Pad disable", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
     await prepareAudioContext(page);
   });
 

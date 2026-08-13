@@ -8,7 +8,8 @@ import {
   addSoundsToPadModal,
   savePadEditModal,
   setPlaybackModeInModal,
-  getPlayingSoundNames,
+  triggerAndReadSoundIndex,
+  gotoApp,
 } from "./test-helpers";
 import { ActivePadBehavior, PlaybackType } from "../src/lib/db";
 
@@ -40,11 +41,7 @@ async function setActivePadBehaviorSetting(
 
 test.describe("ImpAmp3 Audio Playback", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the home page
-    await page.goto("/");
-
-    // Wait for the app to load properly
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);
@@ -305,8 +302,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
   });
 
   // --- Tests for Multi-Sound Drag and Drop --
-  // TODO: This feature currently doesn't seem to work
-  test.fixme("prevents dropping onto pad with >1 sound", async ({ page }) => {
+  test("prevents dropping onto pad with >1 sound", async ({ page }) => {
     const fileNames = ["multiDropA", "multiDropB"];
     const filePaths = await createMultipleTestAudioFiles(fileNames);
     const thirdSound = "multiDropC";
@@ -389,7 +385,14 @@ test.describe("ImpAmp3 Audio Playback", () => {
       );
     }
 
-    test.fixme("Sequential mode plays sounds in order (with state persistence)", async ({
+    // Which sound a multi-sound pad picked is not shown anywhere in the UI —
+    // the Active Tracks panel shows the pad's name, which stays the first
+    // sound's name — so these tests assert on the index reported by the
+    // playback hook. Each trigger stops the track before the next one, because
+    // the default activePadBehavior ("continue") makes re-triggering an
+    // already-playing pad a no-op that never advances the strategy.
+
+    test("Sequential mode plays sounds in order, and keeps its place across stops", async ({
       page,
     }) => {
       const padIndex = 9;
@@ -397,150 +400,58 @@ test.describe("ImpAmp3 Audio Playback", () => {
       await configureMultiSoundPad(page, padIndex, fileNames, "sequential");
       const pad = page.locator(`[id^="pad-"][id$="-${padIndex}"]`);
 
-      // Trigger 1 -> A
-      await pad.click();
-      await expect(
-        page.getByTestId("active-tracks-panel").getByText("seqA"),
-      ).toBeVisible({ timeout: 2000 });
+      const played: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        played.push(await triggerAndReadSoundIndex(page, pad));
+      }
 
-      await expect(await getPlayingSoundNames(page)).toEqual([fileNames[0]]);
-
-      // Trigger 2 -> B
-      await pad.click();
-      await expect(
-        page.getByTestId("active-tracks-panel").getByText("seqA"),
-      ).toBeVisible({ timeout: 2000 });
-      await expect(await getPlayingSoundNames(page)).toEqual([fileNames[1]]);
-
-      // Trigger 3 -> C
-      await pad.click();
-      await expect(
-        page.getByTestId("active-tracks-panel").getByText("seqA"),
-      ).toBeVisible({ timeout: 2000 });
-      await expect(await getPlayingSoundNames(page)).toEqual([fileNames[2]]);
-
-      // Trigger 4 -> A (Wrap around)
-      await pad.click();
-      await expect(
-        page.getByTestId("active-tracks-panel").getByText("seqA"),
-      ).toBeVisible({ timeout: 2000 });
-      await expect(await getPlayingSoundNames(page)).toEqual([fileNames[0]]);
-
-      // Stop sound A
-      await page.getByTestId("active-tracks-panel").getByText("seqA").click();
-      await expect(page.locator("text=Nothing playing")).toBeVisible(); // Wait for stop
-
-      // Trigger 5 -> Should play B (state preserved on stop)
-      await pad.click();
-      await expect(
-        page.getByTestId("active-tracks-panel").getByText("seqA"),
-      ).toBeVisible({ timeout: 2000 });
-      await expect(await getPlayingSoundNames(page)).toEqual([fileNames[1]]);
+      // In order, wrapping back to the first sound — and the position survived
+      // each stop, or every trigger would have replayed index 0.
+      expect(played).toEqual([0, 1, 2, 0]);
     });
 
-    test.fixme("Random mode plays sounds randomly", async ({ page }) => {
+    test("Random mode plays sounds randomly", async ({ page }) => {
       const padIndex = 10;
       const fileNames = ["randA", "randB", "randC"];
       await configureMultiSoundPad(page, padIndex, fileNames, "random");
       const pad = page.locator(`[id^="pad-"][id$="-${padIndex}"]`);
-      const playedSounds: string[] = [];
 
-      // Trigger multiple times
+      const played: number[] = [];
       for (let i = 0; i < 15; i++) {
-        await pad.click();
-        // Wait briefly for active track panel to update
-        await page.waitForTimeout(100);
-        const currentPlaying = await getPlayingSoundNames(page);
-        // Expect only one sound playing at a time for this test setup
-        expect(currentPlaying.length).toBeLessThanOrEqual(1);
-        if (currentPlaying.length === 1) {
-          playedSounds.push(currentPlaying[0]);
-          // Stop the sound before next trigger to avoid overlap issues in test
-          await page
-            .getByTestId("active-tracks-panel")
-            .getByText("randA")
-            .click();
-          await expect(page.locator("text=Nothing playing")).toBeVisible(); // Wait for stop
-        }
-        await page.waitForTimeout(50); // Small delay between triggers
+        played.push(await triggerAndReadSoundIndex(page, pad));
       }
 
-      console.log("Random mode played sounds:", playedSounds);
-      // Assert all played sounds are from the expected list
-      playedSounds.forEach((sound) => expect(fileNames).toContain(sound));
-      // Assert that at least two different sounds were played (high probability)
-      const uniquePlayed = new Set(playedSounds);
-      expect(uniquePlayed.size).toBeGreaterThan(1);
+      // Every pick is a real sound on the pad...
+      for (const index of played) {
+        expect(fileNames[index]).toBeDefined();
+      }
+      // ...and 15 draws from 3 sounds hitting only one is a ~1-in-7-million
+      // fluke, so a single distinct value means the mode is not random.
+      expect(new Set(played).size).toBeGreaterThan(1);
     });
 
-    test.fixme("Round-Robin mode plays all sounds before repeating (with state persistence)", async ({
+    test("Round-Robin mode plays all sounds before repeating", async ({
       page,
     }) => {
       const padIndex = 11;
       const fileNames = ["rrA", "rrB", "rrC"];
       await configureMultiSoundPad(page, padIndex, fileNames, "round-robin");
       const pad = page.locator(`[id^="pad-"][id$="-${padIndex}"]`);
-      const playedSoundsCycle1: string[] = []; // Use const as it's only populated, not reassigned
 
-      // Trigger 3 times, collect results
-      for (let i = 0; i < fileNames.length; i++) {
-        await pad.click();
-        await page.waitForTimeout(100);
-        const currentPlaying = await getPlayingSoundNames(page);
-        expect(currentPlaying.length).toBe(1);
-        playedSoundsCycle1.push(currentPlaying[0]);
-        // Stop the sound
-        await page.getByTestId("active-tracks-panel").getByText("rrA").click();
-        await expect(page.locator("text=Nothing playing")).toBeVisible();
-        await page.waitForTimeout(50);
+      const allIndices = fileNames.map((_, i) => i);
+
+      // Each cycle draws without replacement, so a full cycle covers every
+      // sound exactly once before any of them repeats.
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const played: number[] = [];
+        for (let i = 0; i < fileNames.length; i++) {
+          played.push(await triggerAndReadSoundIndex(page, pad));
+        }
+        expect(
+          [...played].sort(),
+          `round-robin cycle ${cycle + 1} did not cover every sound exactly once`,
+        ).toEqual(allIndices);
       }
-
-      console.log("Round-Robin Cycle 1 played:", playedSoundsCycle1);
-      // Assert all sounds played exactly once in the first cycle
-      expect(playedSoundsCycle1.sort()).toEqual(fileNames.sort());
-
-      // Trigger 4th time - should start a new cycle
-      await pad.click();
-      await page.waitForTimeout(100);
-      let currentPlaying = await getPlayingSoundNames(page);
-      expect(currentPlaying.length).toBe(1);
-      expect(fileNames).toContain(currentPlaying[0]);
-      const fourthSound = currentPlaying[0];
-      console.log("Round-Robin 4th sound:", fourthSound);
-
-      // Stop sound B (assuming it played in cycle 1)
-      await page.getByTestId("active-tracks-panel").getByText("rrA").click();
-      await expect(page.locator("text=Nothing playing")).toBeVisible(); // Wait for stop
-
-      // Stop sound A (assuming it played in cycle 1) - simulate stopping another sound mid-cycle
-      // We need to know which sounds *haven't* played in the *new* cycle.
-      // Let's re-trigger until we get a different sound to stop, demonstrating state persistence.
-      let fifthSound = "";
-      for (let i = 0; i < 5; i++) {
-        // Try a few times
-        await pad.click();
-        await page.waitForTimeout(100);
-        currentPlaying = await getPlayingSoundNames(page);
-        expect(currentPlaying.length).toBe(1);
-        fifthSound = currentPlaying[0];
-        await page.getByTestId("active-tracks-panel").getByText("rrA").click();
-        await expect(page.locator("text=Nothing playing")).toBeVisible();
-        if (fifthSound !== fourthSound) break; // Stop once we get a different one
-        await page.waitForTimeout(50);
-      }
-      console.log("Round-Robin 5th sound:", fifthSound);
-      expect(fifthSound).not.toEqual(fourthSound); // Ensure we got a different sound
-
-      // Trigger again - should play the remaining sound from the cycle
-      await pad.click();
-      await page.waitForTimeout(100);
-      currentPlaying = await getPlayingSoundNames(page);
-      expect(currentPlaying.length).toBe(1);
-      const sixthSound = currentPlaying[0];
-      console.log("Round-Robin 6th sound:", sixthSound);
-      expect(fileNames).toContain(sixthSound);
-      expect(sixthSound).not.toEqual(fourthSound);
-      expect(sixthSound).not.toEqual(fifthSound); // Should be the last remaining sound
     });
   });
 });

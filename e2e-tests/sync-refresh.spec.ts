@@ -1,17 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { gotoApp } from "./test-helpers";
 
 test.describe("Sync Refresh", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    // Wait until a real profile is active in the store (not null)
-    await page.waitForFunction(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const store = (window as any).__profileStore;
-      return store && store.getState().activeProfileId !== null;
-    });
+    await gotoApp(page);
   });
 
-  test.fixme("Pad grid updates immediately when sync writes new data, without switching banks", async ({
+  test("Pad grid updates immediately when sync writes new data, without switching banks", async ({
     page,
   }) => {
     // Get the active profile ID

@@ -1,4 +1,4 @@
-import { test, expect, Page } from "@playwright/test"; // Added Page type
+import { test, expect } from "@playwright/test";
 import {
   prepareAudioContext,
   createTestAudioFilePath,
@@ -10,56 +10,40 @@ import {
   removeSoundFromModal,
   savePadEditModal,
   createNewBankViaUi,
+  gotoApp,
+  enterEditMode,
+  exitEditMode,
 } from "./test-helpers";
-import { PlaybackType } from "../src/lib/db"; // Added PlaybackType
 
 // Helper definitions moved to test-helpers.ts
 
 test.describe("ImpAmp3 Edit Mode", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto("/");
-
-    // Wait for the app to fully load
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);
   });
 
   test("Shift key activates and deactivates edit mode", async ({ page }) => {
-    // Wait for the app to be fully loaded
-    await page.waitForSelector('[id^="pad-"]');
+    // Assert on the banner itself rather than a textContent("body") snapshot
+    // taken after a fixed wait: the snapshot is a single read with no
+    // retrying, so it captures whatever the page happened to look like at that
+    // instant and fails whenever edit mode is a few milliseconds late.
+    const editModeBanner = page.getByText("EDIT MODE", { exact: true });
 
-    // Check initial state - we'll use page content snapshot to verify no EDIT MODE text
-    const initialContent = await page.textContent("body");
-    expect(initialContent).not.toContain("EDIT MODE");
+    await expect(editModeBanner).toBeHidden();
 
-    // Press and hold the Shift key
     await page.keyboard.down("Shift");
+    await expect(editModeBanner).toBeVisible();
 
-    // Wait for a short time to ensure edit mode activates
-    await page.waitForTimeout(300);
-
-    // Verify edit mode is activated - EDIT MODE text should now be visible
-    const editModeElement = page.getByText("EDIT MODE", { exact: true });
-    await expect(editModeElement).toBeVisible();
-
-    // Release the Shift key
     await page.keyboard.up("Shift");
-
-    // Wait for edit mode to deactivate
-    await page.waitForTimeout(300);
-
-    // Verify edit mode is deactivated - check page content again
-    const finalContent = await page.textContent("body");
-    expect(finalContent).not.toContain("EDIT MODE");
+    await expect(editModeBanner).toBeHidden();
   });
 
   test("Can rename pads in edit mode", async ({ page }) => {
     // Enter edit mode
-    await page.keyboard.down("Shift");
-    await page.waitForTimeout(300);
+    await enterEditMode(page);
 
     // Verify edit mode is active
     await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
@@ -91,8 +75,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     // Release shift key (or ensure it's released if test requires it)
     // Note: The modal logic itself handles releasing edit mode if shift is up *after* confirm/cancel
     // We might not need to explicitly release shift here if the modal handles it. Let's keep it for now.
-    await page.keyboard.up("Shift");
-    await page.waitForTimeout(300); // Wait for potential state updates
+    await exitEditMode(page);
 
     // Verify the pad name was updated
     await expect(firstPad).toContainText("Custom Pad Name");
@@ -108,8 +91,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
 
     // --- Rename the new bank ---
     // Ensure Shift is still down (or press it again if needed)
-    await page.keyboard.down("Shift");
-    await page.waitForTimeout(300); // Ensure edit mode is active
+    await enterEditMode(page);
 
     // Click the new bank tab to trigger edit modal
     await newBankTab.click();
@@ -137,8 +119,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
 
     // Release shift key
-    await page.keyboard.up("Shift");
-    await page.waitForTimeout(300);
+    await exitEditMode(page);
 
     // Verify the bank name was updated on the tab
     await expect(newBankTab).toContainText(`Custom Bank`);
@@ -148,8 +129,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
 
   test("Can mark a bank as emergency", async ({ page }) => {
     // Enter edit mode
-    await page.keyboard.down("Shift");
-    await page.waitForTimeout(300);
+    await enterEditMode(page);
 
     // Find the first bank tab
     const firstBankTab = page.locator('[role="tab"]').first();
@@ -182,8 +162,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
 
     // Release shift key
-    await page.keyboard.up("Shift");
-    await page.waitForTimeout(300);
+    await exitEditMode(page);
 
     // Verify the emergency indicator is now visible on the first bank tab
     // Re-locate the tab
@@ -410,7 +389,7 @@ test.describe("ImpAmp3 Edit Mode", () => {
     ).toBeChecked();
   });
 
-  test.fixme("X button / Delete+click opens modal for multi-sound pad", async ({
+  test("Delete/Move mode click opens the edit modal for a multi-sound pad", async ({
     page,
   }) => {
     const fileNames = ["multiSoundX1", "multiSoundX2"];
@@ -421,27 +400,30 @@ test.describe("ImpAmp3 Edit Mode", () => {
     await addSoundsToPadModal(page, filePaths);
     await savePadEditModal(page);
 
-    // Enter edit mode
-    await page.keyboard.down("Shift");
-    await page.waitForTimeout(200);
+    // Removing a sound is no longer an "X" button on the pad in edit mode:
+    // it is a click on the pad in Delete/Move mode, toggled from the toolbar.
+    await page
+      .getByRole("button", { name: "Toggle delete and move mode" })
+      .click();
 
-    // Click the 'X' button on the pad itself
     const pad = page.locator('[id^="pad-"][id$="-7"]');
-    const xButton = pad.locator('button[aria-label="Remove sound"]');
-    await expect(xButton).toBeVisible();
-    await xButton.click();
+    await pad.click();
 
-    // Verify the EDIT modal opened, not the confirmation modal
+    // A pad holding more than one sound can't guess which sound to drop, so
+    // it opens the edit modal rather than a "Remove Sound" confirmation.
     await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
     await expect(page.locator('[data-testid="modal-title"]')).toContainText(
       "Edit Pad",
-    ); // Not "Remove Sound"
+    );
     await expect(
       page.locator('[data-testid="edit-pad-sounds-list"]'),
-    ).toBeVisible(); // Check for edit content
+    ).toBeVisible();
+    // Both sounds are offered for individual removal
+    await expect(
+      page.locator('[data-testid^="edit-pad-sound-item-"]'),
+    ).toHaveCount(2);
 
-    // Close modal and release shift
-    await page.locator('[data-testid="modal-cancel-button"]').click(); // Assuming cancel exists
-    await page.keyboard.up("Shift");
+    await page.locator('[data-testid="modal-cancel-button"]').click();
+    await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
   });
 });
