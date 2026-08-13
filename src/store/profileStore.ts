@@ -13,7 +13,14 @@ import {
 } from "@/lib/db";
 // Import/export utilities will be loaded dynamically to reduce bundle size
 // Types are imported separately for type checking
-import type { ProfileExport, MultiProfileExport } from "../lib/importExport";
+import type {
+  ProfileExport,
+  MultiProfileExport,
+  TransferProgressCallback,
+  ZipImportResult,
+  ImportAudioProgress,
+} from "../lib/importExport";
+import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
@@ -74,17 +81,24 @@ interface ProfileState {
   deleteProfile: (id: number) => Promise<void>;
 
   // Import/Export functionality
-  exportMultipleProfilesToJSON: (profileIds: number[]) => Promise<boolean>;
-  exportMultipleProfilesToZip: (profileIds: number[]) => Promise<boolean>;
+  exportMultipleProfilesToZip: (
+    profileIds: number[],
+    onProgress?: TransferProgressCallback,
+  ) => Promise<boolean>;
   importProfileFromJSON: (jsonData: string) => Promise<number>; // For current format
   importProfileFromImpamp2JSON: (jsonData: string) => Promise<number>; // For impamp2 format
   importMultipleProfilesFromJSON: (
     jsonData: string,
   ) => Promise<{ profileName: string; result: number | Error }[]>;
-  importProfileFromZip: (zipBlob: Blob) => Promise<number>;
-  importMultipleProfilesFromZip: (
+  importProfilesFromZip: (
     zipBlob: Blob,
-  ) => Promise<{ profileName: string; result: number | Error }[]>;
+    onProgress?: TransferProgressCallback,
+  ) => Promise<ZipImportResult[]>;
+  importProfileFromSyncData: (
+    syncData: ProfileSyncData,
+    downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+    onProgress?: (progress: ImportAudioProgress) => void,
+  ) => Promise<number>; // For Google Drive connect flows
 
   // Profile manager UI state
   openProfileManager: () => void;
@@ -131,19 +145,6 @@ const _triggerBlobDownload = (blob: Blob, filename: string): boolean => {
   }
 };
 
-const _triggerDownload = (
-  jsonDataString: string,
-  filename: string,
-): boolean => {
-  try {
-    const blob = new Blob([jsonDataString], { type: "application/json" });
-    _downloadBlob(blob, filename);
-    return true;
-  } catch (error) {
-    console.error("Error triggering download:", error);
-    return false;
-  }
-};
 // --- End Helper Function ---
 
 // Builds the export filename: the single profile's sanitized name, or a
@@ -475,70 +476,6 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       // Import/Export functionality
-      exportMultipleProfilesToJSON: async (profileIds: number[]) => {
-        if (!profileIds || profileIds.length === 0) {
-          console.warn("No profile IDs provided for multi-export.");
-          return false;
-        }
-        try {
-          // Dynamically import the export functions to reduce bundle size
-          const { exportMultipleProfiles } =
-            await import("../lib/importExport");
-          const exportData = await exportMultipleProfiles(profileIds);
-
-          // Convert to JSON string
-          const jsonString = JSON.stringify(exportData, null, 2);
-
-          // Create filename
-          const filename = _buildExportFilename(
-            profileIds,
-            get().profiles,
-            "json",
-          );
-
-          // Use helper to trigger download
-          const success = _triggerDownload(jsonString, filename);
-
-          // --- Update lastBackedUpAt timestamp for all exported profiles ---
-          if (success) {
-            console.log(
-              `Successfully triggered download for ${profileIds.length} profiles. Now updating timestamps...`,
-            );
-            try {
-              await _markProfilesBackedUpNow(set, profileIds);
-              console.log(
-                `Successfully updated lastBackedUpAt for ${profileIds.length} profiles in DB and state.`,
-              );
-            } catch (updateError) {
-              console.error(
-                `Failed to update lastBackedUpAt for one or more profiles (${profileIds.join(", ")}) after successful export:`,
-                updateError,
-              );
-              // Set error state, but don't throw, as download succeeded
-              set({
-                error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-              });
-            }
-          } else {
-            console.error(
-              `Failed to trigger download for ${profileIds.length} profiles.`,
-            );
-            set({ error: `Failed to trigger download for profile export.` });
-          }
-          // --- End timestamp update ---
-
-          return success;
-        } catch (error) {
-          console.error("Failed to export multiple profiles:", error);
-          const errorMessage =
-            error instanceof Error
-              ? error.message
-              : "An unknown error occurred";
-          set({ error: `Failed to export profiles: ${errorMessage}` });
-          throw error; // Re-throw for UI handling
-        }
-      },
-
       importMultipleProfilesFromJSON: async (jsonData: string) => {
         try {
           // Parse the JSON data
@@ -672,15 +609,16 @@ export const useProfileStore = create<ProfileState>()(
         }
       },
 
-      exportMultipleProfilesToZip: async (profileIds: number[]) => {
+      exportMultipleProfilesToZip: async (
+        profileIds: number[],
+        onProgress?: TransferProgressCallback,
+      ) => {
         if (!profileIds || profileIds.length === 0) {
           console.warn("No profile IDs provided for ZIP export.");
           return false;
         }
         try {
-          const { exportMultipleProfilesToZip } =
-            await import("../lib/importExport");
-          const zipBlob = await exportMultipleProfilesToZip(profileIds);
+          const { exportProfilesToZip } = await import("../lib/importExport");
 
           const filename = _buildExportFilename(
             profileIds,
@@ -688,7 +626,72 @@ export const useProfileStore = create<ProfileState>()(
             "iaz",
           );
 
-          const success = _triggerBlobDownload(zipBlob, filename);
+          // Preferred path: stream the archive straight to disk via the File
+          // System Access API (Chromium). The archive never has to fit in
+          // memory, so export size is bounded only by free disk space.
+          // Note: the picker must be called early, while the button click's
+          // user activation is still valid.
+          if (typeof window.showSaveFilePicker === "function") {
+            let handle: FileSystemFileHandle | null = null;
+            try {
+              handle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [
+                  {
+                    description: "ImpAmp profile archive",
+                    accept: { "application/zip": [".iaz"] },
+                  },
+                ],
+              });
+            } catch (pickerError) {
+              if (
+                pickerError instanceof DOMException &&
+                pickerError.name === "AbortError"
+              ) {
+                // User cancelled the save dialog — not an error.
+                return false;
+              }
+              // Picker unavailable (e.g. blocked in this context) — fall
+              // through to the in-memory blob download below.
+              console.warn(
+                "Save picker failed, falling back to blob download:",
+                pickerError,
+              );
+            }
+
+            if (handle) {
+              const writable = await handle.createWritable();
+              try {
+                await exportProfilesToZip(profileIds, writable, onProgress);
+              } catch (error) {
+                try {
+                  await writable.abort();
+                } catch {
+                  // stream may already be closed
+                }
+                throw error;
+              }
+              try {
+                await _markProfilesBackedUpNow(set, profileIds);
+              } catch (updateError) {
+                set({
+                  error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
+                });
+              }
+              return true;
+            }
+          }
+
+          // Fallback: build the archive as an in-memory Blob and download it
+          // via an anchor element (browsers without the File System Access
+          // API — Firefox/Safari).
+          const zipBlob = await exportProfilesToZip(
+            profileIds,
+            "blob",
+            onProgress,
+          );
+          const success =
+            zipBlob !== null && _triggerBlobDownload(zipBlob, filename);
 
           if (success) {
             try {
@@ -714,12 +717,22 @@ export const useProfileStore = create<ProfileState>()(
         }
       },
 
-      importProfileFromZip: async (zipBlob: Blob) => {
+      importProfileFromSyncData: async (
+        syncData: ProfileSyncData,
+        downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+        onProgress?: (progress: ImportAudioProgress) => void,
+      ) => {
         try {
-          const { importProfileFromZip } = await import("../lib/importExport");
+          const { importProfileFromSyncData } =
+            await import("../lib/importExport");
           const { getDb } = await import("@/lib/db");
           const db = await getDb();
-          const newProfileId = await importProfileFromZip(zipBlob, db);
+          const newProfileId = await importProfileFromSyncData(
+            db,
+            syncData,
+            downloadAudioBlob,
+            onProgress,
+          );
 
           const newProfile = await getProfile(newProfileId);
           if (newProfile) {
@@ -730,29 +743,31 @@ export const useProfileStore = create<ProfileState>()(
 
           return newProfileId;
         } catch (error) {
-          console.error("Failed to import profile from ZIP:", error);
+          console.error("Failed to import profile from sync data:", error);
           const errorMessage =
             error instanceof Error
               ? error.message
               : "An unknown error occurred";
-          set({ error: `Failed to import profile: ${errorMessage}` });
+          set({ error: `Failed to connect profile: ${errorMessage}` });
           throw error;
         }
       },
 
-      importMultipleProfilesFromZip: async (zipBlob: Blob) => {
+      importProfilesFromZip: async (
+        zipBlob: Blob,
+        onProgress?: TransferProgressCallback,
+      ) => {
         try {
-          const { importMultipleProfilesFromZip } =
-            await import("../lib/importExport");
+          const { importProfilesFromZip } = await import("../lib/importExport");
           const { getDb } = await import("@/lib/db");
           const db = await getDb();
-          const results = await importMultipleProfilesFromZip(zipBlob, db);
+          const results = await importProfilesFromZip(zipBlob, db, onProgress);
 
           await get().fetchProfiles();
 
           return results;
         } catch (error) {
-          console.error("Failed to import multiple profiles from ZIP:", error);
+          console.error("Failed to import profiles from ZIP:", error);
           const errorMessage =
             error instanceof Error
               ? error.message

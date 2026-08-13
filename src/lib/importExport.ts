@@ -14,7 +14,7 @@ import {
   collectReferencedAudioFileIds,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import { getPadIndexForKey } from "./keyboardUtils";
-import type JSZipType from "jszip";
+import type { ProfileSyncData } from "./syncUtils";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -83,56 +83,51 @@ export interface MultiProfileExport {
   profiles: ProfileExport[]; // An array of individual profile exports
 }
 
-// Helper function to convert Blob to Base64 string
-export function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      // Ensure the result is a string and contains the expected prefix
-      if (typeof dataUrl === "string" && dataUrl.includes(",")) {
-        const base64 = dataUrl.split(",")[1];
-        resolve(base64);
-      } else {
-        reject(new Error("Failed to read blob as data URL or invalid format"));
-      }
-    };
-    reader.onerror = (error) => {
-      console.error("FileReader error:", error);
-      reject(new Error("Failed to convert blob to base64"));
-    };
-    reader.readAsDataURL(blob);
-  });
-}
+// Note: blobToBase64 is intentionally gone — nothing in the app encodes
+// audio to base64 anymore. Audio travels as blobs/original files everywhere
+// (ZIP archives, IndexedDB, separate Drive files). base64ToBlob below is
+// decode-only support for reading legacy formats (old JSON exports, impamp2
+// files, and legacy Drive sync data).
 
 // Helper function to convert Base64 string to Blob
-export function base64ToBlob(base64: string, type: string): Promise<Blob> {
+export async function base64ToBlob(
+  base64: string,
+  type: string,
+): Promise<Blob> {
+  // fetch() decodes data URLs natively and streams the result, which is far
+  // faster and lighter on memory than a manual atob() loop for large files.
   try {
-    // Decode base64
+    const response = await fetch(
+      `data:${type || "application/octet-stream"};base64,${base64}`,
+    );
+    return await response.blob();
+  } catch {
+    // Fall back to manual decoding (e.g. if the data URL is rejected)
+  }
+
+  try {
     const byteCharacters = atob(base64);
     const byteArrays = [];
 
-    // Slice the byteCharacters into smaller chunks to prevent memory issues
-    for (let offset = 0; offset < byteCharacters.length; offset += 1024) {
-      const slice = byteCharacters.slice(offset, offset + 1024);
-
-      const byteNumbers = new Array(slice.length);
+    // Decode in chunks to avoid one huge intermediate allocation
+    const chunkSize = 64 * 1024;
+    for (let offset = 0; offset < byteCharacters.length; offset += chunkSize) {
+      const slice = byteCharacters.slice(offset, offset + chunkSize);
+      const byteArray = new Uint8Array(slice.length);
       for (let i = 0; i < slice.length; i++) {
-        byteNumbers[i] = slice.charCodeAt(i);
+        byteArray[i] = slice.charCodeAt(i);
       }
-
-      const byteArray = new Uint8Array(byteNumbers);
       byteArrays.push(byteArray);
     }
 
-    return Promise.resolve(new Blob(byteArrays, { type }));
+    return new Blob(byteArrays, { type });
   } catch (error) {
     console.error("Error converting base64 to Blob:", error);
-    return Promise.reject(error); // Propagate the error
+    throw error;
   }
 }
 
-// Helper function to get all pad configurations for a profile (Needed by exportProfile)
+// Helper function to get all pad configurations for a profile (used by ZIP export)
 export async function getAllPadConfigurationsForProfile(
   profileId: number,
 ): Promise<PadConfiguration[]> {
@@ -145,110 +140,10 @@ export async function getAllPadConfigurationsForProfile(
   return index.getAll(profileId);
 }
 
-// Export a profile to a JSON object
-export async function exportProfile(profileId: number): Promise<ProfileExport> {
-  try {
-    // Get the profile data
-    const profile = await getProfile(profileId);
-    if (!profile) {
-      throw new Error(`Profile with ID ${profileId} not found`);
-    }
-
-    // Get all pad configurations for this profile
-    const padConfigurations =
-      await getAllPadConfigurationsForProfile(profileId);
-
-    // Get all page metadata for this profile
-    const pageMetadata = await getAllPageMetadataForProfile(profileId);
-
-    // Get all unique audio file IDs referenced by this profile's pads
-    const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
-
-    // Convert audio blobs to base64
-    const audioFiles = [];
-    for (const audioFileId of audioFileIds) {
-      const audioFile = await getAudioFile(audioFileId);
-      if (audioFile) {
-        const base64data = await blobToBase64(audioFile.blob);
-        audioFiles.push({
-          id: audioFileId, // Keep original ID for reference in export, map on import
-          name: audioFile.name,
-          type: audioFile.type,
-          data: base64data,
-        });
-      } else {
-        console.warn(
-          `Audio file with ID ${audioFileId} referenced in profile but not found in DB.`,
-        );
-      }
-    }
-
-    // Create the export object, explicitly excluding lastBackedUpAt
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { lastBackedUpAt, ...profileToExport } = profile; // Destructure to omit lastBackedUpAt
-
-    const exportData: ProfileExport = {
-      exportVersion: 2, // Mark as new version
-      exportDate: new Date().toISOString(),
-      profile: profileToExport, // Use the cloned profile data without lastBackedUpAt
-      padConfigurations, // Already contains the new structure
-      pageMetadata,
-      audioFiles,
-    };
-
-    return exportData;
-  } catch (error) {
-    console.error("Failed to export profile:", error);
-    throw error;
-  }
-}
-
-/**
- * Exports multiple profiles into a single structure.
- * @param profileIds An array of profile IDs to export.
- * @returns A Promise resolving to the MultiProfileExport object.
- */
-export async function exportMultipleProfiles(
-  profileIds: number[],
-): Promise<MultiProfileExport> {
-  console.log(`Starting export for ${profileIds.length} profiles...`);
-  const profileExports: ProfileExport[] = [];
-  const errors: { profileId: number; error: Error }[] = []; // Use Error type instead of any
-
-  for (const profileId of profileIds) {
-    try {
-      console.log(`Exporting profile ID: ${profileId}`);
-      const singleExport = await exportProfile(profileId); // Reuse existing function
-      profileExports.push(singleExport);
-      console.log(`Successfully exported profile ID: ${profileId}`);
-    } catch (error) {
-      console.error(`Failed to export profile ID ${profileId}:`, error);
-      // Ensure the caught object is an Error before pushing
-      errors.push({
-        profileId,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-      // Continue exporting other profiles even if one fails
-    }
-  }
-
-  if (errors.length > 0) {
-    // Log a warning if some profiles failed to export
-    console.warn(
-      `Export completed with ${errors.length} errors for profile IDs: ${errors.map((e) => e.profileId).join(", ")}`,
-    );
-    // Depending on requirements, we might want to throw here or return partial data with error info
-  }
-
-  const multiExportData: MultiProfileExport = {
-    exportVersion: 1, // Version for the multi-export format
-    exportDate: new Date().toISOString(),
-    profiles: profileExports,
-  };
-
-  console.log(`Finished exporting ${profileExports.length} profiles.`);
-  return multiExportData;
-}
+// Note: the old base64/JSON export path (exportProfile /
+// exportMultipleProfiles) was removed — exports are ZIP-only now
+// (exportProfilesToZip below). Importing legacy JSON files is still
+// supported for backward compatibility.
 
 // --- Profile Import Logic ---
 
@@ -318,77 +213,120 @@ async function createImportedProfile(
   return profileId;
 }
 
-// Helper function to import audio files (Refactored for single transaction)
-async function importAudioFiles(
+/**
+ * A pluggable source for one audio file during import. The blob is only
+ * materialized when getBlob() is called, so callers can stream files one at a
+ * time (from a ZIP entry, a base64 string, etc.) instead of holding the whole
+ * archive in memory.
+ */
+export interface ImportAudioSource {
+  originalId: number;
+  name: string;
+  type: string;
+  /** Uncompressed size in bytes, if known (used for progress reporting). */
+  size?: number;
+  /**
+   * Materializes the audio blob. Sources that can report progress mid-file
+   * (e.g. ZIP extraction) invoke onBytes with the number of bytes done so far.
+   */
+  getBlob: (onBytes?: (bytesDone: number) => void) => Promise<Blob>;
+}
+
+/** Progress information reported while importing audio files. */
+export interface ImportAudioProgress {
+  fileName: string;
+  processedFiles: number;
+  totalFiles: number;
+  processedBytes: number;
+  totalBytes: number;
+}
+
+// Imports audio files with bounded memory: each file is materialized,
+// written in a short transaction, then released — memory stays bounded by
+// `concurrency` files at once rather than the whole export.
+//
+// concurrency = 1 (default) also enables byte-level progress within each
+// file. Higher values run sources through a small worker pool — useful for
+// latency-bound sources like Google Drive downloads, pointless for local
+// ZIP extraction — reporting per-file completion progress instead (bytes
+// from interleaved files would not be meaningful).
+async function importAudioSources(
   db: IDBPDatabase<ImpAmpDBSchema>,
-  audioFiles: ProfileExport["audioFiles"],
+  audioSources: ImportAudioSource[],
   now: Date,
+  onProgress?: (progress: ImportAudioProgress) => void,
+  concurrency = 1,
 ): Promise<Map<number, number>> {
   const audioIdMap = new Map<number, number>();
-  console.log(`Starting import of ${audioFiles.length} audio files`);
+  const totalBytes = audioSources.reduce((sum, s) => sum + (s.size ?? 0), 0);
+  let processedBytes = 0;
+  let completedFiles = 0;
 
-  // Prepare audio data outside the transaction
-  const preparedAudio = [];
-  for (const audioFileExport of audioFiles) {
+  console.log(
+    `Starting import of ${audioSources.length} audio files (concurrency: ${concurrency})`,
+  );
+
+  const importOne = async (
+    source: ImportAudioSource,
+    reportBytes: boolean,
+  ): Promise<void> => {
     try {
-      console.log(
-        `Preparing audio file ${audioFileExport.name} (Original ID: ${audioFileExport.id})...`,
+      const blob = await source.getBlob(
+        reportBytes
+          ? (bytesDone) => {
+              onProgress?.({
+                fileName: source.name,
+                processedFiles: completedFiles,
+                totalFiles: audioSources.length,
+                processedBytes: processedBytes + bytesDone,
+                totalBytes,
+              });
+            }
+          : undefined,
       );
-      const blob = await base64ToBlob(
-        audioFileExport.data,
-        audioFileExport.type,
-      );
-      preparedAudio.push({
-        originalId: audioFileExport.id,
-        fileData: {
-          blob,
-          name: audioFileExport.name,
-          type: audioFileExport.type,
-          createdAt: now,
-        },
+      const audioTx = db.transaction("audioFiles", "readwrite");
+      const newAudioId = await audioTx.objectStore("audioFiles").add({
+        blob,
+        name: source.name,
+        type: source.type,
+        createdAt: now,
       });
+      await audioTx.done;
+      audioIdMap.set(source.originalId, newAudioId);
     } catch (error) {
       console.error(
-        `Failed to prepare audio file: ${audioFileExport.name} (Original ID: ${audioFileExport.id})`,
+        `Failed to import audio file: ${source.name} (Original ID: ${source.originalId})`,
         error,
       );
       // Skip this file, but continue with others
     }
-  }
-
-  // Perform all additions in a single transaction
-  if (preparedAudio.length > 0) {
-    const audioTx = db.transaction("audioFiles", "readwrite");
-    const audioStore = audioTx.objectStore("audioFiles");
-    const addPromises = preparedAudio.map(async (item) => {
-      try {
-        const newAudioId = await audioStore.add(item.fileData);
-        audioIdMap.set(item.originalId, newAudioId);
-        console.log(
-          `Added audio file: ${item.fileData.name} (Original ID: ${item.originalId}, New ID: ${newAudioId})`,
-        );
-      } catch (dbError) {
-        console.error(
-          `Database error adding audio file ${item.fileData.name} (Original ID: ${item.originalId}):`,
-          dbError,
-        );
-        // Don't map this ID if add fails
-      }
+    completedFiles++;
+    processedBytes += source.size ?? 0;
+    onProgress?.({
+      fileName: source.name,
+      processedFiles: completedFiles,
+      totalFiles: audioSources.length,
+      processedBytes,
+      totalBytes,
     });
+  };
 
-    try {
-      await Promise.all(addPromises);
-      await audioTx.done;
-      console.log("Audio file transaction committed.");
-    } catch (txError) {
-      console.error("Error during audio file import transaction:", txError);
-      // Note: IDs added before the error might still be in the map, but the transaction failed.
-      // Consider clearing the map or handling this state if partial success is problematic.
-      audioIdMap.clear(); // Clear map on transaction failure
-      throw txError; // Re-throw transaction error
+  if (concurrency <= 1) {
+    for (const source of audioSources) {
+      await importOne(source, true);
     }
   } else {
-    console.log("No audio files prepared for import.");
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(concurrency, audioSources.length) },
+      async () => {
+        while (nextIndex < audioSources.length) {
+          const source = audioSources[nextIndex++];
+          await importOne(source, false);
+        }
+      },
+    );
+    await Promise.all(workers);
   }
 
   console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
@@ -527,10 +465,22 @@ async function importPadConfigurations(
   }
 }
 
-// Import a profile from a standard export object
-export async function importProfile(
+// Shared metadata shape for imports: a full ProfileExport minus the audio
+// payload (audio arrives separately via ImportAudioSource[]).
+type ProfileImportMeta = Omit<ProfileExport, "audioFiles">;
+
+/**
+ * Core import routine shared by the JSON and ZIP paths. Creates the profile,
+ * imports audio from the provided sources (one file at a time), then imports
+ * page metadata and pad configurations. Cleans up the partial profile on
+ * failure.
+ */
+async function importProfileCore(
   db: IDBPDatabase<ImpAmpDBSchema>,
-  exportData: ProfileExport,
+  exportData: ProfileImportMeta,
+  audioSources: ImportAudioSource[],
+  onAudioProgress?: (progress: ImportAudioProgress) => void,
+  audioConcurrency = 1,
 ): Promise<number> {
   let profileId: number | undefined = undefined;
   const now = new Date();
@@ -577,7 +527,6 @@ export async function importProfile(
           createdAt: oldPad.createdAt || now, // Use existing or new date
           updatedAt: oldPad.updatedAt || now, // Use existing or new date
         };
-        // delete (migratedPad as any).audioFileId; // Ensure old field is gone (optional, spread below handles it)
         return migratedPad;
       });
     } else if (exportData.exportVersion !== 2) {
@@ -593,8 +542,14 @@ export async function importProfile(
     profileId = await createImportedProfile(db, exportData, now);
     console.log(`Created imported profile with ID ${profileId}`);
 
-    // Step 2: Import audio files (single transaction)
-    const audioIdMap = await importAudioFiles(db, exportData.audioFiles, now);
+    // Step 2: Import audio files (one short transaction per file)
+    const audioIdMap = await importAudioSources(
+      db,
+      audioSources,
+      now,
+      onAudioProgress,
+      audioConcurrency,
+    );
     console.log(`Imported ${audioIdMap.size} audio files`);
 
     // Step 3: Import page metadata (single transaction)
@@ -633,6 +588,110 @@ export async function importProfile(
     }
     throw error; // Re-throw the original import error
   }
+}
+
+// Import a profile from a standard export object (base64-encoded audio)
+export async function importProfile(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  exportData: ProfileExport,
+): Promise<number> {
+  const audioSources: ImportAudioSource[] = exportData.audioFiles.map(
+    (audioFileExport) => ({
+      originalId: audioFileExport.id,
+      name: audioFileExport.name,
+      type: audioFileExport.type,
+      getBlob: () => base64ToBlob(audioFileExport.data, audioFileExport.type),
+    }),
+  );
+
+  return importProfileCore(db, exportData, audioSources);
+}
+
+// Number of Google Drive audio downloads to run concurrently when
+// connecting a synced profile. Drive requests are latency-dominated, so a
+// small pool gives a large speedup on many-file profiles without straining
+// API rate limits or memory (at most this many files are in flight).
+const DRIVE_DOWNLOAD_CONCURRENCY = 4;
+
+/**
+ * Imports a profile directly from Google Drive sync data, streaming each
+ * audio file (downloaded blob, or legacy embedded base64) straight into
+ * IndexedDB, downloading a few files concurrently.
+ *
+ * This replaces the old connect flow that base64-encoded every downloaded
+ * blob and round-tripped the whole profile through one giant JSON string —
+ * which held all audio in memory at once and hit V8's ~512 MB string cap
+ * for large profiles.
+ *
+ * The caller links the imported profile to Drive (file/folder IDs,
+ * read-only flag) using the returned profile ID.
+ *
+ * @param downloadAudioBlob Downloads the blob for a driveFileId (typically
+ *   useGoogleDriveSync().downloadAudioFile).
+ */
+export async function importProfileFromSyncData(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  syncData: ProfileSyncData,
+  downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
+  onProgress?: (progress: ImportAudioProgress) => void,
+): Promise<number> {
+  // Strip fields the import must not carry over (a fresh id is assigned and
+  // lastBackedUpAt is stamped by the import itself).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id, lastBackedUpAt, ...profileRest } = syncData.profile;
+
+  const meta: ProfileImportMeta = {
+    exportVersion: 2,
+    exportDate: new Date().toISOString(),
+    profile: { ...profileRest, syncType: "googleDrive" },
+    padConfigurations: syncData.padConfigurations ?? [],
+    pageMetadata: syncData.pageMetadata ?? [],
+  };
+
+  const audioSources: ImportAudioSource[] = [];
+  for (const ref of syncData.audioFiles ?? []) {
+    if (ref.driveFileId) {
+      const driveFileId = ref.driveFileId;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        getBlob: async () => {
+          const blob = await downloadAudioBlob(driveFileId);
+          if (!blob) {
+            throw new Error(
+              `Failed to download audio "${ref.name}" from Google Drive.`,
+            );
+          }
+          return blob;
+        },
+      });
+    } else if (typeof ref.data === "string") {
+      // Legacy sync format: audio embedded as base64
+      const data = ref.data;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        getBlob: () => base64ToBlob(data, ref.type),
+      });
+    } else {
+      console.warn(
+        `Audio file "${ref.name}" (ID ${ref.id}) has neither driveFileId nor embedded data — skipping.`,
+      );
+    }
+  }
+
+  // Drive downloads are latency-bound (many small HTTP requests), so a
+  // small worker pool speeds up connects considerably. Kept modest to stay
+  // well within Drive API rate limits.
+  return importProfileCore(
+    db,
+    meta,
+    audioSources,
+    onProgress,
+    DRIVE_DOWNLOAD_CONCURRENCY,
+  );
 }
 
 /**
@@ -1123,41 +1182,64 @@ async function collectProfileDataForZip(profileId: number): Promise<{
 }
 
 /**
- * Exports a single profile as a ZIP blob (.iaz).
- * Structure: profile.json + audio/<id>
+ * Progress reported while exporting to or importing from a ZIP archive.
+ * Byte counts cover audio data only (metadata is negligible in comparison).
  */
-export async function exportProfileToZip(profileId: number): Promise<Blob> {
-  const JSZip = (await import("jszip")).default;
-  const { lean, audioBlobs } = await collectProfileDataForZip(profileId);
+export interface TransferProgress {
+  phase: "preparing" | "audio" | "finalizing";
+  fileName?: string;
+  processedFiles: number;
+  totalFiles: number;
+  processedBytes: number;
+  totalBytes: number;
+}
 
-  const zip = new JSZip();
-  zip.file("profile.json", JSON.stringify(lean, null, 2));
+export type TransferProgressCallback = (progress: TransferProgress) => void;
 
-  for (const [id, { blob }] of audioBlobs) {
-    const buffer = await blob.arrayBuffer();
-    zip.file(`audio/${id}`, buffer);
-  }
-
-  return zip.generateAsync({
-    type: "blob",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
+// Loads zip.js lazily and disables its web workers: they complicate bundling
+// under Next.js and buy nothing here since audio entries are STOREd
+// (no compression work to offload).
+async function getZipJs() {
+  const zipjs = await import("@zip.js/zip.js");
+  zipjs.configure({ useWebWorkers: false });
+  return zipjs;
 }
 
 /**
- * Exports multiple profiles as a ZIP blob (.iaz).
+ * Exports profiles as a ZIP archive (.iaz), streaming each audio blob
+ * straight into the target so the archive never has to fit in memory.
  * Structure: manifest.json + audio/<id> (shared) + profiles/<n>/profile.json
+ *
+ * @param profileIds Profiles to include.
+ * @param target A WritableStream (e.g. from showSaveFilePicker) to stream the
+ *   archive to disk, or "blob" to build an in-memory Blob (fallback for
+ *   browsers without the File System Access API).
+ * @returns The archive Blob when target is "blob", otherwise null.
  */
-export async function exportMultipleProfilesToZip(
+export async function exportProfilesToZip(
   profileIds: number[],
-): Promise<Blob> {
-  const JSZip = (await import("jszip")).default;
-  const zip = new JSZip();
+  target: WritableStream | "blob",
+  onProgress?: TransferProgressCallback,
+): Promise<Blob | null> {
+  const zipjs = await getZipJs();
 
+  onProgress?.({
+    phase: "preparing",
+    processedFiles: 0,
+    totalFiles: 0,
+    processedBytes: 0,
+    totalBytes: 0,
+  });
+
+  // Collect metadata for all profiles first. The audio blobs pulled from
+  // IndexedDB are references (Chrome keeps large blobs on disk), so holding
+  // them in a map is cheap — the data itself is only read while streaming.
   const manifestProfiles: { name: string; folder: string }[] = [];
-  // Shared audio map across all profiles (IDs are globally unique in IndexedDB)
-  const allAudioBlobs = new Map<number, { blob: Blob }>();
+  const profileJsonEntries: { path: string; json: string }[] = [];
+  const allAudioBlobs = new Map<
+    number,
+    { blob: Blob; name: string; type: string }
+  >();
 
   for (let i = 0; i < profileIds.length; i++) {
     try {
@@ -1166,10 +1248,10 @@ export async function exportMultipleProfilesToZip(
       );
       const folder = String(i);
       manifestProfiles.push({ name: lean.profile.name, folder });
-      zip.file(
-        `profiles/${folder}/profile.json`,
-        JSON.stringify(lean, null, 2),
-      );
+      profileJsonEntries.push({
+        path: `profiles/${folder}/profile.json`,
+        json: JSON.stringify(lean, null, 2),
+      });
       for (const [id, data] of audioBlobs) {
         if (!allAudioBlobs.has(id)) {
           allAudioBlobs.set(id, data);
@@ -1180,153 +1262,234 @@ export async function exportMultipleProfilesToZip(
     }
   }
 
-  for (const [id, { blob }] of allAudioBlobs) {
-    const buffer = await blob.arrayBuffer();
-    zip.file(`audio/${id}`, buffer);
+  const totalFiles = allAudioBlobs.size;
+  let totalBytes = 0;
+  for (const { blob } of allAudioBlobs.values()) {
+    totalBytes += blob.size;
   }
+
+  const blobWriter =
+    target === "blob" ? new zipjs.BlobWriter("application/zip") : null;
+  const zipWriter = new zipjs.ZipWriter(
+    blobWriter ?? (target as WritableStream),
+  );
 
   const manifest: ZipManifest = {
     exportVersion: 3,
     exportDate: new Date().toISOString(),
     profiles: manifestProfiles,
   };
-  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
-
-  return zip.generateAsync({
-    type: "blob",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
-}
-
-// Reads the audio files referenced in `refs` out of a ZIP's `audio/<id>` entries,
-// base64-encoding each so the result can feed into the ProfileExport shape.
-// Missing entries are skipped with a console warning built from `warnSuffix`.
-async function readZipAudioFilesAsBase64(
-  zip: JSZipType,
-  refs: AudioFileRef[],
-  warnSuffix: string,
-): Promise<ProfileExport["audioFiles"]> {
-  const audioFiles: ProfileExport["audioFiles"] = [];
-  for (const ref of refs) {
-    const entry = zip.file(`audio/${ref.id}`);
-    if (entry) {
-      const buffer = await entry.async("arraybuffer");
-      const blob = new Blob([buffer], { type: ref.type });
-      const data = await blobToBase64(blob);
-      audioFiles.push({ id: ref.id, name: ref.name, type: ref.type, data });
-    } else {
-      console.warn(`Audio file ${ref.id} ${warnSuffix}`);
-    }
-  }
-  return audioFiles;
-}
-
-/**
- * Imports a single-profile ZIP (containing profile.json + audio/<id>).
- */
-export async function importProfileFromZip(
-  zipBlob: Blob,
-  db: IDBPDatabase<ImpAmpDBSchema>,
-): Promise<number> {
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(zipBlob);
-
-  const profileJsonFile = zip.file("profile.json");
-  if (!profileJsonFile) {
-    throw new Error("Invalid .iaz file: missing profile.json");
-  }
-
-  const lean = JSON.parse(
-    await profileJsonFile.async("string"),
-  ) as ProfileExportLean;
-
-  // Reconstruct full ProfileExport by reading audio files from the ZIP
-  const audioFiles = await readZipAudioFilesAsBase64(
-    zip,
-    lean.audioFiles,
-    "referenced in profile.json but not found in ZIP.",
+  // JSON metadata compresses well — DEFLATE it.
+  await zipWriter.add(
+    "manifest.json",
+    new zipjs.TextReader(JSON.stringify(manifest, null, 2)),
+    { level: 6 },
   );
+  for (const { path, json } of profileJsonEntries) {
+    await zipWriter.add(path, new zipjs.TextReader(json), { level: 6 });
+  }
 
-  const fullExport: ProfileExport = {
-    exportVersion: lean.exportVersion,
-    exportDate: lean.exportDate,
-    profile: lean.profile,
-    padConfigurations: lean.padConfigurations,
-    pageMetadata: lean.pageMetadata,
-    audioFiles,
-  };
+  let processedFiles = 0;
+  let processedBytes = 0;
+  for (const [id, { blob, name }] of allAudioBlobs) {
+    onProgress?.({
+      phase: "audio",
+      fileName: name,
+      processedFiles,
+      totalFiles,
+      processedBytes,
+      totalBytes,
+    });
+    // Audio formats are already compressed — STORE them instead of wasting
+    // time (and blocking the UI) on DEFLATE that saves next to nothing.
+    await zipWriter.add(`audio/${id}`, new zipjs.BlobReader(blob), {
+      level: 0,
+      onprogress: async (progress: number) => {
+        onProgress?.({
+          phase: "audio",
+          fileName: name,
+          processedFiles,
+          totalFiles,
+          processedBytes: processedBytes + progress,
+          totalBytes,
+        });
+      },
+    });
+    processedFiles++;
+    processedBytes += blob.size;
+  }
 
-  return importProfile(db, fullExport);
+  onProgress?.({
+    phase: "finalizing",
+    processedFiles,
+    totalFiles,
+    processedBytes,
+    totalBytes,
+  });
+  await zipWriter.close();
+
+  return blobWriter ? blobWriter.getData() : null;
+}
+
+export interface ZipImportResult {
+  profileName: string;
+  result: number | Error;
 }
 
 /**
- * Imports a multi-profile ZIP (containing manifest.json + audio/<id> + profiles/<n>/profile.json).
+ * Imports profiles from a .iaz ZIP archive. Handles both layouts:
+ * multi-profile (manifest.json + profiles/<n>/profile.json) and legacy
+ * single-profile (profile.json at the root).
+ *
+ * Only the ZIP's central directory is loaded upfront; each audio file is
+ * extracted from the source Blob on demand and written straight to IndexedDB,
+ * so memory use is bounded by the largest single audio file — never the
+ * archive size. No base64 conversion is involved.
  */
-export async function importMultipleProfilesFromZip(
+export async function importProfilesFromZip(
   zipBlob: Blob,
   db: IDBPDatabase<ImpAmpDBSchema>,
-): Promise<{ profileName: string; result: number | Error }[]> {
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(zipBlob);
+  onProgress?: TransferProgressCallback,
+): Promise<ZipImportResult[]> {
+  const zipjs = await getZipJs();
+  const zipReader = new zipjs.ZipReader(new zipjs.BlobReader(zipBlob));
 
-  const manifestFile = zip.file("manifest.json");
-  if (!manifestFile) {
-    throw new Error("Invalid multi-profile .iaz file: missing manifest.json");
-  }
+  try {
+    onProgress?.({
+      phase: "preparing",
+      processedFiles: 0,
+      totalFiles: 0,
+      processedBytes: 0,
+      totalBytes: 0,
+    });
 
-  const manifest = JSON.parse(
-    await manifestFile.async("string"),
-  ) as ZipManifest;
-  if (manifest.exportVersion !== 3 || !Array.isArray(manifest.profiles)) {
-    throw new Error("Invalid or unsupported multi-profile ZIP format.");
-  }
+    const entries = await zipReader.getEntries();
+    const entryByName = new Map(entries.map((e) => [e.filename, e]));
 
-  const results: { profileName: string; result: number | Error }[] = [];
+    const readEntryText = async (name: string): Promise<string | null> => {
+      const entry = entryByName.get(name);
+      if (!entry || entry.directory) return null;
+      return entry.getData(new zipjs.TextWriter());
+    };
 
-  for (const entry of manifest.profiles) {
-    const profileJsonFile = zip.file(`profiles/${entry.folder}/profile.json`);
-    if (!profileJsonFile) {
-      results.push({
-        profileName: entry.name,
-        result: new Error(`Missing profiles/${entry.folder}/profile.json`),
-      });
-      continue;
+    // Determine the archive layout and gather the lean profile descriptors
+    const results: ZipImportResult[] = [];
+    const leanProfiles: ProfileExportLean[] = [];
+
+    const manifestText = await readEntryText("manifest.json");
+    if (manifestText) {
+      const manifest = JSON.parse(manifestText) as ZipManifest;
+      if (manifest.exportVersion !== 3 || !Array.isArray(manifest.profiles)) {
+        throw new Error("Invalid or unsupported multi-profile ZIP format.");
+      }
+      for (const entry of manifest.profiles) {
+        const text = await readEntryText(
+          `profiles/${entry.folder}/profile.json`,
+        );
+        if (!text) {
+          results.push({
+            profileName: entry.name,
+            result: new Error(`Missing profiles/${entry.folder}/profile.json`),
+          });
+          continue;
+        }
+        leanProfiles.push(JSON.parse(text) as ProfileExportLean);
+      }
+    } else {
+      const singleText = await readEntryText("profile.json");
+      if (!singleText) {
+        throw new Error(
+          "Invalid .iaz file: missing manifest.json or profile.json",
+        );
+      }
+      leanProfiles.push(JSON.parse(singleText) as ProfileExportLean);
     }
 
+    // Aggregate totals across all profiles for one smooth progress bar
+    const entrySize = (ref: AudioFileRef): number =>
+      entryByName.get(`audio/${ref.id}`)?.uncompressedSize ?? 0;
+    const totalFiles = leanProfiles.reduce(
+      (n, lean) => n + lean.audioFiles.length,
+      0,
+    );
+    const totalBytes = leanProfiles.reduce(
+      (n, lean) => n + lean.audioFiles.reduce((m, r) => m + entrySize(r), 0),
+      0,
+    );
+    let doneFiles = 0;
+    let doneBytes = 0;
+
+    for (const lean of leanProfiles) {
+      const profileName = lean.profile?.name || "Unnamed Profile";
+      try {
+        const audioSources: ImportAudioSource[] = [];
+        for (const ref of lean.audioFiles) {
+          const entry = entryByName.get(`audio/${ref.id}`);
+          if (!entry || entry.directory) {
+            console.warn(
+              `Audio file ${ref.id} referenced by profile "${profileName}" not found in ZIP.`,
+            );
+            continue;
+          }
+          const getData = entry.getData.bind(entry);
+          audioSources.push({
+            originalId: ref.id,
+            name: ref.name,
+            type: ref.type,
+            size: entry.uncompressedSize,
+            getBlob: (onBytes) =>
+              getData(new zipjs.BlobWriter(ref.type), {
+                onprogress: onBytes
+                  ? async (bytesDone: number) => {
+                      onBytes(bytesDone);
+                    }
+                  : undefined,
+              }),
+          });
+        }
+
+        const baseFiles = doneFiles;
+        const baseBytes = doneBytes;
+        const newProfileId = await importProfileCore(
+          db,
+          lean,
+          audioSources,
+          (p) => {
+            onProgress?.({
+              phase: "audio",
+              fileName: p.fileName,
+              processedFiles: baseFiles + p.processedFiles,
+              totalFiles,
+              processedBytes: baseBytes + p.processedBytes,
+              totalBytes,
+            });
+          },
+        );
+        doneFiles += audioSources.length;
+        doneBytes += audioSources.reduce((s, a) => s + (a.size ?? 0), 0);
+        results.push({ profileName, result: newProfileId });
+      } catch (error) {
+        results.push({
+          profileName,
+          result: error instanceof Error ? error : new Error(String(error)),
+        });
+      }
+    }
+
+    return results;
+  } finally {
     try {
-      const lean = JSON.parse(
-        await profileJsonFile.async("string"),
-      ) as ProfileExportLean;
-
-      // Reconstruct full export reading audio from the shared root audio/ folder
-      const audioFiles = await readZipAudioFilesAsBase64(
-        zip,
-        lean.audioFiles,
-        `not found in ZIP for profile ${entry.name}.`,
-      );
-
-      const fullExport: ProfileExport = {
-        exportVersion: lean.exportVersion,
-        exportDate: lean.exportDate,
-        profile: lean.profile,
-        padConfigurations: lean.padConfigurations,
-        pageMetadata: lean.pageMetadata,
-        audioFiles,
-      };
-
-      const newId = await importProfile(db, fullExport);
-      results.push({ profileName: entry.name, result: newId });
-    } catch (error) {
-      results.push({
-        profileName: entry.name,
-        result: error instanceof Error ? error : new Error(String(error)),
-      });
+      await zipReader.close();
+    } catch {
+      // ignore close errors
     }
   }
-
-  return results;
 }
+
+// JSON imports must be read into a single string, and V8 caps strings at
+// ~512 MB — larger legacy exports simply cannot be parsed in the browser.
+// (.iaz archives have no such limit since they are streamed.)
+export const MAX_JSON_IMPORT_BYTES = 480 * 1024 * 1024;
 
 /**
  * Detects the format of an import file.
@@ -1334,7 +1497,12 @@ export async function importMultipleProfilesFromZip(
 export async function detectImportFormat(
   file: File,
 ): Promise<
-  "zip" | "json-v2-single" | "json-v1-multi" | "impamp2-legacy" | "unknown"
+  | "zip"
+  | "json-v2-single"
+  | "json-v1-multi"
+  | "impamp2-legacy"
+  | "json-too-large"
+  | "unknown"
 > {
   // Check extension first
   if (file.name.toLowerCase().endsWith(".iaz")) {
@@ -1351,6 +1519,10 @@ export async function detectImportFormat(
     bytes[3] === 0x04
   ) {
     return "zip";
+  }
+
+  if (file.size > MAX_JSON_IMPORT_BYTES) {
+    return "json-too-large";
   }
 
   // Try JSON parsing
