@@ -56,18 +56,20 @@ provided, no such directory: <repo>/lint` — while exiting 0, so it looked
 
 ## Dependencies
 
-- **Unused dependencies.** Nothing in `src/`, `e2e-tests/` or `scripts/`
-  imports these, and they are not ambient type packages:
-  - `uuid` + `@types/uuid` — `@types/uuid` is additionally a deprecated stub
-    (uuid has shipped its own types since v9). `uuid` was still carried through
-    three majors (11 → 14) because removing a dependency is a different
-    decision from upgrading one.
-  - `jwt-decode` — no import sites.
-  - `google-api-javascript-client` — no import sites, and it is a long-abandoned
-    npm mirror (v0.1.0), not Google's real client.
-  - `@types/gapi`, `@types/google.picker` — ambient globals, but no `gapi.` or
-    `google.picker` reference survives in `src/`; the Drive picker is used via
-    the `@googleworkspace/drive-picker-element` web component instead.
+- **Unused dependencies — four removed, two still to judge.** Nothing in
+  `src/`, `e2e-tests/` or `scripts/` imports any of these. Removed:
+  `uuid`, `@types/uuid` (a deprecated stub — uuid has shipped its own types
+  since v9), `jwt-decode`, and `google-api-javascript-client` (a long-abandoned
+  npm mirror at v0.1.0, not Google's real client).
+
+  Still declared, and a closer call because they are **ambient** type packages
+  that contribute globals rather than imports: `@types/gapi` and
+  `@types/google.picker`. No `gapi.` or `google.picker` reference survives in
+  `src/` — the Drive picker is used via the
+  `@googleworkspace/drive-picker-element` web component — so they look
+  droppable, but `src/types/drive-picker.d.ts` hand-declares the web component's
+  JSX types and is worth reading first in case it leans on them.
+
 - **Node version pins disagree three ways:** `Dockerfile` runs `node:22-alpine`,
   CI uses `node-version: lts/*` (24), `mise.toml` says `node = "latest"` (26).
   `scripts/check_version_sync.sh` misses it because it only compares pins naming
