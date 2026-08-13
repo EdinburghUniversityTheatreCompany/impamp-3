@@ -438,6 +438,7 @@ async function importPadConfigurations(
       audioFileIds: mappedAudioFileIds, // Use the mapped array
       audioTrimSettings: mappedTrimSettings,
       playbackType: pad.playbackType || "sequential", // Use imported type or default
+      isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
       createdAt: now,
       updatedAt: now,
     };

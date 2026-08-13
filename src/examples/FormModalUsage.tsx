@@ -47,6 +47,7 @@ export function useEditPadModal() {
       name: initialPadConfig.name || DEFAULT_PAD_NAME,
       playbackType: initialPadConfig.playbackType || "sequential",
       audioFileIds: initialPadConfig.audioFileIds || [],
+      isDisabled: initialPadConfig.isDisabled ?? false,
     };
 
     // Open form modal with edit pad form
@@ -76,6 +77,7 @@ export function useEditPadModal() {
             name: values.name,
             playbackType: values.playbackType,
             audioFileIds: values.audioFileIds,
+            isDisabled: values.isDisabled,
             // Preserve other fields that might be in the initial configuration
             keyBinding: initialPadConfig.keyBinding,
           });

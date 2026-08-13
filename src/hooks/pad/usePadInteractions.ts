@@ -101,6 +101,16 @@ export function usePadInteractions(params: PadInteractionsParams) {
 
           // Upsert the configuration with the data from the modal state
           await upsertPadConfiguration(updatedPadConfigData);
+
+          // A disabled pad must not stay queued as an armed cue, or F9 would
+          // still fire it. Any sound already playing is left alone — disabling
+          // blocks future triggers rather than cutting a live cue.
+          if (updatedPadConfigData.isDisabled) {
+            playbackStoreActions.removeArmedTrack(
+              `armed-${activeProfileId}-${currentPageIndex}-${padIndex}`,
+            );
+          }
+
           refreshPadConfigs(); // Refresh the grid display
           incrementPadConfigsVersion(); // Refresh keyboard bindings too
           if (activeProfileId !== null) requestSync(activeProfileId);
@@ -204,6 +214,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
             name: undefined, // Reset name to default
             audioFileIds: [], // Clear the sounds
             playbackType: "round-robin", // Reset playback type
+            isDisabled: false, // An emptied pad should not stay marked "Off"
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
           refreshPadConfigs();
@@ -260,6 +271,13 @@ export function usePadInteractions(params: PadInteractionsParams) {
     (padConfig: PadConfiguration) => {
       if (activeProfileId === null) return;
 
+      if (padConfig.isDisabled) {
+        console.log(
+          `Pad index ${padConfig.padIndex} is disabled, not playing.`,
+        );
+        return;
+      }
+
       if (!hasInteracted.current) {
         ensureAudioContextActive();
         hasInteracted.current = true;
@@ -274,6 +292,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         currentPageIndex: currentPageIndex,
         name: padConfig.name,
         audioTrimSettings: padConfig.audioTrimSettings,
+        isDisabled: padConfig.isDisabled,
         onInstantFeedback: () => {
           console.log(
             `[Pad Interactions] Instant feedback for pad ${padConfig.padIndex}`,
@@ -339,6 +358,11 @@ export function usePadInteractions(params: PadInteractionsParams) {
       const config = padConfigs.get(padIndex);
       if (!config || !config.audioFileIds || config.audioFileIds.length === 0) {
         console.log(`Pad index ${padIndex} has no sounds to arm.`);
+        return;
+      }
+
+      if (config.isDisabled) {
+        console.log(`Pad index ${padIndex} is disabled, cannot arm.`);
         return;
       }
 

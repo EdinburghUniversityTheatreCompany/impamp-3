@@ -247,6 +247,27 @@ export async function setPlaybackModeInModal(page: Page, mode: string) {
   console.log(`[Test Helper] Set playback mode to ${mode} in modal`);
 }
 
+// Helper to tick / untick the "Pad active" checkbox in the edit modal.
+// Ticked means the pad is active; unticked means it is disabled and will not
+// play from any trigger (click, key, armed cue, emergency, search).
+export async function setPadActiveInModal(page: Page, active: boolean) {
+  const checkbox = page.locator('[data-testid="edit-pad-active-checkbox"]');
+  await expect(checkbox).toBeVisible();
+  if (active) {
+    await checkbox.check();
+  } else {
+    await checkbox.uncheck();
+  }
+  console.log(`[Test Helper] Set pad active=${active} in modal`);
+}
+
+// Asserts that no audio is currently playing.
+export async function expectNothingPlaying(page: Page) {
+  await expect(page.locator("text=Nothing playing")).toBeVisible({
+    timeout: 5000,
+  });
+}
+
 // Helper to remove a specific sound from the modal list
 export async function removeSoundFromModal(page: Page, soundName: string) {
   // Locate the remove button by its aria-label, which is built from the sound's
