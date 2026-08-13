@@ -28,14 +28,6 @@ Each entry: what, where, why it matters.
   blocked on lint tooling that has no compatible release yet. Reasons and retry
   conditions in `plans/deferred-upgrades.md`.
 
-- **`@types/gapi` and `@types/google.picker` may be droppable.** No `gapi.` or
-  `google.picker` reference survives in `src/` — the Drive picker is used via
-  the `@googleworkspace/drive-picker-element` web component. They are _ambient_
-  packages contributing globals rather than imports, though, so absence of
-  import sites is not proof they are unused; read `src/types/drive-picker.d.ts`
-  first. (`uuid`, `@types/uuid`, `jwt-decode` and
-  `google-api-javascript-client` were removed on the same grounds — see Done.)
-
 - **Node version pins disagree three ways:** `Dockerfile` runs `node:22-alpine`,
   CI uses `node-version: lts/*` (24), `mise.toml` says `node = "latest"` (26).
   `scripts/check_version_sync.sh` misses it because it only compares pins naming
