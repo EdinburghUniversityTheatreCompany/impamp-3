@@ -180,34 +180,84 @@ export async function prepareAudioContext(page: Page) {
 }
 
 /**
- * Helper function to get the names of currently playing tracks from the Active Tracks Panel.
+ * A currently-playing track, as reported by the __impampActiveSounds test hook.
  */
-export async function getPlayingSoundNames(page: Page): Promise<string[]> {
-  const activeTracksPanel = page.locator('[data-testid="active-tracks-panel"]');
-  // Wait for the panel to potentially update after an action
-  await activeTracksPanel.waitFor({ state: "visible", timeout: 1000 }); // Short wait
+export interface ActiveSoundInfo {
+  key: string;
+  name: string;
+  playbackType?: string;
+  currentAudioFileId?: number;
+  currentAudioIndex?: number;
+  allAudioFileIds?: number[];
+}
 
-  // Check if "Nothing playing" is visible
-  const nothingPlayingVisible = await page
-    .locator("text=Nothing playing")
-    .isVisible();
-  if (nothingPlayingVisible) {
-    return []; // Return empty array if nothing is playing
-  }
-
-  // Get all list items within the panel
-  const trackItems = activeTracksPanel.locator("li"); // Assuming each track is an <li>
-  const count = await trackItems.count();
-  const names: string[] = [];
-  for (let i = 0; i < count; i++) {
-    // Extract the text content, which should be the sound name
-    // Adjust locator if the name is within a specific child element
-    const name = await trackItems.nth(i).locator("span").first().textContent(); // Assuming name is in the first span
-    if (name) {
-      names.push(name.trim());
+/**
+ * Reads the audio module's live track list.
+ *
+ * Which sound a multi-sound pad selected is deliberately invisible in the UI —
+ * the Active Tracks panel shows the pad's name — so tests that care about
+ * selection order read it through the hook src/lib/testHooks.ts installs.
+ */
+export async function getActiveSounds(page: Page): Promise<ActiveSoundInfo[]> {
+  return page.evaluate(() => {
+    const read = (
+      window as unknown as {
+        __impampActiveSounds?: () => ActiveSoundInfo[];
+      }
+    ).__impampActiveSounds;
+    if (typeof read !== "function") {
+      throw new Error(
+        "__impampActiveSounds hook is missing — the server under test must be " +
+          "built with NEXT_PUBLIC_E2E_HOOKS=1 (playwright.config.ts sets it).",
+      );
     }
-  }
-  return names;
+    return read();
+  }) as Promise<ActiveSoundInfo[]>;
+}
+
+/**
+ * Index, within the pad's own sound list, of the sound currently playing.
+ * Asserts exactly one track is active so a stray track can't be read silently.
+ */
+export async function getPlayingSoundIndex(page: Page): Promise<number> {
+  const active = await getActiveSounds(page);
+  expect(active).toHaveLength(1);
+  const index = active[0].currentAudioIndex;
+  expect(
+    index,
+    "active track carries no currentAudioIndex",
+  ).not.toBeUndefined();
+  return index as number;
+}
+
+/**
+ * Stops the single playing track by clicking its entry in the Active Tracks
+ * panel, and waits for the panel to fall back to "Nothing playing".
+ *
+ * Multi-sound pads need this between triggers: the default activePadBehavior is
+ * "continue", so re-triggering a pad that is already playing is a no-op and the
+ * playback strategy never advances.
+ */
+export async function stopPlayingTrack(page: Page) {
+  await page.locator('[data-testid="active-track-item"]').first().click();
+  await expect(page.locator("text=Nothing playing")).toBeVisible();
+}
+
+/**
+ * Triggers a pad, waits for playback to register, reads which sound the
+ * playback strategy picked, then stops it again. Returns the sound's index.
+ */
+export async function triggerAndReadSoundIndex(
+  page: Page,
+  pad: Locator,
+): Promise<number> {
+  await pad.click();
+  await expect(page.locator('[data-testid="active-track-item"]')).toHaveCount(
+    1,
+  );
+  const index = await getPlayingSoundIndex(page);
+  await stopPlayingTrack(page);
+  return index;
 }
 
 // --- Helpers for Edit Pad Modal ---

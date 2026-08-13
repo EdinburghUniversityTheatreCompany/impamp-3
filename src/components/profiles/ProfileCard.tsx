@@ -346,6 +346,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   return (
     <div
+      data-testid="profile-card"
+      data-profile-name={profile.name}
       className={`border rounded-lg p-4 ${
         isActive
           ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"

@@ -161,7 +161,12 @@ const Pad: React.FC<PadProps> = ({
     }
   };
 
-  // Disable dropzone if soundCount > 1
+  // A pad holding more than one sound refuses drops — you pick which sound to
+  // replace in the edit modal instead. The dropzone stays *active* so react-
+  // dropzone still reports isDragActive and the "Cannot drop here" overlay
+  // below can explain the refusal; handleAudioDrop is what actually rejects
+  // the file. Disabling the dropzone here would suppress isDragActive and the
+  // overlay would never render.
   const isDropDisabled = soundCount > 1;
 
   const {
@@ -176,7 +181,9 @@ const Pad: React.FC<PadProps> = ({
     noClick: true, // Prevent opening file dialog on click (we handle click for playback)
     noKeyboard: true, // Prevent opening file dialog with keyboard
     multiple: false, // Accept only one file at a time
-    disabled: isDropDisabled || isDeleteMoveMode, // Disable dropzone based on sound count or in delete/move mode
+    // Special pads (Stop All, Fade Out All) take no audio at all, and there is
+    // no edit modal to send the user to, so they stay fully disabled.
+    disabled: isSpecialPad || isDeleteMoveMode,
   });
 
   // --- Styling with clsx ---
@@ -254,11 +261,14 @@ const Pad: React.FC<PadProps> = ({
             isEditMode && isDropDisabled,
         },
         {
-          // Dropzone accept/reject background/border
+          // Dropzone accept/reject background/border. A pad that will refuse
+          // the file must not turn green, so accept styling also requires the
+          // drop to actually be allowed.
           "bg-green-100 dark:bg-green-900 border-green-500":
-            isDragAccept && !isDeleteMoveMode,
+            isDragAccept && !isDropDisabled && !isDeleteMoveMode,
           "bg-red-100 dark:bg-red-900 border-red-500":
-            isDragReject && !isDeleteMoveMode,
+            (isDragReject || (isDragActive && isDropDisabled)) &&
+            !isDeleteMoveMode,
         },
       ),
     [
