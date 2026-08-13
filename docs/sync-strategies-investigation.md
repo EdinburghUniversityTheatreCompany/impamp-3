@@ -1,7 +1,10 @@
 # Investigation: Sync Strategies for Multi-User Profile Collaboration
 
 **Date:** 2026-08-12
-**Status:** Decided — see "Decisions" at the end
+**Status:** Decided — see "Decisions" at the end.
+**Implementation:** Option 0 shipped in `b387ee6`. Option 4 (core, metadata
+only) shipped on the `feat/server-sync` branch — see `server-sync.md`. Gated
+Wasabi audio hosting remains outstanding.
 
 ## Decisions (2026-08-12)
 

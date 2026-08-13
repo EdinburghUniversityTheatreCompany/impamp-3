@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { resolve } from "node:path";
+
+/** Throwaway server-sync database for the E2E run. Shared with the specs. */
+export const E2E_DB_PATH = resolve(process.cwd(), "data/e2e.db");
 
 export default defineConfig({
   testDir: "./e2e-tests",
@@ -47,6 +51,11 @@ export default defineConfig({
       NEXT_PUBLIC_GOOGLE_CLIENT_ID:
         process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
         "e2e-placeholder.apps.googleusercontent.com",
+      // Server sync writes to its own throwaway database during E2E, kept out
+      // of the developer's ./data/impamp.db. server-sync.spec.ts opens the
+      // same file directly to mint a session, which is the only way to sign in
+      // without a real Google account.
+      IMPAMP_DB_PATH: E2E_DB_PATH,
     },
   },
 });

@@ -42,6 +42,9 @@ fnox.toml
 # vercel
 .vercel
 
+# server-sync SQLite database (local development)
+/data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
