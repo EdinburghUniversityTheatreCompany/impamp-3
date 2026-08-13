@@ -241,9 +241,14 @@ async function migrateToFolderLayout(
 /**
  * Download any audio files referenced in remote sync data that are missing locally.
  * Stores downloaded files in IndexedDB with their Drive file ID set.
+ *
+ * Server sync uses this too: audio stays in Drive under both backends, so a
+ * collaborator pulling from the server still fetches the bytes from Drive —
+ * with a null token falling back to the public proxy for anonymous viewers.
+ *
  * @returns Warnings about files gone from Drive, plus any retryable failures
  */
-async function downloadMissingAudioFiles(
+export async function downloadMissingAudioFiles(
   audioRefs: ProfileSyncData["audioFiles"],
   profileId: number,
   tokenInfo: TokenInfo | null,

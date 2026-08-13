@@ -8,6 +8,10 @@ const REMOTE_CHECK_MIN_GAP_MS = 10_000; // min gap between event-triggered check
 const FULL_SYNC_INTERVAL_MS = 15 * 60 * 1000; // unconditional full-sync backstop
 import { useProfileStore } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
+import {
+  subscribeToProfileChanges,
+  useServerSync,
+} from "@/hooks/useServerSync";
 import { getAllProfiles, getProfile, Profile } from "@/lib/db";
 
 /**
@@ -22,6 +26,13 @@ const canSyncNow = (profile: Profile, isGoogleSignedIn: boolean): boolean =>
   (isGoogleSignedIn || !!profile.readOnly);
 
 /**
+ * Server-synced profiles need no sign-in check here: a link-share token is
+ * enough for a viewer, and the server rejects anything else.
+ */
+const isServerSynced = (profile: Profile): boolean =>
+  profile.id !== undefined && profile.syncType === "server";
+
+/**
  * This component ensures that the initial profile fetching (which involves DB access)
  * happens only on the client-side after the initial render.
  * It also handles automatic sync for Google Drive-linked profiles.
@@ -31,6 +42,7 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   // Get syncProfile from the hook but avoid direct store access in render
   const { syncProfile, getRemoteVersionToken } = useGoogleDriveSync();
+  const { syncProfile: syncServerProfile } = useServerSync();
 
   // Use local state to store auth values from the Zustand store
   const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
@@ -114,8 +126,17 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
         const profiles = await getAllProfiles();
 
         for (const profile of profiles) {
-          if (profile.id === undefined || !canSyncNow(profile, signedIn))
+          if (profile.id === undefined) continue;
+
+          if (isServerSynced(profile)) {
+            console.log(
+              `Syncing server profile ${profile.id} (${profile.name}) — ${reason}...`,
+            );
+            await syncServerProfile(profile.id);
             continue;
+          }
+
+          if (!canSyncNow(profile, signedIn)) continue;
           console.log(
             `Syncing profile ${profile.id} (${profile.name}) — ${reason}...`,
           );
@@ -125,7 +146,7 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
         console.error(`Error during ${reason} sync:`, error);
       }
     },
-    [syncAndRecord],
+    [syncAndRecord, syncServerProfile],
   );
 
   /**
@@ -230,7 +251,12 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
           delete debounceTimersRef.current[profileId];
           const { profiles, isGoogleSignedIn } = useProfileStore.getState();
           const profile = profiles.find((p) => p.id === profileId);
-          if (
+          if (profile?.syncType === "server") {
+            console.log(
+              `Auto-syncing server profile ${profileId} after edit (debounced)...`,
+            );
+            await syncServerProfile(profileId);
+          } else if (
             isGoogleSignedIn &&
             profile?.syncType === "googleDrive" &&
             profile.googleDriveFileId
@@ -248,7 +274,59 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
       unsubscribe();
       Object.values(debounceTimersRef.current).forEach(clearTimeout);
     };
-  }, [syncAndRecord]);
+  }, [syncAndRecord, syncServerProfile]);
+
+  // Live change notifications for server-synced profiles.
+  //
+  // This is what server sync buys over Drive: instead of polling, the server
+  // pushes "profile N moved to version V" and we pull immediately. The
+  // periodic full sync below stays as a backstop for a dropped stream.
+  useEffect(() => {
+    const subscriptions = new Map<number, () => void>();
+
+    const reconcileSubscriptions = (profiles: Profile[]) => {
+      const wanted = new Map(
+        profiles
+          .filter((p) => isServerSynced(p) && p.serverProfileId)
+          .map((p) => [p.id!, p]),
+      );
+
+      // Drop streams for profiles that are gone or no longer server-synced.
+      for (const [profileId, unsubscribe] of subscriptions) {
+        if (!wanted.has(profileId)) {
+          unsubscribe();
+          subscriptions.delete(profileId);
+        }
+      }
+
+      for (const [profileId, profile] of wanted) {
+        if (subscriptions.has(profileId)) continue;
+        subscriptions.set(
+          profileId,
+          subscribeToProfileChanges(
+            profile.serverProfileId!,
+            profile.serverShareToken ?? null,
+            (version) => {
+              console.log(
+                `Server reports profile ${profileId} at version ${version} — syncing...`,
+              );
+              void syncServerProfile(profileId);
+            },
+          ),
+        );
+      }
+    };
+
+    reconcileSubscriptions(useProfileStore.getState().profiles);
+    const unsubscribeStore = useProfileStore.subscribe((state) =>
+      reconcileSubscriptions(state.profiles),
+    );
+
+    return () => {
+      unsubscribeStore();
+      subscriptions.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [syncServerProfile]);
 
   // Light remote-change poll (every 30 seconds while the tab is visible)
   useEffect(() => {

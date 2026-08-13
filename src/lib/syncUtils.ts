@@ -336,6 +336,25 @@ const compareSyncableArrays = <T extends Syncable>(
   return { conflicts, mergedItems };
 };
 
+/**
+ * Profile fields that describe *where* a profile syncs rather than what it
+ * contains. They are per-device bookkeeping — comparing them across devices
+ * would raise conflicts over values that are legitimately different on each.
+ */
+const PROFILE_LOCATION_FIELDS = new Set([
+  "googleDriveFileId",
+  "serverProfileId",
+  "serverVersion",
+  "serverShareToken",
+]);
+
+const isComparableProfileField = (key: string): boolean =>
+  !key.startsWith("_") &&
+  key !== "id" &&
+  key !== "createdAt" &&
+  key !== "updatedAt" &&
+  !PROFILE_LOCATION_FIELDS.has(key);
+
 // --- Data Structure for Syncing ---
 // Represents the entire dataset to be synced for a specific profile
 // This structure will be stored as a single JSON file per profile in Drive
@@ -390,22 +409,8 @@ export const detectProfileConflicts = async (
   const localProfileFields = localProfile._fieldsModified ?? {};
   const remoteProfileFields = remoteProfile._fieldsModified ?? {};
   const allProfileFields = new Set([
-    ...Object.keys(localProfile).filter(
-      (k) =>
-        !k.startsWith("_") &&
-        k !== "id" &&
-        k !== "createdAt" &&
-        k !== "updatedAt" &&
-        k !== "googleDriveFileId",
-    ),
-    ...Object.keys(remoteProfile).filter(
-      (k) =>
-        !k.startsWith("_") &&
-        k !== "id" &&
-        k !== "createdAt" &&
-        k !== "updatedAt" &&
-        k !== "googleDriveFileId",
-    ),
+    ...Object.keys(localProfile).filter(isComparableProfileField),
+    ...Object.keys(remoteProfile).filter(isComparableProfileField),
   ]);
 
   allProfileFields.forEach((field) => {

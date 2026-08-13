@@ -15,13 +15,18 @@ export interface AudioFile {
 }
 
 // Define the structure of profile data
-export type SyncType = "local" | "googleDrive";
+export type SyncType = "local" | "googleDrive" | "server";
 export interface Profile {
   id?: number;
   name: string;
   syncType: SyncType;
   googleDriveFileId?: string | null; // Link to the specific file in user's Drive
   googleDriveFolderId?: string | null; // Link to the per-profile shared folder in Drive
+  // Server sync (syncType "server"). Audio still lives in Drive — the server
+  // stores only the profile blob, which carries hashes and Drive file IDs.
+  serverProfileId?: string | null; // Profile UUID on the ImpAmp server
+  serverVersion?: number | null; // Last version we successfully pulled or pushed
+  serverShareToken?: string | null; // Link-share token, for profiles opened via a share URL
   readOnly?: boolean; // If true, sync only downloads from Drive, never uploads
   activePadBehavior?: ActivePadBehavior;
   syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
@@ -928,6 +933,11 @@ const BACKUP_ONLY_FIELDS = new Set([
   "syncType",
   "googleDriveFileId",
   "syncPausedUntil",
+  // Server-sync bookkeeping: where the profile lives and which version we
+  // last saw, none of which is user content.
+  "serverProfileId",
+  "serverVersion",
+  "serverShareToken",
 ]);
 
 // Records restored from sync payloads can carry ISO strings rather than Dates,

@@ -10,6 +10,20 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  {
+    // `next lint` used to exclude these implicitly; `eslint .` does not, and
+    // linting build output produces thousands of meaningless errors.
+    ignores: [
+      ".next/**",
+      "out/**",
+      "build/**",
+      "node_modules/**",
+      ".worktrees/**",
+      "public/sw.js",
+      "public/workbox-*.js",
+      "src/generated/**",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     // Wallaby.js reads this file itself, as CommonJS — require() is the only
