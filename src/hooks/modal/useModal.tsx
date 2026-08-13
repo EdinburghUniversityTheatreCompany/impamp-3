@@ -56,7 +56,9 @@ export interface LazyModalOptions<T = unknown> extends BaseModalOptions {
  * @returns Object with modal functions
  */
 export function useModal() {
-  const { openModal, closeModal, isModalOpen } = useUIStore();
+  const openModal = useUIStore((state) => state.openModal);
+  const closeModal = useUIStore((state) => state.closeModal);
+  const isModalOpen = useUIStore((state) => state.isModalOpen);
 
   /**
    * Opens a confirmation modal with the given options

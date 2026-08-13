@@ -4,6 +4,7 @@
  */
 
 import {
+  AudioFile,
   PadConfiguration,
   PageMetadata,
   getProfile,
@@ -12,6 +13,7 @@ import {
   ensureAudioFileHash,
   updateAudioFileDriveId,
   collectReferencedAudioFileIds,
+  computeBlobHash,
 } from "@/lib/db";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import { base64ToBlob } from "@/lib/importExport";
@@ -82,30 +84,83 @@ export const getLocalProfileSyncData = async (
 };
 
 /**
+ * Resolves a remote audio reference to the local record holding the same audio.
+ * Content hashes are authoritative; names are only consulted for legacy entries
+ * that predate hashing, and then only when the match is unambiguous.
+ * @param ref The remote reference (name plus optional content hash)
+ * @param getByHash Index lookup by hash
+ * @param getByName Index lookup by name
+ * @returns The matching local record, or undefined if none can be trusted
+ */
+const findLocalAudioMatch = async (
+  ref: { name: string; hash?: string },
+  getByHash: (hash: string) => Promise<AudioFile[]>,
+  getByName: (name: string) => Promise<AudioFile[]>,
+): Promise<AudioFile | undefined> => {
+  if (ref.hash) {
+    const hashMatches = await getByHash(ref.hash);
+    // A hash miss means any same-named local file holds different audio
+    return hashMatches[0];
+  }
+
+  const nameMatches = await getByName(ref.name);
+  if (nameMatches.length !== 1) return undefined;
+  return nameMatches[0].hash ? undefined : nameMatches[0];
+};
+
+/**
+ * JSON round-trips turn Date fields into strings. IndexedDB records must keep
+ * real Date objects, so coerce anything that came back through JSON.parse.
+ */
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value;
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+};
+
+/**
  * Backfills driveFileIds from remote sync data into local audio file records.
  * Called before uploading so that files already on Drive (per the remote JSON)
  * are not re-uploaded.
  */
 export const backfillDriveFileIdsFromRemote = async (
-  audioRefs: { id: number; name: string; driveFileId?: string }[] | undefined,
+  audioRefs:
+    | { id: number; name: string; hash?: string; driveFileId?: string }[]
+    | undefined,
   profileId: number,
 ): Promise<void> => {
   if (!audioRefs || audioRefs.length === 0) return;
 
   const db = await getDb();
+
+  // Resolve every reference in a single read-only pass. The writes must wait
+  // until this transaction is done — awaiting a separate transaction inside it
+  // lets it auto-commit, and the next read then throws TransactionInactiveError.
+  const pendingWrites: { localId: number; driveFileId: string }[] = [];
   const tx = db.transaction("audioFiles", "readonly");
   const audioStore = tx.objectStore("audioFiles");
 
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue;
 
-    const matches = await audioStore.index("name").getAll(ref.name);
-    if (matches.length === 0) continue;
+    const local = await findLocalAudioMatch(
+      ref,
+      (hash) => audioStore.index("hash").getAll(hash),
+      (name) => audioStore.index("name").getAll(name),
+    );
+    if (!local || local.id === undefined) continue;
+    if (local.driveFileIds?.[profileId]) continue;
 
-    const local = matches[0];
-    if (local.id !== undefined && !local.driveFileIds?.[profileId]) {
-      await updateAudioFileDriveId(local.id, ref.driveFileId, profileId);
-    }
+    pendingWrites.push({ localId: local.id, driveFileId: ref.driveFileId });
+  }
+
+  await tx.done;
+
+  for (const { localId, driveFileId } of pendingWrites) {
+    await updateAudioFileDriveId(localId, driveFileId, profileId);
   }
 };
 
@@ -113,89 +168,94 @@ export const backfillDriveFileIdsFromRemote = async (
  * Updates the local database with data from a sync operation
  * @param profileId The profile ID to update
  * @param data The sync data to apply
+ * @returns Warnings about references that could not be preserved
  */
 export const updateLocalData = async (
   profileId: number,
   data: ProfileSyncData,
-): Promise<void> => {
-  if (typeof window === "undefined") return;
+): Promise<string[]> => {
+  if (typeof window === "undefined") return [];
 
   const db = await getDb();
+  const warnings: string[] = [];
 
   // First, handle audio files import
   const audioIdMap = new Map<number, number>();
+  const hasAudioReferences = !!(data.audioFiles && data.audioFiles.length > 0);
 
-  if (data.audioFiles && data.audioFiles.length > 0) {
-    try {
-      console.log(`Importing ${data.audioFiles.length} audio files`);
+  if (hasAudioReferences) {
+    console.log(`Importing ${data.audioFiles.length} audio files`);
 
-      // Create a separate transaction for audio files
-      const audioTx = db.transaction(["audioFiles"], "readwrite");
-      const audioStore = audioTx.objectStore("audioFiles");
+    // Decode legacy base64 payloads and derive their hashes up front: awaiting
+    // work that isn't an IndexedDB request would close the transaction below.
+    const prepared: {
+      ref: ProfileSyncData["audioFiles"][number];
+      blob?: Blob;
+      hash?: string;
+    }[] = [];
+    for (const audioFileData of data.audioFiles) {
+      let blob: Blob | undefined;
+      let hash = audioFileData.hash;
+      if (audioFileData.data) {
+        blob = await base64ToBlob(audioFileData.data, audioFileData.type);
+        hash = hash ?? (await computeBlobHash(blob));
+      }
+      prepared.push({ ref: audioFileData, blob, hash });
+    }
 
-      for (const audioFileData of data.audioFiles) {
-        // Check if audio file already exists locally by name
-        const existingAudioFiles = await audioStore
-          .index("name")
-          .getAll(audioFileData.name);
-        let newAudioId: number;
+    // Create a separate transaction for audio files
+    const audioTx = db.transaction(["audioFiles"], "readwrite");
+    const audioStore = audioTx.objectStore("audioFiles");
 
-        if (existingAudioFiles.length > 0) {
-          newAudioId = existingAudioFiles[0].id as number;
-          // Persist the driveFileId for this profile if we now know it and it's missing
-          if (
-            audioFileData.driveFileId &&
-            !existingAudioFiles[0].driveFileIds?.[profileId]
-          ) {
-            const currentMap = existingAudioFiles[0].driveFileIds ?? {};
-            await audioStore.put({
-              ...existingAudioFiles[0],
-              driveFileIds: {
-                ...currentMap,
-                [profileId]: audioFileData.driveFileId,
-              },
-            });
-          }
-          console.log(`Using existing audio file "${audioFileData.name}"`);
-        } else if (audioFileData.data) {
-          // Legacy path: base64-encoded data present — decode and store
-          const blob = await base64ToBlob(
-            audioFileData.data,
-            audioFileData.type,
-          );
-          newAudioId = await audioStore.add({
-            blob,
-            name: audioFileData.name,
-            type: audioFileData.type,
-            driveFileIds: audioFileData.driveFileId
-              ? { [profileId]: audioFileData.driveFileId }
-              : undefined,
-            createdAt: new Date(),
+    for (const { ref, blob, hash } of prepared) {
+      // Match on content hash so same-named different recordings stay distinct
+      const existing = await findLocalAudioMatch(
+        { name: ref.name, hash },
+        (h) => audioStore.index("hash").getAll(h),
+        (n) => audioStore.index("name").getAll(n),
+      );
+      let newAudioId: number;
+
+      if (existing?.id !== undefined) {
+        newAudioId = existing.id;
+        // Persist the driveFileId for this profile if we now know it and it's missing
+        if (ref.driveFileId && !existing.driveFileIds?.[profileId]) {
+          const currentMap = existing.driveFileIds ?? {};
+          await audioStore.put({
+            ...existing,
+            driveFileIds: { ...currentMap, [profileId]: ref.driveFileId },
           });
-          console.log(`Added audio file from base64 "${audioFileData.name}"`);
-        } else {
-          // New path: driveFileId only — file should have been pre-downloaded by downloadMissingAudioFiles
-          // in sync.ts before updateLocalData is called. If it's missing here, skip it.
-          console.warn(
-            `Audio file "${audioFileData.name}" has no local copy and no base64 data — skipping`,
-          );
-          continue;
         }
-
-        // Map original ID to new local ID
-        audioIdMap.set(audioFileData.id, newAudioId);
+        console.log(`Using existing audio file "${ref.name}"`);
+      } else if (blob) {
+        // Legacy path: base64-encoded data present — store the decoded blob
+        newAudioId = await audioStore.add({
+          blob,
+          name: ref.name,
+          type: ref.type,
+          hash,
+          driveFileIds: ref.driveFileId
+            ? { [profileId]: ref.driveFileId }
+            : undefined,
+          createdAt: new Date(),
+        });
+        console.log(`Added audio file from base64 "${ref.name}"`);
+      } else {
+        // New path: driveFileId only — the file should have been pre-downloaded by
+        // downloadMissingAudioFiles in sync.ts. Leaving it out of the ID map makes
+        // referencing pads drop the reference instead of pointing at another sound.
+        warnings.push(
+          `Audio file "${ref.name}" is unavailable locally — pads referencing it were cleared`,
+        );
+        continue;
       }
 
-      await audioTx.done;
-      console.log(
-        `Audio files import complete, mapped ${audioIdMap.size} files`,
-      );
-    } catch (error) {
-      console.error(
-        `Error importing audio files for profile ${profileId}:`,
-        error,
-      );
+      // Map original ID to new local ID
+      audioIdMap.set(ref.id, newAudioId);
     }
+
+    await audioTx.done;
+    console.log(`Audio files import complete, mapped ${audioIdMap.size} files`);
   }
 
   // Now update profiles, pads, and pages
@@ -223,6 +283,10 @@ export const updateLocalData = async (
         data.profile.googleDriveFileId,
       syncPausedUntil:
         existingLocalProfile?.syncPausedUntil ?? data.profile.syncPausedUntil,
+      createdAt: toDate(
+        existingLocalProfile?.createdAt ?? data.profile.createdAt,
+      ),
+      updatedAt: toDate(data.profile.updatedAt),
     };
     await profileStore.put(profileWithId);
 
@@ -241,17 +305,29 @@ export const updateLocalData = async (
       syncedPadKeys.add(key);
 
       // Create a copy of the pad to modify
-      const padWithProfileId = { ...pad, profileId: profileId };
+      const padWithProfileId = {
+        ...pad,
+        profileId: profileId,
+        createdAt: toDate(pad.createdAt),
+        updatedAt: toDate(pad.updatedAt),
+      };
 
-      // Map remote audio IDs to local audio IDs if we have mappings
-      if (
-        audioIdMap.size > 0 &&
-        padWithProfileId.audioFileIds &&
-        padWithProfileId.audioFileIds.length > 0
-      ) {
-        padWithProfileId.audioFileIds = padWithProfileId.audioFileIds
-          .map((id) => audioIdMap.get(id) || id)
-          .filter((id) => typeof id === "number");
+      // Translate the synced audio IDs into local IDs. Anything that cannot be
+      // resolved is dropped — an untranslated ID would address a different
+      // local recording, so a silent pad is the safer outcome.
+      if (hasAudioReferences && padWithProfileId.audioFileIds?.length) {
+        const resolvedIds: number[] = [];
+        for (const syncedId of padWithProfileId.audioFileIds) {
+          const localId = audioIdMap.get(syncedId);
+          if (localId === undefined) {
+            warnings.push(
+              `Pad ${pad.pageIndex}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
+            );
+            continue;
+          }
+          resolvedIds.push(localId);
+        }
+        padWithProfileId.audioFileIds = resolvedIds;
 
         // Also map audioTrimSettings keys
         if (padWithProfileId.audioTrimSettings) {
@@ -262,9 +338,8 @@ export const updateLocalData = async (
           for (const [oldIdStr, trimValue] of Object.entries(
             padWithProfileId.audioTrimSettings,
           )) {
-            const oldId = Number(oldIdStr);
-            const newId = audioIdMap.get(oldId) || oldId;
-            if (typeof newId === "number") {
+            const newId = audioIdMap.get(Number(oldIdStr));
+            if (newId !== undefined) {
               mappedTrim[newId] = trimValue;
             }
           }
@@ -304,7 +379,12 @@ export const updateLocalData = async (
 
     for (const page of data.pageMetadata) {
       syncedPageIndices.add(page.pageIndex);
-      const pageWithProfileId = { ...page, profileId: profileId };
+      const pageWithProfileId = {
+        ...page,
+        profileId: profileId,
+        createdAt: toDate(page.createdAt),
+        updatedAt: toDate(page.updatedAt),
+      };
       const existingLocalPage = (await pageCompoundIndex.get([
         profileId,
         page.pageIndex,
@@ -331,6 +411,8 @@ export const updateLocalData = async (
 
     // Update last sync timestamp in localStorage
     updateSyncTimestamp(profileId, data._lastSyncTimestamp ?? Date.now());
+
+    return warnings;
   } catch (error) {
     console.error(`Error updating local data for profile ${profileId}:`, error);
     if (tx.error && !tx.done) {

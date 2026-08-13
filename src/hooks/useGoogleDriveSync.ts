@@ -14,11 +14,13 @@ import {
   DriveFile,
   ProfileSyncData,
   SyncStatus,
+  SyncConflictData,
   TokenInfo,
   ItemConflict,
   SyncResult,
 } from "@/lib/googleDrive/types";
 import { isTokenValid } from "@/lib/googleDrive/utils";
+import { checkAndRefreshAuth } from "@/lib/googleDrive/auth";
 import {
   findDriveFileById,
   findDriveFileByName,
@@ -90,11 +92,7 @@ interface GoogleDriveSyncHookReturn {
   syncStatus: SyncStatus;
   error: string | null;
   conflicts: ItemConflict[];
-  conflictData: {
-    local: ProfileSyncData;
-    remote: ProfileSyncData;
-    fileId: string;
-  } | null;
+  conflictData: SyncConflictData | null;
   syncProfile: SyncProfileFn;
   applyConflictResolution: ApplyConflictResolutionFn;
   listAppFiles: ListAppFilesFn;
@@ -123,11 +121,9 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<ItemConflict[]>([]);
-  const [conflictData, setConflictData] = useState<{
-    local: ProfileSyncData;
-    remote: ProfileSyncData;
-    fileId: string;
-  } | null>(null);
+  const [conflictData, setConflictData] = useState<SyncConflictData | null>(
+    null,
+  );
 
   // State ref to prevent recreation on each render
   const stateRef = useRef({
@@ -136,6 +132,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     conflicts,
     conflictData,
     needsReauthSet: false, // Track if we've already set needsReauth
+    lastRefreshAttempt: 0, // Throttle for automatic token refreshes
   });
 
   // Update ref when state changes
@@ -212,10 +209,20 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     const initialState = selectAuthState(store);
     setAuthState(initialState);
 
-    // Subscribe to store changes
+    // Subscribe to store changes, ignoring mutations that leave auth untouched —
+    // pushing a fresh object on every store change re-renders the whole app
     const unsubscribe = useProfileStore.subscribe((state) => {
       const newState = selectAuthState(state);
-      setAuthState(newState);
+      setAuthState((prev) =>
+        prev.googleAccessToken === newState.googleAccessToken &&
+        prev.googleRefreshToken === newState.googleRefreshToken &&
+        prev.tokenExpiresAt === newState.tokenExpiresAt &&
+        prev.isGoogleSignedIn === newState.isGoogleSignedIn &&
+        prev.needsReauth === newState.needsReauth &&
+        prev.googleUser === newState.googleUser
+          ? prev
+          : newState,
+      );
     });
 
     // Cleanup subscription
@@ -253,54 +260,6 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     };
   }, []);
 
-  // Log authentication state for debugging
-  useEffect(() => {
-    console.log(
-      "useGoogleDriveSync Auth State:",
-      authState.isGoogleSignedIn ? "Signed In" : "Not Signed In",
-      authState.googleAccessToken ? "(Token Present)" : "(No Token)",
-      authState.needsReauth ? "(Needs Re-auth)" : "",
-      authState.tokenExpiresAt
-        ? `(Expires: ${new Date(authState.tokenExpiresAt).toLocaleString()})`
-        : "",
-    );
-  }, [authState]);
-
-  // Check token validity on mount and periodically
-  useEffect(() => {
-    // Skip if not signed in or no token
-    if (!authState.isGoogleSignedIn || !currentTokenInfo) return;
-
-    // Skip if we already know we need reauth
-    if (authState.needsReauth) return;
-
-    // Function to check token validity
-    const validateToken = () => {
-      const tokenValid = isTokenValid(
-        currentTokenInfo.accessToken,
-        currentTokenInfo.expiresAt,
-      );
-
-      // Only set needsReauth if token is invalid and we haven't already set it
-      if (!tokenValid && !stateRef.current.needsReauthSet) {
-        console.log("Token expired - needs re-authentication");
-        stateRef.current.needsReauthSet = true;
-        useProfileStore.setState({ needsReauth: true });
-      }
-    };
-
-    // Run initial validation
-    validateToken();
-
-    // Set up interval for periodic checks
-    const intervalId = setInterval(validateToken, 5 * 60 * 1000); // Check every 5 minutes
-
-    // Cleanup function
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [authState.isGoogleSignedIn, currentTokenInfo, authState.needsReauth]);
-
   // Reset the needsReauthSet flag when needsReauth changes to false
   useEffect(() => {
     if (!authState.needsReauth) {
@@ -335,6 +294,65 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     },
     [setGoogleAuthDetails, authState.googleUser],
   );
+
+  // Check token validity on mount and periodically. An expired token is only a
+  // re-auth prompt once refreshing it has actually failed.
+  useEffect(() => {
+    // Skip if not signed in or no token
+    if (!authState.isGoogleSignedIn || !currentTokenInfo) return;
+
+    // Skip if we already know we need reauth
+    if (authState.needsReauth) return;
+
+    let cancelled = false;
+
+    const validateToken = async () => {
+      const tokenInfo = getFreshTokenInfo();
+      if (!tokenInfo || stateRef.current.needsReauthSet) return;
+      if (isTokenValid(tokenInfo.accessToken, tokenInfo.expiresAt)) return;
+
+      // Offline: the refresh can't succeed and the token isn't necessarily bad
+      if (typeof navigator !== "undefined" && navigator.onLine === false)
+        return;
+
+      // Each refresh updates the store, which re-runs this effect — don't let
+      // a short-lived token turn that into a refresh loop
+      const now = Date.now();
+      if (now - stateRef.current.lastRefreshAttempt < 60 * 1000) return;
+      stateRef.current.lastRefreshAttempt = now;
+
+      const { isValid, refreshedTokenInfo } =
+        await checkAndRefreshAuth(tokenInfo);
+      if (cancelled) return;
+
+      if (isValid) {
+        if (refreshedTokenInfo) handleTokenRefresh(refreshedTokenInfo);
+        return;
+      }
+
+      console.log("Token expired and refresh failed - needs re-authentication");
+      stateRef.current.needsReauthSet = true;
+      useProfileStore.setState({ needsReauth: true });
+    };
+
+    // Run initial validation
+    void validateToken();
+
+    // Set up interval for periodic checks
+    const intervalId = setInterval(() => void validateToken(), 5 * 60 * 1000); // Check every 5 minutes
+
+    // Cleanup function
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    authState.isGoogleSignedIn,
+    authState.needsReauth,
+    currentTokenInfo,
+    getFreshTokenInfo,
+    handleTokenRefresh,
+  ]);
 
   // Status callbacks
   const callbacks = useMemo(

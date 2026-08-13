@@ -257,16 +257,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     if (driveHookStatus === "idle" || driveHookStatus === "success") {
       setLastSyncInitiatedByThisCard(false);
     }
-    // Clear local card error if global hook error clears or status becomes idle/success
-    if (
-      (driveHookStatus === "idle" ||
-        driveHookStatus === "success" ||
-        !driveHookError) &&
-      cardError
-    ) {
-      setCardError(null);
-    }
-  }, [driveHookStatus, driveHookError, cardError]);
+  }, [driveHookStatus]);
 
   // Open conflict resolution modal when this card's sync detects conflicts
   useEffect(() => {
@@ -506,6 +497,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               <button
                 onClick={async () => {
                   setIsResuming(true);
+                  setCardError(null);
                   try {
                     await resumeSync(profile.id!);
                   } catch (error) {
@@ -603,6 +595,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
                               onClick={async () => {
                                 setShowPauseOptions(false);
                                 setIsPausing(true);
+                                setCardError(null);
 
                                 try {
                                   // Calculate duration in milliseconds

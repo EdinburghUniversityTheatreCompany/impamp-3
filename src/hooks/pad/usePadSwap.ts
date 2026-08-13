@@ -11,7 +11,7 @@ import { useProfileStore } from "@/store/profileStore";
 import {
   PadConfiguration,
   isEmergencyPage,
-  upsertPadConfiguration,
+  swapPadConfigurations,
 } from "@/lib/db";
 
 interface PadSwapParams {
@@ -50,7 +50,6 @@ export function usePadSwap(params: PadSwapParams) {
       }
 
       const fromConfig = padConfigs.get(fromIndex);
-      const toConfig = padConfigs.get(toIndex);
 
       // Cannot swap if either pad is a special control pad
       if (
@@ -72,69 +71,14 @@ export function usePadSwap(params: PadSwapParams) {
       }
 
       try {
-        // Create temporary copies of the configurations to avoid reference issues
-        const fromConfigCopy = fromConfig ? { ...fromConfig } : null;
-        const toConfigCopy = toConfig ? { ...toConfig } : null;
-
-        // STEP 1: First, clear both pads to avoid unique constraint errors
-        // Clear the source pad (always has a configuration)
-        await upsertPadConfiguration({
-          profileId: activeProfileId,
-          pageIndex: currentPageIndex,
-          padIndex: fromIndex,
-          audioFileIds: [], // Empty
-          playbackType: "round-robin",
-          name: undefined,
-          keyBinding: undefined,
-        });
-
-        // Only clear the target pad if it has a configuration
-        if (
-          toConfigCopy &&
-          toConfigCopy.audioFileIds &&
-          toConfigCopy.audioFileIds.length > 0
-        ) {
-          await upsertPadConfiguration({
-            profileId: activeProfileId,
-            pageIndex: currentPageIndex,
-            padIndex: toIndex,
-            audioFileIds: [], // Empty
-            playbackType: "round-robin",
-            name: undefined,
-            keyBinding: undefined,
-          });
-        }
-
-        // STEP 2: Now that both are empty, set up the new configurations
-        // Move the from pad configuration to the target position, ensuring required fields are present
-        await upsertPadConfiguration({
-          profileId: activeProfileId,
-          pageIndex: currentPageIndex,
-          padIndex: toIndex,
-          audioFileIds: fromConfigCopy?.audioFileIds || [],
-          audioTrimSettings: fromConfigCopy?.audioTrimSettings,
-          playbackType: fromConfigCopy?.playbackType || "round-robin",
-          name: fromConfigCopy?.name,
-          keyBinding: fromConfigCopy?.keyBinding,
-        });
-
-        // If the target had a configuration, move it to the source position
-        if (
-          toConfigCopy &&
-          toConfigCopy.audioFileIds &&
-          toConfigCopy.audioFileIds.length > 0
-        ) {
-          await upsertPadConfiguration({
-            profileId: activeProfileId,
-            pageIndex: currentPageIndex,
-            padIndex: fromIndex,
-            audioFileIds: toConfigCopy.audioFileIds,
-            audioTrimSettings: toConfigCopy.audioTrimSettings,
-            playbackType: toConfigCopy.playbackType || "round-robin",
-            name: toConfigCopy.name,
-            keyBinding: toConfigCopy.keyBinding,
-          });
-        }
+        // Both pads are rewritten in a single transaction, so the sounds can
+        // never end up assigned to neither pad
+        await swapPadConfigurations(
+          activeProfileId,
+          currentPageIndex,
+          fromIndex,
+          toIndex,
+        );
 
         // Success - refresh grid and update emergency sounds if needed
         refreshPadConfigs();

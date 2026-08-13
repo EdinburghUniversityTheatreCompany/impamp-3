@@ -30,6 +30,8 @@ import {
   isTrackPlaying,
   isTrackFading,
   getActivePlaybackKeys,
+  getActiveTrack,
+  getStopGeneration,
 } from "./playback";
 import { resumeAudioContext, getAudioContext } from "./context";
 import {
@@ -297,14 +299,16 @@ export async function triggerAudioForPadInstant(
     currentPageIndex,
     padIndex,
   );
-  const isAlreadyPlaying = isTrackPlaying(playbackKey);
+  // A fading track is on its way out, so it must not block a new trigger
+  const isFadingOut = isTrackFading(playbackKey);
+  const isAlreadyPlaying = isTrackPlaying(playbackKey) && !isFadingOut;
 
   // Get the active pad behavior from the profile store
   const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
 
   console.log(
     `[Audio Controls] [Instant] Triggering pad ${padIndex}, key: ${playbackKey}, ` +
-      `Is Playing: ${isAlreadyPlaying}, Behavior: ${activePadBehavior}, ` +
+      `Is Playing: ${isAlreadyPlaying}, Is Fading: ${isFadingOut}, Behavior: ${activePadBehavior}, ` +
       `Playback Type: ${playbackType}, Audio Files: ${audioFileIds.length}`,
   );
 
@@ -337,7 +341,18 @@ export async function triggerAudioForPadInstant(
         );
         return;
     }
+  } else if (isFadingOut) {
+    // Hard stop the outgoing instance so the new one owns the playback key
+    console.log(
+      `[Audio Controls] [Instant] Stopping fading instance before re-trigger for key: ${playbackKey}`,
+    );
+    stopTrack(playbackKey);
   }
+
+  // Capture the stop generation so a stop during loading cancels this trigger.
+  // Re-baselined whenever this function stops a track itself, so its own
+  // bookkeeping stops are never mistaken for a user-requested stop.
+  let triggerGeneration = getStopGeneration();
 
   try {
     // Use the strategy pattern to select which audio file to play
@@ -405,6 +420,16 @@ export async function triggerAudioForPadInstant(
     //    without decoding the whole file, and no PCM memory is held.
     try {
       const audioFileData = await getAudioFile(audioFileId);
+
+      // Bail out if a stop was requested while the blob was being read —
+      // nothing is audible yet, so just abandon the trigger
+      if (getStopGeneration() !== triggerGeneration) {
+        console.log(
+          `[Audio Controls] [Instant] Blob load cancelled by a stop request for key: ${playbackKey}`,
+        );
+        return;
+      }
+
       if (audioFileData?.blob) {
         ensureStrategyUpdated();
         const element = playBlobStreaming(
@@ -414,6 +439,24 @@ export async function triggerAudioForPadInstant(
         );
         if (element) {
           const playable = await waitForStreamingPlayable(element);
+
+          // A stop (ESC, or a re-trigger of this pad) during the wait tears
+          // this element down and takes the playback key away from it.
+          // Never continue in that case — falling through to the decode
+          // path would restart the sound the user just stopped. A media
+          // error also drops ownership, but without bumping the stop
+          // generation, so unsupported formats still fall back to decoding.
+          const active = getActiveTrack(playbackKey);
+          const stillOurs =
+            active?.source.kind === "media" &&
+            active.source.element === element;
+          if (!stillOurs && getStopGeneration() !== triggerGeneration) {
+            console.log(
+              `[Audio Controls] [Instant] Streaming start cancelled by a stop request for key: ${playbackKey}`,
+            );
+            return;
+          }
+
           if (playable) {
             console.log(
               `[Audio Controls] [Instant] Streaming audio file ID: ${audioFileId} for pad ${padIndex}`,
@@ -423,8 +466,10 @@ export async function triggerAudioForPadInstant(
             return;
           }
           // Release the failed streaming attempt (no-op if the element's
-          // error handler already cleaned it up)
+          // error handler already cleaned it up). This is our own stop, so
+          // re-baseline the generation to keep the decode fallback alive.
           stopTrack(playbackKey);
+          triggerGeneration = getStopGeneration();
         }
         console.warn(
           `[Audio Controls] [Instant] Streaming start failed for ID: ${audioFileId}, falling back to decode...`,
@@ -468,6 +513,14 @@ export async function triggerAudioForPadInstant(
         onLoadingStateChange,
         onError,
       );
+    }
+
+    // Bail out if a stop was requested while we were loading
+    if (getStopGeneration() !== triggerGeneration) {
+      console.log(
+        `[Audio Controls] [Instant] Load cancelled by a stop request for key: ${playbackKey}`,
+      );
+      return;
     }
 
     if (buffer) {

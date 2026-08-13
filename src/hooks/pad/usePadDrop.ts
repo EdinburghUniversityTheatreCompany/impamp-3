@@ -30,6 +30,9 @@ export function usePadDrop(
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
+  const incrementPadConfigsVersion = useProfileStore(
+    (state) => state.incrementPadConfigsVersion,
+  );
   const requestSync = useProfileStore((state) => state.requestSync);
 
   /**
@@ -77,6 +80,7 @@ export function usePadDrop(
 
         // Refresh the UI
         refreshPadConfigs();
+        incrementPadConfigsVersion();
         requestSync(activeProfileId);
 
         // Check if we're on an emergency page and refresh if needed
@@ -107,6 +111,7 @@ export function usePadDrop(
       currentPageIndex,
       refreshPadConfigs,
       incrementEmergencySoundsVersion,
+      incrementPadConfigsVersion,
       requestSync,
     ],
   );

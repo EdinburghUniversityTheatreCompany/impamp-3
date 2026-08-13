@@ -14,6 +14,27 @@ import { checkAndRefreshAuth } from "./auth";
 import { getProfileFolderName } from "./utils";
 
 /**
+ * Escapes a value for safe interpolation into a Drive API query string.
+ * Drive query literals are single-quoted, so backslashes and apostrophes
+ * must be escaped or the query is rejected with a 400.
+ * @param value The raw value (file name, folder name, etc.)
+ * @returns The escaped value
+ */
+export const escapeDriveQueryValue = (value: string): string =>
+  value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+/**
+ * Parses a Drive API response body, tolerating empty responses.
+ * DELETE and some PATCH endpoints answer 204 with no body.
+ */
+async function parseDriveResponse<T>(response: Response): Promise<T | null> {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return null;
+  return JSON.parse(text) as T;
+}
+
+/**
  * Performs an authenticated request to the Google Drive API
  * @param url The API endpoint URL
  * @param method The HTTP method
@@ -71,7 +92,7 @@ async function authenticatedRequest<T>(
         });
 
         if (retryResponse.ok) {
-          return (await retryResponse.json()) as T;
+          return await parseDriveResponse<T>(retryResponse);
         } else if (retryResponse.status === 403) {
           throw new Error("DRIVE_403");
         } else {
@@ -104,12 +125,51 @@ async function authenticatedRequest<T>(
     }
 
     // Parse and return response data
-    return (await response.json()) as T;
+    return await parseDriveResponse<T>(response);
   } catch (err) {
     console.error(`API Request failed: ${url}`, err);
     throw err;
   }
 }
+
+/**
+ * Runs a files.list query, following nextPageToken so results are not capped
+ * at Drive's default page size.
+ * @param query The Drive query string (unencoded)
+ * @param fields The fields to request inside files(...)
+ * @param tokenInfo Current token information
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns All matching files across every page
+ */
+export const listDriveFilesByQuery = async (
+  query: string,
+  fields: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<DriveFile[]> => {
+  const files: DriveFile[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const url =
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}` +
+      `&fields=nextPageToken,files(${fields})&pageSize=100` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+
+    const data = await authenticatedRequest<DriveFileList>(
+      url,
+      "GET",
+      tokenInfo,
+      {},
+      refreshCallback,
+    );
+
+    if (data?.files) files.push(...data.files);
+    pageToken = data?.nextPageToken;
+  } while (pageToken);
+
+  return files;
+};
 
 const APP_FOLDER_NAME = "ImpAmp_Data";
 
@@ -186,7 +246,7 @@ export const getOrCreateProfileFolder = async (
   const folderName = getProfileFolderName(profileName);
 
   // Search for existing sub-folder inside the app folder
-  const query = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${appFolderId}' in parents and trashed=false`;
+  const query = `name='${escapeDriveQueryValue(folderName)}' and mimeType='application/vnd.google-apps.folder' and '${escapeDriveQueryValue(appFolderId)}' in parents and trashed=false`;
   const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
 
   const data = await authenticatedRequest<DriveFileList>(
@@ -485,7 +545,7 @@ export const findDriveFileByName = async (
 
   try {
     // Search only for files created by this application using appProperties
-    const query = `name='${fileName}' and mimeType='application/json' and appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
+    const query = `name='${escapeDriveQueryValue(fileName)}' and mimeType='application/json' and appProperties has { key='appIdentifier' and value='ImpAmp3' } and trashed=false`;
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
 
     const data = await authenticatedRequest<DriveFileList>(
@@ -519,7 +579,7 @@ export const findAudioFileInDriveFolder = async (
   }
 
   try {
-    const query = `name='${fileName}' and '${folderId}' in parents and appProperties has { key='profileId' and value='${profileId}' } and appProperties has { key='fileType' and value='audioFile' } and trashed=false`;
+    const query = `name='${escapeDriveQueryValue(fileName)}' and '${escapeDriveQueryValue(folderId)}' in parents and appProperties has { key='profileId' and value='${profileId}' } and appProperties has { key='fileType' and value='audioFile' } and trashed=false`;
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind,parents)`;
 
     const data = await authenticatedRequest<DriveFileList>(
@@ -557,19 +617,15 @@ export const listAppFiles = async (
   try {
     // Filter by mimeType=application/json to exclude audio files (which have audio MIME types)
     const query = `appProperties has { key='appIdentifier' and value='ImpAmp3' } and mimeType='application/json' and trashed=false`;
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
 
-    const data = await authenticatedRequest<DriveFileList>(
-      url,
-      "GET",
+    const files = await listDriveFilesByQuery(
+      query,
+      "id,name,mimeType,appProperties,modifiedTime,kind",
       tokenInfo,
-      {},
       refreshCallback,
     );
 
-    return (data?.files || []).filter(
-      (f) => f.appProperties?.fileType !== "audioFile",
-    );
+    return files.filter((f) => f.appProperties?.fileType !== "audioFile");
   } catch (err) {
     console.error("Error listing app files:", err);
     throw err;
@@ -592,18 +648,14 @@ export const listFilesInFolder = async (
     throw new Error("Not authenticated");
   }
 
-  const query = `'${folderId}' in parents and mimeType='application/json' and trashed=false`;
-  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,appProperties,modifiedTime,kind)`;
+  const query = `'${escapeDriveQueryValue(folderId)}' in parents and mimeType='application/json' and trashed=false`;
 
-  const data = await authenticatedRequest<DriveFileList>(
-    url,
-    "GET",
+  return listDriveFilesByQuery(
+    query,
+    "id,name,mimeType,appProperties,modifiedTime,kind",
     tokenInfo,
-    {},
     refreshCallback,
   );
-
-  return data?.files || [];
 };
 
 /**

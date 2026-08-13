@@ -13,23 +13,25 @@ import { SequentialStrategy } from "./sequential";
 import { RandomStrategy } from "./random";
 import { RoundRobinStrategy } from "./roundRobin";
 
-// Stateless strategy singletons
+// Fallback strategies used when no per-pad instance key is provided
 const strategies: Record<string, PlaybackStrategy> = {
   sequential: new SequentialStrategy(),
   random: new RandomStrategy(),
 };
 
-// Per-pad instances for stateful strategies (round-robin)
+// Per-pad instances for stateful strategies (sequential, round-robin)
+const sequentialInstances = new Map<string, SequentialStrategy>();
 const roundRobinInstances = new Map<string, RoundRobinStrategy>();
 
 /**
  * Gets the appropriate strategy instance for the specified playback type.
  *
- * Round-robin is stateful (tracks which sounds haven't been played yet),
- * so each pad gets its own instance keyed by playbackKey.
+ * Sequential (tracks the position in the sequence) and round-robin (tracks which
+ * sounds haven't been played yet) are stateful, so each pad gets its own instance
+ * keyed by playbackKey. Random is stateless and can be shared.
  *
  * @param playbackType - The type of playback strategy to get
- * @param instanceKey - Unique key for per-pad instances (required for round-robin)
+ * @param instanceKey - Unique key for per-pad instances (sequential, round-robin)
  * @returns The strategy instance
  */
 export function getStrategy(
@@ -41,6 +43,15 @@ export function getStrategy(
     if (!instance) {
       instance = new RoundRobinStrategy();
       roundRobinInstances.set(instanceKey, instance);
+    }
+    return instance;
+  }
+
+  if (playbackType === "sequential" && instanceKey) {
+    let instance = sequentialInstances.get(instanceKey);
+    if (!instance) {
+      instance = new SequentialStrategy();
+      sequentialInstances.set(instanceKey, instance);
     }
     return instance;
   }

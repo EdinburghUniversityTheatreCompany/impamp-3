@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 
 type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
 
@@ -31,6 +31,22 @@ const Modal: React.FC<ModalProps> = ({
   showCancelButton = true,
   size = "sm",
 }) => {
+  // Escape closes the modal, and must not reach the global keyboard listener
+  // (where it doubles as the panic button)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onClose();
+    };
+
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleConfirm = async () => {

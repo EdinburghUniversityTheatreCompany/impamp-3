@@ -145,6 +145,9 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
       const firstTrack = state.armedTracks.get(firstKey);
 
       if (firstTrack) {
+        // Disarm synchronously so a rapid second trigger cannot fire the same cue
+        get().actions.removeArmedTrack(firstKey);
+
         // Import triggerAudioForPadInstant dynamically to avoid circular dependencies
         import("@/lib/audio").then(({ triggerAudioForPadInstant }) => {
           // Play the armed track with instant response
@@ -196,9 +199,6 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
               loadingStoreActions.clearPadLoadingState(loadingKey);
             },
           });
-
-          // Remove from armed tracks
-          get().actions.removeArmedTrack(firstKey);
         });
       }
     },
@@ -214,3 +214,10 @@ export const useActivePlayback = () =>
 
 export const useArmedTracks = () =>
   usePlaybackStore((state) => state.armedTracks);
+
+// Subscribes to a single pad's playback slice, so progress updates for one track
+// only re-render that track's pad
+export const usePadPlaybackState = (playbackKey: string | null) =>
+  usePlaybackStore((state) =>
+    playbackKey ? (state.activePlayback.get(playbackKey) ?? null) : null,
+  );

@@ -562,11 +562,19 @@ export const detectProfileConflicts = async (
 
     // Add audio files from remote that don't exist locally so updateLocalData
     // can import them and build the correct ID mapping for new files.
+    // Hash-less legacy entries carry their audio inline, so they are deduped by
+    // name and type instead — re-appending them would grow the Drive JSON on
+    // every sync.
     const localAudioHashes = new Set([...localHashToId.keys()]);
+    const mergedAudioKeys = new Set(
+      mergedData.audioFiles.map((f) => f.hash ?? `${f.name}|${f.type}`),
+    );
     for (const remoteFile of remoteData.audioFiles) {
-      if (!remoteFile.hash || !localAudioHashes.has(remoteFile.hash)) {
-        mergedData.audioFiles.push(remoteFile);
-      }
+      if (remoteFile.hash && localAudioHashes.has(remoteFile.hash)) continue;
+      const key = remoteFile.hash ?? `${remoteFile.name}|${remoteFile.type}`;
+      if (mergedAudioKeys.has(key)) continue;
+      mergedAudioKeys.add(key);
+      mergedData.audioFiles.push(remoteFile);
     }
   }
 

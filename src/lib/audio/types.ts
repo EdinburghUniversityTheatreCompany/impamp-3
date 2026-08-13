@@ -61,6 +61,13 @@ export type TrackSource =
  */
 export interface ActiveTrack {
   source: TrackSource;
+  /**
+   * The track's own gain node, inserted between the source and the
+   * destination when playback starts. Fades and hard stops automate this
+   * existing node in place — the graph is never re-plumbed mid-playback,
+   * which would otherwise reset the level to full volume.
+   */
+  gainNode: GainNode;
   name: string;
   startTime: number;
   duration: number;

@@ -36,6 +36,22 @@ export function getProxyRequestParams(
 }
 
 /**
+ * Rejects cross-site callers. Requests without an Origin or Referer (direct
+ * navigation, same-origin fetches in some browsers) are allowed through.
+ */
+export function isSameHostRequest(request: NextRequest): boolean {
+  const source =
+    request.headers.get("origin") ?? request.headers.get("referer");
+  if (!source) return true;
+
+  try {
+    return new URL(source).host === request.nextUrl.host;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Map a failed Google Drive API response to a JSON error response,
  * surfacing Google's own error message where available. 403/404 pass
  * through; anything else becomes a 502.

@@ -10,7 +10,6 @@
 
 import React from "react";
 import { useSearchContext } from "@/components/search";
-import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 
 interface SearchButtonProps {
   className?: string;
@@ -25,12 +24,7 @@ interface SearchButtonProps {
 const SearchButton: React.FC<SearchButtonProps> = ({ className = "" }) => {
   const { openSearchModal } = useSearchContext();
 
-  // Register keyboard shortcut (Ctrl+F)
-  useKeyboardShortcut({
-    keys: ["Control", "f"],
-    callback: () => openSearchModal(),
-    preventDefault: true,
-  });
+  // The Ctrl+F shortcut is registered globally in useKeyboardListener
 
   return (
     <button

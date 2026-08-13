@@ -14,11 +14,17 @@ import { playbackStoreActions } from "@/store/playbackStore";
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
 
+// Incremented whenever playback is stopped, so in-flight triggers can be cancelled
+let stopGeneration = 0;
+
+// Duration of the de-click ramp applied when hard stopping a track
+const HARD_STOP_FADE_SECONDS = 0.02;
+
 // rAF loop ID
 let rAFId: number | null = null;
 
 // Previous playback state for change detection
-let previousPlaybackState = new Map<
+const previousPlaybackState = new Map<
   string,
   {
     progress: number;
@@ -26,6 +32,11 @@ let previousPlaybackState = new Map<
     isFading: boolean;
   }
 >();
+
+// Media elements whose object URL has already been revoked. Keyed by the
+// element (weakly held) so disposal is idempotent and a blob URL is never
+// revoked twice — nor left dangling.
+const disposedMediaElements = new WeakSet<HTMLAudioElement>();
 
 // Reusable objects to reduce garbage collection pressure
 
@@ -61,6 +72,71 @@ function createAudioSource(
 }
 
 /**
+ * Normalises a requested trim range against the media's real duration.
+ *
+ * Invalid values (NaN, negative, reversed or out-of-range) fall back to
+ * playing the whole file rather than producing a zero-length or negative
+ * playback window.
+ *
+ * @param rawStart - Requested trim start in seconds
+ * @param rawEnd - Requested trim end in seconds (undefined = play to the end)
+ * @param duration - Known media duration, if available
+ * @returns The clamped trim range; trimEnd stays undefined when unknown/invalid
+ */
+function clampTrimRange(
+  rawStart: number | undefined,
+  rawEnd: number | undefined,
+  duration?: number,
+): { trimStart: number; trimEnd: number | undefined } {
+  const hasDuration =
+    duration !== undefined && Number.isFinite(duration) && duration > 0;
+
+  let trimStart = rawStart ?? 0;
+  if (!Number.isFinite(trimStart) || trimStart < 0) {
+    trimStart = 0;
+  }
+  if (hasDuration) {
+    trimStart = Math.min(trimStart, duration as number);
+  }
+
+  let trimEnd = rawEnd;
+  if (trimEnd !== undefined) {
+    if (
+      !Number.isFinite(trimEnd) ||
+      trimEnd <= trimStart ||
+      (hasDuration && trimEnd > (duration as number))
+    ) {
+      // Unusable end point — fall back to the natural end of the media
+      trimEnd = undefined;
+    }
+  }
+
+  // A start at/past the end with no usable end point would yield an empty
+  // window; play the whole file instead.
+  if (
+    trimEnd === undefined &&
+    hasDuration &&
+    trimStart >= (duration as number)
+  ) {
+    trimStart = 0;
+  }
+
+  return { trimStart, trimEnd };
+}
+
+/**
+ * Returns the current stop generation counter
+ *
+ * Callers that await asynchronous work before starting playback can capture this
+ * value and compare it afterwards to detect that a stop was requested meanwhile.
+ *
+ * @returns The current stop generation
+ */
+export function getStopGeneration(): number {
+  return stopGeneration;
+}
+
+/**
  * Halts playback of a track's underlying source.
  * May throw InvalidStateError for buffer sources that already stopped.
  */
@@ -76,10 +152,16 @@ function stopSourcePlayback(source: TrackSource): void {
 /**
  * Releases the resources held by a media element source: detaches the
  * element and revokes the object URL so the underlying blob can be
- * garbage collected. Idempotent.
+ * garbage collected. Idempotent — the object URL is revoked exactly once.
  */
 function disposeMediaSource(source: Extract<TrackSource, { kind: "media" }>) {
   const { element, sourceNode, objectUrl } = source;
+
+  if (disposedMediaElements.has(element)) {
+    return;
+  }
+  disposedMediaElements.add(element);
+
   element.onended = null;
   element.onerror = null;
   if (!element.paused) {
@@ -113,6 +195,21 @@ function disposeTrackSource(source: TrackSource): void {
 }
 
 /**
+ * Removes all bookkeeping for a track and stops the monitoring loop if idle.
+ *
+ * Does not touch the underlying source — callers decide whether the source
+ * is released immediately or after a de-click ramp.
+ *
+ * @param playbackKey - The unique key for the playback
+ */
+function clearTrackState(playbackKey: string): void {
+  activeTracks.delete(playbackKey);
+  previousPlaybackState.delete(playbackKey); // Clean up change detection state
+  playbackStoreActions.removeTrack(playbackKey);
+  stopPlaybackLoopIfIdle();
+}
+
+/**
  * Removes a track and releases all resources associated with it.
  */
 function cleanupTrack(playbackKey: string): void {
@@ -122,10 +219,7 @@ function cleanupTrack(playbackKey: string): void {
     disposeMediaSource(track.source);
   }
 
-  activeTracks.delete(playbackKey);
-  previousPlaybackState.delete(playbackKey);
-  playbackStoreActions.removeTrack(playbackKey);
-  stopPlaybackLoop(); // Check if loop should stop
+  clearTrackState(playbackKey);
 }
 
 /**
@@ -162,11 +256,16 @@ export function playBuffer(
     console.log(`[Audio Playback] Starting playback for key: ${playbackKey}`);
 
     // Create audio source
-    const { source } = createAudioSource(buffer, volume);
+    const { source, gainNode } = createAudioSource(buffer, volume);
 
-    // Apply trim settings
-    const trimStart = params.trimStart ?? 0;
-    const trimEnd = params.trimEnd ?? buffer.duration;
+    // Apply trim settings, falling back to the full buffer when invalid
+    const clamped = clampTrimRange(
+      params.trimStart,
+      params.trimEnd,
+      buffer.duration,
+    );
+    const trimStart = clamped.trimStart;
+    const trimEnd = clamped.trimEnd ?? buffer.duration;
     const trimmedDuration = trimEnd - trimStart;
 
     // Start playback with trim offset and duration
@@ -175,6 +274,7 @@ export function playBuffer(
     // Store track information
     const track: ActiveTrack = {
       source: { kind: "buffer", sourceNode: source },
+      gainNode,
       name: params.name,
       startTime: context.currentTime,
       duration: trimmedDuration,
@@ -250,6 +350,8 @@ export function playBlobStreaming(
   playbackKey: string,
   params: PlayAudioParams,
 ): HTMLAudioElement | null {
+  let objectUrl: string | null = null;
+
   try {
     const context = getAudioContext();
     const volume = params.volume ?? 1.0;
@@ -258,7 +360,7 @@ export function playBlobStreaming(
       `[Audio Playback] Starting streaming playback for key: ${playbackKey}`,
     );
 
-    const objectUrl = URL.createObjectURL(blob);
+    objectUrl = URL.createObjectURL(blob);
     const element = new Audio();
     element.preload = "auto";
     element.src = objectUrl;
@@ -274,19 +376,31 @@ export function playBlobStreaming(
     sourceNode.connect(gainNode);
     gainNode.connect(context.destination);
 
-    const trimStart = params.trimStart ?? 0;
-    const trimEnd = params.trimEnd;
-    if (trimStart > 0) {
-      // Applied once metadata loads if the element isn't ready yet
-      element.currentTime = trimStart;
-    }
-
     // The full duration may be unknown until metadata loads; the playback
     // monitoring loop fills it in from element.duration once available
     const elementDuration =
       isFinite(element.duration) && element.duration > 0
         ? element.duration
         : undefined;
+
+    // Clamp the requested trim range; with no duration yet only the obvious
+    // invariants can be enforced, the rest is re-checked on loadedmetadata
+    const { trimStart, trimEnd } = clampTrimRange(
+      params.trimStart,
+      params.trimEnd,
+      elementDuration,
+    );
+
+    if (trimStart > 0) {
+      try {
+        // May be ignored/throw before metadata is available; re-applied by
+        // the loadedmetadata handler below in that case
+        element.currentTime = trimStart;
+      } catch {
+        // Ignore — seek is retried once metadata loads
+      }
+    }
+
     const knownDuration =
       trimEnd !== undefined
         ? trimEnd - trimStart
@@ -296,6 +410,7 @@ export function playBlobStreaming(
 
     const track: ActiveTrack = {
       source: { kind: "media", element, sourceNode, objectUrl },
+      gainNode,
       name: params.name,
       startTime: context.currentTime,
       duration: knownDuration,
@@ -310,6 +425,37 @@ export function playBlobStreaming(
       currentAudioIndex: params.multiSoundState.currentAudioIndex,
       availableAudioIndices: params.multiSoundState.availableAudioIndices,
     };
+
+    // Once the real duration is known, re-clamp the trim range against it
+    // and apply the start seek if it couldn't be applied earlier
+    element.addEventListener(
+      "loadedmetadata",
+      () => {
+        const duration = element.duration;
+        if (!isFinite(duration) || duration <= 0) return;
+
+        const reclamped = clampTrimRange(
+          track.trimStart,
+          track.trimEnd,
+          duration,
+        );
+        track.trimStart = reclamped.trimStart;
+        track.trimEnd = reclamped.trimEnd;
+
+        if (track.duration <= 0) {
+          track.duration = (track.trimEnd ?? duration) - track.trimStart;
+        }
+
+        if (track.trimStart > 0 && element.currentTime < track.trimStart) {
+          try {
+            element.currentTime = track.trimStart;
+          } catch {
+            // Ignore — playback simply starts from the beginning
+          }
+        }
+      },
+      { once: true },
+    );
 
     // Handlers are guarded by track identity so a source that was replaced
     // (e.g. via "restart" behavior) can't remove its successor's state
@@ -360,6 +506,10 @@ export function playBlobStreaming(
       `[Audio Playback] Error streaming audio for key ${playbackKey}:`,
       error,
     );
+    // The track never became active, so nothing else will revoke this URL
+    if (objectUrl !== null) {
+      URL.revokeObjectURL(objectUrl);
+    }
     return null;
   }
 }
@@ -477,25 +627,16 @@ export function fadeOutTrack(
 
   try {
     const context = getAudioContext();
-    // Both buffer and media element sources expose an AudioNode output
-    const sourceNode = track.source.sourceNode;
+    const source = track.source;
+    const gain = track.gainNode.gain;
 
-    // Disconnect the source from its current destination to insert the gain node
-    sourceNode.disconnect();
-
-    // Create a gain node for the fade
-    const gainNode = context.createGain();
-    // Start at current volume (assume 1)
-    gainNode.gain.setValueAtTime(1, context.currentTime);
-    // Fade to 0 over the specified duration
-    gainNode.gain.linearRampToValueAtTime(
-      0,
-      context.currentTime + durationInSeconds,
-    );
-
-    // Connect source -> gain -> destination
-    sourceNode.connect(gainNode);
-    gainNode.connect(context.destination);
+    // Fade the track's own gain node from its current level down to silence.
+    // The graph is left untouched, so the fade applies to both buffer and
+    // media element sources and starts from the real current volume.
+    const currentGain = gain.value;
+    gain.cancelScheduledValues(context.currentTime);
+    gain.setValueAtTime(currentGain, context.currentTime);
+    gain.linearRampToValueAtTime(0, context.currentTime + durationInSeconds);
 
     // Mark track as fading
     track.isFading = true;
@@ -507,34 +648,30 @@ export function fadeOutTrack(
 
     // Clean up after the fade completes
     setTimeout(() => {
-      // Only clean up if the track is still the one we started fading
-      const currentTrack = activeTracks.get(playbackKey);
-      if (currentTrack === track) {
-        try {
-          // Stop the underlying source after the fade
-          stopSourcePlayback(track.source);
-        } catch (error) {
-          // Ignore errors if already stopped (e.g., due to natural end)
-          if ((error as DOMException).name !== "InvalidStateError") {
-            console.warn(
-              `[Audio Playback] Error stopping source during fade cleanup for key ${playbackKey}:`,
-              error,
-            );
-          }
-        } finally {
-          // Always remove state after fade attempt
-          cleanupTrack(playbackKey);
-          console.log(
-            `[Audio Playback] Fade completed for key: ${playbackKey}`,
+      // Always halt the faded source, even if the key now holds another track
+      try {
+        stopSourcePlayback(source);
+      } catch (error) {
+        // Ignore errors if already stopped (e.g., due to natural end)
+        if ((error as DOMException).name !== "InvalidStateError") {
+          console.warn(
+            `[Audio Playback] Error stopping source during fade cleanup for key ${playbackKey}:`,
+            error,
           );
         }
+      }
+
+      // Only remove state if the track is still the one we started fading
+      if (activeTracks.get(playbackKey) === track) {
+        cleanupTrack(playbackKey);
+        console.log(`[Audio Playback] Fade completed for key: ${playbackKey}`);
       } else {
         console.log(
           `[Audio Playback] Fade cleanup skipped for key ${playbackKey} as track changed or was removed.`,
         );
         // Still release the faded source's resources — it no longer owns
         // the playback key but may be playing silently
-        disposeTrackSource(track.source);
+        disposeTrackSource(source);
       }
     }, durationInSeconds * 1000);
 
@@ -546,34 +683,83 @@ export function fadeOutTrack(
     );
 
     // Fallback: If fade setup fails, attempt immediate stop and cleanup
+    console.warn(
+      `[Audio Playback] Fade initiation failed for key ${playbackKey}. Attempting fallback immediate stop.`,
+    );
     try {
-      if (track) {
-        console.warn(
-          `[Audio Playback] Fade initiation failed for key ${playbackKey}. Attempting fallback immediate stop.`,
-        );
-        stopSourcePlayback(track.source);
-        cleanupTrack(playbackKey);
-      }
+      stopSourcePlayback(track.source);
     } catch (stopError) {
       console.error(
         `[Audio Playback] Error during fallback stop for key ${playbackKey}:`,
         stopError,
       );
     }
+    // State must be released even when the source refused to stop
+    cleanupTrack(playbackKey);
 
     return false;
   }
 }
 
 /**
- * Stops playback of a track immediately with a short fade-out
+ * Stops playback of a track immediately, cancelling any fade in progress
  *
  * @param playbackKey - The unique key for the playback
  * @returns True if the track was stopped successfully
  */
 export function stopTrack(playbackKey: string): boolean {
   console.log(`[Audio Playback] Requesting stop for key: ${playbackKey}`);
-  return fadeOutTrack(playbackKey, 0.1); // Very short fade to avoid clicks
+
+  const track = activeTracks.get(playbackKey);
+  if (!track) return false;
+
+  // Invalidate any trigger that is still waiting on an async load
+  stopGeneration++;
+
+  const source = track.source;
+
+  try {
+    const context = getAudioContext();
+    const gain = track.gainNode.gain;
+    const stopAt = context.currentTime + HARD_STOP_FADE_SECONDS;
+
+    // Override any scheduled automation (e.g. an in-progress fade) with a
+    // very short ramp to silence to avoid clicks
+    const currentGain = gain.value;
+    gain.cancelScheduledValues(context.currentTime);
+    gain.setValueAtTime(currentGain, context.currentTime);
+    gain.linearRampToValueAtTime(0, stopAt);
+
+    if (source.kind === "buffer") {
+      source.sourceNode.stop(stopAt);
+    } else {
+      // Media elements can't schedule a pause, so detach the handlers now
+      // (the track is gone as far as the app is concerned) and release the
+      // element once the de-click ramp has run to silence.
+      source.element.onended = null;
+      source.element.onerror = null;
+      setTimeout(
+        () => disposeMediaSource(source),
+        HARD_STOP_FADE_SECONDS * 1000,
+      );
+    }
+  } catch (error) {
+    // Ignore errors if already stopped (e.g., due to natural end)
+    if ((error as DOMException).name !== "InvalidStateError") {
+      console.warn(
+        `[Audio Playback] Error stopping source for key ${playbackKey}:`,
+        error,
+      );
+    }
+    // The ramp could not be scheduled — release the source right away so it
+    // can never be left playing without a way to stop it
+    disposeTrackSource(source);
+  }
+
+  // Remove state immediately so the track can no longer block re-triggering
+  clearTrackState(playbackKey);
+
+  return true;
 }
 
 /**
@@ -584,6 +770,9 @@ export function stopTrack(playbackKey: string): boolean {
 export function stopAllTracks(): number {
   // Get all keys from activeTracks
   const keys = Array.from(activeTracks.keys());
+
+  // Invalidate in-flight triggers even when nothing is currently playing
+  stopGeneration++;
 
   // Stop each track
   let stoppedCount = 0;
@@ -772,14 +961,18 @@ function playbackLoopTick() {
     });
   });
 
-  // Update previous state for next comparison
-  previousPlaybackState = newPreviousState;
-
   // Only update Zustand store if something actually changed
-  if (currentPlaybackState.size > 0) {
-    if (hasAnyChanges) {
-      playbackStoreActions.setPlaybackState(currentPlaybackState);
-    }
+  if (currentPlaybackState.size > 0 && hasAnyChanges) {
+    playbackStoreActions.setPlaybackState(currentPlaybackState);
+
+    // Only advance the comparison baseline for the state we just published,
+    // otherwise small per-frame deltas never accumulate past the thresholds
+    newPreviousState.forEach((state, key) => {
+      previousPlaybackState.set(key, state);
+    });
+  }
+
+  if (activeTracks.size > 0) {
     // Always schedule next frame regardless of changes (tracks are still playing)
     rAFId = requestAnimationFrame(playbackLoopTick);
   } else {
@@ -801,6 +994,15 @@ function startPlaybackLoop() {
   ) {
     console.log("[Audio Playback] Starting playback monitoring loop...");
     rAFId = requestAnimationFrame(playbackLoopTick);
+  }
+}
+
+/**
+ * Stops the playback monitoring loop, but only if no tracks remain active
+ */
+function stopPlaybackLoopIfIdle() {
+  if (activeTracks.size === 0) {
+    stopPlaybackLoop();
   }
 }
 

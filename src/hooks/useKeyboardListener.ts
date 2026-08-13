@@ -42,6 +42,11 @@ const currentEmergencyIndexRef: { current: number } = { current: 0 };
 const keyDebounceMap = new Map<string, boolean>();
 const DEBOUNCE_TIME_MS = 100; // Adjust as needed
 
+// Stable identity of a loaded emergency sound set, used to detect real changes
+function describeEmergencySounds(sounds: EmergencySound[]): string {
+  return sounds.map((s) => `${s.pageIndex}:${s.padIndex}`).join(",");
+}
+
 // Load all emergency sounds from emergency pages
 async function loadEmergencySounds(
   profileId: number,
@@ -177,13 +182,14 @@ export function useKeyboardListener() {
   const emergencySoundsVersion = useProfileStore(
     (state) => state.emergencySoundsVersion,
   );
+  // Get pad configs version to pick up edits, drops and sync results
+  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
   const modalConfig = useUIStore((state) => state.modalConfig);
-  const closeModal = useUIStore((state) => state.closeModal);
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
@@ -193,9 +199,14 @@ export function useKeyboardListener() {
   // For now, fetch directly within the hook.
   // This map will store ALL configurations for the current page, keyed by padIndex.
   const padConfigsRef = useRef<Map<number, PadConfiguration>>(new Map());
+  // Sequence number for pad configuration loads, so stale loads can be discarded
+  const configLoadRequestRef = useRef(0);
 
   // Reference to track if we've loaded emergency sounds
   const hasLoadedEmergencySounds = useRef(false);
+
+  // Track whether edit mode was entered by holding Shift (vs. the toolbar button)
+  const editModeFromShiftRef = useRef(false);
 
   // Function to reload emergency sounds - can be called when needed
   const reloadEmergencySounds = useCallback(async () => {
@@ -207,8 +218,21 @@ export function useKeyboardListener() {
 
     // Load emergency sounds
     const sounds = await loadEmergencySounds(activeProfileId);
+    const previousIdentity = describeEmergencySounds(
+      emergencySoundsRef.current,
+    );
     emergencySoundsRef.current = sounds;
-    currentEmergencyIndexRef.current = 0; // Reset index when loading new sounds
+
+    // Only restart the round-robin when the set of sounds actually changed,
+    // otherwise keep the cursor (clamped to the new length)
+    if (previousIdentity !== describeEmergencySounds(sounds)) {
+      currentEmergencyIndexRef.current = 0;
+    } else if (sounds.length > 0) {
+      currentEmergencyIndexRef.current =
+        currentEmergencyIndexRef.current % sounds.length;
+    } else {
+      currentEmergencyIndexRef.current = 0;
+    }
 
     hasLoadedEmergencySounds.current = true;
     console.log(`Reloaded ${sounds.length} emergency sounds`);
@@ -220,21 +244,17 @@ export function useKeyboardListener() {
       `Loading emergency sounds (version: ${emergencySoundsVersion})`,
     );
     reloadEmergencySounds();
-
-    // Set up a periodic refresh (every 60 seconds) as a fallback
-    // This ensures emergency sounds are up to date even if an update is missed
-    const intervalId = setInterval(() => {
-      reloadEmergencySounds();
-    }, 60000);
-
-    return () => clearInterval(intervalId);
   }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
 
   // Effect to load pad configurations
   useEffect(() => {
+    // Token to discard resolutions of superseded loads (e.g. rapid bank switching)
+    const requestId = ++configLoadRequestRef.current;
+    // Drop the previous bank's configs immediately so keys don't trigger stale pads
+    padConfigsRef.current = new Map();
+
     const loadConfigs = async () => {
       if (activeProfileId === null) {
-        padConfigsRef.current = new Map();
         return;
       }
       try {
@@ -242,6 +262,9 @@ export function useKeyboardListener() {
           activeProfileId,
           currentPageIndex,
         );
+        if (requestId !== configLoadRequestRef.current) {
+          return; // A newer load has started, ignore this result
+        }
         // Store ALL configurations for the page, mapping padIndex to config
         const configMap = new Map<number, PadConfiguration>(
           configs.map((config) => [config.padIndex, config]),
@@ -258,40 +281,39 @@ export function useKeyboardListener() {
       }
     };
     loadConfigs();
-  }, [activeProfileId, currentPageIndex]);
+  }, [activeProfileId, currentPageIndex, padConfigsVersion]);
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
-      console.log(
-        `[KeyboardListener] KeyDown: ${event.key}, Ctrl: ${event.ctrlKey}, Shift: ${event.shiftKey}, Meta: ${event.metaKey}`,
-      ); // Base log for any key press
+      // Ignore OS auto-repeat; every shortcut here is a discrete action
+      if (event.repeat) return;
 
-      // --- Ctrl+S to Confirm/Close Modal ---
+      // --- Ctrl+S to Confirm Modal ---
       // IMPORTANT: This must come BEFORE the input/textarea check
-      if (event.key === "s" && event.ctrlKey) {
+      if (event.key.toLowerCase() === "s" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault(); // Never hand this to the browser's save dialog
         if (isModalOpen) {
-          event.preventDefault();
           console.log(
-            "[KeyboardListener] Ctrl+S detected: Modal open. Attempting confirm and close.",
+            "[KeyboardListener] Ctrl+S detected: Modal open. Attempting confirm.",
           );
           try {
-            await modalConfig?.onConfirm?.(); // Await the confirm action
+            // The confirm handler owns closing the modal, exactly as it does
+            // when the confirm button is clicked, so failed validation keeps
+            // the modal (and the user's edits) open.
+            await modalConfig?.onConfirm?.();
           } catch (error) {
             console.error(
               "[KeyboardListener] Error during modal confirm on Ctrl+S:",
               error,
             );
-          } finally {
-            closeModal(); // Always close
           }
-          return; // Stop further processing
         }
+        return; // Stop further processing
       }
 
-      // Prevent default browser tabbing behavior
-      if (event.key === "Tab") {
-        event.preventDefault();
-        return; // Stop further processing for Tab key
+      // While a modal is open it owns the keyboard (Escape, Tab, typing, etc.)
+      if (isModalOpen) {
+        return;
       }
 
       // Ignore other keys if typing in an input field, textarea, etc.
@@ -304,6 +326,12 @@ export function useKeyboardListener() {
       ) {
         console.log("[KeyboardListener] Ignoring key press in input/textarea.");
         return;
+      }
+
+      // Prevent default browser tabbing behavior outside of inputs and modals
+      if (event.key === "Tab") {
+        event.preventDefault();
+        return; // Stop further processing for Tab key
       }
 
       // --- Specific Shortcut Handling ---
@@ -390,10 +418,13 @@ export function useKeyboardListener() {
         // Check if Shift is the *only* key being pressed (or with standard modifiers)
         // This prevents triggering edit mode when typing Shift+A, etc.
         // Note: This check might be overly simplistic depending on exact needs.
-        console.log(
-          "[KeyboardListener] Shift key pressed, entering edit mode.",
-        );
-        setEditMode(true);
+        if (!useProfileStore.getState().isEditMode) {
+          console.log(
+            "[KeyboardListener] Shift key pressed, entering edit mode.",
+          );
+          editModeFromShiftRef.current = true;
+          setEditMode(true);
+        }
         return; // Don't process Shift for pad activation
       }
 
@@ -511,7 +542,7 @@ export function useKeyboardListener() {
         console.log(
           `[KeyboardListener] No custom binding found. Checking default bindings for key: ${event.key}`,
         );
-        const defaultPadIndex = getPadIndexForKey(event.key); // Handles ' ', 'Escape' etc.
+        const defaultPadIndex = getPadIndexForKey(pressedKeyLower); // Handles ' ', 'Escape' etc.
 
         if (defaultPadIndex !== undefined) {
           console.log(
@@ -641,19 +672,42 @@ export function useKeyboardListener() {
       isSearchModalOpen,
       isModalOpen,
       modalConfig,
-      closeModal,
     ],
   );
+
+  // Clear edit mode that was entered by holding Shift, leaving button-set edit mode alone
+  const clearShiftEditMode = useCallback(() => {
+    if (!editModeFromShiftRef.current) return;
+    editModeFromShiftRef.current = false;
+    setEditMode(false);
+  }, [setEditMode]);
 
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === "Shift") {
-        setEditMode(false);
+        clearShiftEditMode();
       }
     },
-    [setEditMode],
+    [clearShiftEditMode],
   );
+
+  // The keyup for Shift never arrives if the window loses focus while it is held
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearShiftEditMode();
+      }
+    };
+
+    window.addEventListener("blur", clearShiftEditMode);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("blur", clearShiftEditMode);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [clearShiftEditMode]);
 
   useEffect(() => {
     console.log("[KeyboardListener] Adding event listeners.");
@@ -665,8 +719,8 @@ export function useKeyboardListener() {
       console.log("[KeyboardListener] Removing event listeners.");
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      // Ensure edit mode is turned off when component unmounts
-      setEditMode(false);
+      // Ensure Shift-held edit mode is turned off when component unmounts
+      clearShiftEditMode();
     };
-  }, [handleKeyDown, handleKeyUp, setEditMode]); // Re-attach listeners if callbacks or setEditMode change
+  }, [handleKeyDown, handleKeyUp, clearShiftEditMode]); // Re-attach listeners if callbacks change
 }

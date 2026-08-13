@@ -11,7 +11,7 @@ import {
   fadeOutAllAudio,
   preloadCurrentPageIntelligent,
 } from "@/lib/audio";
-import { usePlaybackStore, useArmedTracks } from "@/store/playbackStore";
+import { useArmedTracks } from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import type { EditPadModalContentRef } from "@/components/modals/EditPadModalContent";
@@ -41,6 +41,10 @@ const SPECIAL_PAD_INDICES = [
   SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index,
 ];
 
+// Stable no-op handlers for the special pads (no edit or drop actions)
+const noopClick = () => {};
+const noopDropAudio = async () => {};
+
 interface PadWithLoadingProps {
   padId: string;
   padIndex: number;
@@ -48,10 +52,6 @@ interface PadWithLoadingProps {
   pageIndex: number;
   config: PadConfiguration | undefined;
   soundCount: number;
-  isPlaying: boolean;
-  isFading: boolean;
-  playProgress: number;
-  remainingTime?: number;
   isEditMode: boolean;
   isDeleteMoveMode: boolean;
   isArmed: boolean;
@@ -63,78 +63,84 @@ interface PadWithLoadingProps {
   handleSwapPads: (fromIndex: number, toIndex: number) => void;
 }
 
-const PadWithLoading: React.FC<PadWithLoadingProps> = ({
-  padId,
-  padIndex,
-  profileId,
-  pageIndex,
-  config,
-  soundCount,
-  isPlaying,
-  isFading,
-  playProgress,
-  remainingTime,
-  isEditMode,
-  isDeleteMoveMode,
-  isArmed,
-  dropAllowed,
-  handlePadClick,
-  handleArmTrack,
-  handleDropAudio,
-  handleRemoveInteraction,
-  handleSwapPads,
-}) => {
-  // Get loading state from shared store using hook
-  const loadingState = usePadLoadingState(profileId, pageIndex, padIndex);
+const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
+  ({
+    padId,
+    padIndex,
+    profileId,
+    pageIndex,
+    config,
+    soundCount,
+    isEditMode,
+    isDeleteMoveMode,
+    isArmed,
+    dropAllowed,
+    handlePadClick,
+    handleArmTrack,
+    handleDropAudio,
+    handleRemoveInteraction,
+    handleSwapPads,
+  }) => {
+    // Get loading state from shared store using hook
+    const loadingState = usePadLoadingState(profileId, pageIndex, padIndex);
 
-  if (loadingState) {
-    console.log(
-      `[PadGrid] Pad ${padIndex} has loading state:`,
-      loadingState.status,
-      `${Math.round((loadingState.progress || 0) * 100)}%`,
+    // Stable per-pad callbacks so the memoized Pad only re-renders when its own state changes
+    const onClick = useCallback(
+      () => handlePadClick(padIndex),
+      [handlePadClick, padIndex],
     );
-  }
-
-  return (
-    <Pad
-      key={padId}
-      id={padId}
-      padIndex={padIndex}
-      profileId={profileId}
-      pageIndex={pageIndex}
-      keyBinding={config?.keyBinding}
-      name={config?.name}
-      isConfigured={soundCount > 0}
-      soundCount={soundCount}
-      audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
-      isPlaying={isPlaying}
-      isFading={isFading}
-      playProgress={playProgress}
-      remainingTime={remainingTime}
-      isEditMode={isEditMode}
-      isDeleteMoveMode={isDeleteMoveMode}
-      isArmed={isArmed}
-      isLoading={loadingState !== null}
-      loadingProgress={loadingState?.progress || 0}
-      loadingStatus={loadingState?.status}
-      loadingError={loadingState?.error}
-      onClick={() => handlePadClick(padIndex)}
-      onShiftClick={() => handlePadClick(padIndex)} // Shift click also goes through handlePadClick
-      onCtrlClick={() => handleArmTrack(padIndex)} // Ctrl+Click arms the track
-      onDropAudio={(files) => {
+    const onCtrlClick = useCallback(
+      () => handleArmTrack(padIndex),
+      [handleArmTrack, padIndex],
+    );
+    const onDropAudio = useCallback(
+      (files: File[]) => {
         if (dropAllowed) {
           return handleDropAudio(files, padIndex);
         }
         return Promise.resolve(); // Return empty promise when drop not allowed
-      }}
-      onRemoveSound={
-        // Enable remove interaction if sounds exist
-        soundCount > 0 ? () => handleRemoveInteraction(padIndex) : undefined
-      }
-      onSwapWith={handleSwapPads}
-    />
-  );
-};
+      },
+      [dropAllowed, handleDropAudio, padIndex],
+    );
+    const onRemoveSound = useCallback(
+      () => handleRemoveInteraction(padIndex),
+      [handleRemoveInteraction, padIndex],
+    );
+
+    return (
+      <Pad
+        key={padId}
+        id={padId}
+        padIndex={padIndex}
+        profileId={profileId}
+        pageIndex={pageIndex}
+        keyBinding={config?.keyBinding}
+        name={config?.name}
+        isConfigured={soundCount > 0}
+        soundCount={soundCount}
+        audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
+        isEditMode={isEditMode}
+        isDeleteMoveMode={isDeleteMoveMode}
+        isArmed={isArmed}
+        isLoading={loadingState !== null}
+        loadingProgress={loadingState?.progress || 0}
+        loadingStatus={loadingState?.status}
+        loadingError={loadingState?.error}
+        onClick={onClick}
+        onShiftClick={onClick} // Shift click also goes through handlePadClick
+        onCtrlClick={onCtrlClick} // Ctrl+Click arms the track
+        onDropAudio={onDropAudio}
+        onRemoveSound={
+          // Enable remove interaction if sounds exist
+          soundCount > 0 ? onRemoveSound : undefined
+        }
+        onSwapWith={handleSwapPads}
+      />
+    );
+  },
+);
+
+PadWithLoading.displayName = "PadWithLoading";
 
 interface PadGridProps {
   currentPageIndex: number;
@@ -164,8 +170,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     currentPageIndex,
   );
 
-  // Subscribe to the playback and armed tracks stores
-  const activePlayback = usePlaybackStore((state) => state.activePlayback);
+  // Subscribe to the armed tracks store (each Pad subscribes to its own playback slice)
   const armedTracks = useArmedTracks();
 
   // Use custom hooks for pad functionality
@@ -241,8 +246,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   }, []);
 
   // Special pad handlers
-  const handleStopAllClick = () => stopAllAudio();
-  const handleFadeOutAllClick = () => fadeOutAllAudio();
+  const handleStopAllClick = useCallback(() => stopAllAudio(), []);
+  const handleFadeOutAllClick = useCallback(() => fadeOutAllAudio(), []);
 
   // Main click handler - delegates to appropriate handlers
   const handlePadClick = useCallback(
@@ -340,11 +345,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       const config = padConfigs.get(padIndex);
       const padId = `pad-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
       const armedKey = `armed-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
-      const currentPlaybackState = activePlayback.get(padId);
-      const isPlaying = !!currentPlaybackState;
-      const isFading = currentPlaybackState?.isFading ?? false;
-      const progress = currentPlaybackState?.progress ?? 0;
-      const remainingTime = currentPlaybackState?.remainingTime;
       const isArmed = armedTracks.has(armedKey);
       const soundCount = config?.audioFileIds?.length ?? 0;
       const isSpecialPad = SPECIAL_PAD_INDICES.includes(padIndex);
@@ -362,13 +362,12 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
             isConfigured={true} // Special pads are always "configured"
             soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
-            isPlaying={false}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved
             onClick={handleStopAllClick}
-            onShiftClick={() => {}} // No edit action
-            onDropAudio={async () => {}} // No drop action
+            onShiftClick={noopClick} // No edit action
+            onDropAudio={noopDropAudio} // No drop action
             onRemoveSound={undefined} // Cannot remove
           />
         );
@@ -386,13 +385,12 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
             isConfigured={true} // Special pads are always "configured"
             soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
-            isPlaying={false}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved
             onClick={handleFadeOutAllClick}
-            onShiftClick={() => {}} // No edit action
-            onDropAudio={async () => {}} // No drop action
+            onShiftClick={noopClick} // No edit action
+            onDropAudio={noopDropAudio} // No drop action
             onRemoveSound={undefined} // Cannot remove
           />
         );
@@ -410,10 +408,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           pageIndex={currentPageIndex}
           config={config}
           soundCount={soundCount}
-          isPlaying={isPlaying}
-          isFading={isFading}
-          playProgress={progress}
-          remainingTime={remainingTime}
           isEditMode={isEditMode}
           isDeleteMoveMode={isDeleteMoveMode}
           isArmed={isArmed}
@@ -430,7 +424,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     padConfigs,
     activeProfileId,
     currentPageIndex,
-    activePlayback,
     armedTracks,
     isEditMode,
     isDeleteMoveMode,
@@ -440,6 +433,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     isDropAllowed,
     handleSwapPads,
     handlePadClick,
+    handleStopAllClick,
+    handleFadeOutAllClick,
   ]);
 
   return (

@@ -15,6 +15,64 @@ import {
   isAudioBufferCached,
 } from "./cache";
 
+// Loads/decodes that are currently running, keyed by audio file ID.
+// Lets concurrent callers (e.g. a preload and a live trigger) share one decode.
+const inFlightLoads = new Map<number, Promise<AudioBuffer | null>>();
+
+/**
+ * Registers a load/decode operation as in-flight for the given audio file ID
+ *
+ * @param audioFileId - ID of the audio file being loaded
+ * @param run - The operation to run and share with concurrent callers
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+function trackInFlightLoad(
+  audioFileId: number,
+  run: () => Promise<AudioBuffer | null>,
+): Promise<AudioBuffer | null> {
+  const promise = run().finally(() => {
+    if (inFlightLoads.get(audioFileId) === promise) {
+      inFlightLoads.delete(audioFileId);
+    }
+  });
+
+  inFlightLoads.set(audioFileId, promise);
+  return promise;
+}
+
+/**
+ * Waits on an already running load for the same audio file, reporting the
+ * outcome through this caller's loading state callback
+ *
+ * @param audioFileId - ID of the audio file being loaded
+ * @param inFlight - The pending load to join
+ * @param startTime - Start time of this caller's request
+ * @param onStateChange - Optional callback for loading state updates
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+async function joinInFlightLoad(
+  audioFileId: number,
+  inFlight: Promise<AudioBuffer | null>,
+  startTime: number,
+  onStateChange?: LoadingStateCallback,
+): Promise<AudioBuffer | null> {
+  console.log(
+    `[Audio Decoder] [In-flight] Joining pending load for ID: ${audioFileId}`,
+  );
+
+  const buffer = await inFlight;
+
+  onStateChange?.({
+    audioFileId,
+    status: buffer ? "ready" : "error",
+    progress: 1,
+    error: buffer ? undefined : "Failed to load audio",
+    startTime,
+  });
+
+  return buffer;
+}
+
 /**
  * Decode audio data from a Blob
  *
@@ -41,7 +99,29 @@ export async function decodeAudioBlob(blob: Blob): Promise<AudioBuffer> {
  * @param audioFileId - ID of the audio file to load and decode
  * @returns Promise that resolves to the decoded AudioBuffer or null if file not found or decode failed
  */
-export async function loadAndDecodeAudio(
+export function loadAndDecodeAudio(
+  audioFileId: number,
+): Promise<AudioBuffer | null> {
+  const inFlight = inFlightLoads.get(audioFileId);
+  if (inFlight) {
+    console.log(
+      `[Audio Decoder] [In-flight] Joining pending load for ID: ${audioFileId}`,
+    );
+    return inFlight;
+  }
+
+  return trackInFlightLoad(audioFileId, () =>
+    loadAndDecodeAudioUnshared(audioFileId),
+  );
+}
+
+/**
+ * Load and decode implementation without in-flight sharing
+ *
+ * @param audioFileId - ID of the audio file to load and decode
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+async function loadAndDecodeAudioUnshared(
   audioFileId: number,
 ): Promise<AudioBuffer | null> {
   // 1. Check cache first
@@ -280,7 +360,7 @@ export async function loadAndDecodeAudioPipelined(
   );
 
   // Track ongoing decode operations
-  const activeDecodes = new Set<Promise<void>>();
+  const activeDecodes = new Set<Promise<AudioBuffer | null>>();
   let loadedCount = 0;
   let decodedCount = 0;
 
@@ -291,6 +371,18 @@ export async function loadAndDecodeAudioPipelined(
     // Start loading batch
     const loadPromises = batch.map(async (id) => {
       try {
+        // Reuse a load that is already running for this file
+        const inFlight = inFlightLoads.get(id);
+        if (inFlight) {
+          console.log(
+            `[Audio Decoder] [In-flight] Joining pending load for ID: ${id}`,
+          );
+          results.set(id, await inFlight);
+          loadedCount++;
+          decodedCount++;
+          return;
+        }
+
         const audioFileData = await getAudioFile(id);
         loadedCount++;
 
@@ -307,8 +399,9 @@ export async function loadAndDecodeAudioPipelined(
           await Promise.race(activeDecodes);
         }
 
-        // Start decode immediately after load (pipelined)
-        const decodePromise = (async () => {
+        // Start decode immediately after load (pipelined), sharing it with any
+        // concurrent trigger for the same file
+        const decodePromise = trackInFlightLoad(id, async () => {
           try {
             console.log(
               `[Audio Decoder] Decoding audio for file ID: ${id}, name: ${audioFileData.name}`,
@@ -316,6 +409,7 @@ export async function loadAndDecodeAudioPipelined(
             const decodedBuffer = await decodeAudioBlob(audioFileData.blob);
             results.set(id, decodedBuffer);
             decodedCount++;
+            return decodedBuffer;
           } catch (error) {
             console.error(
               `[Audio Decoder] Error decoding audio file ID ${id}:`,
@@ -323,8 +417,9 @@ export async function loadAndDecodeAudioPipelined(
             );
             results.set(id, null);
             decodedCount++;
+            return null;
           }
-        })();
+        });
 
         activeDecodes.add(decodePromise);
 
@@ -496,10 +591,34 @@ export async function loadAndDecodeAudioEnhanced(
     return cachedBuffer;
   }
 
+  // Share a load that is already running for this file
+  const inFlight = inFlightLoads.get(audioFileId);
+  if (inFlight) {
+    return joinInFlightLoad(audioFileId, inFlight, startTime, onStateChange);
+  }
+
   console.log(
     `[Audio Decoder] [Cache MISS] Loading audio file ID: ${audioFileId} from DB...`,
   );
 
+  return trackInFlightLoad(audioFileId, () =>
+    loadAndDecodeAudioEnhancedUnshared(audioFileId, startTime, onStateChange),
+  );
+}
+
+/**
+ * Enhanced load and decode implementation without in-flight sharing
+ *
+ * @param audioFileId - ID of the audio file to load and decode
+ * @param startTime - Start time used for loading state reporting
+ * @param onStateChange - Optional callback for loading state updates
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+async function loadAndDecodeAudioEnhancedUnshared(
+  audioFileId: number,
+  startTime: number,
+  onStateChange?: LoadingStateCallback,
+): Promise<AudioBuffer | null> {
   try {
     // Update state: loading from IndexedDB
     onStateChange?.({
@@ -675,11 +794,42 @@ export async function loadAndDecodeAudioInstant(
     return loadAndDecodeAudioEnhanced(audioFileId, onStateChange);
   }
 
+  // Share a load that is already running for this file
+  const inFlight = inFlightLoads.get(audioFileId);
+  if (inFlight) {
+    return joinInFlightLoad(audioFileId, inFlight, startTime, onStateChange);
+  }
+
   // For cache misses, start loading in background while providing immediate user feedback
   console.log(
     `[Audio Decoder] [Instant Response] Starting background load for ID: ${audioFileId}`,
   );
 
+  return trackInFlightLoad(audioFileId, () =>
+    loadAndDecodeAudioInstantUnshared(
+      audioFileId,
+      startTime,
+      onStateChange,
+      onPartialReady,
+    ),
+  );
+}
+
+/**
+ * Instant load and decode implementation without in-flight sharing
+ *
+ * @param audioFileId - ID of the audio file to load and decode
+ * @param startTime - Start time used for loading state reporting
+ * @param onStateChange - Optional callback for loading state updates
+ * @param onPartialReady - Optional callback when partial audio is ready for playback
+ * @returns Promise that resolves to the decoded AudioBuffer or null
+ */
+async function loadAndDecodeAudioInstantUnshared(
+  audioFileId: number,
+  startTime: number,
+  onStateChange?: LoadingStateCallback,
+  onPartialReady?: (partialBuffer: AudioBuffer) => void,
+): Promise<AudioBuffer | null> {
   try {
     // Load file from IndexedDB
     onStateChange?.({

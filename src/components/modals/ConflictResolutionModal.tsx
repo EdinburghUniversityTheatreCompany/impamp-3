@@ -6,9 +6,15 @@ import {
   deepClone,
 } from "@/lib/syncUtils"; // Removed FieldConflict (unused in this file)
 import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
+import type { SyncConflictData } from "@/lib/googleDrive/types";
 
 type ResolutionChoice =
-  "local" | "remote" | "keep" | "delete" | "accept" | "discard";
+  | "local"
+  | "remote"
+  | "keep"
+  | "delete"
+  | "accept"
+  | "discard";
 type FieldResolutions = Record<string, ResolutionChoice>; // field -> 'local' | 'remote'
 type ConflictResolutionState = Record<
   string | number,
@@ -17,11 +23,7 @@ type ConflictResolutionState = Record<
 
 interface ConflictResolutionModalProps {
   conflicts: ItemConflict[];
-  conflictData: {
-    local: ProfileSyncData;
-    remote: ProfileSyncData;
-    fileId: string;
-  };
+  conflictData: SyncConflictData;
   onResolve: (resolvedData: ProfileSyncData) => void;
   onCancel: () => void;
 }
@@ -32,16 +34,19 @@ const getItemDisplayName = (conflict: ItemConflict): string => {
     case "profiles":
       // Ensure accessing name property safely
       const profileItem = (conflict.localItem ?? conflict.remoteItem) as
-        Profile | undefined;
+        | Profile
+        | undefined;
       return `Profile: ${profileItem?.name ?? "Unknown"}`;
     case "padConfigurations": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
-        PadConfiguration | undefined;
+        | PadConfiguration
+        | undefined;
       return `Pad Config: Page ${item?.pageIndex ?? "?"}, Pad ${item?.padIndex ?? "?"}`;
     }
     case "pageMetadata": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
-        PageMetadata | undefined;
+        | PageMetadata
+        | undefined;
       return `Page Meta: Page ${item?.pageIndex ?? "?"} (${item?.name ?? "Unnamed"})`;
     }
     default:
@@ -130,7 +135,9 @@ export const ConflictResolutionModal: React.FC<
   }, [conflicts, resolutions]);
 
   const buildResolvedData = useCallback((): ProfileSyncData => {
-    const resolved = deepClone(conflictData.local); // Start with local as base
+    // Start from the automatically merged data so every non-conflicting remote
+    // change survives; only the flagged conflicts are decided here
+    const resolved = deepClone(conflictData.merged);
     const now = Date.now();
 
     const resolvedPadConfigs = new Map(
@@ -148,6 +155,13 @@ export const ConflictResolutionModal: React.FC<
       const resolution = resolutions[keyStr];
       if (!resolution) return;
 
+      // Conflicting items are held back from the merged base, so they have to
+      // be seeded from their local version before the choices are applied
+      const seedFromLocal = (): Syncable | null => {
+        const source = conflict.localItem ?? conflict.remoteItem;
+        return source ? (deepClone(source) as Syncable) : null;
+      };
+
       switch (conflict.type) {
         case "field_conflict": {
           const fieldResolutions = resolution as FieldResolutions;
@@ -157,8 +171,18 @@ export const ConflictResolutionModal: React.FC<
             targetItem = resolved.profile;
           } else if (conflict.storeName === "padConfigurations") {
             targetItem = resolvedPadConfigs.get(keyStr);
+            if (!targetItem) {
+              targetItem = seedFromLocal();
+              if (targetItem)
+                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
+            }
           } else if (conflict.storeName === "pageMetadata") {
             targetItem = resolvedPageMeta.get(keyStr);
+            if (!targetItem) {
+              targetItem = seedFromLocal();
+              if (targetItem)
+                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+            }
           }
 
           if (targetItem) {
@@ -225,14 +249,16 @@ export const ConflictResolutionModal: React.FC<
               resolvedPageMeta.delete(keyStr);
             }
           }
-          // If 'keep', it's already in the local base, ensure its timestamp reflects this sync
+          // If 'keep', restore the local item and mark it as touched by this sync
           else if (resolution === "keep") {
-            let targetItem: Syncable | undefined | null = null;
-            if (conflict.storeName === "padConfigurations")
-              targetItem = resolvedPadConfigs.get(keyStr);
-            else if (conflict.storeName === "pageMetadata")
-              targetItem = resolvedPageMeta.get(keyStr);
-            if (targetItem) targetItem._modified = now; // Mark as touched by this sync
+            const targetItem = seedFromLocal();
+            if (targetItem) {
+              targetItem._modified = now;
+              if (conflict.storeName === "padConfigurations")
+                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
+              else if (conflict.storeName === "pageMetadata")
+                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+            }
           }
           break;
         }

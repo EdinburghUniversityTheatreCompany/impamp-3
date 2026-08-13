@@ -6,7 +6,7 @@
  * @module hooks/useKeyboardShortcut
  */
 
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useMemo, useRef } from "react";
 
 export interface KeyboardShortcutOptions {
   /**
@@ -65,6 +65,14 @@ function areKeysPressed(event: KeyboardEvent, keys: string[]): boolean {
     Meta: "metaKey",
   };
 
+  // Any modifier held that is not part of the combo means this is a different
+  // shortcut (e.g. Ctrl+Shift+F must not match Ctrl+F)
+  const hasUnlistedModifier = Object.entries(modifierMap).some(
+    ([modifier, property]) =>
+      !keys.includes(modifier) && (event[property] as boolean),
+  );
+  if (hasUnlistedModifier) return false;
+
   // For each key in the shortcut, check if it's pressed
   return keys.every((key) => {
     // Check for modifier keys first
@@ -98,6 +106,14 @@ export function useKeyboardShortcut(options: KeyboardShortcutOptions): void {
     condition,
   } = options;
 
+  // Callers pass a fresh array literal on every render, so derive a stable
+  // combo from its contents to avoid re-registering the listener each time
+  const keysSignature = JSON.stringify(keys);
+  const stableKeys = useMemo(
+    () => JSON.parse(keysSignature) as string[],
+    [keysSignature],
+  );
+
   // Use refs to ensure we always have the latest callback and condition
   const callbackRef = useRef(callback);
   const conditionRef = useRef(condition);
@@ -118,7 +134,7 @@ export function useKeyboardShortcut(options: KeyboardShortcutOptions): void {
       if (conditionRef.current && !conditionRef.current()) return;
 
       // Check if all required keys are pressed
-      if (areKeysPressed(event, keys)) {
+      if (areKeysPressed(event, stableKeys)) {
         if (preventDefault) {
           event.preventDefault();
         }
@@ -131,7 +147,7 @@ export function useKeyboardShortcut(options: KeyboardShortcutOptions): void {
         callbackRef.current(event);
       }
     },
-    [isEnabled, keys, preventDefault, stopPropagation],
+    [isEnabled, stableKeys, preventDefault, stopPropagation],
   );
 
   // Set up the event listener

@@ -12,7 +12,6 @@ import { createPortal } from "react-dom";
 import { getWaveformPeaks, WaveformPeak } from "@/lib/audio/waveform";
 import { getAudioFile } from "@/lib/db";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
-import { getAudioContext } from "@/lib/audio/context";
 import { playBuffer, stopTrack } from "@/lib/audio/playback";
 
 interface WaveformTrimmerProps {
@@ -58,6 +57,7 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
   const [dragging, setDragging] = useState<DragTarget>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
+  const initialTrimEndRef = useRef(initialTrimEnd);
 
   // Load and decode audio
   useEffect(() => {
@@ -78,7 +78,8 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
         setDuration(buffer.duration);
 
         // If trimEnd is 0 or beyond duration, set to full duration
-        if (initialTrimEnd <= 0 || initialTrimEnd > buffer.duration) {
+        const requestedTrimEnd = initialTrimEndRef.current;
+        if (requestedTrimEnd <= 0 || requestedTrimEnd > buffer.duration) {
           setTrimEnd(buffer.duration);
         }
 
@@ -99,7 +100,7 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [audioFileId, initialTrimEnd]);
+  }, [audioFileId]);
 
   // Draw waveform
   const drawWaveform = useCallback(() => {
@@ -202,6 +203,10 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     }
   }
 
+  // Keep the latest draw function reachable without re-running the resize effect
+  const drawWaveformRef = useRef(drawWaveform);
+  drawWaveformRef.current = drawWaveform;
+
   // Redraw on state changes
   useEffect(() => {
     drawWaveform();
@@ -217,12 +222,13 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
       const rect = container.getBoundingClientRect();
       canvas.width = rect.width;
       canvas.height = CANVAS_HEIGHT;
-      drawWaveform();
+      drawWaveformRef.current();
     });
 
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }, [drawWaveform]);
+    // Re-attached only when the canvas is mounted/unmounted, not on every trim change
+  }, [loading, error]);
 
   // Mouse/touch interaction
   const getTimeFromX = useCallback(

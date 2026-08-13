@@ -10,13 +10,7 @@ import React from "react";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import PlaybackSettingsForm from "@/components/settings/PlaybackSettingsForm";
 import { useProfileStore } from "@/store/profileStore";
-import type { Profile } from "@/lib/db";
 import type { PlaybackSettingsFormValues, FormErrors } from "@/types/forms";
-
-// Extended profile interface for runtime properties that might not be in the DB schema
-interface ExtendedProfile extends Profile {
-  fadeoutDuration?: number;
-}
 
 /**
  * Hook that provides functionality to open and manage playback settings form
@@ -24,6 +18,10 @@ interface ExtendedProfile extends Profile {
 export function usePlaybackSettings() {
   const { openFormModal } = useFormModal();
   const { profiles, activeProfileId, updateProfile } = useProfileStore();
+  const fadeoutDuration = useProfileStore((state) => state.fadeoutDuration);
+  const setFadeoutDuration = useProfileStore(
+    (state) => state.setFadeoutDuration,
+  );
 
   /**
    * Opens a modal for editing playback settings
@@ -35,9 +33,7 @@ export function usePlaybackSettings() {
     }
 
     // Get the active profile from the profiles array
-    const activeProfile = profiles.find(
-      (p) => p.id === activeProfileId,
-    ) as ExtendedProfile;
+    const activeProfile = profiles.find((p) => p.id === activeProfileId);
     if (!activeProfile) {
       console.error("Cannot edit playback settings: active profile not found");
       return;
@@ -47,9 +43,9 @@ export function usePlaybackSettings() {
     const DEFAULT_FADEOUT_DURATION = 3.0;
 
     // Set up initial values with defaults for missing properties
+    // The fadeout duration lives in the store, which is what every fade path reads
     const initialValues: PlaybackSettingsFormValues = {
-      fadeoutDuration:
-        activeProfile.fadeoutDuration ?? DEFAULT_FADEOUT_DURATION,
+      fadeoutDuration: fadeoutDuration ?? DEFAULT_FADEOUT_DURATION,
       activePadBehavior: activeProfile.activePadBehavior ?? "continue",
     };
 
@@ -69,16 +65,13 @@ export function usePlaybackSettings() {
       },
       onSubmit: async (values) => {
         try {
-          // First, update the standard profile properties
+          // Update the standard profile properties
           await updateProfile(activeProfile.id!, {
             activePadBehavior: values.activePadBehavior,
           });
 
-          // Then update the fadeoutDuration property
-          // We need to cast to unknown first since fadeoutDuration isn't in the standard Profile interface
-          await updateProfile(activeProfile.id!, {
-            fadeoutDuration: values.fadeoutDuration,
-          } as unknown as Partial<ExtendedProfile>);
+          // The fadeout duration is a store setting (persisted by the store itself)
+          setFadeoutDuration(values.fadeoutDuration);
 
           console.log("Playback settings updated successfully");
         } catch (error) {
