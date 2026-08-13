@@ -391,6 +391,12 @@ const HelpModalContent: React.FC = () => {
               <li>
                 Click the &apos;X&apos; button next to a sound to remove it
               </li>
+              <li>
+                Untick &quot;Pad active&quot; to disable the pad. It keeps its
+                sounds but will not play until you tick the box again — handy
+                for taking a sound out of a show without deleting it. Disabled
+                pads are dimmed and marked &quot;OFF&quot;.
+              </li>
               <li>Select a playback mode (see below)</li>
               <li>
                 Click &quot;Save Changes&quot; to apply your configuration

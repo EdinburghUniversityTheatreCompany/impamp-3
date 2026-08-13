@@ -20,7 +20,7 @@ import {
   Draggable,
   OnDragEndResponder,
 } from "@hello-pangea/dnd";
-import { FormField, RadioGroup } from "@/components/forms";
+import { Checkbox, FormField, RadioGroup } from "@/components/forms";
 import { TextInput } from "@/components/forms";
 import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
@@ -245,6 +245,16 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           data-testid="edit-pad-name-input"
         />
       </FormField>
+
+      {/* Active / Disabled Toggle */}
+      <Checkbox
+        id="padActive"
+        label="Pad active"
+        description="Untick to disable this pad. It keeps its sounds and name but will not play when clicked or triggered by its key."
+        checked={!values.isDisabled}
+        onChange={(checked) => updateValue("isDisabled", !checked)}
+        data-testid="edit-pad-active-checkbox"
+      />
 
       {/* Playback Type Selector */}
       <FormField

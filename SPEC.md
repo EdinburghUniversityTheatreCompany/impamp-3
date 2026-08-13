@@ -37,6 +37,11 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
     - `"random"`: On trigger, plays a randomly selected sound from the `audioFileIds` list.
     - `"round-robin"`: On trigger, plays a randomly selected sound from the list _that hasn't been played yet_ in the current cycle. Once all sounds have played, the cycle resets. State is maintained per pad.
 - **Concurrent Playback:** The application supports playing multiple sounds concurrently, including multiple instances from the same or different pads.
+- **Disabled Pads (`isDisabled`):**
+  - A pad can be disabled while keeping its name, sounds and key binding, so a sound can be taken out of a show without being deleted.
+  - A disabled pad refuses to play from _every_ trigger: click, keyboard shortcut, armed cue (F9), emergency round-robin, and the search modal. It also cannot be armed, and disabling a pad removes any armed cue for it.
+  - Audio already playing from the pad is _not_ stopped; disabling only blocks further triggers.
+  - Absent on records written before the flag existed, where it means enabled.
 
 #### 2.2. Pad Configuration
 
@@ -101,6 +106,7 @@ ImpAmp3 is a web-based soundboard application allowing users to map local audio 
   - **Edit Pad:** `Shift+Click` on any pad (empty or configured) opens the Pad Edit Modal.
     - **Modal Content:**
       - Input field for Pad Name.
+      - A "Pad active" checkbox. Ticked (the default) means the pad plays normally; unticking it disables the pad as described in section 2.1.
       - Radio buttons/Select for Playback Mode (`sequential`, `random`, `round-robin`), only enabled if >1 sound is assigned.
       - A list of currently assigned sounds, displaying filenames.
       - Drag-and-drop functionality (`@hello-pangea/dnd`) to reorder sounds in the list.

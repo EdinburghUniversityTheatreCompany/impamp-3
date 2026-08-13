@@ -171,6 +171,11 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
   // Handle result interaction - play or arm
   const handleResultClick = (e: React.MouseEvent, result: SearchResult) => {
+    // Disabled pads are listed so they can be found, but neither play nor arm
+    if (result.isDisabled) {
+      console.log(`[SearchModal] Pad "${result.name}" is disabled, ignoring.`);
+      return;
+    }
     if (e.ctrlKey) {
       handleArmSound(result);
     } else {
@@ -254,12 +259,28 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                 <div
                   key={`${result.pageIndex}-${result.padIndex}`}
                   onClick={(e) => handleResultClick(e, result)}
-                  className="bg-white dark:bg-gray-700 rounded p-3 shadow cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                  className={`bg-white dark:bg-gray-700 rounded p-3 shadow transition-colors ${
+                    result.isDisabled
+                      ? "opacity-60 cursor-not-allowed"
+                      : "cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  }`}
                   data-testid="search-result-item"
-                  title={`Click to play. Ctrl+Click to arm track.`}
+                  aria-disabled={result.isDisabled}
+                  title={
+                    result.isDisabled
+                      ? "This pad is disabled."
+                      : `Click to play. Ctrl+Click to arm track.`
+                  }
                 >
                   <div className="font-medium text-gray-900 dark:text-white">
-                    {result.name}
+                    <span className={result.isDisabled ? "line-through" : ""}>
+                      {result.name}
+                    </span>
+                    {result.isDisabled && (
+                      <span className="ml-2 text-[10px] font-bold uppercase tracking-wide bg-gray-600 text-white px-1 rounded align-middle dark:bg-gray-500">
+                        Off
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                     {result.bankName}

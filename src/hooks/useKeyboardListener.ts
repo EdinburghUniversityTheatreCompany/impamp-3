@@ -76,9 +76,10 @@ async function loadEmergencySounds(
         page.pageIndex,
       );
 
-      // Only include pads with audio files
+      // Only include pads with audio files that are not disabled
       const configuredPads = padConfigs.filter(
-        (pad) => pad.audioFileIds && pad.audioFileIds.length > 0,
+        (pad) =>
+          pad.audioFileIds && pad.audioFileIds.length > 0 && !pad.isDisabled,
       );
 
       // Map configured pads to EmergencySound objects
@@ -574,7 +575,15 @@ export function useKeyboardListener() {
         }
       }
 
-      // 3. Trigger audio if a match was found and it has audio file(s)
+      // 3. A disabled pad ignores its key entirely
+      if (matchedConfig?.isDisabled) {
+        console.log(
+          `[KeyboardListener] Pad ${matchedPadIndex} is disabled, ignoring key ${event.key}.`,
+        );
+        return;
+      }
+
+      // 4. Trigger audio if a match was found and it has audio file(s)
       if (
         matchedConfig &&
         matchedConfig.audioFileIds &&
