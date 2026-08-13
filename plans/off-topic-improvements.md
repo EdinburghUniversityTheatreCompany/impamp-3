@@ -30,9 +30,6 @@ Each entry: what, where, why it matters.
 
 ## Code
 
-- **Duplicate edit-mode border rule** in `src/components/Pad.tsx` — the same
-  `border-2 border-amber-500 ...` string is declared twice in the `clsx` call
-  (once unconditionally on `isEditMode`, once gated on `isDropDisabled`).
 - **`EditPadModalContent` fakes `FormModalRenderProps`** rather than using
   `useFormModal`, hard-coding `errors: {}` and `isSubmitting: false`. The pad
   editor therefore has no validation at all, and

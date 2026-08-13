@@ -264,9 +264,8 @@ const Pad: React.FC<PadProps> = ({
             !isEditMode &&
             !isDeleteMoveMode &&
             !isDropDisabled, // Default border
-          // Edit mode border takes precedence if dropzone is disabled
-          "border-2 border-amber-500 hover:border-amber-600 dark:border-amber-400":
-            isEditMode && isDropDisabled,
+          // The amber edit-mode border is applied unconditionally on
+          // isEditMode above, which already covers the isDropDisabled case.
         },
         {
           // Dropzone accept/reject background/border. A pad that will refuse

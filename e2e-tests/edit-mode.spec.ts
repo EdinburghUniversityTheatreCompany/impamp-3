@@ -409,6 +409,25 @@ test.describe("ImpAmp3 Edit Mode", () => {
     ).toBeChecked();
   });
 
+  test("edit mode borders a multi-sound pad in amber too", async ({ page }) => {
+    // A pad with more than one sound refuses drops (isDropDisabled), which
+    // switches off the default border. The amber edit-mode border has to
+    // survive that — it used to be spelled out twice in the same clsx call to
+    // make sure of it, once unconditionally and once again for this case.
+    const filePaths = await createMultipleTestAudioFiles([
+      "borderA",
+      "borderB",
+    ]);
+    await openEditPadModal(page, 8);
+    await addSoundsToPadModal(page, filePaths);
+    await savePadEditModal(page);
+
+    await enterEditMode(page);
+    const pad = page.locator('[id^="pad-"][id$="-8"]');
+    await expect(pad).toHaveClass(/border-amber-500/);
+    await exitEditMode(page);
+  });
+
   test("Delete/Move mode click opens the edit modal for a multi-sound pad", async ({
     page,
   }) => {
