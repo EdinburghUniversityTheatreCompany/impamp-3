@@ -47,34 +47,19 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // Use local state to store auth values from the Zustand store
   const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
 
-  // Define a type for the store state that only includes what we need
-  interface StoreState {
-    isGoogleSignedIn: boolean;
-  }
-
-  // Memoize the selector to prevent unnecessary re-renders
-  const selectAuthState = useCallback(
-    (state: StoreState) => ({
-      isGoogleSignedIn: state.isGoogleSignedIn,
-    }),
+  // Subscribe to store changes for Google sign-in state. Every subscription in
+  // this component is selector-based (see subscribeWithSelector in
+  // profileStore), so it is woken only when its own slice changes rather than
+  // on every store mutation.
+  useEffect(
+    () =>
+      useProfileStore.subscribe(
+        (state) => state.isGoogleSignedIn,
+        setIsGoogleSignedIn,
+        { fireImmediately: true },
+      ),
     [],
   );
-
-  // Subscribe to store changes for Google sign-in state
-  useEffect(() => {
-    // Get initial state
-    const storeState = useProfileStore.getState();
-    setIsGoogleSignedIn(storeState.isGoogleSignedIn);
-
-    // Subscribe to store changes
-    const unsubscribe = useProfileStore.subscribe((state) => {
-      const newState = selectAuthState(state);
-      setIsGoogleSignedIn(newState.isGoogleSignedIn);
-    });
-
-    // Cleanup subscription
-    return () => unsubscribe();
-  }, [selectAuthState]);
 
   useEffect(() => {
     // Fetch profiles only once when the component mounts on the client
@@ -236,39 +221,37 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   >({});
 
   useEffect(() => {
-    let prevQueue = useProfileStore.getState().syncRequestQueue;
-
-    const unsubscribe = useProfileStore.subscribe((state) => {
-      if (state.syncRequestQueue === prevQueue) return;
-      prevQueue = state.syncRequestQueue;
-
-      Object.keys(state.syncRequestQueue).forEach((key) => {
-        const profileId = parseInt(key);
-        if (debounceTimersRef.current[profileId]) {
-          clearTimeout(debounceTimersRef.current[profileId]);
-        }
-        debounceTimersRef.current[profileId] = setTimeout(async () => {
-          delete debounceTimersRef.current[profileId];
-          const { profiles, isGoogleSignedIn } = useProfileStore.getState();
-          const profile = profiles.find((p) => p.id === profileId);
-          if (profile?.syncType === "server") {
-            console.log(
-              `Auto-syncing server profile ${profileId} after edit (debounced)...`,
-            );
-            await syncServerProfile(profileId);
-          } else if (
-            isGoogleSignedIn &&
-            profile?.syncType === "googleDrive" &&
-            profile.googleDriveFileId
-          ) {
-            console.log(
-              `Auto-syncing profile ${profileId} after edit (debounced)...`,
-            );
-            await syncAndRecord(profileId);
+    const unsubscribe = useProfileStore.subscribe(
+      (state) => state.syncRequestQueue,
+      (syncRequestQueue) => {
+        Object.keys(syncRequestQueue).forEach((key) => {
+          const profileId = parseInt(key);
+          if (debounceTimersRef.current[profileId]) {
+            clearTimeout(debounceTimersRef.current[profileId]);
           }
-        }, AUTO_SYNC_DEBOUNCE_MS);
-      });
-    });
+          debounceTimersRef.current[profileId] = setTimeout(async () => {
+            delete debounceTimersRef.current[profileId];
+            const { profiles, isGoogleSignedIn } = useProfileStore.getState();
+            const profile = profiles.find((p) => p.id === profileId);
+            if (profile?.syncType === "server") {
+              console.log(
+                `Auto-syncing server profile ${profileId} after edit (debounced)...`,
+              );
+              await syncServerProfile(profileId);
+            } else if (
+              isGoogleSignedIn &&
+              profile?.syncType === "googleDrive" &&
+              profile.googleDriveFileId
+            ) {
+              console.log(
+                `Auto-syncing profile ${profileId} after edit (debounced)...`,
+              );
+              await syncAndRecord(profileId);
+            }
+          }, AUTO_SYNC_DEBOUNCE_MS);
+        });
+      },
+    );
 
     return () => {
       unsubscribe();
@@ -317,9 +300,10 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
       }
     };
 
-    reconcileSubscriptions(useProfileStore.getState().profiles);
-    const unsubscribeStore = useProfileStore.subscribe((state) =>
-      reconcileSubscriptions(state.profiles),
+    const unsubscribeStore = useProfileStore.subscribe(
+      (state) => state.profiles,
+      reconcileSubscriptions,
+      { fireImmediately: true },
     );
 
     return () => {
@@ -358,19 +342,20 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 
   // Pull the active profile when entering edit mode so edits start from the
   // latest shared state
-  useEffect(() => {
-    let prevEditMode = useProfileStore.getState().isEditMode;
-
-    const unsubscribe = useProfileStore.subscribe((state) => {
-      const entering = state.isEditMode && !prevEditMode;
-      prevEditMode = state.isEditMode;
-      if (entering && state.activeProfileId !== null) {
-        checkForRemoteChanges([state.activeProfileId]);
-      }
-    });
-
-    return unsubscribe;
-  }, [checkForRemoteChanges]);
+  useEffect(
+    () =>
+      useProfileStore.subscribe(
+        (state) => state.isEditMode,
+        (isEditMode, wasEditMode) => {
+          if (!isEditMode || wasEditMode) return;
+          const { activeProfileId } = useProfileStore.getState();
+          if (activeProfileId !== null) {
+            checkForRemoteChanges([activeProfileId]);
+          }
+        },
+      ),
+    [checkForRemoteChanges],
+  );
 
   // Periodic full sync (every 15 minutes) as a backstop — also uploads local
   // changes that somehow missed the debounced sync and repairs drift

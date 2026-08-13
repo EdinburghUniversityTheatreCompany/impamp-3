@@ -30,11 +30,6 @@ Each entry: what, where, why it matters.
 
 ## Code
 
-- **`ClientSideInitializer` holds four separate store subscriptions** (auth,
-  sync queue, edit mode, server-sync streams), each firing on _every_
-  `useProfileStore` mutation and filtering afterwards. Consolidating them, or
-  using selector-based subscriptions, would cut redundant work on every state
-  change.
 
 - **The profile selector button has no accessible name of its own.** It is
   labelled only by the active profile's name, so a name-based locator (or a
