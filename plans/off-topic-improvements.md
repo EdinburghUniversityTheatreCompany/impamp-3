@@ -28,12 +28,6 @@ Each entry: what, where, why it matters.
   blocked on lint tooling that has no compatible release yet. Reasons and retry
   conditions in `plans/deferred-upgrades.md`.
 
-- **Node version pins disagree three ways:** `Dockerfile` runs `node:22-alpine`,
-  CI uses `node-version: lts/*` (24), `mise.toml` says `node = "latest"` (26).
-  `scripts/check_version_sync.sh` misses it because it only compares pins naming
-  a concrete version. Node 22 is also the floor for `node:sqlite`, so the
-  Dockerfile cannot go below it. Worth settling on one version everywhere.
-
 ## Code
 
 - **`Checkbox` hard-codes an `emergency-checkbox` class** in

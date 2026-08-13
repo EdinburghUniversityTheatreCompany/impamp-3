@@ -4,7 +4,8 @@ pkl = "latest"
 gitleaks = "latest"
 zizmor = "latest"   # GitHub Actions security static analysis (hk `zizmor` step + CI)
 actionlint = "latest"   # GitHub Actions workflow linter — syntax/expressions (hk `actionlint` step + CI)
-node = "latest"   # JS/TS stack tool; also provides npx, used to run jscpd 5.x
+node = "24.19.0"   # LTS (Krypton). Pinned concretely so .node-version, mise.toml and the
+# Dockerfile ARG can be cross-checked by scripts/check_version_sync.sh; node:sqlite needs >= 22.13.
 # jscpd (duplication) runs via npx — see hk.pkl / .jscpd.json (not a mise tool; jscpd 5.x ships
 # as a Rust binary via npm optional platform packages that npx resolves but mise's npm backend
 # does not).

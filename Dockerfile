@@ -1,7 +1,12 @@
 # Multi-stage build for impamp3 Soundboard
 
+# Kept in step with .node-version and mise.toml — scripts/check_version_sync.sh
+# fails the build if they drift. node:sqlite (the server-sync storage layer)
+# needs Node >= 22.13, so this can never go below that.
+ARG NODE_VERSION=24.19.0
+
 # Build stage
-FROM node:22-alpine AS builder
+FROM node:${NODE_VERSION}-alpine AS builder
 WORKDIR /app
 
 # Install dependencies
@@ -22,7 +27,10 @@ RUN echo "CLIENT_ID during build: $NEXT_PUBLIC_GOOGLE_CLIENT_ID"
 RUN npm run build
 
 # Production stage
-FROM node:22-alpine AS runner
+# ARG is re-declared because a FROM line only sees ARGs declared before the
+# first FROM, and the value does not carry into a new stage otherwise.
+ARG NODE_VERSION
+FROM node:${NODE_VERSION}-alpine AS runner
 WORKDIR /app
 
 # Set environment to production

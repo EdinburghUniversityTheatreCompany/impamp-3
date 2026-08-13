@@ -192,4 +192,7 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 
 - Next.js 16 · React 19 · Tailwind CSS 4 · TypeScript 5
 - Vitest 4 (unit) · Playwright 1.4x (E2E) · Prettier 3.8.1
-- Node 22 in the Docker image; `node:sqlite` requires Node >= 22.13
+- Node 24.19.0 (LTS) everywhere — `.node-version`, `mise.toml` and the
+  Dockerfile's `NODE_VERSION` ARG, cross-checked by
+  `scripts/check_version_sync.sh`. `node:sqlite` requires Node >= 22.13, so
+  that is the floor
