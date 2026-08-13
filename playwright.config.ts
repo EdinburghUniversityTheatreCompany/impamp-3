@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// Port is configurable so a git worktree (or a second checkout) can build and
+// serve its own copy of the app without colliding with the 3000 a developer
+// already has running.
+const port = process.env.E2E_PORT ?? "3000";
+const baseURL = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: "./e2e-tests",
   fullyParallel: true,
@@ -8,7 +14,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -38,12 +44,13 @@ export default defineConfig({
   // fall back to a dummy value: no test signs in to Google.
   webServer: {
     command: process.env.E2E_DEV_SERVER
-      ? "npm run dev"
-      : "npm run build && npm start",
-    url: "http://localhost:3000",
+      ? `npm run dev -- --port ${port}`
+      : `npm run build && npm start -- --port ${port}`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 300 * 1000, // 5 minutes — a cold production build is included
     env: {
+      PORT: port,
       NEXT_PUBLIC_GOOGLE_CLIENT_ID:
         process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
         "e2e-placeholder.apps.googleusercontent.com",
