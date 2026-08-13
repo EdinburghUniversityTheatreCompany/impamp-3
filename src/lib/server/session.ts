@@ -8,7 +8,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { getDb, type UserRow } from "./db";
+import { execute, queryOne, type UserRow } from "./db";
 import { getUserById } from "./users";
 
 export const SESSION_COOKIE = "impamp_session";
@@ -23,16 +23,18 @@ export function createSession(userId: number): string {
   const token = randomBytes(32).toString("base64url");
   const now = Date.now();
 
-  getDb()
-    .prepare(
-      `INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?)`,
-    )
-    .run(hashToken(token), userId, now, now + SESSION_TTL_MS);
+  execute(
+    `INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
+     VALUES (?, ?, ?, ?)`,
+    hashToken(token),
+    userId,
+    now,
+    now + SESSION_TTL_MS,
+  );
 
   // Opportunistic cleanup — sessions are only written at sign-in, so this
   // stays cheap without needing a scheduled job.
-  getDb().prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
+  execute("DELETE FROM sessions WHERE expires_at < ?", now);
 
   return token;
 }
@@ -41,11 +43,10 @@ export function createSession(userId: number): string {
 export function getSessionUser(token: string | undefined): UserRow | null {
   if (!token) return null;
 
-  const row = getDb()
-    .prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?")
-    .get(hashToken(token)) as
-    | { user_id: number; expires_at: number }
-    | undefined;
+  const row = queryOne<{ user_id: number; expires_at: number }>(
+    "SELECT user_id, expires_at FROM sessions WHERE token_hash = ?",
+    hashToken(token),
+  );
 
   if (!row) return null;
   if (row.expires_at < Date.now()) {
@@ -58,9 +59,7 @@ export function getSessionUser(token: string | undefined): UserRow | null {
 
 export function destroySession(token: string | undefined): void {
   if (!token) return;
-  getDb()
-    .prepare("DELETE FROM sessions WHERE token_hash = ?")
-    .run(hashToken(token));
+  execute("DELETE FROM sessions WHERE token_hash = ?", hashToken(token));
 }
 
 /** Cookie attributes. Secure is dropped in development so http://localhost works. */

@@ -8,21 +8,28 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { getDb, type Access, type Role, type ShareRow } from "./db";
+import {
+  execute,
+  queryAll,
+  queryOne,
+  type Access,
+  type Role,
+  type ShareRow,
+} from "./db";
 import { normalizeEmail } from "./users";
 
 export function listShares(profileId: string): ShareRow[] {
-  return getDb()
-    .prepare(
-      "SELECT * FROM profile_shares WHERE profile_id = ? ORDER BY created_at",
-    )
-    .all(profileId) as ShareRow[];
+  return queryAll<ShareRow>(
+    "SELECT * FROM profile_shares WHERE profile_id = ? ORDER BY created_at",
+    profileId,
+  );
 }
 
 export function getShareByLinkToken(token: string): ShareRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM profile_shares WHERE link_token = ?")
-    .get(token) as ShareRow | undefined;
+  return queryOne<ShareRow>(
+    "SELECT * FROM profile_shares WHERE link_token = ?",
+    token,
+  );
 }
 
 /**
@@ -37,20 +44,25 @@ export function upsertEmailShare(
   createdBy: number,
 ): ShareRow {
   const normalized = normalizeEmail(email);
-  getDb()
-    .prepare(
-      `INSERT INTO profile_shares (profile_id, email, link_token, role, created_by, created_at)
-       VALUES (?, ?, NULL, ?, ?, ?)
-       -- profile_shares_email_idx is a partial index, so the upsert target has
-       -- to repeat its WHERE clause for SQLite to match it.
-       ON CONFLICT (profile_id, email) WHERE email IS NOT NULL
-       DO UPDATE SET role = excluded.role`,
-    )
-    .run(profileId, normalized, role, createdBy, Date.now());
+  execute(
+    `INSERT INTO profile_shares (profile_id, email, link_token, role, created_by, created_at)
+     VALUES (?, ?, NULL, ?, ?, ?)
+     -- profile_shares_email_idx is a partial index, so the upsert target has
+     -- to repeat its WHERE clause for SQLite to match it.
+     ON CONFLICT (profile_id, email) WHERE email IS NOT NULL
+     DO UPDATE SET role = excluded.role`,
+    profileId,
+    normalized,
+    role,
+    createdBy,
+    Date.now(),
+  );
 
-  return getDb()
-    .prepare("SELECT * FROM profile_shares WHERE profile_id = ? AND email = ?")
-    .get(profileId, normalized) as ShareRow;
+  return queryOne<ShareRow>(
+    "SELECT * FROM profile_shares WHERE profile_id = ? AND email = ?",
+    profileId,
+    normalized,
+  )!;
 }
 
 /**
@@ -63,23 +75,29 @@ export function createLinkShare(
   createdBy: number,
 ): ShareRow {
   const token = randomBytes(24).toString("base64url");
-  const result = getDb()
-    .prepare(
-      `INSERT INTO profile_shares (profile_id, email, link_token, role, created_by, created_at)
-       VALUES (?, NULL, ?, ?, ?, ?)`,
-    )
-    .run(profileId, token, role, createdBy, Date.now());
+  const result = execute(
+    `INSERT INTO profile_shares (profile_id, email, link_token, role, created_by, created_at)
+     VALUES (?, NULL, ?, ?, ?, ?)`,
+    profileId,
+    token,
+    role,
+    createdBy,
+    Date.now(),
+  );
 
-  return getDb()
-    .prepare("SELECT * FROM profile_shares WHERE id = ?")
-    .get(Number(result.lastInsertRowid)) as ShareRow;
+  return queryOne<ShareRow>(
+    "SELECT * FROM profile_shares WHERE id = ?",
+    Number(result.lastInsertRowid),
+  )!;
 }
 
 /** Remove a share. Scoped by profile so an id from another profile can't be used. */
 export function deleteShare(profileId: string, shareId: number): boolean {
-  const result = getDb()
-    .prepare("DELETE FROM profile_shares WHERE id = ? AND profile_id = ?")
-    .run(shareId, profileId);
+  const result = execute(
+    "DELETE FROM profile_shares WHERE id = ? AND profile_id = ?",
+    shareId,
+    profileId,
+  );
   return result.changes > 0;
 }
 
@@ -103,12 +121,12 @@ const ACCESS_RANK: Record<Access, number> = { viewer: 1, editor: 2, owner: 3 };
  * 404 rather than 403 for that, so profile IDs stay unenumerable.
  */
 export function resolveAccess(request: AccessRequest): Access | null {
-  const db = getDb();
   const grants: Access[] = [];
 
-  const profile = db
-    .prepare("SELECT owner_id FROM profiles WHERE id = ?")
-    .get(request.profileId) as { owner_id: number } | undefined;
+  const profile = queryOne<{ owner_id: number }>(
+    "SELECT owner_id FROM profiles WHERE id = ?",
+    request.profileId,
+  );
   if (!profile) return null;
 
   if (request.user && profile.owner_id === request.user.id) {
@@ -116,13 +134,11 @@ export function resolveAccess(request: AccessRequest): Access | null {
   }
 
   if (request.user) {
-    const emailShare = db
-      .prepare(
-        "SELECT role FROM profile_shares WHERE profile_id = ? AND email = ?",
-      )
-      .get(request.profileId, normalizeEmail(request.user.email)) as
-      | { role: Role }
-      | undefined;
+    const emailShare = queryOne<{ role: Role }>(
+      "SELECT role FROM profile_shares WHERE profile_id = ? AND email = ?",
+      request.profileId,
+      normalizeEmail(request.user.email),
+    );
     if (emailShare) grants.push(emailShare.role);
   }
 

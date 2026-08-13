@@ -7,7 +7,7 @@
  * client secret).
  */
 
-import { getDb, transaction, type UserRow } from "./db";
+import { execute, queryOne, transaction, type UserRow } from "./db";
 
 export interface GoogleIdentity {
   sub: string;
@@ -22,21 +22,18 @@ export function normalizeEmail(email: string): string {
 }
 
 export function getUserById(id: number): UserRow | undefined {
-  return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as
-    | UserRow
-    | undefined;
+  return queryOne<UserRow>("SELECT * FROM users WHERE id = ?", id);
 }
 
 export function getUserByEmail(email: string): UserRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(normalizeEmail(email)) as UserRow | undefined;
+  return queryOne<UserRow>(
+    "SELECT * FROM users WHERE email = ?",
+    normalizeEmail(email),
+  );
 }
 
 export function getUserByGoogleSub(sub: string): UserRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM users WHERE google_sub = ?")
-    .get(sub) as UserRow | undefined;
+  return queryOne<UserRow>("SELECT * FROM users WHERE google_sub = ?", sub);
 }
 
 /**
@@ -54,14 +51,12 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
   const now = Date.now();
 
   return transaction(() => {
-    const db = getDb();
     const existing = getUserByGoogleSub(identity.sub);
 
     if (existing) {
-      db.prepare(
+      execute(
         `UPDATE users SET email = ?, name = ?, picture = ?, updated_at = ?
-         WHERE id = ?`,
-      ).run(
+          WHERE id = ?`,
         email,
         identity.name ?? null,
         identity.picture ?? null,
@@ -71,28 +66,23 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
       return getUserById(existing.id)!;
     }
 
-    const { count } = db
-      .prepare("SELECT COUNT(*) AS count FROM users")
-      .get() as {
-      count: number;
-    };
-    const isAdmin = count === 0 ? 1 : 0;
+    const existingUsers = queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM users",
+    )!;
+    const isAdmin = existingUsers.count === 0 ? 1 : 0;
 
-    const result = db
-      .prepare(
-        `INSERT INTO users
-           (google_sub, email, name, picture, is_admin, can_upload_audio, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-      )
-      .run(
-        identity.sub,
-        email,
-        identity.name ?? null,
-        identity.picture ?? null,
-        isAdmin,
-        now,
-        now,
-      );
+    const result = execute(
+      `INSERT INTO users
+         (google_sub, email, name, picture, is_admin, can_upload_audio, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+      identity.sub,
+      email,
+      identity.name ?? null,
+      identity.picture ?? null,
+      isAdmin,
+      now,
+      now,
+    );
 
     return getUserById(Number(result.lastInsertRowid))!;
   });

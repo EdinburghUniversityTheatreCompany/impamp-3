@@ -10,7 +10,7 @@
  * `node:sqlite` for the browser.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -169,6 +169,33 @@ export function getDb(): DatabaseSync {
 export function closeDb(): void {
   db?.close();
   db = null;
+}
+
+/**
+ * node:sqlite hands back loosely typed rows (`Record<string, SQLOutputValue>`).
+ * These helpers put the narrowing in one place instead of a cast per query —
+ * the row shape is still asserted, not checked, so the type argument must
+ * match what the SQL actually selects.
+ */
+export function queryOne<T>(
+  sql: string,
+  ...params: SQLInputValue[]
+): T | undefined {
+  return getDb()
+    .prepare(sql)
+    .get(...params) as T | undefined;
+}
+
+export function queryAll<T>(sql: string, ...params: SQLInputValue[]): T[] {
+  return getDb()
+    .prepare(sql)
+    .all(...params) as T[];
+}
+
+export function execute(sql: string, ...params: SQLInputValue[]) {
+  return getDb()
+    .prepare(sql)
+    .run(...params);
 }
 
 /** Run `fn` inside a transaction, rolling back if it throws. */
