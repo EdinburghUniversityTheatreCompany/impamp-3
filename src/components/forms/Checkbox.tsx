@@ -15,7 +15,14 @@ interface CheckboxProps {
   onChange: (checked: boolean) => void;
   description?: string;
   error?: string;
+  /** Applied to the wrapping element. */
   className?: string;
+  /**
+   * Applied to the <input> itself, for a checkbox that needs its own look.
+   * The bank editor uses it for `emergency-checkbox` (see globals.css), which
+   * repaints the box red — appropriate there and nowhere else.
+   */
+  inputClassName?: string;
   /**
    * Forwarded to the underlying <input>. Declared explicitly because
    * hyphenated JSX attributes bypass prop-type checking, so an unforwarded
@@ -35,6 +42,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
   description,
   error,
   className = "",
+  inputClassName = "",
   "data-testid": dataTestId,
 }) => {
   return (
@@ -46,10 +54,9 @@ export const Checkbox: React.FC<CheckboxProps> = ({
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
-          className="h-4 w-4 text-blue-600 border-gray-300 rounded 
-            focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 
-            dark:focus:ring-blue-600 dark:ring-offset-gray-800
-            emergency-checkbox"
+          className={`h-4 w-4 text-blue-600 border-gray-300 rounded
+            focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600
+            dark:focus:ring-blue-600 dark:ring-offset-gray-800 ${inputClassName}`}
         />
       </div>
       <div className="ml-3 text-sm">

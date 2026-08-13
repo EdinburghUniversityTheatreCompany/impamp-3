@@ -59,7 +59,10 @@ body {
   cursor: text;
 }
 
-/* Checkbox styling for emergency banks */
+/* Checkbox styling for emergency banks.
+   Applied via <Checkbox inputClassName="emergency-checkbox"> in EditBankForm
+   and nowhere else — it was hard-coded into the Checkbox component itself,
+   which painted every checkbox in the app emergency-red. */
 .emergency-checkbox {
   appearance: none;
   width: 1.25rem;

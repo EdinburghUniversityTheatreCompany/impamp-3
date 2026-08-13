@@ -56,6 +56,9 @@ const EditBankForm: React.FC<FormModalRenderProps<BankFormValues>> = ({
         checked={values.isEmergency}
         onChange={(checked) => updateValue("isEmergency", checked)}
         error={errors.isEmergency}
+        // Paints the box red when checked (globals.css). Only here: this is
+        // the one checkbox in the app that means "emergency".
+        inputClassName="emergency-checkbox"
         data-testid="emergency-checkbox"
       />
     </div>

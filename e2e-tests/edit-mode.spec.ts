@@ -177,6 +177,28 @@ test.describe("ImpAmp3 Edit Mode", () => {
     );
   });
 
+  test("only the bank emergency checkbox gets the emergency styling", async ({
+    page,
+  }) => {
+    // `.emergency-checkbox` (globals.css) repaints a checkbox red when
+    // checked. It used to be hard-coded inside the Checkbox component, so
+    // every checkbox in the app wore it — "Pad active", checked, rendered as
+    // an alarm.
+    await enterEditMode(page);
+    await page.locator('[role="tab"]').first().click();
+    await page.waitForSelector('[data-testid="custom-modal"]');
+    await expect(
+      page.locator('[data-testid="emergency-checkbox"]'),
+    ).toHaveClass(/emergency-checkbox/);
+    await page.locator('[data-testid="modal-cancel-button"]').click();
+    await exitEditMode(page);
+
+    await openEditPadModal(page, 0);
+    await expect(
+      page.locator('[data-testid="edit-pad-active-checkbox"]'),
+    ).not.toHaveClass(/emergency-checkbox/);
+  });
+
   // --- Tests for Multi-Sound Pad Editing ---
 
   test("opens edit modal on Shift+click (empty pad)", async ({ page }) => {

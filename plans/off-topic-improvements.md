@@ -30,12 +30,6 @@ Each entry: what, where, why it matters.
 
 ## Code
 
-- **`Checkbox` hard-codes an `emergency-checkbox` class** in
-  `src/components/forms/Checkbox.tsx:52`, on every instance regardless of
-  purpose. It exists only so `e2e-tests/edit-mode.spec.ts` can select the bank
-  emergency toggle. Now that the pad editor has a checkbox too, the class is
-  actively misleading. Switch that test to the `data-testid` the component
-  already forwards and drop the class.
 - **Duplicate edit-mode border rule** in `src/components/Pad.tsx` — the same
   `border-2 border-amber-500 ...` string is declared twice in the `clsx` call
   (once unconditionally on `isEditMode`, once gated on `isDropDisabled`).
