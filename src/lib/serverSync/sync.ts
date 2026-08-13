@@ -7,12 +7,15 @@
  * back with the winning state, which we merge into and retry. Two people
  * editing in the same window therefore converge instead of clobbering.
  *
- * Audio is untouched by all this. It lives in Google Drive exactly as before;
- * the blob carries content hashes and Drive file IDs, and collaborators fetch
- * the bytes from Drive (or, signed out, through the public proxy).
+ * Audio lives in Google Drive by default: the blob carries content hashes and
+ * Drive file IDs, and collaborators fetch the bytes from Drive (or, signed
+ * out, through the public proxy). A deployment that configures Wasabi can also
+ * host audio itself for approved accounts, in which case those files are
+ * marked `serverHosted` and fetched from the bucket instead — see
+ * `src/lib/serverAudio/` and docs/wasabi-audio.md.
  */
 
-import { getProfile, updateProfile } from "@/lib/db";
+import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import {
   getLocalProfileSyncData,
@@ -22,6 +25,11 @@ import {
   downloadMissingAudioFiles,
   uploadMissingAudioFiles,
 } from "@/lib/googleDrive/sync";
+import {
+  downloadProfileAudio,
+  markHostedAudio,
+  uploadProfileAudio,
+} from "@/lib/serverAudio/transfer";
 import type { TokenInfo } from "@/lib/googleDrive/types";
 import {
   createServerProfile,
@@ -105,7 +113,7 @@ async function performServerSync(
       return { status: "skipped", reason: `Paused until ${resumeTime}` };
     }
 
-    // Audio must reach Drive before the blob that references it does,
+    // Audio must reach its host before the blob that references it does,
     // otherwise a collaborator pulls pads pointing at files that aren't there
     // yet. Only the owner uploads, and only when Drive is actually connected.
     const warnings: string[] = [];
@@ -118,11 +126,29 @@ async function performServerSync(
       );
     }
 
-    if (!profile.serverProfileId) {
-      return await adoptProfile(profileId, callbacks);
+    // Optional, gated server-hosted audio. Silently does nothing when the
+    // deployment hosts none or the account is not approved, which is the
+    // default — see docs/wasabi-audio.md.
+    const hostedHashes = new Set<string>();
+    if (!profile.readOnly) {
+      const upload = await uploadProfileAudio([
+        ...(await getAudioFileIdsForProfile(profileId)),
+      ]);
+      upload.hosted.forEach((hash) => hostedHashes.add(hash));
+      warnings.push(...upload.warnings);
     }
 
-    return await pullMergePush(profileId, callbacks, drive, warnings);
+    if (!profile.serverProfileId) {
+      return await adoptProfile(profileId, callbacks, hostedHashes);
+    }
+
+    return await pullMergePush(
+      profileId,
+      callbacks,
+      drive,
+      warnings,
+      hostedHashes,
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Server sync failed.";
@@ -137,10 +163,12 @@ async function performServerSync(
 async function adoptProfile(
   profileId: number,
   callbacks: ServerSyncCallbacks,
+  hostedHashes: Set<string>,
 ): Promise<ServerSyncResult> {
-  const localData = await getLocalProfileSyncData(profileId);
-  if (!localData) throw new Error("Could not load local profile data.");
+  const raw = await getLocalProfileSyncData(profileId);
+  if (!raw) throw new Error("Could not load local profile data.");
 
+  const localData = markHostedAudio(raw, hostedHashes);
   localData._lastSyncTimestamp = Date.now();
   const created = await createServerProfile(localData.profile.name, localData);
 
@@ -161,6 +189,7 @@ async function pullMergePush(
   callbacks: ServerSyncCallbacks,
   drive: DriveAccess,
   warnings: string[],
+  hostedHashes: Set<string>,
 ): Promise<ServerSyncResult> {
   const { onStatusChange, onError, onConflictsDetected } = callbacks;
   const profile = (await getProfile(profileId))!;
@@ -178,8 +207,9 @@ async function pullMergePush(
   let readOnly = remote ? remote.access === "viewer" : !!profile.readOnly;
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
-    const localData = await getLocalProfileSyncData(profileId);
-    if (!localData) throw new Error("Could not load local profile data.");
+    const raw = await getLocalProfileSyncData(profileId);
+    if (!raw) throw new Error("Could not load local profile data.");
+    const localData = markHostedAudio(raw, hostedHashes);
 
     const { requiresManualResolution, conflicts, mergedData } =
       await detectProfileConflicts(localData, remote?.data ?? null);
@@ -195,6 +225,15 @@ async function pullMergePush(
     // Applying the merge without it would clear those pads locally — and
     // then push that loss to everyone else.
     if (remote?.data.audioFiles?.length) {
+      // Server-hosted files first: they carry `serverHosted` and have no
+      // Drive file ID, so the Drive path would skip them entirely.
+      const hostedDownloads = await downloadProfileAudio(
+        serverId,
+        remote.data.audioFiles,
+        shareToken,
+      );
+      warnings.push(...hostedDownloads.warnings);
+
       const downloads = await downloadMissingAudioFiles(
         remote.data.audioFiles,
         profileId,
@@ -202,9 +241,11 @@ async function pullMergePush(
         drive.onTokenRefresh,
       );
       warnings.push(...downloads.warnings);
-      if (downloads.retryable.length > 0) {
+
+      const retryable = [...hostedDownloads.retryable, ...downloads.retryable];
+      if (retryable.length > 0) {
         throw new Error(
-          `Could not download ${downloads.retryable.length} audio file(s) — sync postponed: ${downloads.retryable.join("; ")}`,
+          `Could not download ${retryable.length} audio file(s) — sync postponed: ${retryable.join("; ")}`,
         );
       }
     }

@@ -371,6 +371,10 @@ export interface ProfileSyncData {
     type: string;
     hash?: string; // SHA-256 hex digest of blob content
     driveFileId?: string; // Google Drive file ID (preferred — separate Drive file per audio)
+    // Set when the bytes are hosted by this app's own server (optional, gated
+    // Wasabi storage). Collaborators then fetch via /api/profiles/:id/audio/:hash
+    // instead of Drive. Absent for every profile whose audio lives in Drive.
+    serverHosted?: boolean;
     data?: string; // Base64 encoded audio data (legacy fallback for backward compat)
   }[];
 }

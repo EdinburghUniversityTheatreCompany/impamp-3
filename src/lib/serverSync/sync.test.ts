@@ -10,6 +10,7 @@ import type { ProfileSyncData } from "@/lib/syncUtils";
 const dbMocks = vi.hoisted(() => ({
   getProfile: vi.fn(),
   updateProfile: vi.fn(),
+  getAudioFileIdsForProfile: vi.fn(),
 }));
 const dataAccessMocks = vi.hoisted(() => ({
   getLocalProfileSyncData: vi.fn(),
@@ -24,11 +25,21 @@ const apiMocks = vi.hoisted(() => ({
   fetchServerProfile: vi.fn(),
   pushServerProfile: vi.fn(),
 }));
+/**
+ * Hosted audio is the optional half of server sync, and off by default. These
+ * tests cover the profile loop; `serverAudio/transfer.test.ts` covers hosting.
+ */
+const serverAudioMocks = vi.hoisted(() => ({
+  uploadProfileAudio: vi.fn(),
+  downloadProfileAudio: vi.fn(),
+  markHostedAudio: vi.fn(),
+}));
 
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/googleDrive/dataAccess", () => dataAccessMocks);
 vi.mock("@/lib/googleDrive/sync", () => driveMocks);
 vi.mock("./api", () => apiMocks);
+vi.mock("@/lib/serverAudio/transfer", () => serverAudioMocks);
 
 const { syncServerProfile } = await import("./sync");
 const { VersionConflictError } = await import("./types");
@@ -117,6 +128,21 @@ beforeEach(() => {
     retryable: [],
   });
   driveMocks.uploadMissingAudioFiles.mockResolvedValue(undefined);
+  dbMocks.getAudioFileIdsForProfile.mockResolvedValue(new Set<number>());
+  serverAudioMocks.uploadProfileAudio.mockResolvedValue({
+    hosted: [],
+    warnings: [],
+    aborted: true,
+  });
+  serverAudioMocks.downloadProfileAudio.mockResolvedValue({
+    warnings: [],
+    retryable: [],
+    downloaded: 0,
+  });
+  // Hosting off: the blob passes through unchanged.
+  serverAudioMocks.markHostedAudio.mockImplementation(
+    (data: ProfileSyncData) => data,
+  );
   dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(
     syncData("local pad", AFTER_SYNC),
   );
