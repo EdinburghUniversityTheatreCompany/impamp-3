@@ -10,7 +10,6 @@ import {
   stopAllAudio,
   fadeOutAllAudio,
   preloadCurrentPageIntelligent,
-  preloadAllConfiguredFiles,
 } from "@/lib/audio";
 import { useArmedTracks } from "@/store/playbackStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
@@ -210,13 +209,14 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     }
   }, [isLoadingConfigs, configError]);
 
-  // Intelligent preload audio files for current page and background loading
+  // Preload decoded buffers for the current page only. Pads on other pages
+  // play instantly too — they stream directly from the stored blob until a
+  // decoded buffer is available, so no whole-profile preload is needed.
   useEffect(() => {
     if (activeProfileId === null || padConfigs.size === 0) return;
 
     const configsArray = Array.from(padConfigs.values());
     if (configsArray.length > 0) {
-      // Immediate preload for current page with highest priority
       console.log(
         `[PadGrid Preload] Intelligent preload for page ${currentPageIndex}`,
       );
@@ -225,10 +225,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         activeProfileId,
         currentPageIndex,
       );
-
-      // Background preload all configured files (lower priority)
-      // This will intelligently prioritize recently played files
-      preloadAllConfiguredFiles(configsArray, activeProfileId);
     }
   }, [padConfigs, activeProfileId, currentPageIndex]);
 

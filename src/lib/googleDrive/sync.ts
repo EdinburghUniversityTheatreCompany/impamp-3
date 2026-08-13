@@ -23,6 +23,7 @@ import {
 } from "./dataAccess";
 import {
   downloadDriveFile,
+  downloadPublicProfileData,
   findDriveFileById,
   findDriveFileByName,
   findAudioFileInDriveFolder,
@@ -245,7 +246,7 @@ async function migrateToFolderLayout(
 async function downloadMissingAudioFiles(
   audioRefs: ProfileSyncData["audioFiles"],
   profileId: number,
-  tokenInfo: TokenInfo,
+  tokenInfo: TokenInfo | null,
   refreshCallback: (token: TokenInfo) => void,
 ): Promise<{ warnings: string[]; retryable: string[] }> {
   const warnings: string[] = [];
@@ -336,6 +337,66 @@ async function downloadMissingAudioFiles(
   }
 
   return { warnings, retryable };
+}
+
+/**
+ * Pull a read-only profile from Drive via the public proxy and apply it
+ * locally. Used when there is no Google sign-in, or when the signed-in
+ * user's drive.file token cannot see the profile's Drive file (a public
+ * profile connected via share URL without a Picker grant).
+ *
+ * The profile is read-only, so no local edits can exist: remote wins
+ * outright and nothing is ever written back to Drive.
+ */
+async function pullPublicReadOnlyProfile(
+  profileId: number,
+  fileId: string,
+  onStatusChange: (status: SyncStatus) => void,
+  onError: (error: string | null) => void,
+): Promise<SyncResult> {
+  console.log(
+    `Pulling read-only profile ${profileId} via public proxy (file ${fileId})...`,
+  );
+
+  const remoteData = await downloadPublicProfileData(fileId);
+  if (!remoteData) {
+    const message =
+      "This shared profile is not publicly accessible. Ask the owner to " +
+      'share it with "anyone with the link", or sign in with an invited ' +
+      "Google account.";
+    onError(message);
+    onStatusChange("error");
+    return { status: "error", error: message };
+  }
+
+  // Fetch any audio we don't have yet through the public proxy (token = null)
+  if (remoteData.audioFiles) {
+    const { retryable } = await downloadMissingAudioFiles(
+      remoteData.audioFiles,
+      profileId,
+      null,
+      () => {},
+    );
+    // A transient failure here must postpone the pull: applying the profile
+    // without the audio would strip those pad references locally until the
+    // next successful pull.
+    if (retryable.length > 0) {
+      const message = `Could not download audio for this shared profile: ${retryable.join("; ")}`;
+      onError(message);
+      onStatusChange("error");
+      return { status: "error", error: message };
+    }
+  }
+
+  remoteData._lastSyncTimestamp = Date.now();
+  const warnings = await updateLocalData(profileId, remoteData);
+  if (warnings.length > 0) {
+    onError(warnings.join("\n"));
+  }
+
+  onStatusChange("success");
+  console.log(`Read-only profile ${profileId} pulled via public proxy.`);
+  return { status: "success", data: remoteData };
 }
 
 /**
@@ -447,6 +508,16 @@ const performProfileSync = async (
 
     // Check authentication
     if (!tokenInfo?.accessToken) {
+      // No sign-in needed for read-only profiles that are publicly shared:
+      // pull them through the server-side proxy instead.
+      if (localProfile.readOnly && localProfile.googleDriveFileId) {
+        return await pullPublicReadOnlyProfile(
+          profileId,
+          localProfile.googleDriveFileId,
+          onStatusChange,
+          onError,
+        );
+      }
       onStatusChange("error");
       onError("Not authenticated with Google Drive");
       return {
@@ -468,6 +539,20 @@ const performProfileSync = async (
         );
         fileId = null; // Reset fileId as the link is broken
       }
+    }
+
+    // A read-only profile whose Drive file is invisible to this account is a
+    // publicly shared profile connected via URL (drive.file has no grant on
+    // it). Pull it through the public proxy — do NOT fall through to the
+    // name-lookup/initial-upload path, which would wrongly create a folder in
+    // this user's own Drive and flip the profile to read-write.
+    if (!fileId && localProfile.readOnly && localProfile.googleDriveFileId) {
+      return await pullPublicReadOnlyProfile(
+        profileId,
+        localProfile.googleDriveFileId,
+        onStatusChange,
+        onError,
+      );
     }
 
     // If not linked or link is broken, try to find by name

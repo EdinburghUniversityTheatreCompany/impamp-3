@@ -35,14 +35,44 @@ export interface PlaybackStrategy {
 }
 
 /**
+ * The underlying audio source for an active track.
+ *
+ * - "buffer": a fully decoded AudioBuffer played through an
+ *   AudioBufferSourceNode (sample-accurate, used when the decoded buffer
+ *   is already cached)
+ * - "media": an HTMLAudioElement streaming directly from the stored blob
+ *   (starts almost immediately without decoding the whole file, used when
+ *   no decoded buffer is available)
+ */
+export type TrackSource =
+  | {
+      kind: "buffer";
+      sourceNode: AudioBufferSourceNode;
+    }
+  | {
+      kind: "media";
+      element: HTMLAudioElement;
+      sourceNode: MediaElementAudioSourceNode;
+      objectUrl: string;
+    };
+
+/**
  * Represents a currently playing audio track
  */
 export interface ActiveTrack {
-  source: AudioBufferSourceNode;
+  source: TrackSource;
+  /**
+   * The track's own gain node, inserted between the source and the
+   * destination when playback starts. Fades and hard stops automate this
+   * existing node in place — the graph is never re-plumbed mid-playback,
+   * which would otherwise reset the level to full volume.
+   */
   gainNode: GainNode;
   name: string;
   startTime: number;
   duration: number;
+  trimStart: number;
+  trimEnd?: number;
   padInfo: {
     profileId: number;
     pageIndex: number;

@@ -967,9 +967,34 @@ export const uploadAudioFile = async (
 };
 
 /**
- * Download an audio file from Google Drive as a Blob
+ * Download a publicly shared audio file through the server-side proxy.
+ * Used when there is no Google sign-in, or when the signed-in user's
+ * drive.file token cannot see the file (e.g. a public profile connected
+ * via share URL without a Picker grant).
+ * @returns The audio blob, or null if the file is not publicly accessible
+ */
+const downloadAudioFileViaPublicProxy = async (
+  fileId: string,
+): Promise<Blob | null> => {
+  try {
+    const response = await fetch(
+      `/api/drive/public-audio?id=${encodeURIComponent(fileId)}`,
+    );
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch (err) {
+    console.warn(`Public audio proxy failed for file ${fileId}:`, err);
+    return null;
+  }
+};
+
+/**
+ * Download an audio file from Google Drive as a Blob.
+ * Falls back to the public proxy when unauthenticated, or when the
+ * authenticated request is denied/invisible (403/404) — which happens for
+ * public files the drive.file scope has no explicit grant on.
  * @param fileId The Drive file ID
- * @param tokenInfo Current token information
+ * @param tokenInfo Current token information (null for anonymous view-only)
  * @param refreshCallback Callback to update token if refreshed
  * @returns The audio blob or null if not found
  */
@@ -979,7 +1004,7 @@ export const downloadAudioFileAsBlob = async (
   refreshCallback: (token: TokenInfo) => void,
 ): Promise<Blob | null> => {
   if (!tokenInfo?.accessToken) {
-    throw new Error("Not authenticated");
+    return downloadAudioFileViaPublicProxy(fileId);
   }
 
   try {
@@ -998,7 +1023,9 @@ export const downloadAudioFileAsBlob = async (
           },
         });
         if (retryResponse.ok) return retryResponse.blob();
-        if (retryResponse.status === 404) return null;
+        if (retryResponse.status === 404 || retryResponse.status === 403) {
+          return downloadAudioFileViaPublicProxy(fileId);
+        }
         throw new Error(
           `API Error: ${retryResponse.status} ${retryResponse.statusText}`,
         );
@@ -1006,7 +1033,12 @@ export const downloadAudioFileAsBlob = async (
       throw new Error("Authentication expired. Please sign in again.");
     }
 
-    if (response.status === 404) return null;
+    // 404 can mean deleted OR scope-invisible (drive.file has no grant on the
+    // file); 403 means access denied. In both cases the file may still be
+    // publicly shared, so try the proxy before giving up.
+    if (response.status === 404 || response.status === 403) {
+      return downloadAudioFileViaPublicProxy(fileId);
+    }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -1022,5 +1054,91 @@ export const downloadAudioFileAsBlob = async (
       err,
     );
     throw err;
+  }
+};
+
+/**
+ * Get an opaque change-detection token for a Drive file, combining its
+ * monotonically increasing `version` with `modifiedTime`. A cheap call used
+ * to poll for remote changes without downloading file content.
+ *
+ * Tries the authenticated API first (private + shared files); falls back to
+ * the public proxy metadata endpoint for files the drive.file scope cannot
+ * see (public profiles connected via share URL) or when signed out.
+ *
+ * @param fileId The Drive file ID
+ * @param tokenInfo Current token information (null when signed out)
+ * @param refreshCallback Callback to update token if refreshed
+ * @returns A token that changes whenever the file changes, or null if the
+ *          file's state cannot be determined right now
+ */
+export const getDriveFileVersionToken = async (
+  fileId: string,
+  tokenInfo: TokenInfo | null,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string | null> => {
+  interface VersionFields {
+    version?: string;
+    modifiedTime?: string;
+  }
+
+  const toToken = (data: VersionFields | null): string | null => {
+    if (!data || (!data.version && !data.modifiedTime)) return null;
+    return `${data.version ?? ""}:${data.modifiedTime ?? ""}`;
+  };
+
+  if (tokenInfo?.accessToken) {
+    try {
+      const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=version,modifiedTime`;
+      const data = await authenticatedRequest<VersionFields>(
+        url,
+        "GET",
+        tokenInfo,
+        {},
+        refreshCallback,
+      );
+      const token = toToken(data);
+      if (token) return token;
+      // null data = 404 (deleted or scope-invisible) — fall through to proxy
+    } catch (err) {
+      if (!(err instanceof Error && err.message === "DRIVE_403")) {
+        throw err;
+      }
+      // Access denied — the file may still be public; fall through to proxy
+    }
+  }
+
+  try {
+    const response = await fetch(
+      `/api/drive/public-file?id=${encodeURIComponent(fileId)}&meta=1`,
+    );
+    if (!response.ok) return null;
+    return toToken((await response.json()) as VersionFields);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Download a publicly shared profile JSON through the server-side proxy.
+ * Used for read-only profiles whose Drive file is not visible to the current
+ * account (or when signed out entirely).
+ * @param fileId The Drive file ID of the profile JSON
+ * @returns The parsed sync data, or null if the file is not publicly accessible
+ */
+export const downloadPublicProfileData = async (
+  fileId: string,
+): Promise<ProfileSyncData | null> => {
+  try {
+    const response = await fetch(
+      `/api/drive/public-file?id=${encodeURIComponent(fileId)}`,
+    );
+    if (!response.ok) return null;
+    const data = (await response.json()) as ProfileSyncData;
+    if (data?._syncFormatVersion !== 1 || !data.profile) return null;
+    return data;
+  } catch (err) {
+    console.warn(`Public profile proxy failed for file ${fileId}:`, err);
+    return null;
   }
 };

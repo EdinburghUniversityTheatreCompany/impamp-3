@@ -9,17 +9,20 @@
  */
 
 import { useProfileStore } from "@/store/profileStore";
-import { PadConfiguration } from "../db";
+import { PadConfiguration, getAudioFile } from "../db";
 import {
   loadAndDecodeAudioInstant,
   loadAndDecodeAudioEnhanced,
   preloadAudioFiles,
   LoadingState,
 } from "./decoder";
+import { getCachedAudioBuffer } from "./cache";
 import { audioPreloader } from "./preloader";
 import { getStrategy } from "./strategies";
 import {
   playBuffer,
+  playBlobStreaming,
+  waitForStreamingPlayable,
   stopTrack,
   fadeOutTrack,
   stopAllTracks,
@@ -27,10 +30,15 @@ import {
   isTrackPlaying,
   isTrackFading,
   getActivePlaybackKeys,
+  getActiveTrack,
   getStopGeneration,
 } from "./playback";
 import { resumeAudioContext, getAudioContext } from "./context";
-import { TriggerAudioArgs, generatePlaybackKey } from "./types";
+import {
+  TriggerAudioArgs,
+  PlayAudioParams,
+  generatePlaybackKey,
+} from "./types";
 
 /**
  * Type for loading state callback function
@@ -341,15 +349,145 @@ export async function triggerAudioForPadInstant(
     stopTrack(playbackKey);
   }
 
-  // Capture the stop generation so a stop during loading cancels this trigger
-  const triggerGeneration = getStopGeneration();
+  // Capture the stop generation so a stop during loading cancels this trigger.
+  // Re-baselined whenever this function stops a track itself, so its own
+  // bookkeeping stops are never mistaken for a user-requested stop.
+  let triggerGeneration = getStopGeneration();
 
   try {
     // Use the strategy pattern to select which audio file to play
     const strategy = getStrategy(playbackType, playbackKey);
     const { audioFileId, index } = strategy.selectNextSound(audioFileIds);
 
-    // Use instant loading with progress feedback
+    // Look up trim settings for this specific audio file
+    const trimForFile = audioTrimSettings?.[audioFileId];
+
+    // Advance the playback strategy at most once, even if the first
+    // playback attempt fails and we fall back to another method
+    let strategyUpdated = false;
+    const ensureStrategyUpdated = () => {
+      if (!strategyUpdated) {
+        strategy.updateState(index, audioFileIds);
+        strategyUpdated = true;
+      }
+    };
+
+    // Build playback params. Must be called after ensureStrategyUpdated so
+    // the round-robin available indices reflect the sound being played.
+    const buildPlayParams = (): PlayAudioParams => ({
+      name: name || `Pad ${padIndex + 1}`,
+      padInfo: {
+        profileId: activeProfileId,
+        pageIndex: currentPageIndex,
+        padIndex,
+      },
+      trimStart: trimForFile?.trimStart,
+      trimEnd: trimForFile?.trimEnd,
+      multiSoundState: {
+        playbackType,
+        allAudioFileIds: audioFileIds,
+        currentAudioFileId: audioFileId,
+        currentAudioIndex: index,
+        availableAudioIndices:
+          playbackType === "round-robin"
+            ? (
+                getStrategy(
+                  "round-robin",
+                  playbackKey,
+                ) as import("./strategies/roundRobin").RoundRobinStrategy
+              ).getAvailableIndices?.()
+            : undefined,
+      },
+    });
+
+    // 1. Fast path: a decoded buffer is already cached (e.g. the current
+    //    page has been preloaded) — play it with sample-accurate buffer
+    //    playback.
+    const cachedBuffer = getCachedAudioBuffer(audioFileId);
+    if (cachedBuffer) {
+      console.log(
+        `[Audio Controls] [Instant] Playing cached buffer for ID: ${audioFileId}, pad ${padIndex}`,
+      );
+      audioPreloader.trackPlayedFile(audioFileId);
+      ensureStrategyUpdated();
+      onAudioReady?.();
+      playBuffer(cachedBuffer, playbackKey, buildPlayParams());
+      return;
+    }
+
+    // 2. No decoded buffer: stream directly from the stored blob via a
+    //    media element. Playback starts within tens of milliseconds
+    //    without decoding the whole file, and no PCM memory is held.
+    try {
+      const audioFileData = await getAudioFile(audioFileId);
+
+      // Bail out if a stop was requested while the blob was being read —
+      // nothing is audible yet, so just abandon the trigger
+      if (getStopGeneration() !== triggerGeneration) {
+        console.log(
+          `[Audio Controls] [Instant] Blob load cancelled by a stop request for key: ${playbackKey}`,
+        );
+        return;
+      }
+
+      if (audioFileData?.blob) {
+        ensureStrategyUpdated();
+        const element = playBlobStreaming(
+          audioFileData.blob,
+          playbackKey,
+          buildPlayParams(),
+        );
+        if (element) {
+          const playable = await waitForStreamingPlayable(element);
+
+          // A stop (ESC, or a re-trigger of this pad) during the wait tears
+          // this element down and takes the playback key away from it.
+          // Never continue in that case — falling through to the decode
+          // path would restart the sound the user just stopped. A media
+          // error also drops ownership, but without bumping the stop
+          // generation, so unsupported formats still fall back to decoding.
+          const active = getActiveTrack(playbackKey);
+          const stillOurs =
+            active?.source.kind === "media" &&
+            active.source.element === element;
+          if (!stillOurs && getStopGeneration() !== triggerGeneration) {
+            console.log(
+              `[Audio Controls] [Instant] Streaming start cancelled by a stop request for key: ${playbackKey}`,
+            );
+            return;
+          }
+
+          if (playable) {
+            console.log(
+              `[Audio Controls] [Instant] Streaming audio file ID: ${audioFileId} for pad ${padIndex}`,
+            );
+            audioPreloader.trackPlayedFile(audioFileId);
+            onAudioReady?.();
+            return;
+          }
+          // Release the failed streaming attempt (no-op if the element's
+          // error handler already cleaned it up). This is our own stop, so
+          // re-baseline the generation to keep the decode fallback alive.
+          stopTrack(playbackKey);
+          triggerGeneration = getStopGeneration();
+        }
+        console.warn(
+          `[Audio Controls] [Instant] Streaming start failed for ID: ${audioFileId}, falling back to decode...`,
+        );
+      } else {
+        console.warn(
+          `[Audio Controls] [Instant] Audio file ID ${audioFileId} not found for streaming, falling back to decode...`,
+        );
+      }
+    } catch (streamError) {
+      console.warn(
+        `[Audio Controls] [Instant] Streaming playback error for ID: ${audioFileId}, falling back to decode:`,
+        streamError,
+      );
+    }
+
+    // 3. Fallback: decode the full file (also covers edge cases the media
+    //    element pipeline can't stream but decodeAudioData can handle)
     let buffer = await loadAndDecodeAudioInstant(
       audioFileId,
       onLoadingStateChange,
@@ -393,41 +531,13 @@ export async function triggerAudioForPadInstant(
         `[Audio Controls] [Instant] Playing audio file ID: ${audioFileId} for pad ${padIndex}`,
       );
 
-      // Update strategy state after selection
-      strategy.updateState(index, audioFileIds);
+      ensureStrategyUpdated();
 
       // Notify that audio is ready and starting
       onAudioReady?.();
 
-      // Look up trim settings for this specific audio file
-      const trimForFile = audioTrimSettings?.[audioFileId];
-
       // Play the buffer with the appropriate parameters
-      playBuffer(buffer, playbackKey, {
-        name: name || `Pad ${padIndex + 1}`,
-        padInfo: {
-          profileId: activeProfileId,
-          pageIndex: currentPageIndex,
-          padIndex,
-        },
-        trimStart: trimForFile?.trimStart,
-        trimEnd: trimForFile?.trimEnd,
-        multiSoundState: {
-          playbackType,
-          allAudioFileIds: audioFileIds,
-          currentAudioFileId: audioFileId,
-          currentAudioIndex: index,
-          availableAudioIndices:
-            playbackType === "round-robin"
-              ? (
-                  getStrategy(
-                    "round-robin",
-                    playbackKey,
-                  ) as import("./strategies/roundRobin").RoundRobinStrategy
-                ).getAvailableIndices?.()
-              : undefined,
-        },
-      });
+      playBuffer(buffer, playbackKey, buildPlayParams());
     } else {
       const errorMsg = `Failed to load audio file ID: ${audioFileId} for pad ${padIndex}`;
       console.error(`[Audio Controls] [Instant] ${errorMsg}`);

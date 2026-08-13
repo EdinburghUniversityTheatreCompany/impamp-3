@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  getProxyRequestParams,
+  driveErrorResponse,
+  isSameHostRequest,
+} from "../proxyUtils";
 
 /**
  * Downloads a publicly shared Google Drive file using a server-side API key.
@@ -7,64 +12,34 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * GET /api/drive/public-file?id=FILE_ID
  * Returns: the raw JSON content of the file, or an error response
+ *
+ * GET /api/drive/public-file?id=FILE_ID&meta=1
+ * Returns: file metadata (name, mimeType, size, modifiedTime, version) instead
+ * of content — used by the client to cheaply detect remote changes on public
+ * profiles without downloading the whole file.
  */
 // Profile JSON is text; anything larger than this is not ours to proxy
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
-/**
- * Rejects cross-site callers. Requests without an Origin or Referer (direct
- * navigation, same-origin fetches in some browsers) are allowed through.
- */
-function isSameHostRequest(request: NextRequest): boolean {
-  const source =
-    request.headers.get("origin") ?? request.headers.get("referer");
-  if (!source) return true;
-
-  try {
-    return new URL(source).host === request.nextUrl.host;
-  } catch {
-    return false;
-  }
-}
-
 export async function GET(request: NextRequest) {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Google API key not configured on server" },
-      { status: 500 },
-    );
-  }
+  const params = getProxyRequestParams(request);
+  if (params.errorResponse) return params.errorResponse;
+  const { apiKey, fileId } = params;
 
   if (!isSameHostRequest(request)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const fileId = request.nextUrl.searchParams.get("id");
-  if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-    return NextResponse.json({ error: "Invalid file ID" }, { status: 400 });
-  }
+  const wantMeta = request.nextUrl.searchParams.get("meta") === "1";
 
   try {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
+    const url = wantMeta
+      ? `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,size,modifiedTime,version&key=${apiKey}`
+      : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
     const response = await fetch(url);
 
     if (!response.ok) {
-      // Try to surface Google's own error message
-      const errorBody = (await response.json().catch(() => null)) as {
-        error?: { message?: string };
-      } | null;
-      const message =
-        errorBody?.error?.message ?? `Drive API error: ${response.status}`;
-      return NextResponse.json(
-        { error: message },
-        {
-          status:
-            response.status === 403 || response.status === 404
-              ? response.status
-              : 502,
-        },
-      );
+      return driveErrorResponse(response);
     }
 
     const declaredLength = Number(response.headers.get("content-length"));

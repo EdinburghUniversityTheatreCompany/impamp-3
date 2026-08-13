@@ -6,7 +6,6 @@ import { useGoogleLogin } from "@react-oauth/google";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import { blobToBase64 } from "@/lib/importExport";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 
@@ -27,7 +26,7 @@ function DriveOpenContent() {
     profiles,
     setGoogleAuthDetails,
     updateProfile,
-    importProfileFromJSON,
+    importProfileFromSyncData,
   } = useProfileStore();
 
   const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
@@ -85,79 +84,26 @@ function DriveOpenContent() {
           throw new Error("Not a valid ImpAmp profile file.");
         }
 
-        // Download audio blobs for any files that only have a driveFileId
-        const needsDownload = (syncData.audioFiles ?? []).filter(
-          (f) => !f.data && f.driveFileId,
-        );
-        let enrichedSyncData = syncData;
-        if (needsDownload.length > 0) {
-          setPageState({
-            kind: "connecting",
-            progress: { current: 0, total: needsDownload.length },
-          });
-
-          const enriched = new Map<number, string>();
-          for (let i = 0; i < needsDownload.length; i++) {
-            const ref = needsDownload[i];
-            try {
-              const blob = await downloadAudioFile(ref.driveFileId!);
-              if (blob) {
-                enriched.set(ref.id, await blobToBase64(blob));
-              }
-            } catch (err) {
-              console.warn(`Failed to download audio "${ref.name}":`, err);
-            }
+        // Import as a new local profile, streaming each audio file straight
+        // into IndexedDB, then link it to the shared Drive folder.
+        const newProfileId = await importProfileFromSyncData(
+          syncData,
+          downloadAudioFile,
+          (p) =>
             setPageState({
               kind: "connecting",
-              progress: { current: i + 1, total: needsDownload.length },
-            });
-          }
-
-          enrichedSyncData = {
-            ...syncData,
-            audioFiles: (syncData.audioFiles ?? []).map((f) =>
-              enriched.has(f.id) ? { ...f, data: enriched.get(f.id) } : f,
-            ),
-          };
-        }
-
-        // Convert sync format to export format and import as a new local profile
-        const profileCopy = { ...enrichedSyncData.profile };
-        const exportData = {
-          exportVersion: 2,
-          exportDate: new Date().toISOString(),
-          profile: {
-            ...profileCopy,
-            id: undefined,
-            syncType: "googleDrive" as const,
-            lastBackedUpAt: Date.now(),
-          },
-          padConfigurations: enrichedSyncData.padConfigurations || [],
-          pageMetadata: enrichedSyncData.pageMetadata || [],
-          audioFiles: (enrichedSyncData.audioFiles || []).filter(
-            (f): f is typeof f & { data: string } => typeof f.data === "string",
-          ),
-        };
-
-        const profileIdsBefore = new Set(profiles.map((p) => p.id));
-        await importProfileFromJSON(JSON.stringify(exportData));
-
-        // Find the newly created profile and link it to the shared Drive folder
-        const updatedProfiles = useProfileStore.getState().profiles;
-        const newProfile = updatedProfiles.find(
-          (p) => !profileIdsBefore.has(p.id),
+              progress: { current: p.processedFiles, total: p.totalFiles },
+            }),
         );
-        if (newProfile?.id) {
-          await updateProfile(newProfile.id, {
-            googleDriveFileId: profileFile.id,
-            googleDriveFolderId: folderId,
-          });
-        }
+        await updateProfile(newProfileId, {
+          googleDriveFileId: profileFile.id,
+          googleDriveFolderId: folderId,
+        });
 
         sessionStorage.removeItem(PENDING_FOLDER_KEY);
         setPageState({
           kind: "success",
-          profileName: enrichedSyncData.profile.name,
+          profileName: syncData.profile.name,
         });
       } catch (error) {
         console.error("Failed to connect shared Drive profile:", error);
@@ -175,7 +121,7 @@ function DriveOpenContent() {
       listFilesInFolder,
       downloadDriveFile,
       downloadAudioFile,
-      importProfileFromJSON,
+      importProfileFromSyncData,
       updateProfile,
     ],
   );
