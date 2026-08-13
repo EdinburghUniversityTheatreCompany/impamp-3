@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  attachSessionCookie,
+  establishSession,
+} from "@/lib/server/establishSession";
 
 /**
  * Exchanges a Google OAuth authorization code for access and refresh tokens.
  * Uses the server-side client secret so it never reaches the browser.
  *
+ * Also establishes a server-sync session cookie for the same account, so a
+ * single sign-in covers both Drive sync and server sync. Failing to do so is
+ * not an error: the response still carries the Drive tokens.
+ *
  * POST /api/auth/google/exchange
  * Body: { code: string }
- * Returns: { access_token, refresh_token, expires_in }
+ * Returns: { access_token, refresh_token, expires_in, user }
  */
 export async function POST(request: NextRequest) {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
@@ -59,11 +67,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({
+    const session = await establishSession(data.access_token);
+
+    const result = NextResponse.json({
       access_token: data.access_token,
       refresh_token: data.refresh_token ?? null,
       expires_in: data.expires_in,
+      user: session?.user ?? null,
     });
+    if (session) attachSessionCookie(result, session);
+    return result;
   } catch {
     // Network failure (e.g. server is offline) — don't log the user out
     return NextResponse.json(

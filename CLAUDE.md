@@ -13,6 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Testing
 
+- `npm test` - Run the Vitest unit/integration suite (server sync, storage, API routes)
+- `npm run test:watch` - Vitest in watch mode
 - `npm test:e2e` - Run all Playwright end-to-end tests
 - `npm test:e2e:audio` - Run audio playback tests specifically
 - `npm test:e2e:profiles` - Run profile management tests
@@ -45,6 +47,19 @@ Three main stores handle application state:
 - **Playback Store** (`playbackStore.ts`) - Active tracks, armed tracks, playback controls
 - **UI Store** (`uiStore.ts`) - Modal state, edit mode, search functionality
 
+### Server Layer (server sync)
+
+Server-side code lives in `src/lib/server/` and must never be imported from
+client components — it uses Node's built-in `node:sqlite`:
+
+- **Storage** (`db.ts`) - SQLite connection, migrations, typed query helpers
+- **Users / Profiles / Shares** (`users.ts`, `profiles.ts`, `shares.ts`)
+- **Sessions** (`session.ts`) - HttpOnly cookie, only the token hash is stored
+- **Events** (`events.ts`) - in-process pub/sub behind the SSE endpoint
+
+The client half is `src/lib/serverSync/` plus `src/hooks/useServerSync.ts`.
+See `docs/server-sync.md`.
+
 ### Database Layer
 
 IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
@@ -67,6 +82,8 @@ IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
 - **Search System** - Ctrl+F opens search modal across all banks
 - **Track Arming** - Ctrl+Click to queue sounds, F9 to play next
 - **Google Drive Sync** - Complete sync implementation in `src/lib/googleDrive/`
+- **Server Sync** - ETag/If-Match sync against the app's own backend, with SSE
+  change notifications (`src/lib/serverSync/`). Audio stays in Drive.
 - **PWA Support** - Service worker, manifest, offline capabilities
 
 ### Import/Export System
@@ -120,6 +137,7 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 
 ### Testing Strategy
 
+- Vitest for unit/integration tests (`src/**/*.test.ts`), run with `npm test`
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
@@ -134,6 +152,7 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 ### Profile System
 
 - Each profile is completely isolated
+- `syncType` is one of `local`, `googleDrive`, or `server`
 - Profiles can be linked to Google Drive for sync
 - Export updates `lastBackedUpAt` timestamp
 - Backup reminder system based on configurable intervals
@@ -146,3 +165,11 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 - Edit mode uses visual indicators (amber borders, "EDIT MODE" banner)
 - PWA implementation requires service worker registration and manifest
 - Google Drive integration uses appData scope (hidden files, no quota impact)
+- Server sync needs `IMPAMP_DB_PATH` and a persistent volume; the SSE bus is
+  in-process, so the app must run as a single instance
+
+## Pinned Versions
+
+- Next.js 16 · React 19 · Tailwind CSS 4 · TypeScript 5
+- Vitest 4 (unit) · Playwright 1.4x (E2E) · Prettier 3.8.1
+- Node 22 in the Docker image; `node:sqlite` requires Node >= 22.13

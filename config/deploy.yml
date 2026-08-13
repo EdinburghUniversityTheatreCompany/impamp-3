@@ -49,6 +49,12 @@ env:
   clear:
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: $NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_GOOGLE_API_KEY: $NEXT_PUBLIC_GOOGLE_FILE_PICKER_API_KEY
+    # Server-sync database, on the persistent volume declared below.
+    IMPAMP_DB_PATH: /data/impamp.db
+    # Who may hold a server-sync account. UNSET MEANS ANY Google account can
+    # sign in and store profiles — set this before exposing server sync on a
+    # public host. Accepts addresses and @domain suffixes, comma-separated.
+    # IMPAMP_ALLOWED_EMAILS: "@bedlamtheatre.co.uk"
   secret:
     - GOOGLE_CLIENT_SECRET
     - GOOGLE_API_KEY
@@ -67,8 +73,15 @@ ssh:
 
 # Use a persistent storage volume.
 #
-# volumes:
-#   - "app_storage:/app/storage"
+# Holds the server-sync SQLite database (users, profiles, shares, sessions).
+# It must survive deploys — losing it unlinks every server-synced profile,
+# though nothing in it is the only copy of a soundboard: profile data also
+# lives in each collaborator's IndexedDB and their audio stays in Drive.
+#
+# Back it up with a consistent copy rather than `cp` (WAL is in play):
+#   kamal app exec --reuse 'sqlite3 /data/impamp.db ".backup /data/backup.db"'
+volumes:
+  - "impamp_data:/data"
 
 # Bridge fingerprinted assets, like JS and CSS, between versions to avoid
 # hitting 404 on in-flight requests. Combines all files from new and old

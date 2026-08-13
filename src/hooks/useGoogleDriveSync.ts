@@ -7,7 +7,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { getProfile } from "@/lib/db";
+import { applySyncedProfile } from "./applySyncedProfile";
 
 // Import from our modular structure
 import {
@@ -375,17 +375,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         handleTokenRefresh,
       );
       if (result.status === "success") {
-        useProfileStore.getState().incrementPadConfigsVersion();
-        // Re-read the profile from DB so any fields written by sync (e.g.
-        // googleDriveFolderId, readOnly) are reflected in the store's state.
-        const updated = await getProfile(profileId);
-        if (updated) {
-          useProfileStore.setState((state) => ({
-            profiles: state.profiles.map((p) =>
-              p.id === profileId ? updated : p,
-            ),
-          }));
-        }
+        await applySyncedProfile(profileId);
       }
       return result;
     },

@@ -13,7 +13,11 @@ services:
       - "${HOST_PORT:-3025}:3000" # Map to host port specified by HOST_PORT env var (default: 3025)
     environment:
       - NODE_ENV=production
+      - IMPAMP_DB_PATH=/data/impamp.db
       # Add any additional environment variables here
+    volumes:
+      # Server-sync SQLite database — must outlive the container.
+      - impamp_data:/data
 
   # Development service with hot-reloading
   dev:
@@ -31,4 +35,8 @@ services:
       - "${DEV_PORT:-3000}:3000" # Map to host port specified by DEV_PORT env var (default: 3002)
     environment:
       - NODE_ENV=development
+      - IMPAMP_DB_PATH=/app/data/impamp.db
     command: npm run dev
+
+volumes:
+  impamp_data:

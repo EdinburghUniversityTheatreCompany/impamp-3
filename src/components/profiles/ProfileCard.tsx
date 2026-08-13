@@ -18,6 +18,8 @@ import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import SharingPanel from "./SharingPanel";
+import ServerSharingPanel from "./ServerSharingPanel";
+import { useServerSync } from "@/hooks/useServerSync";
 
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -82,6 +84,42 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     useState(false); // Track if this card triggered the last sync
 
   const [showSharingPanel, setShowSharingPanel] = useState(false);
+
+  // Server sync
+  const {
+    isServerSignedIn,
+    syncProfile: syncProfileToServer,
+    error: serverSyncError,
+  } = useServerSync();
+  const [isLinkingServer, setIsLinkingServer] = useState(false);
+
+  /**
+   * Move a local profile onto the server. The first sync uploads it as-is and
+   * records the id the server assigned; from then on the normal sync loop
+   * keeps it current.
+   */
+  const handleSyncToServer = async () => {
+    if (profile.id === undefined) return;
+    setIsLinkingServer(true);
+    setCardError(null);
+    try {
+      await updateProfile(profile.id, { syncType: "server" });
+      const result = await syncProfileToServer(profile.id);
+      if (result.status === "error") {
+        // Leaving it on "server" with no server id would strand the profile
+        // in a state the UI can't act on.
+        await updateProfile(profile.id, { syncType: "local" });
+        setCardError(result.error);
+      }
+    } catch (error) {
+      await updateProfile(profile.id, { syncType: "local" });
+      setCardError(
+        error instanceof Error ? error.message : "Could not enable server sync",
+      );
+    } finally {
+      setIsLinkingServer(false);
+    }
+  };
 
   // Sync pause states
   const [isPausing, setIsPausing] = useState(false);
@@ -364,7 +402,11 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
               ? profile.readOnly
                 ? "Google Drive Sync (read-only)"
                 : "Google Drive Sync"
-              : "Local Storage Only"}
+              : profile.syncType === "server"
+                ? profile.readOnly
+                  ? "Server Sync (view-only)"
+                  : "Server Sync"
+                : "Local Storage Only"}
           </p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
             Created{" "}
@@ -460,6 +502,51 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
             <p className="text-xs text-red-600 dark:text-red-400 mt-1">
               Error: {cardError}
             </p>
+          )}
+        </div>
+      )}
+
+      {/* Convert a local profile to server sync */}
+      {profile.syncType === "local" && isServerSignedIn && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={handleSyncToServer}
+            disabled={isLinkingServer}
+            data-testid="enable-server-sync"
+            className="px-3 py-1 text-xs bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200 transition-colors dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-800/40 disabled:opacity-50"
+          >
+            {isLinkingServer ? "Setting up…" : "Sync to ImpAmp server"}
+          </button>
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            Collaborators see edits within seconds. Sounds still come from
+            Google Drive.
+          </p>
+        </div>
+      )}
+
+      {/* Server sync status and sharing */}
+      {profile.syncType === "server" && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+          <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
+            Server Sync
+          </h4>
+          {serverSyncError && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {serverSyncError}
+            </p>
+          )}
+          {!profile.serverProfileId && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Waiting for the first sync to reach the server.
+            </p>
+          )}
+          {profile.readOnly && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              You have view-only access, so local edits are not sent back.
+            </p>
+          )}
+          {!profile.readOnly && profile.serverProfileId && (
+            <ServerSharingPanel serverProfileId={profile.serverProfileId} />
           )}
         </div>
       )}

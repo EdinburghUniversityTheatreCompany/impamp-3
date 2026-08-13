@@ -281,6 +281,11 @@ export const updateLocalData = async (
       googleDriveFileId:
         existingLocalProfile?.googleDriveFileId ??
         data.profile.googleDriveFileId,
+      // Where this device syncs the profile is local bookkeeping — a blob
+      // written by another device must never repoint it.
+      serverProfileId: existingLocalProfile?.serverProfileId ?? null,
+      serverVersion: existingLocalProfile?.serverVersion ?? null,
+      serverShareToken: existingLocalProfile?.serverShareToken ?? null,
       syncPausedUntil:
         existingLocalProfile?.syncPausedUntil ?? data.profile.syncPausedUntil,
       createdAt: toDate(

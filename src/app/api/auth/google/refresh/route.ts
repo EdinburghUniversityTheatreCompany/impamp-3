@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  attachSessionCookie,
+  establishSession,
+} from "@/lib/server/establishSession";
+import { getSessionUser, SESSION_COOKIE } from "@/lib/server/session";
 
 /**
  * Refreshes a Google OAuth access token using a refresh token.
  * Uses the server-side client secret so it never reaches the browser.
+ *
+ * Doubles as the recovery path for the server-sync session: a browser whose
+ * session cookie has expired (or that never had one, having signed in before
+ * server sync existed) gets a fresh one here, since the client keeps calling
+ * this route for as long as its Google refresh token is good.
  *
  * POST /api/auth/google/refresh
  * Body: { refresh_token: string }
@@ -57,10 +67,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({
+    const result = NextResponse.json({
       access_token: data.access_token,
       expires_in: data.expires_in,
     });
+
+    // Only mint a session when there isn't a working one — this route runs
+    // every time a token expires, and re-signing each time would pile up
+    // session rows for no gain.
+    const existing = getSessionUser(request.cookies.get(SESSION_COOKIE)?.value);
+    if (!existing) {
+      const session = await establishSession(data.access_token);
+      if (session) attachSessionCookie(result, session);
+    }
+
+    return result;
   } catch {
     // Network failure — don't log the user out, let caller retry later
     return NextResponse.json(
