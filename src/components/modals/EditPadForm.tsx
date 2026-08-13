@@ -61,13 +61,18 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
   // Keep track of whether we're doing the initial load
   const initialLoadRef = useRef(true);
 
+  // Cache of already resolved sound names, keyed by audio file ID
+  const soundNamesRef = useRef(new Map<number, string>());
+
   // Generate consistent IDs for the same audio files across renders
-  const getDndId = useCallback((fileId: number, index: number) => {
-    return `sound-${fileId}-${index}`;
+  const getDndId = useCallback((fileId: number) => {
+    return `sound-${fileId}`;
   }, []);
 
   // Load sound names when audioFileIds change
   useEffect(() => {
+    let cancelled = false;
+
     const fetchSoundNames = async () => {
       if (!values.audioFileIds || values.audioFileIds.length === 0) {
         setSounds([]);
@@ -76,16 +81,21 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
 
       setIsLoadingNames(true);
       try {
+        const nameCache = soundNamesRef.current;
         const fetchedSounds: SoundListItem[] = [];
-        for (let i = 0; i < values.audioFileIds.length; i++) {
-          const fileId = values.audioFileIds[i];
-          const audioFile = await getAudioFile(fileId);
+        for (const fileId of values.audioFileIds) {
+          if (!nameCache.has(fileId)) {
+            const audioFile = await getAudioFile(fileId);
+            if (cancelled) return;
+            nameCache.set(fileId, audioFile?.name || `File ID ${fileId}`); // Fallback name
+          }
           fetchedSounds.push({
-            dndId: getDndId(fileId, i), // Create a consistent ID
+            dndId: getDndId(fileId), // Create a consistent ID
             fileId: fileId,
-            name: audioFile?.name || `File ID ${fileId}`, // Fallback name
+            name: nameCache.get(fileId)!,
           });
         }
+        if (cancelled) return;
         setSounds(fetchedSounds);
 
         // Log for debugging
@@ -96,11 +106,16 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
       } catch (error) {
         console.error("Error fetching sound names:", error);
       } finally {
-        setIsLoadingNames(false);
+        if (!cancelled) {
+          setIsLoadingNames(false);
+        }
       }
     };
 
     fetchSoundNames();
+    return () => {
+      cancelled = true;
+    };
   }, [values.audioFileIds, getDndId]);
 
   // Drag-and-drop handler
@@ -168,8 +183,9 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           // explicitly associate the audio file with the profile here
         });
 
+        soundNamesRef.current.set(newFileId, file.name);
         newSounds.push({
-          dndId: `${newFileId}-${Date.now()}`,
+          dndId: getDndId(newFileId),
           fileId: newFileId,
           name: file.name,
         });

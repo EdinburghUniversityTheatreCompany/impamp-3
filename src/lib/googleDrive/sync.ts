@@ -6,6 +6,7 @@
 import {
   updateProfile,
   getProfile,
+  getDb,
   getAudioFileIdsForProfile,
   getAudioFile,
   addAudioFile,
@@ -31,11 +32,13 @@ import {
   getOrCreateProfileFolder,
   getFolderCapabilities,
   moveFileToFolder,
+  listDriveFilesByQuery,
 } from "./api";
 import {
   ProfileSyncData,
   SyncStatus,
   SyncResult,
+  SyncConflictData,
   TokenInfo,
   ItemConflict,
 } from "./types";
@@ -207,19 +210,18 @@ async function migrateToFolderLayout(
   // Find and move audio files for this profile that are in Drive
   try {
     const query = `appProperties has { key='profileId' and value='${profileId}' } and appProperties has { key='fileType' and value='audioFile' } and trashed=false`;
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
-    const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
-    const resp = await fetch(url, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      const files: { id: string; name: string }[] = data.files ?? [];
-      for (const f of files) {
-        try {
-          await moveFileToFolder(f.id, folderId, tokenInfo, refreshCallback);
-          console.log(`Moved audio file "${f.name}" → folder ${folderId}`);
-        } catch (err) {
-          console.error(`Failed to move audio file "${f.name}":`, err);
-        }
+    const files = await listDriveFilesByQuery(
+      query,
+      "id,name",
+      tokenInfo,
+      refreshCallback,
+    );
+    for (const f of files) {
+      try {
+        await moveFileToFolder(f.id, folderId, tokenInfo, refreshCallback);
+        console.log(`Moved audio file "${f.name}" → folder ${folderId}`);
+      } catch (err) {
+        console.error(`Failed to move audio file "${f.name}":`, err);
       }
     }
   } catch (err) {
@@ -238,17 +240,32 @@ async function migrateToFolderLayout(
 /**
  * Download any audio files referenced in remote sync data that are missing locally.
  * Stores downloaded files in IndexedDB with their Drive file ID set.
+ * @returns Warnings for every file that could not be downloaded
  */
 async function downloadMissingAudioFiles(
   audioRefs: ProfileSyncData["audioFiles"],
   profileId: number,
   tokenInfo: TokenInfo,
   refreshCallback: (token: TokenInfo) => void,
-): Promise<void> {
-  if (!audioRefs || audioRefs.length === 0) return;
+): Promise<string[]> {
+  const warnings: string[] = [];
+  if (!audioRefs || audioRefs.length === 0) return warnings;
 
-  const { getDb } = await import("@/lib/db");
-  const db = await getDb();
+  // Hashes for local files that predate hashing, built once and only if a
+  // reference actually misses the hash index — the blobs are read one at a
+  // time so the whole audio library never sits in memory at once.
+  let hashlessIndex: Map<string, number> | null = null;
+  const getHashlessIndex = async (): Promise<Map<string, number>> => {
+    if (hashlessIndex) return hashlessIndex;
+    hashlessIndex = new Map();
+    const db = await getDb();
+    const localIds = await db.getAllKeys("audioFiles");
+    for (const localId of localIds) {
+      const computedHash = await ensureAudioFileHash(localId);
+      if (computedHash) hashlessIndex.set(computedHash, localId);
+    }
+    return hashlessIndex;
+  };
 
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
@@ -258,19 +275,12 @@ async function downloadMissingAudioFiles(
       ? await getAudioFileByHash(ref.hash)
       : undefined;
 
-    // If no hash match, scan local files without a hash and compute on the fly
+    // If no hash match, local files without a stored hash may still be the same
+    // audio — hash them once and retry the lookup
     if (!existingFile && ref.hash) {
-      const allLocal = await db
-        .transaction("audioFiles", "readonly")
-        .store.getAll();
-      for (const local of allLocal) {
-        if (local.hash) continue; // already has a hash, would have matched above
-        if (local.id === undefined) continue;
-        const computedHash = await ensureAudioFileHash(local.id);
-        if (computedHash === ref.hash) {
-          existingFile = await getAudioFile(local.id);
-          break;
-        }
+      const localId = (await getHashlessIndex()).get(ref.hash);
+      if (localId !== undefined) {
+        existingFile = await getAudioFile(localId);
       }
     }
 
@@ -307,15 +317,23 @@ async function downloadMissingAudioFiles(
           driveFileIds: { [profileId]: ref.driveFileId },
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
+      } else {
+        warnings.push(
+          `Audio file "${ref.name}" is no longer available in Drive`,
+        );
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error(
         `Failed to download audio file "${ref.name}" from Drive:`,
         err,
       );
-      // Non-fatal: pad will be silent but sync continues
+      // Non-fatal: pads referencing it are cleared, but sync continues
+      warnings.push(`Could not download audio file "${ref.name}": ${msg}`);
     }
   }
+
+  return warnings;
 }
 
 /**
@@ -325,24 +343,53 @@ interface SyncStatusCallbacks {
   onStatusChange: (status: SyncStatus) => void;
   onError: (error: string | null) => void;
   onConflictsDetected: (conflicts: ItemConflict[]) => void;
-  onConflictDataAvailable: (
-    data: {
-      local: ProfileSyncData;
-      remote: ProfileSyncData;
-      fileId: string;
-    } | null,
-  ) => void;
+  onConflictDataAvailable: (data: SyncConflictData | null) => void;
 }
 
 /**
- * Synchronize a profile with Google Drive
+ * Syncs currently running, keyed by profile ID. Sign-in, the online event, the
+ * debounce, the periodic timer and manual syncs can all fire at once; without
+ * this the last writer would clobber the others both locally and in Drive.
+ */
+const inFlightSyncs = new Map<number, Promise<SyncResult>>();
+
+/**
+ * Synchronize a profile with Google Drive.
+ * Concurrent calls for the same profile share the in-flight run.
  * @param profileId The profile ID to sync
  * @param tokenInfo Current token information
  * @param callbacks Status update callbacks
  * @param refreshCallback Callback to update token if refreshed
  * @returns The sync result
  */
-export const syncProfile = async (
+export const syncProfile = (
+  profileId: number,
+  tokenInfo: TokenInfo | null,
+  callbacks: SyncStatusCallbacks,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<SyncResult> => {
+  const inFlight = inFlightSyncs.get(profileId);
+  if (inFlight) {
+    console.log(
+      `Sync already running for profile ${profileId} — joining in-flight run`,
+    );
+    return inFlight;
+  }
+
+  const run = performProfileSync(
+    profileId,
+    tokenInfo,
+    callbacks,
+    refreshCallback,
+  ).finally(() => {
+    inFlightSyncs.delete(profileId);
+  });
+
+  inFlightSyncs.set(profileId, run);
+  return run;
+};
+
+const performProfileSync = async (
   profileId: number,
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,
@@ -527,12 +574,15 @@ export const syncProfile = async (
     }
 
     // 1d. Download any audio files referenced in remote data that we don't have locally
+    const warnings: string[] = [];
     if (remoteData?.audioFiles) {
-      await downloadMissingAudioFiles(
-        remoteData.audioFiles,
-        profileId,
-        tokenInfo,
-        refreshCallback,
+      warnings.push(
+        ...(await downloadMissingAudioFiles(
+          remoteData.audioFiles,
+          profileId,
+          tokenInfo,
+          refreshCallback,
+        )),
       );
     }
 
@@ -549,9 +599,13 @@ export const syncProfile = async (
 
       // Ensure remoteData is not null when setting conflictData
       if (remoteData && fileId) {
-        const conflictData = {
+        // mergedData carries every automatically resolved change (remote field
+        // wins, remote-only additions). It is the base the resolution builds on;
+        // resolving from local alone would silently drop all of it.
+        const conflictData: SyncConflictData = {
           local: localData,
           remote: remoteData,
+          merged: mergedData,
           fileId: fileId,
         };
 

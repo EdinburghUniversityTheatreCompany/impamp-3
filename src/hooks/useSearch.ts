@@ -6,7 +6,7 @@
  * @module hooks/useSearch
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { getAudioFile, PlaybackType } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
@@ -61,6 +61,9 @@ export function useSearch(searchOptions: SearchOptions = {}) {
   // Get active profile from store
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
 
+  // Cache of audio file names, so each file is only read from IndexedDB once
+  const audioFileNamesRef = useRef(new Map<number, string>());
+
   // Handle search
   useEffect(() => {
     if (!searchTerm.trim() || !activeProfileId) {
@@ -68,12 +71,15 @@ export function useSearch(searchOptions: SearchOptions = {}) {
       return;
     }
 
+    let cancelled = false;
+
     const searchPads = async () => {
       setIsLoading(true);
       try {
         // Get all pad configurations for the active profile
         const allPads =
           await getAllPadConfigurationsForProfile(activeProfileId);
+        if (cancelled) return;
 
         // Create a map to store bank names by index
         const bankNames = new Map<number, string>();
@@ -112,15 +118,24 @@ export function useSearch(searchOptions: SearchOptions = {}) {
           const originalFileNames: string[] = [];
           let displayFileName = ""; // Store the first filename for display
 
-          // Try to get all original file names
+          // Try to get all original file names, reusing previously cached names
           try {
+            const nameCache = audioFileNamesRef.current;
             for (const audioId of pad.audioFileIds) {
-              const audioFile = await getAudioFile(audioId);
-              if (audioFile) {
-                originalFileNames.push(audioFile.name);
+              if (!nameCache.has(audioId)) {
+                const audioFile = await getAudioFile(audioId);
+                if (cancelled) return;
+                if (audioFile) {
+                  nameCache.set(audioId, audioFile.name);
+                }
+              }
+
+              const fileName = nameCache.get(audioId);
+              if (fileName) {
+                originalFileNames.push(fileName);
                 if (!displayFileName) {
                   // Store the first valid name for display
-                  displayFileName = audioFile.name;
+                  displayFileName = fileName;
                 }
               }
             }
@@ -155,11 +170,15 @@ export function useSearch(searchOptions: SearchOptions = {}) {
           }
         }
 
-        setResults(searchResults);
+        if (!cancelled) {
+          setResults(searchResults);
+        }
       } catch (error) {
         console.error("Error searching pads:", error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -167,7 +186,10 @@ export function useSearch(searchOptions: SearchOptions = {}) {
       searchPads();
     }, debounceTime);
 
-    return () => clearTimeout(debounceTimeout);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounceTimeout);
+    };
   }, [searchTerm, activeProfileId, debounceTime]);
 
   return {

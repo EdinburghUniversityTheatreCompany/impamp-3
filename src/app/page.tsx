@@ -48,7 +48,9 @@ export default function Home() {
     (state) => state.incrementEmergencySoundsVersion,
   ); // Get the action
   const requestSync = useProfileStore((state) => state.requestSync);
-  const { openModal, closeModal } = useUIStore(); // Get modal actions
+  // Get modal actions (selected individually to avoid re-rendering on modal state changes)
+  const openModal = useUIStore((state) => state.openModal);
+  const closeModal = useUIStore((state) => state.closeModal);
 
   // Memoized components to prevent unnecessary remounting
   const renderProfileSelector = useCallback(() => {

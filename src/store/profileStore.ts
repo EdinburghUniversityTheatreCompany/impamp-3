@@ -163,6 +163,10 @@ const _buildExportFilename = (
   return `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.${extension}`;
 };
 
+// Monotonic token for bank switches, so a slow metadata lookup can never
+// overwrite a bank the user selected afterwards.
+let pageIndexRequestToken = 0;
+
 type ProfileSetState = (
   partial:
     Partial<ProfileState> | ((state: ProfileState) => Partial<ProfileState>),
@@ -289,19 +293,31 @@ export const useProfileStore = create<ProfileState>()(
           return;
         }
 
+        const requestToken = ++pageIndexRequestToken;
+
+        // Banks 0-9 (UI 1-10) always exist conceptually, so switch immediately
+        // without waiting on a metadata lookup.
+        if (index <= 9) {
+          console.log(
+            `Switching to bank ${bankNumber} (internal index: ${index})`,
+          );
+          set({ currentPageIndex: index });
+          return;
+        }
+
         // Use an IIFE to handle the async operation within the synchronous function signature
         (async () => {
           try {
             const { getAllPageMetadataForProfile } = await import("@/lib/db"); // Dynamic import
             const metadata =
               await getAllPageMetadataForProfile(activeProfileId);
+
+            // A newer bank switch has been requested in the meantime
+            if (requestToken !== pageIndexRequestToken) return;
+
             const existingIndices = new Set(metadata.map((m) => m.pageIndex));
 
-            // Banks 0-9 (UI 1-10) are assumed to always exist conceptually, even if no metadata entry exists yet.
-            // Check if the target index exists in metadata OR is within the default range (0-9).
-            const bankExists = index <= 9 || existingIndices.has(index);
-
-            if (bankExists) {
+            if (existingIndices.has(index)) {
               console.log(
                 `Switching to bank ${bankNumber} (internal index: ${index})`,
               );
@@ -317,19 +333,10 @@ export const useProfileStore = create<ProfileState>()(
               `Error fetching page metadata while switching bank:`,
               error,
             );
-            // Optionally handle the error, e.g., prevent switching or show a message
-            // For now, we'll prevent switching if metadata fetch fails for higher banks
-            if (index > 9) {
-              console.warn(
-                `Could not verify existence of bank ${bankNumber} due to error. Current bank selection maintained.`,
-              );
-            } else {
-              // Allow switching to default banks 1-10 even if metadata fetch fails
-              console.log(
-                `Switching to default bank ${bankNumber} (internal index: ${index}) despite metadata fetch error.`,
-              );
-              set({ currentPageIndex: index });
-            }
+            // We can't verify the bank exists, so keep the current selection
+            console.warn(
+              `Could not verify existence of bank ${bankNumber} due to error. Current bank selection maintained.`,
+            );
           }
         })();
       },
@@ -852,7 +859,8 @@ export const useProfileStore = create<ProfileState>()(
         set({
           googleUser: userInfo,
           googleAccessToken: accessToken,
-          googleRefreshToken: refreshToken,
+          // Google omits the refresh token on re-consent, so keep the existing one
+          googleRefreshToken: refreshToken ?? get().googleRefreshToken,
           tokenExpiresAt: expiresAt,
           isGoogleSignedIn: true,
           needsReauth: false,

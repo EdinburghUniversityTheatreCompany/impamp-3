@@ -371,36 +371,37 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-grow">
-        {/* File List Panel */}
-        <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700 flex flex-col">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-lg font-semibold">Files to Import</h3>
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="audio/*"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="bulk-import-file-input"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm mr-2"
-                disabled={isImporting}
-              >
-                Add Files
-              </button>
+      {/* A single context wraps both panels so files can be dragged onto pads */}
+      <DragDropContext
+        onDragStart={() => setIsDragging(true)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-grow">
+          {/* File List Panel */}
+          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700 flex flex-col">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-lg font-semibold">Files to Import</h3>
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="audio/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="bulk-import-file-input"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm mr-2"
+                  disabled={isImporting}
+                >
+                  Add Files
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* File list with drag and drop */}
-          <DragDropContext
-            onDragStart={() => setIsDragging(true)}
-            onDragEnd={handleDragEnd}
-          >
+            {/* File list with drag and drop */}
             <Droppable droppableId="file-list">
               {(provided) => (
                 <div
@@ -448,42 +449,37 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
                 </div>
               )}
             </Droppable>
-          </DragDropContext>
 
-          {/* Auto-assign buttons */}
-          <div className="mt-4 flex justify-between">
-            <button
-              onClick={handleAutoAssign}
-              className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm"
-              disabled={fileList.length === 0 || isImporting}
-            >
-              Auto-Assign
-            </button>
-            <button
-              onClick={handleClearAssignments}
-              className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
-              disabled={isImporting}
-            >
-              Clear All
-            </button>
+            {/* Auto-assign buttons */}
+            <div className="mt-4 flex justify-between">
+              <button
+                onClick={handleAutoAssign}
+                className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm"
+                disabled={fileList.length === 0 || isImporting}
+              >
+                Auto-Assign
+              </button>
+              <button
+                onClick={handleClearAssignments}
+                className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+                disabled={isImporting}
+              >
+                Clear All
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Pad Grid Panel */}
-        <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700 flex flex-col">
-          <h3 className="text-lg font-semibold mb-2">Pad Assignments</h3>
+          {/* Pad Grid Panel */}
+          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700 flex flex-col">
+            <h3 className="text-lg font-semibold mb-2">Pad Assignments</h3>
 
-          {/* Grid layout */}
-          <div
-            className="grid gap-2 flex-grow overflow-y-auto"
-            style={{
-              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 50px))`,
-            }}
-          >
-            <DragDropContext
-              onDragStart={() => setIsDragging(true)}
-              onDragEnd={handleDragEnd}
+            {/* Grid layout */}
+            <div
+              className="grid gap-2 flex-grow overflow-y-auto"
+              style={{
+                gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 50px))`,
+              }}
             >
               {padAssignments.map((pad) => (
                 <Droppable
@@ -550,10 +546,10 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
                   )}
                 </Droppable>
               ))}
-            </DragDropContext>
+            </div>
           </div>
         </div>
-      </div>
+      </DragDropContext>
 
       {/* Action buttons */}
       <div className="mt-4 flex justify-end">

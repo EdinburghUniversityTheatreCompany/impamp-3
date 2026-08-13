@@ -262,45 +262,9 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             });
           }
         }
-        // V3 Migration
-        if (oldVersion < 3) {
-          console.log("Applying V3 migration...");
-          if (!transaction) {
-            throw new Error("V3 Migration: No transaction");
-          }
-          const store = transaction.objectStore("padConfigurations");
-          store
-            .openCursor()
-            .then(function iterateV3(cursor) {
-              if (!cursor) {
-                console.log("V3 Migration complete.");
-                return;
-              }
-              // First cast to unknown, then to Record to avoid type errors
-              const oldVal = cursor.value as unknown as Record<string, unknown>;
-              const audioFileIds =
-                oldVal.audioFileId !== undefined && oldVal.audioFileId !== null
-                  ? [oldVal.audioFileId as number]
-                  : [];
-              const newVal: PadConfiguration = {
-                ...(oldVal as unknown as PadConfiguration),
-                audioFileIds,
-                playbackType: "round-robin",
-              };
-              // Use a Record type with index signature instead of any
-              const newValRecord = newVal as unknown as Record<string, unknown>;
-              if ("audioFileId" in newValRecord) {
-                delete newValRecord.audioFileId;
-              }
-              cursor.update(newVal);
-              cursor.continue().then(iterateV3);
-            })
-            .catch((err) => {
-              console.error("V3 Migration Error:", err);
-              transaction.abort();
-            });
-        }
-        // V4 Migration
+        // V3 + V4 Migration. Any upgrade crossing version 3 also crosses version 4,
+        // so the V3 pad reshape is applied inside the V4 pass over padConfigurations
+        // rather than by a second, concurrent cursor over the same store.
         if (oldVersion < 4) {
           console.log("Applying V4 migration...");
           if (!transaction) {
@@ -311,7 +275,18 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
           });
           // Queue migrations (don't await directly in upgrade)
           migrateStoreV4(transaction, "profiles").catch(console.error);
-          migrateStoreV4(transaction, "padConfigurations").catch(console.error);
+          migrateStoreV4(
+            transaction,
+            "padConfigurations",
+            oldVersion < 3,
+          ).catch((err) => {
+            console.error("V3/V4 Migration Error (padConfigurations):", err);
+            try {
+              transaction.abort();
+            } catch (abortError) {
+              console.error("Error aborting transaction:", abortError);
+            }
+          });
           migrateStoreV4(transaction, "pageMetadata").catch(console.error);
           console.log("V4 Migration queued.");
         }
@@ -796,6 +771,7 @@ export async function updateProfile(
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction("profiles", "readwrite");
+  let txSettled = false;
   try {
     const existingProfile = await tx.store.get(id);
     if (!existingProfile) {
@@ -822,10 +798,11 @@ export async function updateProfile(
     );
     await tx.store.put(updatedProfile);
     await tx.done;
+    txSettled = true;
     console.log(`[DB] Successfully updated profile with id: ${id}`);
   } catch (error) {
     console.error(`[DB] Failed to update profile ${id}:`, error);
-    if (tx.error && !tx.done) {
+    if (!txSettled) {
       try {
         tx.abort();
       } catch (e) {
@@ -847,6 +824,7 @@ export async function deleteProfile(id: number): Promise<void> {
     ["profiles", "padConfigurations", "pageMetadata", "audioFiles"],
     "readwrite",
   );
+  let txSettled = false;
   try {
     // Delete the profile
     await tx.objectStore("profiles").delete(id);
@@ -869,13 +847,35 @@ export async function deleteProfile(id: number): Promise<void> {
       pageCursor = await pageCursor.continue();
     }
 
-    // Delete associated audio files
+    // Audio files can be shared between profiles (sync deduplicates by hash and
+    // by name), so collect everything still referenced by the remaining profiles
+    // and keep those files.
+    const stillReferencedIds = new Set<number>();
+    let refCursor = await padStore.openCursor();
+    while (refCursor) {
+      const pad = refCursor.value as PadConfiguration & {
+        audioFileId?: number;
+      };
+      if (pad.profileId !== id) {
+        pad.audioFileIds?.forEach((audioId) => stillReferencedIds.add(audioId));
+        if (typeof pad.audioFileId === "number") {
+          stillReferencedIds.add(pad.audioFileId);
+        }
+      }
+      refCursor = await refCursor.continue();
+    }
+
+    // Delete the audio files this profile exclusively referenced
+    const deletableAudioFileIds = new Set(
+      [...audioFileIds].filter((audioId) => !stillReferencedIds.has(audioId)),
+    );
     const audioStore = tx.objectStore("audioFiles");
-    for (const audioFileId of audioFileIds) {
+    for (const audioFileId of deletableAudioFileIds) {
       await audioStore.delete(audioFileId);
     }
 
     await tx.done;
+    txSettled = true;
 
     // Clear audio cache entries for deleted audio files
     // Import dynamically to avoid circular dependency issues
@@ -883,28 +883,28 @@ export async function deleteProfile(id: number): Promise<void> {
       try {
         const { clearCachedAudioBuffer } = await import("./audio/cache");
         let clearedCacheCount = 0;
-        for (const audioFileId of audioFileIds) {
+        for (const audioFileId of deletableAudioFileIds) {
           if (clearCachedAudioBuffer(audioFileId)) {
             clearedCacheCount++;
           }
         }
         console.log(
-          `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files (${clearedCacheCount} cache entries cleared)`,
+          `Deleted profile with id: ${id} and all associated data including ${deletableAudioFileIds.size} audio files (${clearedCacheCount} cache entries cleared)`,
         );
       } catch (cacheError) {
         console.warn("Failed to clear audio cache entries:", cacheError);
         console.log(
-          `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`,
+          `Deleted profile with id: ${id} and all associated data including ${deletableAudioFileIds.size} audio files`,
         );
       }
     } else {
       console.log(
-        `Deleted profile with id: ${id} and all associated data including ${audioFileIds.size} audio files`,
+        `Deleted profile with id: ${id} and all associated data including ${deletableAudioFileIds.size} audio files`,
       );
     }
   } catch (error) {
     console.error(`Failed to delete profile ${id}:`, error);
-    if (tx.error && !tx.done) {
+    if (!txSettled) {
       try {
         tx.abort();
       } catch (e) {
@@ -929,6 +929,14 @@ const BACKUP_ONLY_FIELDS = new Set([
   "googleDriveFileId",
   "syncPausedUntil",
 ]);
+
+// Records restored from sync payloads can carry ISO strings rather than Dates,
+// so coerce before comparing. Unusable values are treated as "not changed".
+function toTimestamp(value: Date | string | number | undefined | null): number {
+  if (value === undefined || value === null) return 0;
+  const ms = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
 
 export async function hasProfileChangedSince(
   profileId: number,
@@ -957,7 +965,7 @@ export async function hasProfileChangedSince(
     .index("profileId")
     .getAll(profileId);
   await padTx.done;
-  if (pads.some((pad) => pad.updatedAt.getTime() > since)) return true;
+  if (pads.some((pad) => toTimestamp(pad.updatedAt) > since)) return true;
 
   // Check page metadata
   const pageTx = db.transaction("pageMetadata", "readonly");
@@ -966,7 +974,7 @@ export async function hasProfileChangedSince(
     .index("profileId")
     .getAll(profileId);
   await pageTx.done;
-  if (pages.some((page) => page.updatedAt.getTime() > since)) return true;
+  if (pages.some((page) => toTimestamp(page.updatedAt) > since)) return true;
 
   return false;
 }
@@ -994,6 +1002,7 @@ export async function upsertPadConfiguration(
   const index = store.index("profilePagePad");
   const now = new Date();
   const nowMs = now.getTime();
+  let txSettled = false;
 
   try {
     const existing = await index.get([
@@ -1048,10 +1057,124 @@ export async function upsertPadConfiguration(
       console.log(`Added pad configuration with id: ${id}`);
     }
     await tx.done;
+    txSettled = true;
     return id;
   } catch (error) {
     console.error("Error in upsertPadConfiguration:", error);
-    if (tx.error && !tx.done) {
+    if (!txSettled) {
+      try {
+        tx.abort();
+      } catch (e) {
+        console.error("Error aborting transaction:", e);
+      }
+    }
+    throw error;
+  }
+}
+
+// The part of a pad configuration that moves with the sound during a swap.
+// Key bindings are deliberately excluded: they belong to the pad position.
+type PadContent = Pick<
+  PadConfiguration,
+  "audioFileIds" | "audioTrimSettings" | "playbackType" | "name"
+>;
+
+// Swap the contents of two pads on the same page in a single transaction, so a
+// failure can never leave a sound assigned to neither pad.
+export async function swapPadConfigurations(
+  profileId: number,
+  pageIndex: number,
+  fromPadIndex: number,
+  toPadIndex: number,
+): Promise<void> {
+  if (fromPadIndex === toPadIndex) return;
+
+  const db = await getDb();
+  const tx = db.transaction("padConfigurations", "readwrite");
+  const store = tx.objectStore("padConfigurations");
+  const index = store.index("profilePagePad");
+  const now = new Date();
+  const nowMs = now.getTime();
+  let txSettled = false;
+
+  try {
+    const fromExisting = await index.get([profileId, pageIndex, fromPadIndex]);
+    const toExisting = await index.get([profileId, pageIndex, toPadIndex]);
+
+    if (!fromExisting) {
+      throw new Error(
+        `Pad configuration not found for profile ${profileId}, page ${pageIndex}, pad ${fromPadIndex}`,
+      );
+    }
+
+    const fromContent: PadContent = {
+      audioFileIds: fromExisting.audioFileIds ?? [],
+      audioTrimSettings: fromExisting.audioTrimSettings,
+      playbackType: fromExisting.playbackType ?? "round-robin",
+      name: fromExisting.name,
+    };
+    const toContent: PadContent = {
+      audioFileIds: toExisting?.audioFileIds ?? [],
+      audioTrimSettings: toExisting?.audioTrimSettings,
+      playbackType: toExisting?.playbackType ?? "round-robin",
+      name: toExisting?.name,
+    };
+
+    const writePad = async (
+      padIndex: number,
+      existing: PadConfiguration | undefined,
+      content: PadContent,
+    ) => {
+      if (existing) {
+        const syncFields = generateSyncFields(existing);
+        await store.put({
+          ...existing,
+          ...content,
+          updatedAt: now,
+          _modified: syncFields._modified,
+          _fieldsModified: updateFieldsModified(
+            content,
+            existing,
+            existing._fieldsModified,
+          ),
+        });
+        return;
+      }
+      const syncFields = generateSyncFields();
+      const initialFieldsModified: Record<string, number> = {
+        profileId: nowMs,
+        pageIndex: nowMs,
+        padIndex: nowMs,
+      };
+      Object.keys(content).forEach((key) => {
+        initialFieldsModified[key] = nowMs;
+      });
+      await store.add({
+        profileId,
+        pageIndex,
+        padIndex,
+        ...content,
+        createdAt: now,
+        updatedAt: now,
+        _created: syncFields._created,
+        _modified: syncFields._modified,
+        _fieldsModified: initialFieldsModified,
+      });
+    };
+
+    // Existing records are updated in place, so the unique profilePagePad index
+    // is never violated and neither pad has to be emptied first.
+    await writePad(toPadIndex, toExisting, fromContent);
+    await writePad(fromPadIndex, fromExisting, toContent);
+
+    await tx.done;
+    txSettled = true;
+    console.log(
+      `Swapped pads ${fromPadIndex} and ${toPadIndex} on page ${pageIndex} for profile ${profileId}`,
+    );
+  } catch (error) {
+    console.error("Error in swapPadConfigurations:", error);
+    if (!txSettled) {
       try {
         tx.abort();
       } catch (e) {
@@ -1130,6 +1253,7 @@ export async function upsertPageMetadata(
   const index = store.index("profilePage");
   const now = new Date();
   const nowMs = now.getTime();
+  let txSettled = false;
 
   try {
     const existing = await index.get([
@@ -1182,10 +1306,11 @@ export async function upsertPageMetadata(
       console.log(`Added page metadata with id: ${id}`);
     }
     await tx.done;
+    txSettled = true;
     return id;
   } catch (error) {
     console.error("Error in upsertPageMetadata:", error);
-    if (tx.error && !tx.done) {
+    if (!txSettled) {
       try {
         tx.abort();
       } catch (e) {

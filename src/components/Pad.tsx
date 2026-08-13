@@ -73,7 +73,7 @@ const Pad: React.FC<PadProps> = ({
 
   // Calculate remaining seconds (rounded) if playing and time is available
   const remainingSeconds =
-    isPlaying && typeof playbackState.remainingTime === "number"
+    playbackState && typeof playbackState.remainingTime === "number"
       ? Math.max(0, Math.round(playbackState.remainingTime))
       : null;
 
@@ -415,4 +415,4 @@ const Pad: React.FC<PadProps> = ({
   );
 };
 
-export default Pad;
+export default React.memo(Pad);

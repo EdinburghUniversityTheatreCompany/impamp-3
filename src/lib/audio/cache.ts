@@ -232,14 +232,16 @@ export function cacheAudioBuffer(
   const config = getCacheConfiguration();
 
   // Remove existing entry if it exists to update memory tracking
+  // (deleted immediately so a cleanup pass cannot subtract its size again)
   const existingEntry = audioBufferCache.get(audioFileId);
   if (existingEntry) {
     totalMemoryUsage -= existingEntry.memorySize;
+    audioBufferCache.delete(audioFileId);
   }
 
   // Check if we need cleanup before adding new entry
   const potentialMemory = totalMemoryUsage + memorySize;
-  const potentialEntries = audioBufferCache.size + (existingEntry ? 0 : 1);
+  const potentialEntries = audioBufferCache.size + 1;
 
   if (
     potentialMemory > config.maxMemoryBytes ||
