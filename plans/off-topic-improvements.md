@@ -5,12 +5,6 @@ Each entry: what, where, why it matters.
 
 ## Tooling
 
-- **`wallaby.config.js` is still partly dead.** Vitest now exists (see
-  `vitest.config.ts`), so the reference to it resolves, but `setup:` still
-  requires `./test/setup`, which does not. Wallaby isn't in `devDependencies`
-  and isn't run in CI; either wire up the setup file or delete the config. The
-  server-sync work added an ESLint override for the file rather than rewriting
-  a config for a tool we don't run.
 - **`reuseExistingServer: true` + a rebuild is a footgun.** Running the suite
   twice in a row can leave `next start` serving a `.next` that a concurrent
   `npm run build` has replaced underneath it, which shows up as tests failing

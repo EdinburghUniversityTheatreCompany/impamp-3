@@ -27,15 +27,6 @@ const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypeScript,
   {
-    // Wallaby.js reads this file itself, as CommonJS — require() is the only
-    // form it accepts, so the TS import rules don't apply.
-    files: ["wallaby.config.js"],
-    rules: {
-      "@typescript-eslint/no-require-imports": "off",
-      "@typescript-eslint/no-unused-vars": "off",
-    },
-  },
-  {
     // eslint-config-next 16 turns on the React Compiler-era react-hooks rules.
     // They flag long-standing patterns in this codebase — set-state-in-effect
     // being most of them — none of which the dependency upgrade introduced.
