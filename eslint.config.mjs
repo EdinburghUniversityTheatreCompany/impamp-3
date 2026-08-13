@@ -1,13 +1,5 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypeScript from "eslint-config-next/typescript";
 
 const eslintConfig = [
   // `next lint` used to supply these ignores implicitly. Next 16 removed that
@@ -28,7 +20,12 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // eslint-config-next 16 ships flat configs on its subpaths, so these are
+  // spread straight in. The old FlatCompat bridge (@eslint/eslintrc) cannot
+  // load them — it tries to JSON.stringify the config for eslintrc schema
+  // validation and dies on the circular `plugins.react` reference.
+  ...nextCoreWebVitals,
+  ...nextTypeScript,
 ];
 
 export default eslintConfig;

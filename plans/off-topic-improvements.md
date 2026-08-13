@@ -28,8 +28,26 @@ The two `require()` errors are in config files that legitimately need CJS
 interop; they probably want a scoped override in `eslint.config.mjs` rather
 than a code change.
 
+### …then 15 more, once eslint-config-next reached 16
+
+The same pass took `eslint-config-next` 15 -> 16, which turns on the React
+Compiler-era `react-hooks` rules. Count went 7 -> 22. Every one of these is an
+existing code pattern newly flagged, not something the upgrade broke:
+
+| Rule                                   | Sites                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `react-hooks/set-state-in-effect` (10) | `app/drive/open/page.tsx:133`, `AuthNotification.tsx:137`, `ClientSideInitializer.tsx:55`, `BulkImportModalContent.tsx:68`, `ProfileCard.tsx:258`, `ProfileManager.tsx:288`, `SharingPanel.tsx:63`, `useGoogleDriveSync.ts:210`, `usePadConfigurations.ts:92`, `useSearch.ts:70` |
+| `react-hooks/immutability` (2)         | `WaveformTrimmer.tsx:151`, `hooks/pad/usePadInteractions.ts:265`                                                                                                                                                                                                                 |
+| `react-hooks/refs` (2)                 | `WaveformTrimmer.tsx:208`, `useKeyboardListener.ts:688`                                                                                                                                                                                                                          |
+| `react-hooks/purity` (1)               | `ProfileCard.tsx:495`                                                                                                                                                                                                                                                            |
+
+`set-state-in-effect` dominates and is the one worth a real look: each site is
+a state write during an effect, which is the pattern React Compiler will refuse
+to optimise. Working through them is a genuine refactor, not a lint sweep.
+
 Worth considering afterwards: add eslint to the hk pre-commit steps and the CI
-lint job, so the command that now works is actually enforced.
+lint job, so the command that now works is actually enforced. Do the cleanup
+first — wiring it up while 17 errors stand would just gate every commit.
 
 ## Unused dependencies (2026-08-13)
 
