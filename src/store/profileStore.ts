@@ -24,6 +24,7 @@ import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
+import { playbackStoreActions } from "@/store/playbackStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 
 // Define a type for the decoded Google user info (adjust as needed)
@@ -267,8 +268,17 @@ export const useProfileStore = create<ProfileState>()(
         console.log(`Attempting to set active profile ID to: ${id}`);
         const profileExists = get().profiles.some((p: Profile) => p.id === id);
         if (id === null || profileExists) {
+          const previousId = get().activeProfileId;
           set({ activeProfileId: id });
           // TODO: Trigger loading of pad configurations for the new active profile
+
+          // Cues belong to the profile they were armed in. Profiles are
+          // isolated, and the Armed Tracks panel shows nothing but a name, so
+          // leaving them armed means F9 fires a pad from a profile that is no
+          // longer open.
+          if (previousId !== id) {
+            playbackStoreActions.clearAllArmedTracks();
+          }
         } else {
           console.warn(
             `Profile with ID ${id} not found in the store. Active profile not changed.`,
