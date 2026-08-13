@@ -79,3 +79,14 @@ Three different Node majors are pinned across the repo:
 `scripts/check_version_sync.sh` doesn't catch it because it only compares pins
 that name a concrete version. Worth settling on one (probably the current LTS)
 so the image, CI and local dev agree.
+
+## README structure (2026-08-13)
+
+The `github-readme` audit fails on the README for reasons that predate the
+dependency-upgrade pass, and were left alone as out of scope:
+
+- 4 `#` H1 headings where there should be exactly one (the rest want demoting
+  to H2/H3).
+- No table of contents, on a ~1300-word README.
+
+Run `writing:github-readme` and its audit script if this is worth tidying.
