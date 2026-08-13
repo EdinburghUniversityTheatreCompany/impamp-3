@@ -1,0 +1,23 @@
+{
+  "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+  "bucket": "impamp-audio",
+  "deleteHeaders": {
+    "Authorization": "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260814/eu-central-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=be1e0e30593a4d2b6e8a275de1288bd34c92b9080a32ab14dad244c853fdd52c",
+    "X-Amz-Content-SHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "X-Amz-Date": "20260814T101112Z"
+  },
+  "endpoint": "https://s3.eu-central-2.wasabisys.com",
+  "headHeaders": {
+    "Authorization": "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260814/eu-central-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=57d2a11a4edd3e9d8bd01c2fdcc6ad0cd5acc9490f2062b283e38e0288447dbf",
+    "X-Amz-Content-SHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "X-Amz-Date": "20260814T101112Z"
+  },
+  "presignedGet": "https://s3.eu-central-2.wasabisys.com/impamp-audio/audio/ab/abc123.wav?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260814%2Feu-central-2%2Fs3%2Faws4_request&X-Amz-Date=20260814T101112Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Signature=455bfc6717050800a423164402c31ba191c36595df88c26720794b402b8ff852",
+  "presignedGetWithQuery": "https://s3.eu-central-2.wasabisys.com/impamp-audio/audio/ab/abc123.wav?response-content-type=audio%2Fwav&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260814%2Feu-central-2%2Fs3%2Faws4_request&X-Amz-Date=20260814T101112Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Signature=5f393837a58a01304ebbfeb8bb834afee4109474e2992eaefc832535197433ac",
+  "presignedGetWithSpaceAndUnicode": "https://s3.eu-central-2.wasabisys.com/impamp-audio/audio/pad%20one/caf%C3%A9%20%281%29.wav?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260814%2Feu-central-2%2Fs3%2Faws4_request&X-Amz-Date=20260814T101112Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Signature=f0cd178078bc589265b7195d5a2af83272464d0fdb810d059a117469385b3168",
+  "presignedPut": "https://s3.eu-central-2.wasabisys.com/impamp-audio/audio/ab/abc123.wav?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260814%2Feu-central-2%2Fs3%2Faws4_request&X-Amz-Date=20260814T101112Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=8361e84a70742963052b0c7d10ce14e225e8588b1283fac6f9b14df47f7c4eed",
+  "region": "eu-central-2",
+  "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "service": "s3",
+  "timestamp": "20260814T101112Z"
+}
