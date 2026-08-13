@@ -6,6 +6,7 @@ import {
   deepClone,
 } from "@/lib/syncUtils"; // Removed FieldConflict (unused in this file)
 import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
+import type { SyncConflictData } from "@/lib/googleDrive/types";
 
 type ResolutionChoice =
   "local" | "remote" | "keep" | "delete" | "accept" | "discard";
@@ -17,11 +18,7 @@ type ConflictResolutionState = Record<
 
 interface ConflictResolutionModalProps {
   conflicts: ItemConflict[];
-  conflictData: {
-    local: ProfileSyncData;
-    remote: ProfileSyncData;
-    fileId: string;
-  };
+  conflictData: SyncConflictData;
   onResolve: (resolvedData: ProfileSyncData) => void;
   onCancel: () => void;
 }
@@ -130,7 +127,9 @@ export const ConflictResolutionModal: React.FC<
   }, [conflicts, resolutions]);
 
   const buildResolvedData = useCallback((): ProfileSyncData => {
-    const resolved = deepClone(conflictData.local); // Start with local as base
+    // Start from the automatically merged data so every non-conflicting remote
+    // change survives; only the flagged conflicts are decided here
+    const resolved = deepClone(conflictData.merged);
     const now = Date.now();
 
     const resolvedPadConfigs = new Map(

@@ -630,7 +630,7 @@ const performProfileSync = async (
       if (localProfile.readOnly) {
         // Read-only: apply remote changes locally but never write back to Drive
         console.log(`Profile ${profileId} is read-only — skipping upload.`);
-        await updateLocalData(profileId, mergedData);
+        warnings.push(...(await updateLocalData(profileId, mergedData)));
       } else {
         // 4. Upload Merged Data to Drive (Create or Update)
         const driveFileName = getProfileSyncFilename(mergedData.profile.name);
@@ -645,7 +645,7 @@ const performProfileSync = async (
         );
 
         // 5. Update Local Data with Merged Data
-        await updateLocalData(profileId, mergedData);
+        warnings.push(...(await updateLocalData(profileId, mergedData)));
 
         // 6. Ensure local profile has the correct file ID
         if (uploadedFile.id !== fileId) {
@@ -657,9 +657,14 @@ const performProfileSync = async (
 
       onStatusChange("success");
       console.log(`Profile ${profileId} synced successfully.`);
+      if (warnings.length > 0) {
+        console.warn(`Profile ${profileId} synced with warnings:`, warnings);
+        onError(warnings.join("\n"));
+      }
       return {
         status: "success",
         data: mergedData,
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
   } catch (err) {
@@ -716,8 +721,18 @@ export const applyConflictResolution = async (
       };
     }
 
+    // Keep everything inside the profile's folder, as syncProfile does — files
+    // uploaded to the app root are invisible to folder-scoped collaborators
+    const profile = await getProfile(profileId);
+    const folderId = profile?.googleDriveFolderId ?? undefined;
+
     // Upload any audio files that don't have a Drive file ID yet
-    await uploadMissingAudioFiles(profileId, tokenInfo, refreshCallback);
+    await uploadMissingAudioFiles(
+      profileId,
+      tokenInfo,
+      refreshCallback,
+      folderId,
+    );
 
     // Set a fresh timestamp for the resolution
     resolvedData._lastSyncTimestamp = Date.now();
@@ -735,10 +750,11 @@ export const applyConflictResolution = async (
       profileId,
       tokenInfo,
       refreshCallback,
+      folderId,
     );
 
     // Update local data with the resolved data
-    await updateLocalData(profileId, resolvedData);
+    const warnings = await updateLocalData(profileId, resolvedData);
 
     // Ensure the profile has the correct file ID
     if (uploadedFile.id !== fileId) {
@@ -757,10 +773,18 @@ export const applyConflictResolution = async (
     console.log(
       `Conflict resolution applied successfully for profile ${profileId}`,
     );
+    if (warnings.length > 0) {
+      console.warn(
+        `Conflict resolution for profile ${profileId} produced warnings:`,
+        warnings,
+      );
+      onError(warnings.join("\n"));
+    }
 
     return {
       status: "success",
       data: resolvedData,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   } catch (err) {
     console.error(

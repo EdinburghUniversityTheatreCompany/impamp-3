@@ -218,7 +218,9 @@ export function useKeyboardListener() {
 
     // Load emergency sounds
     const sounds = await loadEmergencySounds(activeProfileId);
-    const previousIdentity = describeEmergencySounds(emergencySoundsRef.current);
+    const previousIdentity = describeEmergencySounds(
+      emergencySoundsRef.current,
+    );
     emergencySoundsRef.current = sounds;
 
     // Only restart the round-robin when the set of sounds actually changed,
