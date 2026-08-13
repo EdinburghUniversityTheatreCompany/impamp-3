@@ -4,6 +4,67 @@ import * as path from "path";
 import * as os from "os";
 
 /**
+ * Navigates to the app and waits until it is actually ready to be driven.
+ *
+ * Waiting for a pad element to exist is not enough, and is what made this
+ * suite flaky under parallel load. The pad grid mounts before the active
+ * profile resolves and before the bank tabs render, and anything done in that
+ * window is dropped on the floor without an error:
+ *
+ *  - handleDropAudio() returns early while activeProfileId is null, so a file
+ *    set on a pad's input never lands and the pad stays "Empty Pad";
+ *  - the bank tabs are still absent, so counting them returns 0.
+ *
+ * Under one worker the gap closes before the first action; under ten it does
+ * not, which is why these failures looked like CPU contention.
+ */
+export async function gotoApp(page: Page) {
+  await page.goto("/");
+  await waitForAppReady(page);
+}
+
+/**
+ * Waits for a freshly loaded (or reloaded) app to be ready to drive.
+ * See gotoApp for why each of these waits is needed.
+ */
+export async function waitForAppReady(page: Page) {
+  await page.waitForSelector('[id^="pad-"]');
+
+  // A real profile must be active before any pad write will persist.
+  await page.waitForFunction(() => {
+    const store = (
+      window as unknown as {
+        __profileStore?: { getState(): { activeProfileId: number | null } };
+      }
+    ).__profileStore;
+    return !!store && store.getState().activeProfileId !== null;
+  });
+
+  // Bank tabs render from page metadata, loaded separately from the pads.
+  await expect(page.locator('[role="tab"]').first()).toBeVisible();
+}
+
+/**
+ * Holds Shift and waits for edit mode to actually engage.
+ *
+ * The keyboard listener detaches and re-attaches as app state changes, so the
+ * delay between the keypress and edit mode turning on is not fixed. Waiting a
+ * flat 200-300ms instead — as this suite used to — means the following click
+ * sometimes lands in normal mode and plays the pad rather than opening the
+ * edit modal.
+ */
+export async function enterEditMode(page: Page) {
+  await page.keyboard.down("Shift");
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
+}
+
+/** Releases Shift and waits for edit mode to actually disengage. */
+export async function exitEditMode(page: Page) {
+  await page.keyboard.up("Shift");
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeHidden();
+}
+
+/**
  * Helper function to create a test audio file path for testing.
  * Generates a simple sine wave audio buffer, formats it as WAV,
  * saves it to a temporary file, and returns the file path.
@@ -264,8 +325,7 @@ export async function triggerAndReadSoundIndex(
 
 // Helper to open the edit modal for a specific pad
 export async function openEditPadModal(page: Page, padIndex: number) {
-  await page.keyboard.down("Shift");
-  await page.waitForTimeout(200); // Short delay for shift state
+  await enterEditMode(page);
   await page.locator(`[id^="pad-"][id$="-${padIndex}"]`).click(); // Click the specific pad
   await expect(page.locator('[data-testid="custom-modal"]')).toBeVisible();
   await expect(page.locator('[data-testid="modal-title"]')).toContainText(
@@ -335,13 +395,19 @@ export async function removeSoundFromModal(page: Page, soundName: string) {
 // resulting modal, and waits for the new tab to appear. Returns the bank
 // count *before* the new bank was added. Leaves Shift held down.
 export async function createNewBankViaUi(page: Page): Promise<number> {
-  await page.keyboard.down("Shift");
-  await page.waitForTimeout(300);
+  await enterEditMode(page);
 
   const addBankButton = page.getByRole("button", { name: "Add new bank" });
   await expect(addBankButton).toBeVisible();
 
-  const initialBanks = await page.locator('[role="tab"]').count();
+  // The "Add new bank" button appears with edit mode, but the tabs beside it
+  // render from the profile's bank names, which load separately. count() is
+  // the one locator call that does *not* auto-wait, so reading it in that gap
+  // silently returns 0 — and then every expectation below is off by the real
+  // bank count ("Bank 1" vs the app's "Bank 11"). Wait for the tabs first.
+  const bankTabs = page.locator('[role="tab"]');
+  await expect(bankTabs.first()).toBeVisible();
+  const initialBanks = await bankTabs.count();
 
   await addBankButton.click();
 
@@ -366,7 +432,5 @@ export async function savePadEditModal(page: Page) {
   await page.locator('[data-testid="modal-confirm-button"]').click();
   await expect(page.locator('[data-testid="custom-modal"]')).toBeHidden();
   console.log(`[Test Helper] Saved pad edit modal`);
-  // Release shift if needed after modal closes
-  await page.keyboard.up("Shift");
-  await page.waitForTimeout(200);
+  await exitEditMode(page);
 }

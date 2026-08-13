@@ -1,13 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { prepareAudioContext } from "./test-helpers";
+import { prepareAudioContext, gotoApp, waitForAppReady } from "./test-helpers";
 
 test.describe("ImpAmp3 Profile Management", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto("/");
-
-    // Wait for the app to fully load
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);
@@ -68,9 +64,7 @@ test.describe("ImpAmp3 Profile Management", () => {
 
     // Reload the page
     await page.reload();
-
-    // Wait for the app to load again
-    await page.waitForSelector('[id^="pad-"]');
+    await waitForAppReady(page);
 
     // Verify the new profile is still active
     await expect(profileSelector).toContainText("Test Profile");

@@ -4,15 +4,13 @@ import {
   activatePad,
   prepareAudioContext,
   createNewBankViaUi,
+  gotoApp,
+  exitEditMode,
 } from "./test-helpers";
 
 test.describe("ImpAmp3 Keyboard Shortcuts", () => {
   test.beforeEach(async ({ page }) => {
-    // Go to the app
-    await page.goto("/");
-
-    // Wait for the app to fully load
-    await page.waitForSelector('[id^="pad-"]');
+    await gotoApp(page);
 
     // Prepare the audio context for testing
     await prepareAudioContext(page);
@@ -113,8 +111,7 @@ test.describe("ImpAmp3 Keyboard Shortcuts", () => {
     await createNewBankViaUi(page);
 
     // Release Shift key to exit edit mode before testing keyboard shortcuts
-    await page.keyboard.up("Shift");
-    await page.waitForTimeout(300); // Wait for edit mode to deactivate
+    await exitEditMode(page);
 
     // NOTE: This bit is unique for this test
 
