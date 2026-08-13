@@ -281,6 +281,36 @@ export async function getActiveSounds(page: Page): Promise<ActiveSoundInfo[]> {
 }
 
 /**
+ * Creates a second local profile through the profile manager and switches to
+ * it, leaving the app on the new (empty) profile.
+ */
+export async function createAndSwitchToProfile(
+  page: Page,
+  name: string,
+): Promise<void> {
+  // Matched by its popup role rather than by name: the profile selector is
+  // named after the active profile, so a name-based locator collides with any
+  // pad or armed-track button whose sound happens to be named similarly.
+  const profileSelector = page.locator('button[aria-haspopup="true"]');
+  await profileSelector.click();
+  await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
+  await expect(page.getByText(/Profile Manager/i)).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Profile Name" }).fill(name);
+  await page.getByRole("button", { name: /Create Profile/i }).click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+
+  await page.getByLabel("Close").click();
+  await expect(
+    page.getByRole("heading", { name: "Profile Manager" }),
+  ).toBeHidden();
+
+  await profileSelector.click();
+  await page.getByRole("menuitem", { name }).click();
+  await expect(profileSelector).toContainText(name);
+}
+
+/**
  * What the audio buffer cache is holding, as reported by the
  * __impampAudioCache test hook.
  */

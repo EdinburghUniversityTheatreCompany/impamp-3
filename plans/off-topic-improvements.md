@@ -103,10 +103,11 @@ Each entry: what, where, why it matters.
   using selector-based subscriptions, would cut redundant work on every state
   change.
 
-- **`clearAllArmedTracks` has no callers.** Switching profiles leaves the
-  previous profile's cues armed in `playbackStore`, so the Armed Tracks panel
-  keeps listing pads that belong to a profile that is no longer open (and F9
-  fires them). Either wire the action into the profile switch or drop it.
+- **The profile selector button has no accessible name of its own.** It is
+  labelled only by the active profile's name, so a name-based locator (or a
+  screen-reader user) cannot tell it apart from a pad or armed-track button
+  whose sound is named similarly — `createAndSwitchToProfile` in the E2E
+  helpers has to match it by `aria-haspopup` instead.
 
 ## Docs
 
@@ -124,3 +125,5 @@ Each entry: what, where, why it matters.
 - ~~Four dependencies with no import sites~~ — `uuid`, `@types/uuid` (a
   deprecated stub), `jwt-decode` and `google-api-javascript-client` (an
   abandoned v0.1.0 npm mirror) removed in the dependency-upgrade pass.
+- ~~`clearAllArmedTracks` had no callers, so profile switches left stale
+  cues armed~~ — wired into `setActiveProfileId`.

@@ -2,6 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 import {
   createTestAudioFilePath,
   prepareAudioContext,
+  createAndSwitchToProfile,
   createMultipleTestAudioFiles,
   getActiveSounds,
   getAudioCacheState,
@@ -636,6 +637,39 @@ test.describe("Armed tracks keep their sounds in the audio cache", () => {
       page.locator('[data-testid="armed-tracks-panel"]'),
     ).not.toBeVisible();
 
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length)
+      .toBe(0);
+  });
+
+  test("Switching profiles disarms the cues of the profile left behind", async ({
+    page,
+  }) => {
+    await loadSoundOnFirstPad(page, "cue-of-old-profile");
+    await armPad(page, 0);
+    await expect(
+      page.locator('[data-testid="armed-tracks-panel"]'),
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await getAudioCacheState(page)).pinnedIds.length, {
+        timeout: 10000,
+      })
+      .toBe(1);
+
+    await createAndSwitchToProfile(page, "Other Profile");
+
+    // A cue belongs to the profile it was armed in: profiles are isolated, and
+    // firing a pad from a profile that is no longer open would be a surprise.
+    await expect(
+      page.locator('[data-testid="armed-tracks-panel"]'),
+    ).not.toBeVisible();
+    expect(await getArmedTrackNames(page)).toEqual([]);
+
+    // F9 must have nothing left to fire
+    await page.keyboard.press("F9");
+    await expect(page.getByText("Nothing playing")).toBeVisible();
+
+    // ...and the sounds it was holding in memory are released
     await expect
       .poll(async () => (await getAudioCacheState(page)).pinnedIds.length)
       .toBe(0);
