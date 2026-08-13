@@ -21,6 +21,32 @@ to 39 passed / 0 flaky / 10 failed, and roughly halved the wall-clock time.
 prerender. The config supplies a placeholder when it is unset — no test signs
 in to Google.
 
+### Reusing a server hides your changes
+
+Outside CI the config sets `reuseExistingServer: true`, so if anything is
+already listening on the port Playwright **skips the whole webServer command**
+— including the `npm run build` in it. Two ways that bites:
+
+- **A leftover server serves the old bundle.** The suite runs green (or red)
+  against whatever was built the last time a server actually started, and your
+  edits are simply not in it. Nothing warns you.
+- **A concurrent build pulls the bundle out from under it.** Running
+  `npm run build` in another terminal while a server from an earlier run is
+  still up replaces `.next` underneath it, and tests then fail on code that is
+  demonstrably present in the source _and_ in the bundle on disk.
+
+Either way the fix is to make sure the server you are testing was built from
+the current tree:
+
+```bash
+scripts/e2e-server.sh 3100      # kills the old server, rebuilds, restarts
+E2E_PORT=3100 npx playwright test --project=chromium
+```
+
+`scripts/e2e-server.sh` exists for exactly this: it frees the port first (only
+killing a server serving _this_ checkout), rebuilds, and waits for `/up`. When
+in doubt, stop the stale server rather than trusting a green run.
+
 ## Known failures
 
 CI gates on chromium only. These specs still fail and are **not** regressions

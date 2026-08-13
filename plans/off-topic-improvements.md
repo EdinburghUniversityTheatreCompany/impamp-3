@@ -5,11 +5,6 @@ Each entry: what, where, why it matters.
 
 ## Tooling
 
-- **`reuseExistingServer: true` + a rebuild is a footgun.** Running the suite
-  twice in a row can leave `next start` serving a `.next` that a concurrent
-  `npm run build` has replaced underneath it, which shows up as tests failing
-  against code that is definitely present in the bundle. Worth a note in
-  `e2e-tests/README.md`.
 - **The edit-mode E2E suite is flaky under parallel load.** About two runs in
   five, one edit-mode test fails on a timeout in the 7-worker chromium run — a
   different test each time ("Can mark a bank as emergency", "Can rename pads in
