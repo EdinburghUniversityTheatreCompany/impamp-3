@@ -1,7 +1,24 @@
 # Investigation: Sync Strategies for Multi-User Profile Collaboration
 
 **Date:** 2026-08-12
-**Status:** Investigation / decision document — no implementation yet
+**Status:** Decided — see "Decisions" at the end
+
+## Decisions (2026-08-12)
+
+1. **Option 0 ships first** (PR: hardened Drive sync — light remote-change
+   polling, focus/edit-mode pulls, 10 s push debounce, public audio proxy,
+   anonymous read-only pull path).
+2. **Option 4 follows as a separate PR**, with these choices:
+   - **Wasabi** (S3-compatible, already in use by the org) hosts audio for
+     **approved users only**; audio stays in Google Drive for everyone else.
+   - A **global storage cap** across all hosted audio, with current usage
+     visible to admins.
+   - **Per-user usage metering**: admins can see how much each user has
+     uploaded, and each user can see their own usage (and their limit).
+   - Quota design note: Wasabi bills a 90-day minimum retention per object
+     and its free-egress policy assumes egress ≤ stored volume per month —
+     both worth accounting for when sizing the cap and deciding how
+     deletions credit back against a user's quota.
 
 ## Goal
 
@@ -33,12 +50,12 @@ OAuth scope) works like this:
 ### Why it doesn't fully deliver joint editing / view-only
 
 1. **`drive.file` scope visibility friction.** The app can only access files
-   the user created *with the app* or explicitly granted via the Picker /
+   the user created _with the app_ or explicitly granted via the Picker /
    "Open with" flow. An invited collaborator can see the folder in Drive, but
    the app's token gets 403/404 until they perform the Picker or Open-with
-   dance. Pasting a *private* share URL fails (the code already carries a
+   dance. Pasting a _private_ share URL fails (the code already carries a
    `DRIVE_403` / "scope-invisible file" fallback for exactly this). Files the
-   owner adds to the folder *later* have also proven unreliable to access,
+   owner adds to the folder _later_ have also proven unreliable to access,
    which is why `repairDriveAudioFiles` and the backfill machinery exist.
 2. **Latency.** Polling every 15 minutes means collaborators work on stale
    data most of the time. There is no change-notification channel: Drive's
@@ -63,7 +80,7 @@ OAuth scope) works like this:
 Keep everything; fix the sharp edges:
 
 - **Faster, cheaper change detection.** Poll `files.get(fileId,
-  fields=modifiedTime,version)` on the profile JSON every 30–60 s for shared
+fields=modifiedTime,version)` on the profile JSON every 30–60 s for shared
   profiles (a very light call) and only run a full sync when it changed. Add
   sync-on-`visibilitychange`/focus and a pull when entering edit mode. Drop
   the push debounce to ~10 s for shared profiles.
@@ -71,13 +88,13 @@ Keep everything; fix the sharp edges:
   `/api/drive/public-audio`) to stream `alt=media` bytes for audio files of
   public profiles, with a size cap and cache headers. This completes
   anonymous **view-only**: JSON + audio both work without sign-in. We proxy
-  bytes but still don't *store* them.
+  bytes but still don't _store_ them.
 - **Connect UX.** Lead recipients through the Picker/Open-with grant instead
   of URL-paste for private shares, since that's the only path `drive.file`
   reliably supports.
 
 **Effort:** days. **Result:** solid view-only (including anonymous), and
-turn-taking collaboration with sub-minute freshness. Does *not* fix truly
+turn-taking collaboration with sub-minute freshness. Does _not_ fix truly
 simultaneous editing.
 
 ### Option 1 — Broader Drive scope (`drive` full access)
@@ -95,7 +112,7 @@ overlap, a second OAuth integration to maintain. No real gain. Rejected.
 
 ### Option 3 — Real-time CRDT collaboration (Yjs)
 
-Model the profile metadata (pads, banks, names — *not* audio bytes) as a Yjs
+Model the profile metadata (pads, banks, names — _not_ audio bytes) as a Yjs
 document; audio stays in Drive, referenced by content hash as today.
 
 - Gives Google-Docs-style simultaneous editing, presence ("Mick is editing
@@ -112,7 +129,7 @@ document; audio stays in Drive, referenced by content hash as today.
   anyone with Drive access to the folder automatically has collab access.
 
 **Effort:** weeks, plus an always-on (but tiny and stateless) service.
-**Result:** true joint editing. Best done *after* a server exists (Option 4),
+**Result:** true joint editing. Best done _after_ a server exists (Option 4),
 since it can share that infrastructure.
 
 ### Option 4 — Lightweight app backend (recommended medium-term)
@@ -126,11 +143,11 @@ not a rewrite:
    and keep a `users` table + session cookie.
 2. **Data:** Postgres (or SQLite + Litestream) with `profiles`
    (JSON blob + integer version), `shares` (user email or link token, role
-   `viewer`/`editor`), and audio *references* (hash + optional
+   `viewer`/`editor`), and audio _references_ (hash + optional
    `driveFileId`).
 3. **Sync protocol:** `GET /api/profiles/:id` with `If-None-Match: <version>`;
    `PUT` with `If-Match` for optimistic concurrency. On 409, run the
-   *existing* client-side merge (`detectProfileConflicts`) and retry — the
+   _existing_ client-side merge (`detectProfileConflicts`) and retry — the
    conflict machinery is reused wholesale, just pointed at a different
    remote.
 4. **Realtime-ish:** an SSE endpoint per profile that emits "changed, re-pull"
