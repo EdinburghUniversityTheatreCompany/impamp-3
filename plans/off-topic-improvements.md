@@ -33,17 +33,6 @@ provided, no such directory: <repo>/lint` — while exiting 0, so it looked
   override in `eslint.config.mjs` instead. Clear these before wiring eslint into
   hk/CI, or every commit gets gated.
 
-- **The e2e port is hard-coded to 3000** in `playwright.config.ts`, so the
-  suite cannot run while a dev server occupies that port (common when working
-  in a git worktree). Reading the port from an env var with a 3000 default
-  would make parallel worktree runs possible. This bit the upgrade pass, which
-  had to run against a hand-written copy of the config on another port.
-- **`reuseExistingServer: true` + a rebuild is a footgun.** Running the suite
-  twice in a row can leave `next start` serving a `.next` that a concurrent
-  `npm run build` has replaced underneath it, which shows up as tests failing
-  against code that is definitely present in the bundle. Worth a note in
-  `e2e-tests/README.md`. Worse across worktrees: with a dev server on :3000
-  from another checkout, the suite silently tests _that_ code instead.
 - **The suite flakes under machine load.** With several worktrees building at
   once (load ~20 on 20 cores), a different spec times out on each full parallel
   run while passing 3/3 in isolation. `--workers=1 --retries=2`, which is what

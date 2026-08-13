@@ -352,13 +352,13 @@ const Pad: React.FC<PadProps> = ({
       // edit / delete-move mode the pad is still an actionable target — that is
       // how it gets re-enabled — so it must not report itself as disabled.
       //
-      // Keep this AFTER the {...rootProps} spread: react-dropzone stamps its
-      // own `aria-disabled` on the root whenever the dropzone is disabled, and
-      // the dropzone is disabled for any pad holding 2+ sounds or in
-      // delete/move mode — pads that are still perfectly clickable. This line
-      // is what overrides that. Drop it and a working pad reports itself
-      // disabled to assistive tech, and becomes unclickable to anything that
-      // honours the attribute (Playwright included).
+      // Keep this AFTER the {...rootProps} spread: since react-dropzone 17 it
+      // stamps its own `aria-disabled` on the root whenever the dropzone is
+      // disabled — which here means every special pad, and every pad while
+      // delete/move mode is on, all of them still clickable. This line is what
+      // overrides that. Drop it and those pads report themselves disabled to
+      // assistive tech, and become unclickable to anything honouring the
+      // attribute (Playwright included).
       aria-disabled={isDisabled && !isEditMode && !isDeleteMoveMode}
       aria-label={`Sound pad ${padIndex + 1}${name !== "Empty Pad" ? `: ${name}` : ""}${displayKeyBinding ? `, key ${displayKeyBinding}` : ""}${isDisabled ? ", disabled" : ""}`}
       title={isDisabled ? `${name} (disabled)` : undefined}
