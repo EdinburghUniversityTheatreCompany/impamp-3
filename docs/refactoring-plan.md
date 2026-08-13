@@ -129,6 +129,7 @@ src/lib/audio/
    ```
 
 3. **Create Dedicated Audio Cache:**
+
    ```typescript
    // cache.ts
    const audioBufferCache = new Map<number, AudioBuffer | null>();
@@ -269,6 +270,7 @@ src/lib/audio/
    ```
 
 2. **Extract Audio Source Creation:**
+
    ```typescript
    function createAudioSource(
      buffer: AudioBuffer,
@@ -323,6 +325,7 @@ src/lib/audio/
    ```
 
 2. **Compose Values from Parts:**
+
    ```typescript
    // Before
    let totalIncome = 0;
@@ -478,6 +481,7 @@ src/lib/audio/
    ```
 
 4. **Add TODO and FIXME Tags:**
+
    ```typescript
    // TODO: Implement caching for profile configs to reduce db reads
 
@@ -551,6 +555,7 @@ src/lib/audio/
    ```
 
 3. **Split Large Components:**
+
    ```tsx
    // Before: All in one large component
    const SomeComponent = () => {
@@ -629,6 +634,7 @@ src/lib/audio/
    ```
 
 3. **Use Descriptive Test Names:**
+
    ```typescript
    // Before
    test("test sequential mode", async () => {

@@ -934,7 +934,8 @@ const BACKUP_ONLY_FIELDS = new Set([
 // so coerce before comparing. Unusable values are treated as "not changed".
 function toTimestamp(value: Date | string | number | undefined | null): number {
   if (value === undefined || value === null) return 0;
-  const ms = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  const ms =
+    value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isNaN(ms) ? 0 : ms;
 }
 

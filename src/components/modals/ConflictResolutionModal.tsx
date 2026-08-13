@@ -9,7 +9,12 @@ import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import type { SyncConflictData } from "@/lib/googleDrive/types";
 
 type ResolutionChoice =
-  "local" | "remote" | "keep" | "delete" | "accept" | "discard";
+  | "local"
+  | "remote"
+  | "keep"
+  | "delete"
+  | "accept"
+  | "discard";
 type FieldResolutions = Record<string, ResolutionChoice>; // field -> 'local' | 'remote'
 type ConflictResolutionState = Record<
   string | number,
@@ -29,16 +34,19 @@ const getItemDisplayName = (conflict: ItemConflict): string => {
     case "profiles":
       // Ensure accessing name property safely
       const profileItem = (conflict.localItem ?? conflict.remoteItem) as
-        Profile | undefined;
+        | Profile
+        | undefined;
       return `Profile: ${profileItem?.name ?? "Unknown"}`;
     case "padConfigurations": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
-        PadConfiguration | undefined;
+        | PadConfiguration
+        | undefined;
       return `Pad Config: Page ${item?.pageIndex ?? "?"}, Pad ${item?.padIndex ?? "?"}`;
     }
     case "pageMetadata": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
-        PageMetadata | undefined;
+        | PageMetadata
+        | undefined;
       return `Page Meta: Page ${item?.pageIndex ?? "?"} (${item?.name ?? "Unnamed"})`;
     }
     default:
