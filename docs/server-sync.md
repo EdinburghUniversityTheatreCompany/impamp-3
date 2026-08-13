@@ -150,9 +150,10 @@ gates on `is_admin` yet; it exists for the hosted-audio feature.
 - **No replication.** The SQLite file lives on one volume with no streaming
   backup. Litestream (replicating to the org's Wasabi bucket) is the obvious
   next step if this becomes load-bearing.
-- **Audio hosting is not implemented.** Audio remains in Drive for everyone.
-  The gated Wasabi option — approved users, a global cap, per-user metering —
-  is a separate piece of work.
+- **Audio is in Drive by default.** For a deployment that configures nothing
+  else, audio remains in Drive for everyone and the server hosts none of it.
+  The gated Wasabi option — approved users only, a global cap, per-user
+  metering — now exists as a separate, opt-in piece: see `wasabi-audio.md`.
 - **No storage quota.** Nothing caps how many profiles a user creates or how
   large a profile blob may be. `IMPAMP_ALLOWED_EMAILS` is the only limit on
   who can consume space.

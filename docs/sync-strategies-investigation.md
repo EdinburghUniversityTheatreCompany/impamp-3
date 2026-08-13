@@ -4,7 +4,8 @@
 **Status:** Decided — see "Decisions" at the end.
 **Implementation:** Option 0 shipped in `b387ee6`. Option 4 (core, metadata
 only) shipped on the `feat/server-sync` branch — see `server-sync.md`. Gated
-Wasabi audio hosting remains outstanding.
+Wasabi audio hosting shipped on `feat/wasabi-audio` — see `wasabi-audio.md`.
+All of the 2026-08-12 decisions are now implemented.
 
 ## Decisions (2026-08-12)
 

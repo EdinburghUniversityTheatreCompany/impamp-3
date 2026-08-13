@@ -83,7 +83,13 @@ IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
 - **Track Arming** - Ctrl+Click to queue sounds, F9 to play next
 - **Google Drive Sync** - Complete sync implementation in `src/lib/googleDrive/`
 - **Server Sync** - ETag/If-Match sync against the app's own backend, with SSE
-  change notifications (`src/lib/serverSync/`). Audio stays in Drive.
+  change notifications (`src/lib/serverSync/`). Audio stays in Drive by
+  default.
+- **Server-hosted audio** - optional, off unless the five `IMPAMP_S3_*`
+  variables are set, and then still per-account (`can_upload_audio`). Presigned
+  PUT/GET straight to Wasabi; the app never handles the bytes.
+  `src/lib/serverAudio/` (client), `src/lib/server/s3/` (signing + client).
+  See `docs/wasabi-audio.md`.
 - **PWA Support** - Service worker, manifest, offline capabilities
 
 ### Import/Export System
@@ -173,6 +179,11 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 - Google Drive integration uses appData scope (hidden files, no quota impact)
 - Server sync needs `IMPAMP_DB_PATH` and a persistent volume; the SSE bus is
   in-process, so the app must run as a single instance
+- Hosted audio quota is charged from the size the _bucket_ reports at commit,
+  never the size the client claimed — a presigned PUT signs only `host` and so
+  cannot constrain the upload
+- Once audio is hosted, the SQLite database and the bucket must be backed up
+  and restored **together**; either one alone leaves dangling references
 
 ## Pinned Versions
 
