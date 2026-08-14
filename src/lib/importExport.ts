@@ -752,6 +752,34 @@ async function importProfileCore(
     );
     console.log(`Imported pad configurations`);
 
+    // The audio above went straight into the `audioFiles` store via a raw
+    // transaction (see importAudioSources), not through `addAudioFile`, so
+    // none of it triggered `analyseAndStore` the way a drag-and-drop
+    // assignment does. `refreshProfileLoudness` is the usual fire-and-forget
+    // trigger for this, but it isn't right here: `createImportedProfile`
+    // always allocates a fresh id, so this profile is never the one active
+    // in the store at this point, and `loadProfileLoudness` (which
+    // `refreshProfileLoudness` calls) replaces the *entire* in-memory gain
+    // cache with whatever profile it's given — calling it for a profile that
+    // isn't active would clobber the cache for the profile the user actually
+    // has open (see the same guard in applySyncedProfile.ts). `runBackfill`
+    // alone is safe for any caller: it's a global, additive sweep that
+    // persists measurements to IndexedDB and only adds to the in-memory
+    // cache, never replaces it. So importing sounds now starts the same
+    // background analysis a fresh install gets, instead of leaving every
+    // imported file at 0 dB until the user switches into this profile, hits
+    // re-analyse, or reloads. Dynamic import keeps the Web-Audio-only
+    // pipeline out of every caller of importExport.ts; fire-and-forget since
+    // the import itself must not sit through a full-board decode.
+    void import("./audio/loudness/pipeline")
+      .then(({ runBackfill }) => runBackfill())
+      .catch((error) => {
+        console.warn(
+          `[Loudness] Post-import backfill failed (profile ${profileId}):`,
+          error,
+        );
+      });
+
     console.log(`Successfully completed profile import with ID ${profileId}`);
     return profileId;
   } catch (error) {

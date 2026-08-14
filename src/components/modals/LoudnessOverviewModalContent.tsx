@@ -94,32 +94,51 @@ export default function LoudnessOverviewModalContent() {
 
   // Load this profile's pads and every distinct sound name they reference.
   useEffect(() => {
-    if (activeProfileId === null) return;
     let cancelled = false;
 
     void (async () => {
-      setIsLoading(true);
-      const loaded = await getAllPadConfigurationsForProfile(activeProfileId);
-      if (cancelled) return;
-      setPads(loaded);
-
-      // A full board can have hundreds of pad-sound slots but far fewer
-      // distinct audio files (the same sound reused across many pads).
-      // Dedupe the ids first, then fetch the survivors concurrently — one
-      // round-trip per distinct file, all in flight at once, instead of one
-      // sequential round-trip per pad-sound slot.
-      const uniqueIds = [
-        ...new Set(loaded.flatMap((pad) => pad.audioFileIds ?? [])),
-      ];
-      const entries = await Promise.all(
-        uniqueIds.map(async (id): Promise<[number, string]> => {
-          const file = await getAudioFile(id);
-          return [id, file?.name ?? `Sound ${id}`];
-        }),
-      );
-      if (!cancelled) {
-        setNames(new Map(entries));
+      if (activeProfileId === null) {
+        // No profile to load pads for — without this, isLoading would stay
+        // true forever and the "No sounds assigned yet" empty state would
+        // never get a chance to render.
         setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const loaded = await getAllPadConfigurationsForProfile(activeProfileId);
+        if (cancelled) return;
+        setPads(loaded);
+
+        // A full board can have hundreds of pad-sound slots but far fewer
+        // distinct audio files (the same sound reused across many pads).
+        // Dedupe the ids first, then fetch the survivors concurrently — one
+        // round-trip per distinct file, all in flight at once, instead of one
+        // sequential round-trip per pad-sound slot.
+        const uniqueIds = [
+          ...new Set(loaded.flatMap((pad) => pad.audioFileIds ?? [])),
+        ];
+        const entries = await Promise.all(
+          uniqueIds.map(async (id): Promise<[number, string]> => {
+            const file = await getAudioFile(id);
+            return [id, file?.name ?? `Sound ${id}`];
+          }),
+        );
+        if (!cancelled) {
+          setNames(new Map(entries));
+        }
+      } catch (error) {
+        // A rejection here (a bad pad, a missing audio file, IndexedDB
+        // hiccupping) must not leave the table stuck on its loading state —
+        // that would render as a permanently blank modal with no message,
+        // worse than not having a loading flag at all.
+        console.error(
+          "[LoudnessOverview] Failed to load pad configurations:",
+          error,
+        );
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     })();
 
@@ -138,11 +157,11 @@ export default function LoudnessOverviewModalContent() {
   }, []);
 
   // Observes the background backfill's progress; never calls runBackfill
-  // itself. runBackfill's generation-token supersede logic assumes exactly
-  // one caller (ClientSideInitializer) — a second caller here would take a
-  // fresh token, supersede that run, and could leave the in-memory loudness
-  // cache repopulated from a pre-analysis snapshot. Same pattern as
-  // ProfileCard's backfill indicator.
+  // itself. `runBackfill` coalesces concurrent callers rather than one
+  // superseding another, so it would in fact be safe to call from here too —
+  // but this modal only wants to display progress, not decide when a
+  // backfill should run, so it sticks to subscribeToBackfillProgress. Same
+  // pattern as ProfileCard's backfill indicator.
   const [backfill, setBackfill] = useState({ done: 0, total: 0 });
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;

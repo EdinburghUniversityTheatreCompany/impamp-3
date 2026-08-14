@@ -45,6 +45,7 @@ const {
   refreshProfileLoudness,
   runBackfill,
   shouldAnalyse,
+  subscribeToBackfillProgress,
 } = await import("./pipeline");
 
 function fakeAudioFile(id: number) {
@@ -54,6 +55,16 @@ function fakeAudioFile(id: number) {
     name: `file-${id}`,
     type: "audio/wav",
     createdAt: new Date(),
+  };
+}
+
+function fakeAnalysis(): LoudnessAnalysis {
+  return {
+    algoVersion: LOUDNESS_ALGO_VERSION,
+    sampleRate: 48000,
+    duration: 1,
+    blockMeanSquare: new Float32Array(0),
+    hopTruePeak: new Float32Array(0),
   };
 }
 
@@ -188,16 +199,6 @@ describe("failed-analysis filtering", () => {
 describe("runBackfill coalescing", () => {
   useSyntheticIdleWindow();
 
-  function fakeAnalysis(): LoudnessAnalysis {
-    return {
-      algoVersion: LOUDNESS_ALGO_VERSION,
-      sampleRate: 48000,
-      duration: 1,
-      blockMeanSquare: new Float32Array(0),
-      hopTruePeak: new Float32Array(0),
-    };
-  }
-
   beforeEach(() => {
     resetPipelineMocks();
     decoderMocks.decodeAudioBlob.mockResolvedValue({});
@@ -268,6 +269,43 @@ describe("runBackfill coalescing", () => {
     // Under the old supersede logic, a second concurrent caller could take
     // over the generation token and leave the first caller's work undone.
     expect(attemptedIds).toContain(1);
+  });
+});
+
+describe("runBackfill survives a throwing progress listener", () => {
+  useSyntheticIdleWindow();
+
+  beforeEach(() => {
+    resetPipelineMocks();
+    decoderMocks.decodeAudioBlob.mockResolvedValue({});
+    analyseMocks.analyseAudioBuffer.mockReturnValue(fakeAnalysis());
+  });
+
+  it("still resolves, and clears backfillInFlight, when a subscriber throws", async () => {
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
+
+    // Skip the synchronous call subscribeToBackfillProgress makes on
+    // subscribe (fires with whatever progress is already current) and throw
+    // only on the call the sweep itself triggers after analysing a batch —
+    // the exact path `emitBackfillProgress` drives from inside
+    // `runBackfillSweep`'s `.then()`.
+    let calls = 0;
+    const unsubscribe = subscribeToBackfillProgress(() => {
+      calls++;
+      if (calls > 1) throw new Error("boom");
+    });
+
+    // Without the `.catch(() => resolve())` on that `.then()` chain, this
+    // would hang forever: `step` never gets scheduled again, so the sweep's
+    // promise never settles.
+    await expect(runBackfill()).resolves.toBeUndefined();
+    unsubscribe();
+
+    // If `backfillInFlight` had been left set, this second call would join
+    // the dead promise instead of starting a fresh sweep.
+    dbMocks.findUnanalysedAudioFileIds.mockClear();
+    await expect(runBackfill()).resolves.toBeUndefined();
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(1);
   });
 });
 

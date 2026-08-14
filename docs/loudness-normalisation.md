@@ -139,11 +139,14 @@ Until a file is analysed, `normDb` resolves to 0 — it plays exactly as it did
 before this feature existed. The overview table shows `unmeasured` rows
 rather than guessing a number.
 
-**Progress appears in profile settings.** `ProfileCard`
-(`src/components/profiles/ProfileCard.tsx`) shows "Analysing 12/180…" for the
-active profile's backfill, next to the normalisation enable toggle and target
-LUFS slider, by subscribing to `subscribeToBackfillProgress`. It does not
-currently appear inside the loudness overview modal.
+**Progress appears in profile settings and in the loudness overview.**
+`ProfileCard` (`src/components/profiles/ProfileCard.tsx`) shows "Analysing
+12/180…" for the active profile's backfill, next to the normalisation enable
+toggle and target LUFS slider, by subscribing to `subscribeToBackfillProgress`.
+`LoudnessOverviewModalContent` subscribes the same way and shows the same
+"Analysing N of M…" line (`data-testid="loudness-backfill-progress"`) while a
+sweep is in flight — both are pure observers, neither one starts a run of its
+own.
 
 `runBackfill` **coalesces concurrent callers** rather than one superseding
 another. The backfill queue is global — `findUnanalysedAudioFileIds` scans
@@ -154,9 +157,11 @@ race over who gets to do it:
 - If a run is already in flight, a call returns that same promise instead of
   starting a competing one, and records that another run was requested.
 - The queue is snapshotted at the start of each sweep, so a file that arrives
-  mid-run would otherwise be missed. When the in-flight run finishes, if a
-  re-run was requested while it was going, it does exactly one more sweep
-  before resolving.
+  mid-run would otherwise be missed. The `do…while` loop re-checks after
+  _every_ sweep, not just the first: when a sweep finishes, a re-run
+  requested while it was going starts exactly one more sweep — and if another
+  caller arrives during that sweep too, it gets exactly one more again. Only
+  a sweep that finishes with no re-run requested lets the whole run resolve.
 
 `refreshProfileLoudness(profileId)` is the entry point built on top of this:
 warm the in-memory cache from what's already stored, run (or join) the
@@ -182,9 +187,13 @@ an earlier version of `ProfileCard` starting a second backfill directly hit
 exactly this bug — but it made a re-analyse button impossible to build
 without a rework, and it was blocking a real fix: nothing started a backfill
 when audio arrived by sync or ZIP import, so a collaborator's newly-synced
-sounds could play un-normalised for the rest of a session. Coalescing
-replaces the generation token for `runBackfill` and removes both problems at
-once. `loadProfileLoudness`'s own generation token is unrelated and
+sounds — or a freshly imported profile's — could play un-normalised for the
+rest of a session. Coalescing replaces the generation token for `runBackfill`
+and makes both fixes possible: the re-analyse button (below), the post-sync
+refresh (`applySyncedProfile`, `src/hooks/applySyncedProfile.ts`), and the
+backfill trigger at the end of `importProfileCore`
+(`src/lib/importExport.ts`) all call safely into the same coalesced run.
+`loadProfileLoudness`'s own generation token is unrelated and
 unchanged — it guards a different race (a slow load for a profile just left
 finishing after a faster load for the newly active one already won). That
 race is not a coalescing candidate: unlike the backfill queue, which is the
@@ -264,18 +273,23 @@ Analysis is accepted back on import only when its `algoVersion` matches the
 current `LOUDNESS_ALGO_VERSION`; a stale one is dropped and the file is
 queued for the idle backfill sweep instead.
 
-### The Google Drive gap
+### The sync gap
 
-**Google Drive sync does not carry loudness analysis.** The Drive data layer
-(`src/lib/googleDrive/dataAccess.ts`) remaps `audioTrimSettings` and
-`audioGainSettings`, the same as import, but it has no handling for the
-`loudness` field at all. A profile pulled down through Drive sync arrives
+**Neither sync backend carries loudness analysis.** `ProfileSyncData`
+(`src/lib/syncUtils.ts`), the shape both Google Drive sync and server sync
+push and pull, has no `loudness` field on its `audioFiles` entries — the
+Drive data layer (`src/lib/googleDrive/dataAccess.ts`) remaps
+`audioTrimSettings` and `audioGainSettings` the same as import, but neither
+it nor the server-sync merge in `syncUtils.ts` has any handling for
+`loudness` at all. A profile pulled down through either backend arrives
 without its analysis and gets re-analysed locally by the same backfill sweep
 that handles a fresh install. That's graceful — the sound plays at 0 dB
-normalisation in the meantime, then normalises once the sweep catches up —
-but it is a real gap, not a hidden one: a Drive-synced device does real
-decode-and-analyse work that a device receiving the same profile via export
-or server-sync metadata would not have to.
+normalisation in the meantime, then normalises once the sweep catches up (and
+`applySyncedProfile`, `src/hooks/applySyncedProfile.ts`, starts that sweep
+immediately for whichever profile is on screen) — but it is a real gap, not a
+hidden one: a synced device does real decode-and-analyse work that a device
+receiving the same profile via export would not have to, since `.iaz`/JSON
+export carries `LoudnessAnalysis` in its manifest (see Export, above).
 
 ## A known display race
 

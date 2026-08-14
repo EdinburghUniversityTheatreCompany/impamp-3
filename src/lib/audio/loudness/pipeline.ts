@@ -214,12 +214,25 @@ function runBackfillSweep(
         }
         remaining = remaining.slice(batch.length);
 
-        void Promise.all(batch.map((id) => analyseAndStore(id))).then(() => {
-          done += batch.length;
-          emitBackfillProgress(done, total);
-          onProgress?.(done, total);
-          onIdle(step);
-        });
+        void Promise.all(batch.map((id) => analyseAndStore(id)))
+          .then(() => {
+            done += batch.length;
+            emitBackfillProgress(done, total);
+            onProgress?.(done, total);
+            onIdle(step);
+          })
+          .catch(() => {
+            // A progress listener (emitBackfillProgress invokes every
+            // subscriber synchronously) or onProgress itself threw. This
+            // batch's files are already analysed and persisted regardless —
+            // what matters is that `step` never gets scheduled again without
+            // this: `resolve()` below would never run, this sweep's promise
+            // would stay pending forever, and `backfillInFlight` would never
+            // clear, so every future `runBackfill()` — including the
+            // re-analyse button — would join a dead promise for the rest of
+            // the session.
+            resolve();
+          });
       };
 
       onIdle(step);

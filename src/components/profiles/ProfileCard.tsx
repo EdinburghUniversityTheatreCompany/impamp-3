@@ -123,6 +123,12 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   // `loudness`, so they drop out of that warm rather than needing a separate
   // cache-eviction call. The backfill that follows is what makes the
   // `subscribeToBackfillProgress` indicator above move.
+  //
+  // Also clears the in-memory failed-analysis set: a file that failed to
+  // decode earlier in the session is otherwise filtered out of every future
+  // backfill sweep (see `failedAnalysis` in pipeline.ts), so without this the
+  // button would silently refuse to retry exactly the files most likely to
+  // need it.
   const [isReanalysing, setIsReanalysing] = useState(false);
   const [reanalyseError, setReanalyseError] = useState<string | null>(null);
 
@@ -133,9 +139,9 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     try {
       const audioFileIds = await getAudioFileIdsForProfile(profile.id);
       await clearAudioFileLoudness(audioFileIds);
-      const { refreshProfileLoudness } = await import(
-        "@/lib/audio/loudness/pipeline"
-      );
+      const { clearFailedAnalysis, refreshProfileLoudness } =
+        await import("@/lib/audio/loudness/pipeline");
+      clearFailedAnalysis();
       await refreshProfileLoudness(profile.id);
     } catch (error) {
       console.error("Failed to re-analyse loudness:", error);
