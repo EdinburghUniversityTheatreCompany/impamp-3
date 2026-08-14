@@ -47,11 +47,16 @@ function readNumber(name: string, fallback: number): number {
  * `null` as "this deployment does not host audio" rather than as an error.
  */
 export function getAudioHostingConfig(): AudioHostingConfig | null {
-  const endpoint = process.env.IMPAMP_S3_ENDPOINT;
-  const region = process.env.IMPAMP_S3_REGION;
-  const bucket = process.env.IMPAMP_S3_BUCKET;
-  const accessKeyId = process.env.IMPAMP_S3_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.IMPAMP_S3_SECRET_ACCESS_KEY;
+  // Trimmed, every one of them. A credential pasted into a vault or an env
+  // file with a stray leading space still looks right in every UI that shows
+  // it, but signs every request wrongly — and S3 answers only
+  // "SignatureDoesNotMatch", which points at the code rather than the paste.
+  // Whitespace is never meaningful in any of these values.
+  const endpoint = process.env.IMPAMP_S3_ENDPOINT?.trim();
+  const region = process.env.IMPAMP_S3_REGION?.trim();
+  const bucket = process.env.IMPAMP_S3_BUCKET?.trim();
+  const accessKeyId = process.env.IMPAMP_S3_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.IMPAMP_S3_SECRET_ACCESS_KEY?.trim();
 
   if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
     return null;

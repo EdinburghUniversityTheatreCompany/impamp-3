@@ -72,6 +72,33 @@ describe("getAudioHostingConfig", () => {
     expect(config.defaultUserQuotaBytes).toBe(1000);
   });
 
+  it("trims whitespace off every value", () => {
+    // A credential pasted with a stray leading space looks correct in every
+    // vault UI but signs every request wrongly, and S3 says only
+    // "SignatureDoesNotMatch". Cost a real debugging session on 2026-08-14.
+    Object.assign(process.env, {
+      IMPAMP_S3_ENDPOINT: "  https://s3.eu-west-1.wasabisys.com  ",
+      IMPAMP_S3_REGION: " eu-west-1\n",
+      IMPAMP_S3_BUCKET: "\timpamp-audio ",
+      IMPAMP_S3_ACCESS_KEY_ID: " AKIAIOSFODNN7EXAMPLE",
+      IMPAMP_S3_SECRET_ACCESS_KEY: " secret-with-leading-space",
+    });
+    const config = getAudioHostingConfig()!;
+
+    expect(config.endpoint).toBe("https://s3.eu-west-1.wasabisys.com");
+    expect(config.region).toBe("eu-west-1");
+    expect(config.bucket).toBe("impamp-audio");
+    expect(config.accessKeyId).toBe("AKIAIOSFODNN7EXAMPLE");
+    expect(config.secretAccessKey).toBe("secret-with-leading-space");
+  });
+
+  it("treats an all-whitespace credential as not configured", () => {
+    Object.assign(process.env, REQUIRED, {
+      IMPAMP_S3_SECRET_ACCESS_KEY: "   ",
+    });
+    expect(getAudioHostingConfig()).toBeNull();
+  });
+
   it("refuses a nonsense limit rather than silently defaulting", () => {
     Object.assign(process.env, REQUIRED, {
       IMPAMP_AUDIO_GLOBAL_CAP_BYTES: "not-a-number",
