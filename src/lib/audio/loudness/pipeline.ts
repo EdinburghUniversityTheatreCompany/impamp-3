@@ -25,6 +25,26 @@ import { LOUDNESS_ALGO_VERSION } from "./constants";
 /** How many files to analyse per idle slice. */
 const BACKFILL_BATCH_SIZE = 3;
 
+// Monotonic tokens so a superseded run can never write. A profile switch
+// starts a new load and a new backfill; whichever run is no longer current
+// must abandon its result rather than clobber the one that replaced it.
+let loadGeneration = 0;
+let backfillGeneration = 0;
+
+/**
+ * Files that failed to decode this session. Kept in memory rather than
+ * persisted so a transient failure gets another chance on next launch, while
+ * a genuinely corrupt file costs one decode attempt per session instead of
+ * one per profile switch (the backfill queue is rebuilt every switch, and
+ * without this a permanently undecodable file would be retried forever).
+ */
+const failedAnalysis = new Set<number>();
+
+/** Test-only: clears the failed-analysis set so tests don't leak state. */
+export function clearFailedAnalysis(): void {
+  failedAnalysis.clear();
+}
+
 export function shouldAnalyse(loudness: LoudnessAnalysis | undefined): boolean {
   return !loudness || loudness.algoVersion !== LOUDNESS_ALGO_VERSION;
 }
@@ -58,6 +78,10 @@ export async function analyseAndStore(
     return analysis;
   } catch (error) {
     // A file we cannot decode simply stays unanalysed and plays at 0 dB.
+    // Remember it for this session so the backfill queue stops offering it —
+    // without this, a genuinely corrupt file gets re-decoded on every
+    // startup and every profile switch forever.
+    failedAnalysis.add(audioFileId);
     console.warn(
       `[Loudness] Could not analyse audio file ${audioFileId}:`,
       error,
@@ -75,10 +99,21 @@ export async function analyseAndStore(
  * is called): every profile activation must call this, or the previous
  * profile's measurements stay resident and a different profile's sounds
  * resolve gain from them.
+ *
+ * Guarded by a generation token rather than by the caller cancelling: the
+ * gathering loop below awaits one `getAudioFile` per audio file, so a slow
+ * load for profile A can still be in flight when the user switches to B and
+ * B's own (faster) load has already warmed the cache. Without the token, A
+ * would resolve afterwards and call `warmLoudnessCache` again, clobbering
+ * B's data with A's — silently, since nothing throws. The token makes that
+ * write conditional on this call still being the most recent one requested,
+ * so only the newest `loadProfileLoudness` call for the currently active
+ * profile is ever allowed to write.
  */
 export async function loadProfileLoudness(profileId: number): Promise<void> {
   if (typeof window === "undefined") return;
 
+  const generation = ++loadGeneration;
   const ids = await getAudioFileIdsForProfile(profileId);
   const entries: [number, LoudnessAnalysis][] = [];
 
@@ -89,9 +124,7 @@ export async function loadProfileLoudness(profileId: number): Promise<void> {
     }
   }
 
-  // warmLoudnessCache clears the map before repopulating it, so this always
-  // fully replaces the previous profile's entries — there is no code path
-  // where a stale entry can survive the switch.
+  if (generation !== loadGeneration) return; // a newer load superseded this one
   warmLoudnessCache(entries);
 }
 
@@ -110,13 +143,22 @@ function onIdle(callback: () => void): void {
 /**
  * Analyses every file that needs it, a few at a time, on idle.
  * Resolves once the queue is empty.
+ *
+ * Guarded by the same generation-token pattern as `loadProfileLoudness`: a
+ * profile switch bumps `backfillGeneration`, so the previous backfill's next
+ * `step()` sees it is no longer current and resolves instead of continuing —
+ * it stops decoding files for a profile the user has already left, rather
+ * than racing the new backfill for the same idle slices.
  */
 export async function runBackfill(
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
   if (typeof window === "undefined") return;
 
-  const queue = await findUnanalysedAudioFileIds(LOUDNESS_ALGO_VERSION);
+  const generation = ++backfillGeneration;
+  const queue = (
+    await findUnanalysedAudioFileIds(LOUDNESS_ALGO_VERSION)
+  ).filter((id) => !failedAnalysis.has(id));
   const total = queue.length;
   if (total === 0) {
     onProgress?.(0, 0);
@@ -128,6 +170,11 @@ export async function runBackfill(
 
   return new Promise((resolve) => {
     const step = () => {
+      if (generation !== backfillGeneration) {
+        resolve(); // a newer backfill superseded this one
+        return;
+      }
+
       const batch = nextBackfillBatch(remaining, BACKFILL_BATCH_SIZE);
       if (batch.length === 0) {
         resolve();

@@ -103,6 +103,14 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // replaces the whole cache, so this effect is what honours that contract —
   // without it, the previous profile's analysis would stay resident and a
   // different profile's sounds would resolve gain from it.
+  //
+  // `cancelled` here only saves this effect instance from doing pointless
+  // work (starting a backfill, or a second load) after its own profile has
+  // been left. It is not what prevents a stale write: a load already in
+  // flight when `cancelled` flips can still resolve afterwards and call
+  // `loadProfileLoudness` again. The actual guarantee that a superseded run
+  // can never clobber a newer one lives in pipeline.ts's generation tokens
+  // (`loadGeneration`/`backfillGeneration`), which gate the write itself.
   const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
 
   useEffect(
@@ -128,11 +136,21 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
       if (cancelled) return;
       // Pick up anything the backfill just measured.
       await loadProfileLoudness(activeProfileId);
-    })();
+    })().catch((error) => {
+      // Analysis failing must never surface as an unhandled rejection — an
+      // unanalysed file simply plays at 0 dB. getDb()/getAudioFileIdsForProfile/
+      // findUnanalysedAudioFileIds calls inside loadProfileLoudness and
+      // runBackfill sit outside analyseAndStore's own try/catch, so this is
+      // the backstop for those.
+      console.warn(
+        `[Loudness] Profile loudness load/backfill failed for profile ${activeProfileId}:`,
+        error,
+      );
+    });
 
-    // Guards against a backfill still in flight for the *previous* profile
-    // finishing after this effect's cleanup and re-populating the cache with
-    // stale entries once the new profile's loadProfileLoudness has already run.
+    // Avoids starting a new backfill, or re-warming the cache a second time,
+    // for a profile the user has already left — see the generation-token
+    // note above for why this alone is not the correctness guarantee.
     return () => {
       cancelled = true;
     };

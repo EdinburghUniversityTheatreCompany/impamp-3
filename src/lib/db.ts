@@ -507,9 +507,18 @@ export async function addAudioFile(
   // it is fired without awaiting. The file plays at 0 dB normalisation until
   // this lands, which is exactly how it behaved before this feature existed.
   if (typeof window !== "undefined") {
-    void import("@/lib/audio/loudness/pipeline").then(({ analyseAndStore }) =>
-      analyseAndStore(id),
-    );
+    void import("@/lib/audio/loudness/pipeline")
+      .then(({ analyseAndStore }) => analyseAndStore(id))
+      .catch((error) => {
+        // analyseAndStore already contains its own errors; this only guards
+        // the dynamic import itself (e.g. a chunk-load failure). Either way,
+        // analysis failing must never surface as an unhandled rejection —
+        // the whole design is that an unanalysed file just plays at 0 dB.
+        console.warn(
+          `[Loudness] Background analysis failed for audio file ${id}:`,
+          error,
+        );
+      });
   }
 
   return id;
