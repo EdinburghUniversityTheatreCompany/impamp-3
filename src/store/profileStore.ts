@@ -67,6 +67,7 @@ interface ProfileState {
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
   setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
   getNormalisationSettings: () => NormalisationSettings; // Get the loudness normalisation settings for the active profile
+  setNormalisation: (settings: NormalisationSettings) => Promise<void>; // Set the loudness normalisation settings for the active profile
 
   // Auto-sync after edits
   syncRequestQueue: Record<number, number>; // profileId → last request timestamp
@@ -928,6 +929,42 @@ export const useProfileStore = create<ProfileState>()(
             });
             // Re-throw might be useful depending on how calling code handles errors
             // throw error;
+          }
+        },
+
+        setNormalisation: async (settings: NormalisationSettings) => {
+          const { activeProfileId } = get();
+          if (activeProfileId === null) {
+            console.warn(
+              "Cannot set normalisation settings: No active profile selected.",
+            );
+            return;
+          }
+
+          try {
+            // Persist change to DB
+            await updateProfile(activeProfileId, { normalisation: settings });
+
+            // Update state
+            set((state) => ({
+              profiles: state.profiles.map((p) =>
+                p.id === activeProfileId
+                  ? { ...p, normalisation: settings, updatedAt: new Date() }
+                  : p,
+              ),
+            }));
+          } catch (error) {
+            console.error(
+              `Failed to set normalisation settings for profile ${activeProfileId}:`,
+              error,
+            );
+            const errorMessage =
+              error instanceof Error
+                ? error.message
+                : "An unknown error occurred";
+            set({
+              error: `Failed to set normalisation settings: ${errorMessage}`,
+            });
           }
         },
 

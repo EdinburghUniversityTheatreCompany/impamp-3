@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
-import { Profile, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
+import {
+  Profile,
+  DEFAULT_BACKUP_REMINDER_PERIOD_MS,
+  DEFAULT_NORMALISATION,
+} from "@/lib/db";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
@@ -54,7 +58,8 @@ interface ProfileCardProps {
  * longer competes with them for the reader's attention.
  */
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
-  const { setActiveProfileId, deleteProfile } = useProfileStore();
+  const { setActiveProfileId, deleteProfile, setNormalisation } =
+    useProfileStore();
 
   const { openProfileEditor } = useProfileEdit();
 
@@ -65,6 +70,36 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
+
+  // Loudness normalisation. `profile.normalisation` is absent for any profile
+  // created before this feature, so every read falls back to the default.
+  const normalisation = profile.normalisation ?? DEFAULT_NORMALISATION;
+
+  // Backfill progress for the "Analysing N/M…" indicator. Driven by calling
+  // runBackfill ourselves rather than observing some shared progress store,
+  // because the pipeline exposes progress only via this callback. Gated to
+  // the active profile's card: setNormalisation (like setActivePadBehavior,
+  // which it is modelled on) always writes to the store's activeProfileId,
+  // so a non-active card offering these controls would silently edit the
+  // wrong profile. Restricting the effect to isActive also keeps this from
+  // racing ClientSideInitializer's own runBackfill call for every profile
+  // card mounted in the manager list, so only one runs at a time.
+  const [backfill, setBackfill] = useState({ done: 0, total: 0 });
+  useEffect(() => {
+    if (!isActive) return;
+    let cancelled = false;
+    void (async () => {
+      const { runBackfill } = await import("@/lib/audio/loudness/pipeline");
+      await runBackfill((done, total) => {
+        if (!cancelled) setBackfill({ done, total });
+      });
+    })().catch((error) => {
+      console.warn("[Loudness] Backfill failed:", error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive]);
 
   const syncState = getSyncState(profile);
   const syncStatus = useProfileSyncStatus(profile.id);
@@ -238,6 +273,68 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       </div>
 
       {syncPanelOpen && <ProfileSyncPanel profile={profile} />}
+
+      {/* Loudness normalisation — active profile only. setNormalisation
+          writes to the store's activeProfileId, so these controls would
+          silently target the wrong profile if shown on any other card. */}
+      {isActive && (
+        <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
+          <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            Loudness normalisation
+          </h4>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Levels every sound to the same loudness automatically. Your
+            per-sound and per-pad gain adjustments are applied on top and are
+            never overwritten.
+          </p>
+
+          <label className="mt-3 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={normalisation.enabled}
+              onChange={(e) =>
+                void setNormalisation({
+                  ...normalisation,
+                  enabled: e.target.checked,
+                })
+              }
+              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600"
+              data-testid="normalisation-enabled"
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Normalise automatically
+            </span>
+          </label>
+
+          <label className="mt-3 block">
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Target loudness: {normalisation.targetLufs} LUFS
+            </span>
+            <input
+              type="range"
+              min={-30}
+              max={-9}
+              step={1}
+              value={normalisation.targetLufs}
+              disabled={!normalisation.enabled}
+              onChange={(e) =>
+                void setNormalisation({
+                  ...normalisation,
+                  targetLufs: Number(e.target.value),
+                })
+              }
+              className="mt-1 w-full disabled:opacity-50"
+              data-testid="normalisation-target"
+            />
+          </label>
+
+          {backfill.total > 0 && backfill.done < backfill.total && (
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Analysing {backfill.done}/{backfill.total}…
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
