@@ -65,6 +65,9 @@ export default function LoudnessOverviewModalContent() {
   const [sortKey, setSortKey] = useState<SoundSortKey>("deviation");
   const [direction, setDirection] = useState<SortDirection>("desc");
   const [problemsOnly, setProblemsOnly] = useState(false);
+  // "all" or a pageIndex. Independent of tab/sort/gain-edit state so it
+  // survives all three — nothing here ever resets it.
+  const [bankFilter, setBankFilter] = useState<number | "all">("all");
   // Bumped whenever the loudness cache changes; not read directly, only
   // used as a memo dependency below to force `soundRows` to recompute once
   // an unmeasured sound gets measured by the background sweep.
@@ -122,6 +125,35 @@ export default function LoudnessOverviewModalContent() {
     });
   }, []);
 
+  // Observes the background backfill's progress; never calls runBackfill
+  // itself. runBackfill's generation-token supersede logic assumes exactly
+  // one caller (ClientSideInitializer) — a second caller here would take a
+  // fresh token, supersede that run, and could leave the in-memory loudness
+  // cache repopulated from a pre-analysis snapshot. Same pattern as
+  // ProfileCard's backfill indicator.
+  const [backfill, setBackfill] = useState({ done: 0, total: 0 });
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let cancelled = false;
+
+    void import("@/lib/audio/loudness/pipeline")
+      .then(({ subscribeToBackfillProgress }) => {
+        if (cancelled) return;
+        unsubscribe = subscribeToBackfillProgress(setBackfill);
+      })
+      .catch((error) => {
+        console.warn(
+          "[LoudnessOverview] Could not observe backfill progress:",
+          error,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
   const soundRows = useMemo(
     () =>
       buildSoundRows(pads, {
@@ -138,14 +170,48 @@ export default function LoudnessOverviewModalContent() {
     [pads, normalisation, names, cacheVersion],
   );
 
+  // Distinct banks that actually hold a sound, in bank order — not all
+  // twenty pages, which would make the filter useless on a mostly-empty
+  // board.
+  const bankOptions = useMemo(() => {
+    const byPageIndex = new Map<number, string>();
+    for (const row of soundRows) {
+      if (!byPageIndex.has(row.pageIndex)) {
+        byPageIndex.set(row.pageIndex, row.bankName);
+      }
+    }
+    return [...byPageIndex.entries()].sort(([a], [b]) => a - b);
+  }, [soundRows]);
+
+  // Bank and "problems only" compose: both active means rows matching both.
+  const bankFilteredRows = useMemo(
+    () =>
+      bankFilter === "all"
+        ? soundRows
+        : soundRows.filter((row) => row.pageIndex === bankFilter),
+    [soundRows, bankFilter],
+  );
+
   const visibleRows = useMemo(() => {
     const filtered = problemsOnly
-      ? filterProblemRows(soundRows, normalisation.targetLufs)
-      : soundRows;
+      ? filterProblemRows(bankFilteredRows, normalisation.targetLufs)
+      : bankFilteredRows;
     return sortRows(filtered, sortKey, direction, normalisation.targetLufs);
-  }, [soundRows, problemsOnly, sortKey, direction, normalisation.targetLufs]);
+  }, [
+    bankFilteredRows,
+    problemsOnly,
+    sortKey,
+    direction,
+    normalisation.targetLufs,
+  ]);
 
-  const padRows = useMemo(() => buildPadRows(soundRows), [soundRows]);
+  // The bank filter narrows both tabs; "problems only" narrows the sounds
+  // tab alone, so the pads tab aggregates every sound on the (bank-scoped)
+  // pad rather than only its problem ones.
+  const padRows = useMemo(
+    () => buildPadRows(bankFilteredRows),
+    [bankFilteredRows],
+  );
 
   const toggleSort = (key: SoundSortKey) => {
     if (key === sortKey) {
@@ -249,16 +315,53 @@ export default function LoudnessOverviewModalContent() {
           ))}
         </div>
 
-        <label className="ml-auto flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={problemsOnly}
-            onChange={(e) => setProblemsOnly(e.target.checked)}
-            data-testid="loudness-problems-only"
-          />
-          Problems only
-        </label>
+        <div className="ml-auto flex items-center gap-4">
+          <label
+            htmlFor="loudness-bank-filter"
+            className="flex items-center gap-2 text-sm"
+          >
+            Bank
+            <select
+              id="loudness-bank-filter"
+              value={bankFilter === "all" ? "all" : String(bankFilter)}
+              onChange={(e) =>
+                setBankFilter(
+                  e.target.value === "all" ? "all" : Number(e.target.value),
+                )
+              }
+              aria-label="Filter to one bank"
+              data-testid="loudness-bank-filter"
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
+            >
+              <option value="all">All banks</option>
+              {bankOptions.map(([pageIndex, bankName]) => (
+                <option key={pageIndex} value={pageIndex}>
+                  {bankName}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={problemsOnly}
+              onChange={(e) => setProblemsOnly(e.target.checked)}
+              data-testid="loudness-problems-only"
+            />
+            Problems only
+          </label>
+        </div>
       </div>
+
+      {backfill.total > 0 && backfill.done < backfill.total && (
+        <p
+          className="mb-2 text-xs text-gray-500 dark:text-gray-400"
+          data-testid="loudness-backfill-progress"
+        >
+          Analysing sounds… {backfill.done} of {backfill.total}
+        </p>
+      )}
 
       <div className="overflow-auto">
         {tab === "sounds" ? (
@@ -313,7 +416,15 @@ export default function LoudnessOverviewModalContent() {
                     {row.bankName} · {row.padIndex + 1}
                   </td>
                   <td className="px-2 py-1">{row.soundName}</td>
-                  <td className="px-2 py-1 font-mono tabular-nums">
+                  <td
+                    className="px-2 py-1 font-mono tabular-nums"
+                    title={
+                      row.untrimmedLufs !== null &&
+                      row.untrimmedLufs !== row.gain.measuredLufs
+                        ? `Untrimmed: ${formatLufs(row.untrimmedLufs)} LUFS`
+                        : undefined
+                    }
+                  >
                     {formatLufs(row.gain.measuredLufs)}
                     {row.gain.estimated && (
                       <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">

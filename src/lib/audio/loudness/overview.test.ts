@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PadConfiguration } from "@/lib/db";
+import { analyseLoudness } from "./analyse";
 import {
   buildPadRows,
   buildSoundRows,
@@ -7,6 +8,7 @@ import {
   sortRows,
   type SoundRow,
 } from "./overview";
+import { concat, sine, TEST_SAMPLE_RATE as SAMPLE_RATE } from "./testFixtures";
 import { DEFAULT_NORMALISATION } from "./types";
 
 function pad(overrides: Partial<PadConfiguration> = {}): PadConfiguration {
@@ -55,6 +57,7 @@ function row(overrides: Partial<SoundRow>): SoundRow {
     },
     soundGainDb: 0,
     padGainDb: 0,
+    untrimmedLufs: -16,
     ...overrides,
   };
 }
@@ -266,5 +269,48 @@ describe("buildPadRows", () => {
     expect(bank1.spreadDb).toBeCloseTo(0, 1);
     expect(bank0.minLufs).toBeCloseTo(-20, 1);
     expect(bank1.minLufs).toBeCloseTo(-16, 1);
+  });
+});
+
+describe("buildSoundRows untrimmedLufs", () => {
+  it("is populated for an analysed row, measured over the whole file", () => {
+    const analysis = analyseLoudness(
+      [sine(1000, 5, -23), sine(1000, 5, -23)],
+      SAMPLE_RATE,
+    );
+    const rows = buildSoundRows([pad({ audioFileIds: [10] })], {
+      ...options,
+      getAnalysis: () => analysis,
+    });
+    expect(rows[0].untrimmedLufs).toBeCloseTo(-23, 1);
+  });
+
+  it("is null when the sound has not been analysed", () => {
+    const rows = buildSoundRows([pad({ audioFileIds: [10] })], options);
+    expect(rows[0].untrimmedLufs).toBeNull();
+  });
+
+  it("differs from the trimmed measurement when the trim excludes a loud passage", () => {
+    // Quiet first half, loud second half; trim to the quiet half only.
+    const full = concat(sine(1000, 4, -28), sine(1000, 4, -20));
+    const analysis = analyseLoudness([full, full], SAMPLE_RATE);
+
+    const rows = buildSoundRows(
+      [
+        pad({
+          audioFileIds: [10],
+          audioTrimSettings: { 10: { trimStart: 0, trimEnd: 4 } },
+        }),
+      ],
+      { ...options, getAnalysis: () => analysis },
+    );
+
+    expect(rows[0].gain.measuredLufs).not.toBeNull();
+    expect(rows[0].untrimmedLufs).not.toBeNull();
+    // The untrimmed figure includes the loud half the trim excludes, so it
+    // must read meaningfully louder than the trimmed measurement.
+    expect(rows[0].untrimmedLufs as number).toBeGreaterThan(
+      (rows[0].gain.measuredLufs as number) + 2,
+    );
   });
 });

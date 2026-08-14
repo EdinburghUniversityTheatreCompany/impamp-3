@@ -10,6 +10,7 @@
 
 import type { PadConfiguration } from "@/lib/db";
 import { resolveGain } from "./gain";
+import { measureRange } from "./query";
 import type {
   LoudnessAnalysis,
   NormalisationSettings,
@@ -30,6 +31,13 @@ export interface SoundRow {
   gain: ResolvedGain;
   soundGainDb: number;
   padGainDb: number;
+  /**
+   * Loudness of the whole file, ignoring any trim — a measurement, not a
+   * level, so it is taken directly from `measureRange` rather than routed
+   * through `resolveGain` (which resolves playback gain, a different
+   * question). null when there is no analysis yet or the file is silent.
+   */
+  untrimmedLufs: number | null;
 }
 
 export interface PadRow {
@@ -63,6 +71,7 @@ export function buildSoundRows(
       const trim = pad.audioTrimSettings?.[audioFileId];
       const soundGainDb = pad.audioGainSettings?.[audioFileId] ?? 0;
       const padGainDb = pad.padGainDb ?? 0;
+      const analysis = options.getAnalysis(audioFileId);
 
       rows.push({
         // Index, not just audioFileId — a pad can legitimately hold the same
@@ -76,7 +85,7 @@ export function buildSoundRows(
         audioFileId,
         soundName: options.getSoundName(audioFileId),
         gain: resolveGain({
-          analysis: options.getAnalysis(audioFileId),
+          analysis,
           trimStart: trim?.trimStart ?? 0,
           trimEnd: trim?.trimEnd,
           soundGainDb,
@@ -85,6 +94,9 @@ export function buildSoundRows(
         }),
         soundGainDb,
         padGainDb,
+        untrimmedLufs: analysis
+          ? measureRange(analysis, 0, analysis.duration).lufs
+          : null,
       });
     });
   }
