@@ -306,16 +306,20 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   }, [profile.id, profile.name, updateProfile]);
 
-  // Clear the 'initiated by this card' flag when the hook status resets.
+  // Clear the 'initiated by this card' flag when the hook goes back to idle.
   //
   // Adjusted during render rather than in an effect — the pattern React
-  // documents for state that reacts to a value changing between renders. The
-  // condition is unchanged: it fires on a transition into "idle" or "success",
-  // which is exactly when the effect's dependency array used to run it.
+  // documents for state that reacts to a value changing between renders.
+  //
+  // "success" used to clear it too, which made getSyncStatusDisplay's "Synced"
+  // message unreachable: that message renders only when the status is
+  // "success" AND this flag is set, so clearing on "success" cancelled the one
+  // thing it enables. Idle is the status that actually means "this card's sync
+  // is over and done with".
   const [lastHookStatus, setLastHookStatus] = useState(driveHookStatus);
   if (driveHookStatus !== lastHookStatus) {
     setLastHookStatus(driveHookStatus);
-    if (driveHookStatus === "idle" || driveHookStatus === "success") {
+    if (driveHookStatus === "idle") {
       setLastSyncInitiatedByThisCard(false);
     }
   }
