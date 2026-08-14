@@ -16,7 +16,7 @@ import {
   computeBlobHash,
 } from "@/lib/db";
 import { ProfileSyncData, resolveSyncedPadAudio } from "@/lib/syncUtils";
-import { base64ToBlob } from "@/lib/importExport";
+import { base64ToBlob, remapAudioFileIdKeys } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
 /**
@@ -347,29 +347,32 @@ export const updateLocalData = async (
             `Pad ${pad.pageIndex}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
           );
         }
+
+        // Both settings maps are keyed by audio file id, so they follow
+        // whichever ids the pad ended up with. An id with no local mapping is
+        // dropped rather than kept: an untranslated id addresses a different
+        // local recording, so a missing setting is the safer outcome.
         if (resolved.keptLocal) {
           warnings.push(
             `Pad ${pad.pageIndex}-${pad.padIndex}: kept the sound already on this device, because the synced copy referenced audio that could not be fetched`,
           );
-          // Already keyed by this device's ids, so it must skip the remap
-          // below — running it would translate them as though they were the
-          // sender's, dropping the trim or, on an id collision, moving it to
-          // a different sound.
+          // Already keyed by this device's ids, so they must skip the remap —
+          // running it would translate them as though they were the sender's,
+          // dropping the setting or, on an id collision, moving it to a
+          // different sound.
           padWithProfileId.audioTrimSettings = existing?.audioTrimSettings;
-        } else if (padWithProfileId.audioTrimSettings) {
-          const mappedTrim: Record<
-            number,
-            { trimStart: number; trimEnd: number }
-          > = {};
-          for (const [oldIdStr, trimValue] of Object.entries(
+          padWithProfileId.audioGainSettings = existing?.audioGainSettings;
+        } else {
+          padWithProfileId.audioTrimSettings = remapAudioFileIdKeys(
             padWithProfileId.audioTrimSettings,
-          )) {
-            const newId = audioIdMap.get(Number(oldIdStr));
-            if (newId !== undefined) {
-              mappedTrim[newId] = trimValue;
-            }
-          }
-          padWithProfileId.audioTrimSettings = mappedTrim;
+            audioIdMap,
+            "drop",
+          );
+          padWithProfileId.audioGainSettings = remapAudioFileIdKeys(
+            padWithProfileId.audioGainSettings,
+            audioIdMap,
+            "drop",
+          );
         }
         padWithProfileId.audioFileIds = resolved.audioFileIds;
       }

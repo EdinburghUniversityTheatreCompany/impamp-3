@@ -421,6 +421,37 @@ async function importPageMetadata(
   }
 }
 
+/**
+ * Translates a record keyed by audio file ID through an old-id to new-id map.
+ *
+ * Audio file IDs are reassigned on import and on sync, so every
+ * Record<audioFileId, …> field on a pad must go through this.
+ *
+ * `unmappedKeys` is explicit because the call sites genuinely differ:
+ * the import and Drive paths drop an entry whose ID has no mapping, while
+ * the sync-merge path keeps it under its original ID. Passing the wrong one
+ * changes behaviour silently, so there is no default.
+ */
+export function remapAudioFileIdKeys<T>(
+  settings: Record<number, T> | undefined,
+  idMap: Map<number, number>,
+  unmappedKeys: "drop" | "keep",
+): Record<number, T> | undefined {
+  if (!settings) return undefined;
+
+  const result: Record<number, T> = {};
+  for (const [oldIdStr, value] of Object.entries(settings)) {
+    const oldId = Number(oldIdStr);
+    const newId = idMap.get(oldId);
+    if (newId !== undefined) {
+      result[newId] = value;
+    } else if (unmappedKeys === "keep") {
+      result[oldId] = value;
+    }
+  }
+  return result;
+}
+
 // Helper function to import pad configurations (Refactored for single transaction)
 async function importPadConfigurations(
   db: IDBPDatabase<ImpAmpDBSchema>,
@@ -456,21 +487,20 @@ async function importPadConfigurations(
       );
     }
 
-    // Map audioTrimSettings keys (old audioFileId -> new audioFileId)
-    let mappedTrimSettings:
-      Record<number, { trimStart: number; trimEnd: number }> | undefined;
-    if (pad.audioTrimSettings) {
-      mappedTrimSettings = {};
-      for (const [oldIdStr, trimValue] of Object.entries(
-        pad.audioTrimSettings,
-      )) {
-        const oldId = Number(oldIdStr);
-        const newId = audioIdMap.get(oldId);
-        if (newId !== undefined) {
-          mappedTrimSettings[newId] = trimValue;
-        }
-      }
-    }
+    // Map audioTrimSettings and audioGainSettings keys (old audioFileId ->
+    // new audioFileId). An ID with no mapping is dropped: it addresses audio
+    // that was not (or could not be) imported, so keeping it would leave a
+    // setting pointing at nothing.
+    const mappedTrimSettings = remapAudioFileIdKeys(
+      pad.audioTrimSettings,
+      audioIdMap,
+      "drop",
+    );
+    const mappedGainSettings = remapAudioFileIdKeys(
+      pad.audioGainSettings,
+      audioIdMap,
+      "drop",
+    );
 
     // Construct the new pad configuration using the updated structure
     const newPadData: Omit<PadConfiguration, "id"> = {
@@ -481,6 +511,8 @@ async function importPadConfigurations(
       name: pad.name,
       audioFileIds: mappedAudioFileIds, // Use the mapped array
       audioTrimSettings: mappedTrimSettings,
+      audioGainSettings: mappedGainSettings,
+      padGainDb: pad.padGainDb, // Whole-pad gain isn't keyed by audio file ID
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
       createdAt: now,

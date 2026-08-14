@@ -4,6 +4,7 @@ import {
   PageMetadata,
   ensureAudioFileHash,
 } from "./db"; // Import main data types
+import { remapAudioFileIdKeys } from "./importExport";
 
 // Type guard to check if an object has sync fields
 // Exporting Syncable type for use in other modules
@@ -584,20 +585,26 @@ export const detectProfileConflicts = async (
           (id) => remoteToLocalIdMap.get(id) ?? id,
         );
 
-        let translatedTrimSettings = pad.audioTrimSettings;
-        if (translatedTrimSettings) {
-          const newTrim: typeof translatedTrimSettings = {};
-          for (const [idStr, trim] of Object.entries(translatedTrimSettings)) {
-            const id = Number(idStr);
-            newTrim[remoteToLocalIdMap.get(id) ?? id] = trim;
-          }
-          translatedTrimSettings = newTrim;
-        }
+        // A remote ID with no local match is kept under its original ID
+        // (rather than dropped) — this merge path isn't discarding audio
+        // files the way import/Drive-write can, so the setting should
+        // survive under whatever ID eventually resolves it.
+        const translatedTrimSettings = remapAudioFileIdKeys(
+          pad.audioTrimSettings,
+          remoteToLocalIdMap,
+          "keep",
+        );
+        const translatedGainSettings = remapAudioFileIdKeys(
+          pad.audioGainSettings,
+          remoteToLocalIdMap,
+          "keep",
+        );
 
         return {
           ...pad,
           audioFileIds: translatedIds ?? pad.audioFileIds,
           audioTrimSettings: translatedTrimSettings,
+          audioGainSettings: translatedGainSettings,
         };
       });
     }
