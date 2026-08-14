@@ -377,7 +377,6 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
         )}
       </div>
 
-      {/* Whole-pad gain */}
       <div>
         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Pad gain

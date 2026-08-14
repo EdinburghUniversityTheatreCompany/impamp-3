@@ -942,10 +942,8 @@ export const useProfileStore = create<ProfileState>()(
           }
 
           try {
-            // Persist change to DB
             await updateProfile(activeProfileId, { normalisation: settings });
 
-            // Update state
             set((state) => ({
               profiles: state.profiles.map((p) =>
                 p.id === activeProfileId

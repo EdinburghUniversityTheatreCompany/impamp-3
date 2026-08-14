@@ -18,9 +18,6 @@ interface LoudnessOverviewButtonProps {
 /**
  * Button that opens the loudness overview — a sortable table of every sound
  * on the active profile, showing what each will actually play at.
- *
- * @param props - Component props
- * @returns Button component
  */
 const LoudnessOverviewButton: React.FC<LoudnessOverviewButtonProps> = ({
   className = "",

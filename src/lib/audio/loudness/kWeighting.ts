@@ -39,7 +39,6 @@ export function kWeightingCoefficients(sampleRate: number): {
   stage1: Biquad;
   stage2: Biquad;
 } {
-  // Stage 1 - high shelf
   const k1 = Math.tan((Math.PI * SHELF_F0) / sampleRate);
   const vh = 10 ** (SHELF_GAIN_DB / 20);
   const vb = vh ** SHELF_VB_EXPONENT;
@@ -54,7 +53,7 @@ export function kWeightingCoefficients(sampleRate: number): {
     a2: (1 - k1 / SHELF_Q + k1sq) / denom1,
   };
 
-  // Stage 2 - high pass. Numerator is fixed at (1, -2, 1).
+  // High-pass numerator is fixed at (1, -2, 1).
   const k2 = Math.tan((Math.PI * HP_F0) / sampleRate);
   const k2sq = k2 * k2;
   const denom2 = 1 + k2 / HP_Q + k2sq;

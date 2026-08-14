@@ -154,12 +154,9 @@ test.describe("loudness normalisation", () => {
 
     // The background analysis sweep measures both sounds well within the
     // time this test has already taken opening the modal, saving and
-    // sorting — verified empirically (a first draft of this test assumed
-    // both sounds would still be unmeasured here and asserted the opposite
-    // outcome below; it failed 4/4 runs with both rows still present,
-    // because they were already measured). Waiting out the "analysing…"
-    // marker makes that explicit and removes the dependency on how fast a
-    // given machine happens to be, rather than assuming it.
+    // sorting. Waiting out the "analysing…" marker makes that explicit and
+    // removes the dependency on how fast a given machine happens to be,
+    // rather than assuming it.
     await expect(page.getByText("analysing…")).toHaveCount(0);
 
     // Normalisation is on by default (DEFAULT_NORMALISATION.enabled), and

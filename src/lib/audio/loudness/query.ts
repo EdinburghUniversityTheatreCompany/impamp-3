@@ -64,7 +64,6 @@ export function measureRange(
   const start = Math.max(0, Math.min(startSec, duration));
   const end = Math.max(start, Math.min(endSec, duration));
 
-  // --- Peak: every hop that overlaps the range at all ---
   let peakLinear = 0;
   const hopCount = analysis.hopTruePeak.length;
   const firstHop = Math.max(0, Math.floor(start / HOP_SECONDS));
@@ -75,7 +74,6 @@ export function measureRange(
   }
   const truePeakDb = peakLinear > 0 ? 20 * Math.log10(peakLinear) : -Infinity;
 
-  // --- Loudness: blocks fully inside the range ---
   const fullyInside: number[] = [];
   for (let j = 0; j < analysis.blockMeanSquare.length; j++) {
     const blockStart = j * HOP_SECONDS;
@@ -92,9 +90,9 @@ export function measureRange(
     };
   }
 
-  // --- Fallback: range shorter than one gating block ---
-  // A large share of soundboard content is sub-400 ms stabs, so this path is
-  // routine rather than exotic. Use the block that overlaps the range most.
+  // Fallback for a range shorter than one gating block: a large share of
+  // soundboard content is sub-400 ms stabs, so this path is routine rather
+  // than exotic. Use the block that overlaps the range most.
   let bestIndex = -1;
   let bestOverlap = 0;
   for (let j = 0; j < analysis.blockMeanSquare.length; j++) {

@@ -316,9 +316,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
       {syncPanelOpen && <ProfileSyncPanel profile={profile} />}
 
-      {/* Loudness normalisation — active profile only. setNormalisation
-          writes to the store's activeProfileId, so these controls would
-          silently target the wrong profile if shown on any other card. */}
       {isActive && (
         <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
           <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
