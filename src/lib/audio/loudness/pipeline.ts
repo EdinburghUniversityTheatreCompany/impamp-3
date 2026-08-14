@@ -25,11 +25,22 @@ import { LOUDNESS_ALGO_VERSION } from "./constants";
 /** How many files to analyse per idle slice. */
 const BACKFILL_BATCH_SIZE = 3;
 
-// Monotonic tokens so a superseded run can never write. A profile switch
-// starts a new load and a new backfill; whichever run is no longer current
-// must abandon its result rather than clobber the one that replaced it.
+// Monotonic token so a superseded load can never write. A profile switch
+// starts a new load; a slow load for the profile just left must abandon its
+// result rather than clobber the one that replaced it. `runBackfill` no
+// longer uses this pattern — see the coalescing state below.
 let loadGeneration = 0;
-let backfillGeneration = 0;
+
+// `runBackfill` coalesces rather than supersedes: the backfill queue is
+// global (`findUnanalysedAudioFileIds` scans every audio file), so two
+// callers genuinely want the same work, not a fight over who wins. A call
+// that arrives while a run is in flight joins that run's promise instead of
+// starting a competing one; if it also wants a re-run (because the queue
+// was snapshotted at the start and files may have arrived since), it
+// records that, and the in-flight run does exactly one more pass once it
+// finishes before resolving.
+let backfillInFlight: Promise<void> | null = null;
+let backfillRerunRequested = false;
 
 /**
  * Files that failed to decode this session. Kept in memory rather than
@@ -58,10 +69,10 @@ const progressListeners = new Set<(p: BackfillProgress) => void>();
 /**
  * Observes backfill progress without starting one.
  *
- * `runBackfill` must have exactly one caller: a second caller takes a new
- * generation token, supersedes the first, and can leave the in-memory cache
- * repopulated from a snapshot taken before the surviving run's analyses
- * landed. UI that wants to display progress subscribes here instead.
+ * `runBackfill` coalesces concurrent callers (see the coalescing state
+ * above), so it is safe to call from more than one place. UI that only
+ * wants to display progress without itself deciding when a backfill should
+ * run can still subscribe here instead.
  */
 export function subscribeToBackfillProgress(
   listener: (progress: BackfillProgress) => void,
@@ -174,56 +185,104 @@ function onIdle(callback: () => void): void {
 }
 
 /**
- * Analyses every file that needs it, a few at a time, on idle.
- * Resolves once the queue is empty.
- *
- * Guarded by the same generation-token pattern as `loadProfileLoudness`: a
- * profile switch bumps `backfillGeneration`, so the previous backfill's next
- * `step()` sees it is no longer current and resolves instead of continuing —
- * it stops decoding files for a profile the user has already left, rather
- * than racing the new backfill for the same idle slices.
+ * One sweep of the backfill: snapshots the current queue, analyses it a few
+ * files at a time on idle, and resolves once that snapshot is exhausted.
+ * Files that arrive after the snapshot was taken are not picked up by this
+ * call — `runBackfill` below is what re-runs this when that matters.
  */
-export async function runBackfill(
+function runBackfillSweep(
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
-  if (typeof window === "undefined") return;
+  return findUnanalysedAudioFileIds(LOUDNESS_ALGO_VERSION).then((ids) => {
+    const queue = ids.filter((id) => !failedAnalysis.has(id));
+    const total = queue.length;
+    if (total === 0) {
+      emitBackfillProgress(0, 0);
+      onProgress?.(0, 0);
+      return;
+    }
 
-  const generation = ++backfillGeneration;
-  const queue = (
-    await findUnanalysedAudioFileIds(LOUDNESS_ALGO_VERSION)
-  ).filter((id) => !failedAnalysis.has(id));
-  const total = queue.length;
-  if (total === 0) {
-    emitBackfillProgress(0, 0);
-    onProgress?.(0, 0);
-    return;
+    let done = 0;
+    let remaining = queue;
+
+    return new Promise((resolve) => {
+      const step = () => {
+        const batch = nextBackfillBatch(remaining, BACKFILL_BATCH_SIZE);
+        if (batch.length === 0) {
+          resolve();
+          return;
+        }
+        remaining = remaining.slice(batch.length);
+
+        void Promise.all(batch.map((id) => analyseAndStore(id))).then(() => {
+          done += batch.length;
+          emitBackfillProgress(done, total);
+          onProgress?.(done, total);
+          onIdle(step);
+        });
+      };
+
+      onIdle(step);
+    });
+  });
+}
+
+/**
+ * Analyses every file that needs it, a few at a time, on idle. Resolves
+ * once nothing is left to do.
+ *
+ * Safely re-entrant by coalescing rather than superseding: the backfill
+ * queue is global, so two callers — say, `ClientSideInitializer`'s
+ * per-profile-activation sweep and a re-analyse button — genuinely want the
+ * same work done, not a fight over which one gets to do it.
+ *
+ * - If no run is in flight, this starts one and returns its promise.
+ * - If a run is already in flight, this returns that same promise and
+ *   records that another run was requested.
+ * - The queue is snapshotted at the start of each sweep, so a file that
+ *   arrives mid-run would otherwise be missed. When the in-flight run
+ *   finishes, if a re-run was requested while it was going, it does exactly
+ *   one more sweep before resolving — not an open-ended loop, one.
+ */
+export function runBackfill(
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+
+  if (backfillInFlight) {
+    backfillRerunRequested = true;
+    return backfillInFlight;
   }
 
-  let done = 0;
-  let remaining = queue;
-
-  return new Promise((resolve) => {
-    const step = () => {
-      if (generation !== backfillGeneration) {
-        resolve(); // a newer backfill superseded this one
-        return;
-      }
-
-      const batch = nextBackfillBatch(remaining, BACKFILL_BATCH_SIZE);
-      if (batch.length === 0) {
-        resolve();
-        return;
-      }
-      remaining = remaining.slice(batch.length);
-
-      void Promise.all(batch.map((id) => analyseAndStore(id))).then(() => {
-        done += batch.length;
-        emitBackfillProgress(done, total);
-        onProgress?.(done, total);
-        onIdle(step);
-      });
-    };
-
-    onIdle(step);
+  const run = (async () => {
+    do {
+      backfillRerunRequested = false;
+      await runBackfillSweep(onProgress);
+    } while (backfillRerunRequested);
+  })().finally(() => {
+    backfillInFlight = null;
   });
+
+  backfillInFlight = run;
+  return run;
+}
+
+/**
+ * The single entry point for bringing a profile's loudness state current:
+ * warm the in-memory cache from what is already stored, run (or join) the
+ * backfill for anything missing or stale, then warm the cache again to pick
+ * up whatever that backfill just measured.
+ *
+ * Every caller that wants a profile's loudness current should call this
+ * rather than assembling the three steps itself — `ClientSideInitializer` on
+ * profile activation, `applySyncedProfile` after sync delivers new audio,
+ * and the re-analyse action after clearing stale measurements. Safe to call
+ * from more than one place because `runBackfill` coalesces; `loadProfileLoudness`
+ * still assumes `profileId` is the currently active profile, since it
+ * replaces the whole in-memory cache with that profile's entries.
+ */
+export async function refreshProfileLoudness(profileId: number): Promise<void> {
+  await loadProfileLoudness(profileId);
+  await runBackfill();
+  await loadProfileLoudness(profileId);
 }

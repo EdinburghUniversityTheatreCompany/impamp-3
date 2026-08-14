@@ -570,6 +570,30 @@ export async function findUnanalysedAudioFileIds(
   return ids;
 }
 
+/**
+ * Clears the stored loudness analysis for exactly the given audio files.
+ *
+ * Scoped deliberately: audio files are shared between profiles, so a
+ * caller must pass the specific IDs it means to re-analyse (typically from
+ * `getAudioFileIdsForProfile`) rather than every audio file in the store —
+ * otherwise this would discard another profile's measurements too.
+ */
+export async function clearAudioFileLoudness(
+  audioFileIds: Iterable<number>,
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  for (const id of audioFileIds) {
+    const existing = await tx.store.get(id);
+    if (existing?.loudness) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { loudness, ...rest } = existing;
+      await tx.store.put(rest);
+    }
+  }
+  await tx.done;
+}
+
 // Delete an audio file by ID
 export async function deleteAudioFile(id: number): Promise<void> {
   const db = await getDb();

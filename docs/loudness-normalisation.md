@@ -145,17 +145,51 @@ active profile's backfill, next to the normalisation enable toggle and target
 LUFS slider, by subscribing to `subscribeToBackfillProgress`. It does not
 currently appear inside the loudness overview modal.
 
-`runBackfill` must have **exactly one caller** — currently
-`ClientSideInitializer` (`src/components/ClientSideInitializer.tsx:105`), run
-once per profile activation. A second concurrent caller takes a new
-generation token and supersedes the first; the superseded run can still be
-mid-flight and finish writing to the in-memory loudness cache _after_ the
-surviving run already finished, leaving the cache repopulated from a stale
-snapshot. Anything that wants to observe progress — a settings panel, the
-overview modal — should call `subscribeToBackfillProgress` instead of
-starting its own backfill. (This was a real bug during development: an
-earlier version had `ProfileCard` starting a second backfill and it had to be
-removed.)
+`runBackfill` **coalesces concurrent callers** rather than one superseding
+another. The backfill queue is global — `findUnanalysedAudioFileIds` scans
+every audio file — so two callers genuinely want the same work done, not a
+race over who gets to do it:
+
+- If no run is in flight, a call starts one and gets its promise back.
+- If a run is already in flight, a call returns that same promise instead of
+  starting a competing one, and records that another run was requested.
+- The queue is snapshotted at the start of each sweep, so a file that arrives
+  mid-run would otherwise be missed. When the in-flight run finishes, if a
+  re-run was requested while it was going, it does exactly one more sweep
+  before resolving.
+
+`refreshProfileLoudness(profileId)` is the entry point built on top of this:
+warm the in-memory cache from what's already stored, run (or join) the
+backfill, then warm the cache again to pick up whatever that backfill just
+measured. Every caller that wants a profile's loudness current — profile
+activation (`ClientSideInitializer`, `src/components/ClientSideInitializer.tsx`),
+a post-sync refresh (`applySyncedProfile`,
+`src/hooks/applySyncedProfile.ts`), and the re-analyse action below — calls
+this rather than assembling the three steps itself, and any of them can run
+at the same time as another: the coalescing above is what makes that safe.
+
+Anything that only wants to _observe_ progress — a settings panel, the
+overview modal — can still call `subscribeToBackfillProgress` without
+triggering a run of its own.
+
+An earlier version of this design required `runBackfill` to have exactly one
+caller, guarded by a generation token identical in shape to the one
+`loadProfileLoudness` still uses (see above): a second caller would take a
+new token and supersede the first, and the superseded run could finish
+writing to the in-memory cache _after_ the surviving run, leaving it
+repopulated from a stale snapshot. That was a real constraint at the time —
+an earlier version of `ProfileCard` starting a second backfill directly hit
+exactly this bug — but it made a re-analyse button impossible to build
+without a rework, and it was blocking a real fix: nothing started a backfill
+when audio arrived by sync or ZIP import, so a collaborator's newly-synced
+sounds could play un-normalised for the rest of a session. Coalescing
+replaces the generation token for `runBackfill` and removes both problems at
+once. `loadProfileLoudness`'s own generation token is unrelated and
+unchanged — it guards a different race (a slow load for a profile just left
+finishing after a faster load for the newly active one already won). That
+race is not a coalescing candidate: unlike the backfill queue, which is the
+same global work for every caller, only one profile's data is ever correct
+for the cache to hold at a time.
 
 ## Where to find the controls
 
@@ -169,7 +203,17 @@ removed.)
 - **Per-pad gain** — a single dB control in `EditPadForm`, applied on top of
   every sound's own gain.
 - **Profile settings** (`ProfileCard`) — the enable toggle, the target LUFS
-  slider, and backfill progress.
+  slider, backfill progress, and a "Re-analyse loudness" button for the
+  active profile. That button is the escape hatch for a measurement the user
+  suspects is simply wrong (the file was replaced, the analysis ran on a
+  truncated download) — the normal `LOUDNESS_ALGO_VERSION` staleness check
+  doesn't catch that case since the file's own analysis is otherwise
+  current. It clears the stored analysis for exactly this profile's audio
+  files (via `clearAudioFileLoudness` in `src/lib/db.ts`, scoped by
+  `getAudioFileIdsForProfile` — never the whole store, since audio files are
+  shared between profiles) and then calls `refreshProfileLoudness`. Confirmed
+  first, behind the app's standard confirm-modal pattern: on a large board
+  this re-decodes every file, which can take minutes.
 - **The loudness overview** — opened from the toolbar button in
   `src/components/buttons/LoudnessOverviewButton.tsx`, scoped to the active
   profile. Two tabs:
@@ -252,7 +296,12 @@ worth knowing about before debugging a "the number looks wrong" report.
 Audio, no DOM), so they're unit-tested directly, including the compliance
 anchor (a −23 dBFS 1 kHz sine must measure −23.0 ± 0.1 LUFS, per EBU Tech 3341) and the range-equivalence property that the whole trim-aware design
 rests on. `resolveGain` is unit-tested for every rail and edge case. The
-three ID-remapping sites each have a regression test. End-to-end coverage
+three ID-remapping sites each have a regression test. `runBackfill`'s
+coalescing — a caller that arrives while a run is in flight joins the same
+promise, and a re-run requested mid-flight is honoured exactly once, not
+once per extra caller — is unit-tested in `pipeline.test.ts` against the
+same mocked IndexedDB/decoder/analyser doubles used for the failed-analysis
+filter, since it's pure control flow and needs no DOM. End-to-end coverage
 lives in `e2e-tests/loudness.spec.ts` (chromium only, per this project's E2E
 policy); because resolved gain isn't observable from the DOM, it's exposed
 through `exposeE2EHook` (`src/lib/testHooks.ts`) as

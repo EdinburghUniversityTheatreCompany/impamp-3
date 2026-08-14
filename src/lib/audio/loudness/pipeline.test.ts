@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LOUDNESS_ALGO_VERSION } from "./constants";
+import type { LoudnessAnalysis } from "./types";
 
 // `analyseAndStore` and `runBackfill` touch IndexedDB, the audio buffer
 // cache, the decoder, and the analysis engine — none of which exist in
@@ -41,6 +42,7 @@ const {
   analyseAndStore,
   clearFailedAnalysis,
   nextBackfillBatch,
+  refreshProfileLoudness,
   runBackfill,
   shouldAnalyse,
 } = await import("./pipeline");
@@ -99,7 +101,15 @@ describe("nextBackfillBatch", () => {
   });
 });
 
-describe("failed-analysis filtering", () => {
+/**
+ * Stubs `window` (Vitest's node environment has none, and runBackfill /
+ * loadProfileLoudness guard on it for SSR-safety) and makes the idle
+ * scheduler run synchronously, so backfill batches resolve immediately
+ * instead of waiting on the setTimeout(200ms) fallback. Registers
+ * beforeEach/afterEach on whichever describe block calls it — shared by
+ * every describe below that exercises `runBackfill` for real.
+ */
+function useSyntheticIdleWindow(): void {
   const globalWithWindow = globalThis as unknown as {
     window?: unknown;
     requestIdleCallback?: (cb: () => void) => number;
@@ -107,31 +117,34 @@ describe("failed-analysis filtering", () => {
   const hadWindow = "window" in globalThis;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    clearFailedAnalysis();
-
-    // runBackfill (like every IndexedDB-touching function here) guards on
-    // `typeof window !== "undefined"` for SSR-safety. Vitest's node
-    // environment has no `window`, so stub a minimal one to get past the
-    // guard and exercise the function for real.
     if (!hadWindow) globalWithWindow.window = {};
-
-    // Make the idle scheduler run synchronously so backfill batches resolve
-    // immediately instead of waiting on the setTimeout(200ms) fallback.
     globalWithWindow.requestIdleCallback = (cb: () => void) => {
       cb();
       return 0;
     };
-
-    dbMocks.getAudioFile.mockImplementation(async (id: number) =>
-      fakeAudioFile(id),
-    );
-    cacheMocks.getCachedAudioBuffer.mockReturnValue(null);
   });
 
   afterEach(() => {
     if (!hadWindow) delete globalWithWindow.window;
     delete globalWithWindow.requestIdleCallback;
+  });
+}
+
+/** Common mock reset shared by every describe below that calls `runBackfill`. */
+function resetPipelineMocks(): void {
+  vi.clearAllMocks();
+  clearFailedAnalysis();
+  dbMocks.getAudioFile.mockImplementation(async (id: number) =>
+    fakeAudioFile(id),
+  );
+  cacheMocks.getCachedAudioBuffer.mockReturnValue(null);
+}
+
+describe("failed-analysis filtering", () => {
+  useSyntheticIdleWindow();
+
+  beforeEach(() => {
+    resetPipelineMocks();
   });
 
   it("stops offering a file that failed to decode this session", async () => {
@@ -169,5 +182,110 @@ describe("failed-analysis filtering", () => {
       (args: unknown[]) => args[0] as number,
     );
     expect(attemptedIds).toEqual([1]);
+  });
+});
+
+describe("runBackfill coalescing", () => {
+  useSyntheticIdleWindow();
+
+  function fakeAnalysis(): LoudnessAnalysis {
+    return {
+      algoVersion: LOUDNESS_ALGO_VERSION,
+      sampleRate: 48000,
+      duration: 1,
+      blockMeanSquare: new Float32Array(0),
+      hopTruePeak: new Float32Array(0),
+    };
+  }
+
+  beforeEach(() => {
+    resetPipelineMocks();
+    decoderMocks.decodeAudioBlob.mockResolvedValue({});
+    analyseMocks.analyseAudioBuffer.mockReturnValue(fakeAnalysis());
+  });
+
+  it("returns the in-flight promise to a caller that arrives mid-run, and does one coalesced re-run for it", async () => {
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
+
+    const first = runBackfill();
+    const second = runBackfill(); // arrives while `first` is still in flight
+
+    expect(second).toBe(first);
+
+    await first;
+    await second;
+
+    // One sweep for the original call, plus exactly one coalesced re-run for
+    // the request that arrived mid-flight — not one (which would lose the
+    // second caller's request) and not more than two (which would mean it
+    // wasn't coalesced into a single follow-up pass).
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(2);
+  });
+
+  it("honours a rerun request exactly once, regardless of how many callers asked for it mid-flight", async () => {
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
+
+    const first = runBackfill();
+    void runBackfill();
+    void runBackfill();
+    void runBackfill();
+
+    await first;
+
+    // Three extra callers while the first run was in flight still produce
+    // only one coalesced re-run: a boolean "rerun requested" flag, not a
+    // counted queue of reruns — a loop that grew with the caller count would
+    // fail this.
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a fresh, independent run once the previous coalesced sequence has fully finished", async () => {
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
+
+    const first = runBackfill();
+    const second = runBackfill(); // coalesces into one re-run after `first`
+    await first;
+    await second;
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(2);
+
+    const third = runBackfill();
+    expect(third).not.toBe(first);
+    await third;
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(3);
+  });
+
+  it("actually analyses the file both coalesced callers were waiting on, rather than dropping it", async () => {
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
+
+    const first = runBackfill();
+    const second = runBackfill();
+    await first;
+    await second;
+
+    const attemptedIds = dbMocks.getAudioFile.mock.calls.map(
+      (args: unknown[]) => args[0] as number,
+    );
+    // Under the old supersede logic, a second concurrent caller could take
+    // over the generation token and leave the first caller's work undone.
+    expect(attemptedIds).toContain(1);
+  });
+});
+
+describe("refreshProfileLoudness", () => {
+  useSyntheticIdleWindow();
+
+  beforeEach(() => {
+    resetPipelineMocks();
+    dbMocks.getAudioFileIdsForProfile.mockResolvedValue(new Set());
+    dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([]);
+  });
+
+  it("warms the cache, runs the backfill, then warms the cache again", async () => {
+    await refreshProfileLoudness(7);
+
+    expect(dbMocks.getAudioFileIdsForProfile).toHaveBeenCalledWith(7);
+    expect(dbMocks.getAudioFileIdsForProfile).toHaveBeenCalledTimes(2);
+    expect(dbMocks.findUnanalysedAudioFileIds).toHaveBeenCalledTimes(1);
+    expect(loudnessCacheMocks.warmLoudnessCache).toHaveBeenCalledTimes(2);
   });
 });

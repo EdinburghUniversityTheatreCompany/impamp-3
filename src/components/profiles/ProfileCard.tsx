@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
@@ -8,6 +8,8 @@ import {
   Profile,
   DEFAULT_BACKUP_REMINDER_PERIOD_MS,
   DEFAULT_NORMALISATION,
+  clearAudioFileLoudness,
+  getAudioFileIdsForProfile,
 } from "@/lib/db";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
@@ -66,7 +68,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const { applyConflictResolution } = useGoogleDriveSync();
   const { resolveConflict: resolveServerConflict } = useServerSync();
 
-  const { openLazyModal, closeModal } = useModal();
+  const { openLazyModal, openConfirmModal, closeModal } = useModal();
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
@@ -75,17 +77,15 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   // created before this feature, so every read falls back to the default.
   const normalisation = profile.normalisation ?? DEFAULT_NORMALISATION;
 
-  // Backfill progress for the "Analysing N/M…" indicator. This card only
-  // observes — it never calls runBackfill itself. ClientSideInitializer is
-  // the pipeline's sole caller; runBackfill's generation-token supersede
-  // logic assumes exactly one caller, and a second one here would take a
-  // fresh token, supersede the initialiser's run, and could leave the
-  // in-memory loudness cache repopulated from a pre-analysis snapshot for
-  // any file the surviving run analyses in that window. Gated to the active
-  // profile's card because setNormalisation (like setActivePadBehavior,
-  // which it is modelled on) always writes to the store's activeProfileId,
-  // so a non-active card offering these controls would silently edit the
-  // wrong profile.
+  // Backfill progress for the "Analysing N/M…" indicator, and for the
+  // re-analyse action below. `runBackfill` coalesces concurrent callers (see
+  // pipeline.ts) rather than one superseding another, so this card calling
+  // `refreshProfileLoudness` from the re-analyse button alongside
+  // `ClientSideInitializer`'s per-activation sweep is safe — both calls join
+  // the same run. Gated to the active profile's card because setNormalisation
+  // (like setActivePadBehavior, which it is modelled on) always writes to the
+  // store's activeProfileId, so a non-active card offering these controls
+  // would silently edit the wrong profile.
   const [backfill, setBackfill] = useState({ done: 0, total: 0 });
   useEffect(() => {
     if (!isActive) return;
@@ -112,6 +112,41 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const lastSyncedAt =
     syncStatus.lastSyncedAt ??
     (profile.id !== undefined ? getSyncTimestamp(profile.id) || null : null);
+
+  // Re-analyse: the escape hatch for a measurement the user suspects is
+  // simply wrong (file replaced, analysis ran on a truncated download).
+  // Clears the stored analysis for exactly this profile's audio files (never
+  // the whole store, since audio files are shared between profiles), then
+  // calls `refreshProfileLoudness`, whose first step re-warms the in-memory
+  // cache from the database. The cleared files no longer have a stored
+  // `loudness`, so they drop out of that warm rather than needing a separate
+  // cache-eviction call. The backfill that follows is what makes the
+  // `subscribeToBackfillProgress` indicator above move.
+  const [isReanalysing, setIsReanalysing] = useState(false);
+  const [reanalyseError, setReanalyseError] = useState<string | null>(null);
+
+  const handleReanalyse = useCallback(async () => {
+    if (profile.id === undefined) return;
+    setIsReanalysing(true);
+    setReanalyseError(null);
+    try {
+      const audioFileIds = await getAudioFileIdsForProfile(profile.id);
+      await clearAudioFileLoudness(audioFileIds);
+      const { refreshProfileLoudness } = await import(
+        "@/lib/audio/loudness/pipeline"
+      );
+      await refreshProfileLoudness(profile.id);
+    } catch (error) {
+      console.error("Failed to re-analyse loudness:", error);
+      setReanalyseError(
+        error instanceof Error
+          ? error.message
+          : "Failed to re-analyse loudness.",
+      );
+    } finally {
+      setIsReanalysing(false);
+    }
+  }, [profile.id]);
 
   const handleDelete = async () => {
     if (isActive) {
@@ -337,6 +372,29 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           {backfill.total > 0 && backfill.done < backfill.total && (
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
               Analysing {backfill.done}/{backfill.total}…
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={() =>
+              openConfirmModal({
+                title: "Re-analyse loudness",
+                message: `This discards every stored loudness measurement for "${profile.name}" and re-decodes every sound to measure it again. On a large board this can take several minutes. Continue?`,
+                confirmText: "Re-analyse",
+                onConfirm: handleReanalyse,
+              })
+            }
+            disabled={isReanalysing}
+            aria-label="Re-analyse loudness: clear stored measurements and re-decode every sound in this profile"
+            data-testid="normalisation-reanalyse"
+            className="mt-3 px-3 py-1 text-xs bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
+          >
+            {isReanalysing ? "Re-analysing…" : "Re-analyse loudness"}
+          </button>
+          {reanalyseError && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+              {reanalyseError}
             </p>
           )}
         </div>
