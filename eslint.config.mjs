@@ -27,22 +27,15 @@ const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypeScript,
   {
-    // eslint-config-next 16 turns on the React Compiler-era react-hooks rules.
-    // They flag long-standing patterns in this codebase — set-state-in-effect
-    // being most of them — none of which the dependency upgrade introduced.
-    // Clearing them means reworking effect-driven state in the audio, profile
-    // and sync paths: a real refactor with real regression risk, and not
-    // something to bundle into a dependency bump.
+    // eslint-config-next 16 turns on the React Compiler-era react-hooks rules,
+    // which flagged long-standing patterns across this codebase. They were all
+    // demoted to warnings at the time so CI stayed green on pre-existing code.
     //
-    // Demoted to warnings so they stay visible without turning CI red on
-    // pre-existing code. The sites are catalogued in
-    // plans/off-topic-improvements.md; promote each back to "error" as it is
-    // cleared.
+    // immutability, refs and purity are cleared and back to "error" — the
+    // remaining set-state-in-effect sites are still being worked through, and
+    // it stays a warning until the last one goes.
     rules: {
       "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/immutability": "warn",
-      "react-hooks/refs": "warn",
-      "react-hooks/purity": "warn",
     },
   },
 ];

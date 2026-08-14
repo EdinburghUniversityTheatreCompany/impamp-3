@@ -148,32 +148,26 @@ export function useServerSync(): ServerSyncHook {
     [],
   );
 
-  // Read the Drive token at call time rather than closing over it, so a
-  // refresh that happened since render is picked up.
-  const driveAccessRef = useRef<DriveAccess>({
-    tokenInfo: null,
-    onTokenRefresh: () => {},
-  });
-  driveAccessRef.current = {
-    tokenInfo: currentDriveToken(),
-    onTokenRefresh: (token: TokenInfo) => {
-      const store = useProfileStore.getState();
-      store.setGoogleAuthDetails(
-        store.googleUser ?? { name: "", email: "" },
-        token.accessToken,
-        token.refreshToken ?? null,
-        token.expiresAt,
-      );
-    },
-  };
-
   const sync = useCallback(
     async (profileId: number): Promise<ServerSyncResult> => {
-      const result = await syncServerProfile(
-        profileId,
-        callbacks,
-        driveAccessRef.current,
-      );
+      // Built here rather than during render: the point is to read the Drive
+      // token at call time, so a refresh since the last render is picked up.
+      // It used to be assembled into a ref during render, which is both the
+      // long way round and a write React reserves for effects and handlers.
+      const driveAccess: DriveAccess = {
+        tokenInfo: currentDriveToken(),
+        onTokenRefresh: (token: TokenInfo) => {
+          const store = useProfileStore.getState();
+          store.setGoogleAuthDetails(
+            store.googleUser ?? { name: "", email: "" },
+            token.accessToken,
+            token.refreshToken ?? null,
+            token.expiresAt,
+          );
+        },
+      };
+
+      const result = await syncServerProfile(profileId, callbacks, driveAccess);
 
       if (result.status === "success") {
         await applySyncedProfile(profileId);

@@ -39,7 +39,7 @@ interface PadInteractionsParams {
   currentPageIndex: number;
   padConfigs: Map<number, PadConfiguration>;
   refreshPadConfigs: () => void;
-  hasInteracted: React.RefObject<boolean>;
+  hasInteractedRef: React.RefObject<boolean>;
 }
 
 /**
@@ -49,7 +49,7 @@ interface PadInteractionsParams {
  * @returns Object containing handlers for pad interactions
  */
 export function usePadInteractions(params: PadInteractionsParams) {
-  const { currentPageIndex, padConfigs, refreshPadConfigs, hasInteracted } =
+  const { currentPageIndex, padConfigs, refreshPadConfigs, hasInteractedRef } =
     params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const incrementEmergencySoundsVersion = useProfileStore(
@@ -270,9 +270,9 @@ export function usePadInteractions(params: PadInteractionsParams) {
         return;
       }
 
-      if (!hasInteracted.current) {
+      if (!hasInteractedRef.current) {
         ensureAudioContextActive();
-        hasInteracted.current = true;
+        hasInteractedRef.current = true;
       }
 
       // Use instant trigger with loading state callbacks
@@ -334,7 +334,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         },
       });
     },
-    [activeProfileId, currentPageIndex, hasInteracted],
+    [activeProfileId, currentPageIndex, hasInteractedRef],
   );
 
   /**

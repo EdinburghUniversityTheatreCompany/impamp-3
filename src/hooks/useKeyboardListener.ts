@@ -692,9 +692,13 @@ export function useKeyboardListener() {
   }, [setEditMode]);
 
   // Kept in a ref so the unmount-only effect below can call the latest version
-  // without taking it as a dependency (which would defeat the point).
+  // without taking it as a dependency (which would defeat the point). Assigned
+  // in an effect rather than during render — the only reader is that effect's
+  // cleanup, which runs long after every effect has flushed.
   const clearShiftEditModeRef = useRef(clearShiftEditMode);
-  clearShiftEditModeRef.current = clearShiftEditMode;
+  useEffect(() => {
+    clearShiftEditModeRef.current = clearShiftEditMode;
+  });
 
   // Add a keyup handler to detect when shift key is released
   const handleKeyUp = useCallback(

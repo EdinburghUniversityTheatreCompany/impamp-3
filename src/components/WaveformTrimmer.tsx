@@ -38,6 +38,44 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toFixed(2).padStart(5, "0")}`;
 }
 
+/**
+ * Draw one trim handle. Lives at module scope because it needs nothing from
+ * the component — only its arguments and the layout constants above. Inside
+ * the component it was a function declaration that drawWaveform called
+ * before its own declaration, which works only by hoisting.
+ */
+function drawHandle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  height: number,
+  type: "start" | "end",
+) {
+  // Handle line
+  ctx.strokeStyle = type === "start" ? "rgb(34, 197, 94)" : "rgb(239, 68, 68)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, PADDING_TOP);
+  ctx.lineTo(x, PADDING_TOP + WAVEFORM_HEIGHT);
+  ctx.stroke();
+
+  // Handle grip
+  ctx.fillStyle = type === "start" ? "rgb(34, 197, 94)" : "rgb(239, 68, 68)";
+  const gripY = PADDING_TOP + WAVEFORM_HEIGHT / 2 - 12;
+  ctx.beginPath();
+  ctx.roundRect(x - HANDLE_WIDTH / 2, gripY, HANDLE_WIDTH, 24, 3);
+  ctx.fill();
+
+  // Grip lines
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 1;
+  for (let i = -4; i <= 4; i += 4) {
+    ctx.beginPath();
+    ctx.moveTo(x - 2, gripY + 12 + i);
+    ctx.lineTo(x + 2, gripY + 12 + i);
+    ctx.stroke();
+  }
+}
+
 const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
   audioFileId,
   audioFileName,
@@ -170,42 +208,15 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     );
   }, [peaks, duration, trimStart, trimEnd]);
 
-  function drawHandle(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    height: number,
-    type: "start" | "end",
-  ) {
-    // Handle line
-    ctx.strokeStyle =
-      type === "start" ? "rgb(34, 197, 94)" : "rgb(239, 68, 68)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, PADDING_TOP);
-    ctx.lineTo(x, PADDING_TOP + WAVEFORM_HEIGHT);
-    ctx.stroke();
-
-    // Handle grip
-    ctx.fillStyle = type === "start" ? "rgb(34, 197, 94)" : "rgb(239, 68, 68)";
-    const gripY = PADDING_TOP + WAVEFORM_HEIGHT / 2 - 12;
-    ctx.beginPath();
-    ctx.roundRect(x - HANDLE_WIDTH / 2, gripY, HANDLE_WIDTH, 24, 3);
-    ctx.fill();
-
-    // Grip lines
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 1;
-    for (let i = -4; i <= 4; i += 4) {
-      ctx.beginPath();
-      ctx.moveTo(x - 2, gripY + 12 + i);
-      ctx.lineTo(x + 2, gripY + 12 + i);
-      ctx.stroke();
-    }
-  }
-
-  // Keep the latest draw function reachable without re-running the resize effect
+  // Keep the latest draw function reachable without re-running the resize
+  // effect. Updated in an effect rather than during render: writing to a ref
+  // while rendering is exactly what React reserves for effects and handlers,
+  // and the only reader is a ResizeObserver callback, which cannot run before
+  // effects have flushed.
   const drawWaveformRef = useRef(drawWaveform);
-  drawWaveformRef.current = drawWaveform;
+  useEffect(() => {
+    drawWaveformRef.current = drawWaveform;
+  });
 
   // Redraw on state changes
   useEffect(() => {

@@ -44,6 +44,22 @@ interface ProfileCardProps {
   isActive: boolean;
 }
 
+/**
+ * How to describe a paused sync, given when it resumes.
+ *
+ * Pulled out of the JSX because the version inline there fell back to
+ * `Date.now()` when there was no resume time — a call whose result changes on
+ * every render, which is exactly what React Compiler cannot cache, and which
+ * rendered the useless "Sync Paused until <this very moment>". A pause with no
+ * resume time is simply a pause with no end to name.
+ */
+function syncPauseLabel(resumeAt: number | null): string {
+  if (!resumeAt) return "Sync Paused";
+  if (resumeAt >= Number.MAX_SAFE_INTEGER - 1)
+    return "Sync Paused indefinitely";
+  return `Sync Paused until ${format(new Date(resumeAt), "h:mm a, MMM d")}`;
+}
+
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const {
     setActiveProfileId,
@@ -578,10 +594,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
             <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
               <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
-                {(getSyncResumeTime(profile.id!) ?? 0) >=
-                Number.MAX_SAFE_INTEGER - 1
-                  ? "Sync Paused indefinitely"
-                  : `Sync Paused until ${format(new Date(getSyncResumeTime(profile.id!) || Date.now()), "h:mm a, MMM d")}`}
+                {syncPauseLabel(getSyncResumeTime(profile.id!))}
               </p>
               <button
                 onClick={async () => {

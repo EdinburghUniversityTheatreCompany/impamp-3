@@ -156,7 +156,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const { openLazyModal, closeModal } = useModal();
 
   // Refs
-  const hasInteracted = useRef(false);
+  const hasInteractedRef = useRef(false);
 
   // Use the hook to get pad configurations
   const {
@@ -182,7 +182,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     currentPageIndex,
     padConfigs,
     refreshPadConfigs,
-    hasInteracted,
+    hasInteractedRef,
   });
 
   const { handleSwapPads } = usePadSwap({
