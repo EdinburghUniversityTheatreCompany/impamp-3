@@ -69,6 +69,17 @@ export default function LoudnessOverviewModalContent() {
   // used as a memo dependency below to force `soundRows` to recompute once
   // an unmeasured sound gets measured by the background sweep.
   const [cacheVersion, setCacheVersion] = useState(0);
+  // Buffers a sound-gain drag in progress: GainControl's <input type="range">
+  // fires onChange continuously while dragging, not on release, so writing
+  // straight to the database on every tick would amplify one drag into
+  // dozens of IndexedDB writes and — worse — resort the (worst-first) table
+  // out from under the pointer mid-gesture. Holding the live value here
+  // instead means `pads` (and therefore the sort) only changes once, when
+  // the drag actually ends.
+  const [pendingGain, setPendingGain] = useState<{
+    key: string;
+    db: number;
+  } | null>(null);
 
   // Load this profile's pads and every distinct sound name they reference.
   useEffect(() => {
@@ -145,7 +156,9 @@ export default function LoudnessOverviewModalContent() {
     }
   };
 
-  const setSoundGain = async (
+  // Called once, from GainControl's onCommit (pointer release / blur) — not
+  // from onChange, which only updates the local `pendingGain` buffer above.
+  const commitSoundGain = async (
     pageIndex: number,
     padIndex: number,
     audioFileId: number,
@@ -154,7 +167,13 @@ export default function LoudnessOverviewModalContent() {
     const pad = pads.find(
       (p) => p.pageIndex === pageIndex && p.padIndex === padIndex,
     );
-    if (!pad || activeProfileId === null) return;
+    if (!pad || activeProfileId === null) {
+      console.warn(
+        `[LoudnessOverview] No pad found at ${pageIndex}-${padIndex} for sound ${audioFileId}; discarding gain edit.`,
+      );
+      setPendingGain(null);
+      return;
+    }
 
     // Spread the pad's existing gain record — replacing it wholesale would
     // silently erase every other sound's gain on this pad, and that loss
@@ -164,27 +183,41 @@ export default function LoudnessOverviewModalContent() {
       [audioFileId]: db,
     };
 
-    await upsertPadConfiguration({
-      profileId: pad.profileId,
-      pageIndex: pad.pageIndex,
-      padIndex: pad.padIndex,
-      keyBinding: pad.keyBinding,
-      name: pad.name,
-      audioFileIds: pad.audioFileIds,
-      audioTrimSettings: pad.audioTrimSettings,
-      audioGainSettings: updatedGainSettings,
-      padGainDb: pad.padGainDb,
-      playbackType: pad.playbackType,
-      isDisabled: pad.isDisabled,
-    });
+    try {
+      await upsertPadConfiguration({
+        profileId: pad.profileId,
+        pageIndex: pad.pageIndex,
+        padIndex: pad.padIndex,
+        keyBinding: pad.keyBinding,
+        name: pad.name,
+        audioFileIds: pad.audioFileIds,
+        audioTrimSettings: pad.audioTrimSettings,
+        audioGainSettings: updatedGainSettings,
+        padGainDb: pad.padGainDb,
+        playbackType: pad.playbackType,
+        isDisabled: pad.isDisabled,
+      });
 
-    setPads((current) =>
-      current.map((p) =>
-        p.pageIndex === pageIndex && p.padIndex === padIndex
-          ? { ...p, audioGainSettings: updatedGainSettings }
-          : p,
-      ),
-    );
+      setPads((current) =>
+        current.map((p) =>
+          p.pageIndex === pageIndex && p.padIndex === padIndex
+            ? { ...p, audioGainSettings: updatedGainSettings }
+            : p,
+        ),
+      );
+    } catch (error) {
+      // The slider is a controlled input driven by `pendingGain` while a
+      // drag is in flight; since `pads` never updated, clearing the buffer
+      // below is what makes it visibly snap back to the last-saved value
+      // instead of silently disagreeing with both React state and the
+      // database.
+      console.warn(
+        `[LoudnessOverview] Failed to save gain for pad ${pageIndex}-${padIndex}, sound ${audioFileId}:`,
+        error,
+      );
+    } finally {
+      setPendingGain(null);
+    }
   };
 
   return (
@@ -297,9 +330,14 @@ export default function LoudnessOverviewModalContent() {
                   <td className="px-2 py-1">
                     <GainControl
                       compact
-                      valueDb={row.soundGainDb}
-                      onChange={(db) =>
-                        void setSoundGain(
+                      valueDb={
+                        pendingGain?.key === row.key
+                          ? pendingGain.db
+                          : row.soundGainDb
+                      }
+                      onChange={(db) => setPendingGain({ key: row.key, db })}
+                      onCommit={(db) =>
+                        void commitSoundGain(
                           row.pageIndex,
                           row.padIndex,
                           row.audioFileId,

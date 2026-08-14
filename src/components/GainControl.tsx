@@ -6,6 +6,20 @@ import { formatGainDb, gainToneClass } from "@/lib/audio/loudness/format";
 interface GainControlProps {
   valueDb: number;
   onChange: (db: number) => void;
+  /**
+   * Fires once the user has finished adjusting — pointer release or the
+   * control losing focus (so a keyboard-driven change commits too) — rather
+   * than on every intermediate `onChange` tick during a drag. Optional and
+   * additive: a caller that only needs the live value (e.g. `EditPadForm`,
+   * which just buffers into its own form state and saves once on submit)
+   * can omit it and nothing changes.
+   *
+   * A caller that writes on every `onChange` (e.g. the loudness overview,
+   * which persists straight to IndexedDB) should instead buffer locally on
+   * `onChange` and do the actual write from `onCommit` — otherwise a single
+   * drag fires one write per tick instead of one write for the gesture.
+   */
+  onCommit?: (db: number) => void;
   label: string;
   testId?: string;
   compact?: boolean;
@@ -22,10 +36,19 @@ interface GainControlProps {
 export default function GainControl({
   valueDb,
   onChange,
+  onCommit,
   label,
   testId,
   compact = false,
 }: GainControlProps) {
+  // Read the value straight off the DOM at commit time rather than closing
+  // over `valueDb`: the prop only reflects the caller's state after it has
+  // re-rendered from the preceding `onChange`, and there is no guarantee
+  // that has happened yet by the time the pointer-up/blur handler runs.
+  // The input's own value is authoritative regardless of that timing.
+  const commitFromEvent = (e: { currentTarget: HTMLInputElement }) =>
+    onCommit?.(Number(e.currentTarget.value));
+
   return (
     <div className={compact ? "flex items-center gap-2" : "flex flex-col"}>
       <div className="flex items-center gap-2">
@@ -36,6 +59,8 @@ export default function GainControl({
           step={0.5}
           value={valueDb}
           onChange={(e) => onChange(Number(e.target.value))}
+          onPointerUp={commitFromEvent}
+          onBlur={commitFromEvent}
           aria-label={label}
           className={compact ? "w-24" : "w-full"}
           data-testid={testId}
@@ -48,7 +73,10 @@ export default function GainControl({
         </span>
         <button
           type="button"
-          onClick={() => onChange(0)}
+          onClick={() => {
+            onChange(0);
+            onCommit?.(0);
+          }}
           disabled={valueDb === 0}
           className="text-xs text-gray-500 underline disabled:opacity-40 dark:text-gray-400"
           aria-label={`Reset ${label} to 0 dB`}
