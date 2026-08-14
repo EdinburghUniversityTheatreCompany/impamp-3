@@ -58,6 +58,10 @@ export default function LoudnessOverviewModalContent() {
       s.profiles.find((p) => p.id === s.activeProfileId)?.normalisation ??
       DEFAULT_NORMALISATION,
   );
+  const incrementPadConfigsVersion = useProfileStore(
+    (s) => s.incrementPadConfigsVersion,
+  );
+  const requestSync = useProfileStore((s) => s.requestSync);
 
   const [pads, setPads] = useState<PadConfiguration[]>([]);
   const [names, setNames] = useState<Map<number, string>>(new Map());
@@ -83,6 +87,10 @@ export default function LoudnessOverviewModalContent() {
     key: string;
     db: number;
   } | null>(null);
+  // True until the initial pad/name load resolves, so the "No sounds
+  // assigned yet" empty state doesn't flash for a frame on every open before
+  // any pads have been fetched.
+  const [isLoading, setIsLoading] = useState(true);
 
   // Load this profile's pads and every distinct sound name they reference.
   useEffect(() => {
@@ -90,6 +98,7 @@ export default function LoudnessOverviewModalContent() {
     let cancelled = false;
 
     void (async () => {
+      setIsLoading(true);
       const loaded = await getAllPadConfigurationsForProfile(activeProfileId);
       if (cancelled) return;
       setPads(loaded);
@@ -108,7 +117,10 @@ export default function LoudnessOverviewModalContent() {
           return [id, file?.name ?? `Sound ${id}`];
         }),
       );
-      if (!cancelled) setNames(new Map(entries));
+      if (!cancelled) {
+        setNames(new Map(entries));
+        setIsLoading(false);
+      }
     })();
 
     return () => {
@@ -277,6 +289,9 @@ export default function LoudnessOverviewModalContent() {
             : p,
         ),
       );
+
+      incrementPadConfigsVersion(); // Refresh keyboard bindings too
+      requestSync(pad.profileId);
     } catch (error) {
       // The slider is a controlled input driven by `pendingGain` while a
       // drag is in flight; since `pads` never updated, clearing the buffer
@@ -543,7 +558,7 @@ export default function LoudnessOverviewModalContent() {
         )}
       </div>
 
-      {visibleRows.length === 0 && tab === "sounds" && (
+      {!isLoading && visibleRows.length === 0 && tab === "sounds" && (
         <p className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
           {problemsOnly
             ? "No problems found — every sound is within 3 dB of target."

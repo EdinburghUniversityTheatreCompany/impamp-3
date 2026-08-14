@@ -152,4 +152,45 @@ describe("resolveGain", () => {
     expect(trimmed.measuredLufs).toBeCloseTo(full.measuredLufs as number, 1);
     expect(trimmed.estimated).toBe(false);
   });
+
+  // {trimStart: 0, trimEnd: 0} is the "no trim" shape EditPadForm defaults
+  // to, and exactly what clampTrimRange in playback.ts was written to
+  // absorb: a zero-width range that would otherwise measure no blocks at
+  // all and return a null lufs, even though the pad plays the whole file.
+  it("treats a {0, 0} trim range as the whole file, matching playback", () => {
+    const analysis = fakeAnalysis(-27, -12);
+    const full = resolveGain({ ...base, analysis });
+    const zeroWidth = resolveGain({
+      ...base,
+      analysis,
+      trimStart: 0,
+      trimEnd: 0,
+    });
+    expect(zeroWidth.measuredLufs).not.toBeNull();
+    expect(zeroWidth.measuredLufs).toBeCloseTo(full.measuredLufs as number, 1);
+    expect(zeroWidth.finalLufs).toBeCloseTo(full.finalLufs as number, 1);
+  });
+
+  // A reversed range (end before start) is equally malformed. Before this
+  // fix, gain.ts passed it straight to measureRange, whose own clamping
+  // (`end = Math.max(start, ...)`) collapses a reversed range to zero
+  // width — the same silent-null failure as {0, 0}. clampTrimRange instead
+  // discards the bad end point and keeps playing from the (valid) start,
+  // which is what the pad actually does.
+  it("treats a reversed trim range as playback does, not as a null measurement", () => {
+    const analysis = fakeAnalysis(-27, -12);
+    const full = resolveGain({ ...base, analysis });
+    const reversed = resolveGain({
+      ...base,
+      analysis,
+      trimStart: 0.5,
+      trimEnd: 0.2,
+    });
+    expect(reversed.measuredLufs).not.toBeNull();
+    // Constant signal, so measuring from 0.5s to the end agrees with the
+    // full-file figure — but only once the range past 0.5s is honoured
+    // rather than collapsed to nothing.
+    expect(reversed.measuredLufs).toBeCloseTo(full.measuredLufs as number, 1);
+    expect(reversed.finalLufs).toBeCloseTo(full.finalLufs as number, 1);
+  });
 });

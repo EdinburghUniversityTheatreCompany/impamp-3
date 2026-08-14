@@ -64,4 +64,38 @@ describe("analyseLoudness", () => {
     expect(result.blockMeanSquare.length).toBe(0);
     expect(result.duration).toBe(0);
   });
+
+  // BS.1770-4 excludes the LFE channel from the loudness measurement
+  // entirely. Web Audio's 5.1 channel order is [L, R, C, LFE, SL, SR], so
+  // this puts the signal at index 3 — everything else silent — and expects
+  // it to contribute nothing at all, not the 1.41 a naive "index >= 3 is a
+  // surround" rule would give it.
+  it("excludes the LFE channel entirely in a 5.1 layout", () => {
+    const silence = new Float32Array(Math.floor(SAMPLE_RATE * 2));
+    const lfe = sine(80, 2, -6);
+    const result = analyseLoudness(
+      [silence, silence, silence, lfe, silence, silence],
+      SAMPLE_RATE,
+    );
+    expect(Array.from(result.blockMeanSquare).every((w) => w === 0)).toBe(true);
+  });
+
+  // Quad is [L, R, SL, SR] — the surrounds sit at index 2 and 3, not 3+ as a
+  // naive rule would assume. The same signal in a surround channel should
+  // read 10*log10(1.41) louder than in a front channel.
+  it("weights the quad surrounds at 1.41 and the fronts at unity", () => {
+    const silence = new Float32Array(Math.floor(SAMPLE_RATE * 2));
+    const front = analyseLoudness(
+      [sine(1000, 2, -23), silence, silence, silence],
+      SAMPLE_RATE,
+    );
+    const surround = analyseLoudness(
+      [silence, silence, sine(1000, 2, -23), silence],
+      SAMPLE_RATE,
+    );
+    expect(meanBlockLufs(surround.blockMeanSquare)).toBeCloseTo(
+      meanBlockLufs(front.blockMeanSquare) + 10 * Math.log10(1.41),
+      1,
+    );
+  });
 });

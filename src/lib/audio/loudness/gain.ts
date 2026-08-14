@@ -11,6 +11,7 @@
  * @module lib/audio/loudness/gain
  */
 
+import { clampTrimRange } from "../playback";
 import {
   MAX_NORM_BOOST_DB,
   MAX_TOTAL_GAIN_DB,
@@ -43,10 +44,21 @@ export function resolveGain(input: ResolveGainInput): ResolvedGain {
     };
   }
 
+  // Route through the same clamping playback uses: a stored trim range can
+  // be malformed (non-finite, reversed, or past the real duration), and
+  // playback's answer to that — discard it and use the whole file — is the
+  // one this measurement must agree with. Without this, a `{0, 0}` "no trim"
+  // pad measures a zero-width range, finds no blocks, and plays completely
+  // un-normalised while the overview shows "—" for a pad that audibly plays.
+  const clampedRange = clampTrimRange(
+    input.trimStart,
+    input.trimEnd,
+    analysis.duration,
+  );
   const range = measureRange(
     analysis,
-    input.trimStart,
-    input.trimEnd ?? analysis.duration,
+    clampedRange.trimStart,
+    clampedRange.trimEnd ?? analysis.duration,
   );
 
   const canNormalise = normalisation.enabled && range.lufs !== null;

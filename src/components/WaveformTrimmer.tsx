@@ -383,13 +383,21 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
       padInfo: { profileId: 0, pageIndex: 0, padIndex: 0 },
       trimStart,
       trimEnd,
+      volume: resolved.linear,
       multiSoundState: {
         playbackType: "sequential",
         allAudioFileIds: [audioFileId],
         currentAudioFileId: audioFileId,
       },
     });
-  }, [trimStart, trimEnd, audioFileId, audioFileName, previewKey]);
+  }, [
+    trimStart,
+    trimEnd,
+    audioFileId,
+    audioFileName,
+    previewKey,
+    resolved.linear,
+  ]);
 
   // Save and close
   const handleSave = useCallback(() => {

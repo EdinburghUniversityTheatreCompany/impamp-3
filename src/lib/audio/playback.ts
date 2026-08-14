@@ -58,7 +58,7 @@ const disposedMediaElements = new WeakSet<HTMLAudioElement>();
  * Creates an audio source node for playback
  *
  * @param buffer - The audio buffer to play
- * @param volume - The volume level (0.0 to 1.0)
+ * @param volume - The volume level (0.0 to MAX_GAIN)
  * @returns Object containing source node and gain node
  */
 function createAudioSource(
@@ -94,7 +94,7 @@ function createAudioSource(
  * @param duration - Known media duration, if available
  * @returns The clamped trim range; trimEnd stays undefined when unknown/invalid
  */
-function clampTrimRange(
+export function clampTrimRange(
   rawStart: number | undefined,
   rawEnd: number | undefined,
   duration?: number,

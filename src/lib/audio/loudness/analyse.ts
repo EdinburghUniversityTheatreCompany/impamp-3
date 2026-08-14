@@ -18,13 +18,29 @@ import { kWeight } from "./kWeighting";
 import { computeHopTruePeak } from "./truePeak";
 
 /**
- * BS.1770-4 channel weights. Left, right and centre count at unity; surrounds
- * at 1.41. Mono and stereo are the realistic cases here, so in practice every
- * weight is 1.0.
+ * BS.1770-4 channel weights, by channel *role* — not raw index. Web Audio's
+ * channel order is only defined for 1 (mono), 2 (stereo), 4 (quad) and 6
+ * (5.1); anything else is an unspecified discrete layout, so every channel
+ * there is left at unity rather than guessed at.
+ *
+ *   1 (mono):   [C]                        -> 1
+ *   2 (stereo): [L, R]                     -> 1, 1
+ *   4 (quad):   [L, R, SL, SR]             -> 1, 1, 1.41, 1.41
+ *   6 (5.1):    [L, R, C, LFE, SL, SR]     -> 1, 1, 1, 0, 1.41, 1.41
+ *
+ * Left, right and centre count at unity; the surrounds (SL/SR) at 1.41. LFE
+ * is excluded from the loudness measurement entirely, per BS.1770-4 — it is
+ * not a surround channel and must not be weighted as one.
  */
 function channelWeight(index: number, channelCount: number): number {
-  if (channelCount <= 2) return 1;
-  return index >= 3 ? 1.41 : 1;
+  if (channelCount === 6) {
+    if (index === 3) return 0; // LFE — excluded per BS.1770-4
+    return index >= 4 ? 1.41 : 1; // SL, SR at 4, 5; L, R, C at 0-2
+  }
+  if (channelCount === 4) {
+    return index >= 2 ? 1.41 : 1; // SL, SR at 2, 3
+  }
+  return 1; // mono, stereo, and any unspecified discrete layout
 }
 
 /**

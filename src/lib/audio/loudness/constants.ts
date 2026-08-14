@@ -12,7 +12,7 @@
 export const BLOCK_SECONDS = 0.4;
 /** Gating hop length in seconds — 75% overlap. */
 export const HOP_SECONDS = 0.1;
-/** Loudness offset from BS.1770-4, compensating the K-filter gain at 1 kHz. */
+/** Loudness offset from BS.1770-4, compensating the K-filter gain at the 997 Hz calibration tone. */
 export const LOUDNESS_OFFSET_DB = -0.691;
 /** Absolute gate threshold, LUFS. */
 export const ABSOLUTE_GATE_LUFS = -70;

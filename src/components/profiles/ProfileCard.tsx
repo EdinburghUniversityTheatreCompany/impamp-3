@@ -15,6 +15,7 @@ import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
+import { formatLufs } from "@/lib/audio/loudness/format";
 import { useServerSync } from "@/hooks/useServerSync";
 import { getSyncState } from "@/lib/syncState";
 import { useProfileSyncStatus } from "@/store/syncStatusStore";
@@ -349,7 +350,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
           <label className="mt-3 block">
             <span className="text-sm text-gray-700 dark:text-gray-300">
-              Target loudness: {normalisation.targetLufs} LUFS
+              Target loudness: {formatLufs(normalisation.targetLufs)} LUFS
             </span>
             <input
               type="range"
