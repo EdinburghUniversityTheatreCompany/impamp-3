@@ -36,14 +36,18 @@ describe("measureRange", () => {
     expect(sliced.lufs as number).toBeCloseTo(fresh.lufs as number, 1);
   });
 
+  // Levels are 8 dB apart on purpose. Widen the gap much further and the
+  // relative gate excludes the quiet half outright, collapsing the
+  // whole-file figure onto the loud-half one — the gate working, not a bug.
+  // The largest gap this comparison can ever show is 10*log10(2) = 3.01 dB.
   it("gives a different answer for a trimmed range than the whole file", () => {
-    const full = concat(sine(1000, 4, -35), sine(1000, 4, -15));
+    const full = concat(sine(1000, 4, -28), sine(1000, 4, -20));
     const analysis = analyseLoudness([full, full], SAMPLE_RATE);
 
     const whole = measureRange(analysis, 0, 8).lufs as number;
     const loudHalf = measureRange(analysis, 4, 8).lufs as number;
 
-    expect(loudHalf).toBeGreaterThan(whole + 3);
+    expect(loudHalf).toBeGreaterThan(whole + 2);
   });
 
   // The absolute gate exists so silence does not drag the figure down.
@@ -63,7 +67,11 @@ describe("measureRange", () => {
       6,
     ).lufs as number;
 
-    expect(padded).toBeCloseTo(toneOnly, 1);
+    // The absolute gate drops the silent blocks; without it this would read
+    // about 3 dB low. The residual ~0.2 LU is from the three blocks
+    // straddling the tone-to-silence cut, which contain partial tone —
+    // inherent to 400 ms block gating, not leakage through the gate.
+    expect(padded).toBeCloseTo(toneOnly, 0);
   });
 
   it("flags a sub-400 ms range as estimated but still returns a value", () => {
