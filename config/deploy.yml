@@ -73,10 +73,10 @@ env:
   secret:
     - GOOGLE_CLIENT_SECRET
     - GOOGLE_API_KEY
-    # Wasabi keys, when hosting audio. Resolved from fnox/Bitwarden at deploy
-    # time — never write the values into this file.
-    # - IMPAMP_S3_ACCESS_KEY_ID
-    # - IMPAMP_S3_SECRET_ACCESS_KEY
+    # Wasabi keys, for server-hosted audio. .kamal/secrets holds only
+    # $-references, so the values never enter a committed file.
+    - IMPAMP_S3_ACCESS_KEY_ID
+    - IMPAMP_S3_SECRET_ACCESS_KEY
     # - RAILS_MASTER_KEY
 
 # Aliases are triggered with "bin/kamal <alias>". You can overwrite arguments on invocation:
