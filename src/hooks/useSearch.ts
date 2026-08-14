@@ -30,6 +30,10 @@ export interface SearchResult {
   playbackType: PlaybackType;
   /** Trim settings per audio file */
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  /** Per-sound manual gain in dB, keyed by audio file ID */
+  audioGainSettings?: Record<number, number>;
+  /** Whole-pad manual gain in dB */
+  padGainDb?: number;
   /** Whether the pad is disabled and so cannot be played or armed */
   isDisabled: boolean;
   /** Original filename of the first audio file */
@@ -169,6 +173,8 @@ export function useSearch(searchOptions: SearchOptions = {}) {
               audioFileIds: pad.audioFileIds,
               playbackType: pad.playbackType,
               audioTrimSettings: pad.audioTrimSettings,
+              audioGainSettings: pad.audioGainSettings,
+              padGainDb: pad.padGainDb,
               isDisabled: pad.isDisabled ?? false,
               originalFileName: displayFileName,
               bankName:

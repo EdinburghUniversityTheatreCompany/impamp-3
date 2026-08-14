@@ -32,6 +32,8 @@ interface EmergencySound {
   playbackType: PlaybackType;
   name?: string;
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  audioGainSettings?: Record<number, number>;
+  padGainDb?: number;
 }
 
 // Global reference to track emergency sounds and current index for round-robin
@@ -91,6 +93,8 @@ async function loadEmergencySounds(
         playbackType: pad.playbackType,
         name: pad.name,
         audioTrimSettings: pad.audioTrimSettings,
+        audioGainSettings: pad.audioGainSettings,
+        padGainDb: pad.padGainDb,
       }));
 
       allEmergencySounds.push(...emergencySoundsForPage);
@@ -128,6 +132,8 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     currentPageIndex: sound.pageIndex, // Use the pageIndex from the sound object
     name: sound.name,
     audioTrimSettings: sound.audioTrimSettings,
+    audioGainSettings: sound.audioGainSettings,
+    padGainDb: sound.padGainDb,
     onInstantFeedback: () => {
       console.log(
         `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
@@ -619,6 +625,8 @@ export function useKeyboardListener() {
           currentPageIndex: currentPageIndex,
           name: matchedConfig.name,
           audioTrimSettings: matchedConfig.audioTrimSettings,
+          audioGainSettings: matchedConfig.audioGainSettings,
+          padGainDb: matchedConfig.padGainDb,
           onInstantFeedback: () => {
             console.log(
               `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,

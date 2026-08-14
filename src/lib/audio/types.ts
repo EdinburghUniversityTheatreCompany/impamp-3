@@ -98,6 +98,10 @@ export interface TriggerAudioArgs {
   currentPageIndex: number;
   name?: string;
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  /** Per-sound manual gain in dB, keyed by audio file ID. */
+  audioGainSettings: Record<number, number> | undefined;
+  /** Whole-pad manual gain in dB. */
+  padGainDb: number | undefined;
   /**
    * When true the pad is disabled and playback is refused. Every trigger path
    * passes this through so the guard lives in one place.

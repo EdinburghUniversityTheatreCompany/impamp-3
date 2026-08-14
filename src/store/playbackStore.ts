@@ -35,6 +35,8 @@ export interface ArmedTrackState {
   audioFileIds: number[];
   playbackType: PlaybackType;
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  audioGainSettings?: Record<number, number>;
+  padGainDb?: number;
 }
 
 // Define the store's state and actions
@@ -209,6 +211,8 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
             currentPageIndex: firstTrack.padInfo.pageIndex,
             name: firstTrack.name,
             audioTrimSettings: firstTrack.audioTrimSettings,
+            audioGainSettings: firstTrack.audioGainSettings,
+            padGainDb: firstTrack.padGainDb,
             onInstantFeedback: () => {
               console.log(
                 `[PlaybackStore] Armed track triggered: "${firstTrack.name}"`,

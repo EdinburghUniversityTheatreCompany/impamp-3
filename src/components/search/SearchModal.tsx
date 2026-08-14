@@ -94,6 +94,8 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         currentPageIndex: result.pageIndex,
         name: result.name,
         audioTrimSettings: result.audioTrimSettings,
+        audioGainSettings: result.audioGainSettings,
+        padGainDb: result.padGainDb,
         onInstantFeedback: () => {
           console.log(
             `[SearchModal] Search result triggered for "${result.name}"`,
@@ -158,6 +160,8 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         audioFileIds: result.audioFileIds,
         playbackType: result.playbackType,
         audioTrimSettings: result.audioTrimSettings,
+        audioGainSettings: result.audioGainSettings,
+        padGainDb: result.padGainDb,
       });
 
       console.log(`Armed track from search: ${result.name}`);

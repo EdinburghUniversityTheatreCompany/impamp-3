@@ -84,6 +84,8 @@ export function usePadInteractions(params: PadInteractionsParams) {
           playbackType: padConfig?.playbackType ?? DEFAULT_PLAYBACK_TYPE,
           audioFileIds: padConfig?.audioFileIds ?? [],
           audioTrimSettings: padConfig?.audioTrimSettings,
+          audioGainSettings: padConfig?.audioGainSettings,
+          padGainDb: padConfig?.padGainDb,
           isDisabled: padConfig?.isDisabled ?? false,
         },
         renderForm: (props) =>
@@ -108,6 +110,8 @@ export function usePadInteractions(params: PadInteractionsParams) {
             playbackType: values.playbackType,
             audioFileIds: values.audioFileIds,
             audioTrimSettings: values.audioTrimSettings,
+            audioGainSettings: values.audioGainSettings,
+            padGainDb: values.padGainDb,
             isDisabled: values.isDisabled,
             keyBinding: padConfig?.keyBinding, // Preserve original keybinding
           };
@@ -284,6 +288,8 @@ export function usePadInteractions(params: PadInteractionsParams) {
         currentPageIndex: currentPageIndex,
         name: padConfig.name,
         audioTrimSettings: padConfig.audioTrimSettings,
+        audioGainSettings: padConfig.audioGainSettings,
+        padGainDb: padConfig.padGainDb,
         isDisabled: padConfig.isDisabled,
         onInstantFeedback: () => {
           console.log(
@@ -373,6 +379,8 @@ export function usePadInteractions(params: PadInteractionsParams) {
         audioFileIds: config.audioFileIds,
         playbackType: config.playbackType || DEFAULT_PLAYBACK_TYPE,
         audioTrimSettings: config.audioTrimSettings,
+        audioGainSettings: config.audioGainSettings,
+        padGainDb: config.padGainDb,
       });
 
       console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);
