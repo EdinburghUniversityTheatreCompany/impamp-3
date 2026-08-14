@@ -1,0 +1,209 @@
+"use client";
+
+/**
+ * One view of a profile's syncing, whichever backend it uses.
+ *
+ * `ProfileCard` used to thread six separate pieces of hook state into its JSX
+ * — two sync statuses, two errors, a conflict list, and two sign-in flags —
+ * and branch on them in four places. That is most of why it grew to eight
+ * hundred lines, and why the two backends drifted: Drive got a status line, a
+ * manual sync, a pause and an unlink, and server sync got none of them,
+ * because nothing forced the two to be described the same way.
+ *
+ * This hook is that forcing function. A component asks for a profile and gets
+ * its state, its status, and the actions available on it, without knowing
+ * which backend is behind them.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Profile } from "@/lib/db";
+import { getSyncState, type SyncState } from "@/lib/syncState";
+import { getSyncTimestamp } from "@/lib/googleDrive/utils";
+import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
+import { useServerSync } from "@/hooks/useServerSync";
+import { useProfileStore } from "@/store/profileStore";
+import {
+  useProfileSyncStatus,
+  syncStatusActions,
+  type ProfileSyncStatus,
+} from "@/store/syncStatusStore";
+import { canHostAudio } from "@/lib/serverAudio/transfer";
+
+/**
+ * Whether something is possible, and — the part that was missing — why not.
+ *
+ * The old UI simply did not render the server-sync button when signed out, so
+ * the capability was invisible: nothing told you server sync existed, let
+ * alone what to do to get it. An option you can see and cannot use is more
+ * honest than an option that isn't there.
+ */
+export interface Availability {
+  ok: boolean;
+  reason?: string;
+}
+
+export interface ProfileSyncView {
+  state: SyncState;
+  status: ProfileSyncStatus;
+  /** When this profile last synced, or null if it never has. */
+  lastSyncedAt: number | null;
+  availability: {
+    google: Availability;
+    server: Availability;
+    hostedAudio: Availability;
+  };
+  /** Sync now, using whichever backend this profile is on. */
+  syncNow: () => Promise<void>;
+  pause: (durationMs: number) => Promise<void>;
+  resume: () => Promise<void>;
+}
+
+/**
+ * Frozen and shared so each answer keeps one identity across renders — a fresh
+ * object per render would defeat every memo downstream.
+ */
+const AVAILABLE: Availability = Object.freeze({ ok: true });
+const CHECKING: Availability = Object.freeze({
+  ok: false,
+  reason: "Checking…",
+});
+const NEEDS_GOOGLE: Availability = Object.freeze({
+  ok: false,
+  reason: "Sign in with Google to use Drive sync.",
+});
+const NEEDS_SERVER: Availability = Object.freeze({
+  ok: false,
+  reason: "Sign in with Google to use server sync — one sign-in covers both.",
+});
+const HOSTING_UNKNOWN: Availability = Object.freeze({
+  ok: false,
+  reason: "Sign in to see whether this server can host your sounds.",
+});
+const HOSTING_NOT_APPROVED: Availability = Object.freeze({
+  ok: false,
+  reason:
+    "This server does not host audio for your account. Ask an admin, or keep your sounds in Drive.",
+});
+
+export function useProfileSync(profile: Profile): ProfileSyncView {
+  const profileId = profile.id;
+
+  const {
+    syncProfile: syncDriveProfile,
+    syncStatus: driveStatus,
+    error: driveError,
+  } = useGoogleDriveSync();
+  const {
+    syncProfile: syncServerProfile,
+    isServerSignedIn,
+    isCheckingSession,
+  } = useServerSync();
+
+  const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
+  const pauseSync = useProfileStore((s) => s.pauseSync);
+  const resumeSync = useProfileStore((s) => s.resumeSync);
+
+  const status = useProfileSyncStatus(profileId);
+  const state = useMemo(() => getSyncState(profile), [profile]);
+
+  // Drive's status still lives in its own hook instance, so mirror it into the
+  // shared store for the profile this view is about. Both backends then report
+  // through one place, which is what lets a card show a sync it did not start.
+  useEffect(() => {
+    if (profileId === undefined || state.target !== "googleDrive") return;
+    syncStatusActions.patch(profileId, {
+      activity: driveStatus,
+      error: driveError,
+    });
+  }, [profileId, state.target, driveStatus, driveError]);
+
+  const hostedAudio = useHostedAudioAvailability(isServerSignedIn);
+
+  const availability = useMemo(
+    () => ({
+      google: isGoogleSignedIn ? AVAILABLE : NEEDS_GOOGLE,
+      server: isCheckingSession
+        ? CHECKING
+        : isServerSignedIn
+          ? AVAILABLE
+          : NEEDS_SERVER,
+      hostedAudio,
+    }),
+    [isGoogleSignedIn, isServerSignedIn, isCheckingSession, hostedAudio],
+  );
+
+  const syncNow = useCallback(async () => {
+    if (profileId === undefined) return;
+    syncStatusActions.patch(profileId, { activity: "syncing", error: null });
+    try {
+      if (state.target === "server") {
+        const result = await syncServerProfile(profileId);
+        if (result.status === "error") {
+          syncStatusActions.patch(profileId, {
+            activity: "error",
+            error: result.error,
+          });
+        } else {
+          syncStatusActions.noteSynced(profileId, Date.now());
+        }
+      } else if (state.target === "googleDrive") {
+        // The Drive hook reports through its own callbacks, mirrored above.
+        await syncDriveProfile(profileId);
+      }
+    } catch (error) {
+      syncStatusActions.patch(profileId, {
+        activity: "error",
+        error: error instanceof Error ? error.message : "Sync failed.",
+      });
+    }
+  }, [profileId, state.target, syncServerProfile, syncDriveProfile]);
+
+  const pause = useCallback(
+    async (durationMs: number) => {
+      if (profileId !== undefined) await pauseSync(profileId, durationMs);
+    },
+    [profileId, pauseSync],
+  );
+
+  const resume = useCallback(async () => {
+    if (profileId !== undefined) await resumeSync(profileId);
+  }, [profileId, resumeSync]);
+
+  // The store's timestamp wins when it has one; localStorage holds the record
+  // the Drive path writes, and unlike the store it survives a reload.
+  const lastSyncedAt =
+    status.lastSyncedAt ??
+    (profileId !== undefined ? getSyncTimestamp(profileId) || null : null);
+
+  return { state, status, lastSyncedAt, availability, syncNow, pause, resume };
+}
+
+/**
+ * Whether this deployment hosts audio and this account may use it.
+ *
+ * Three gates collapse into one answer: the five `IMPAMP_S3_*` variables
+ * (absent, and every route answers 501), the per-account `can_upload_audio`
+ * flag, and the quota. `canHostAudio` caches for the session, so asking here
+ * costs one request no matter how many profiles are on screen.
+ */
+function useHostedAudioAvailability(isServerSignedIn: boolean): Availability {
+  // Only the *answer* is state. The signed-out case is derived below, because
+  // storing it would mean writing state synchronously inside an effect for a
+  // value that is already a function of the props.
+  const [resolved, setResolved] = useState<Availability | null>(null);
+
+  useEffect(() => {
+    if (!isServerSignedIn) return;
+
+    let cancelled = false;
+    void canHostAudio().then((ok) => {
+      if (!cancelled) setResolved(ok ? AVAILABLE : HOSTING_NOT_APPROVED);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isServerSignedIn]);
+
+  if (!isServerSignedIn) return HOSTING_UNKNOWN;
+  return resolved ?? CHECKING;
+}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
 import {
   Profile,
@@ -13,13 +13,16 @@ import {
   useGoogleDriveSync,
   getLocalProfileSyncData,
   getProfileSyncFilename,
-} from "@/hooks/useGoogleDriveSync"; // Import sync hook and helpers
+} from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import SharingPanel from "./SharingPanel";
-import ServerSharingPanel from "./ServerSharingPanel";
 import { useServerSync } from "@/hooks/useServerSync";
+import { getSyncState } from "@/lib/syncState";
+import { useProfileSyncStatus } from "@/store/syncStatusStore";
+import { getSyncTimestamp } from "@/lib/googleDrive/utils";
+import ProfileSyncPanel from "./sync/ProfileSyncPanel";
+import SyncStatusChip from "./sync/SyncStatusChip";
 
 const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -45,41 +48,34 @@ interface ProfileCardProps {
 }
 
 /**
- * How to describe a paused sync, given when it resumes.
+ * A profile, and a way in to how it syncs.
  *
- * Pulled out of the JSX because the version inline there fell back to
- * `Date.now()` when there was no resume time — a call whose result changes on
- * every render, which is exactly what React Compiler cannot cache, and which
- * rendered the useless "Sync Paused until <this very moment>". A pause with no
- * resume time is simply a pause with no end to name.
+ * Everything about syncing now lives behind the status chip, in
+ * `ProfileSyncPanel`. This card used to carry four conditional sync blocks —
+ * one per combination of `syncType` and sign-in state — plus its own status
+ * derivation and its own copy of the pause controls, which is how Drive ended
+ * up with a manual sync, a pause and a status line while server sync had none
+ * of them.
+ *
+ * The buttons that *change* where a profile syncs are still here. They are
+ * replaced by the panel's own controls once transitions land; removing them
+ * first would leave no way to turn syncing on at all.
  */
-function syncPauseLabel(resumeAt: number | null): string {
-  if (!resumeAt) return "Sync Paused";
-  if (resumeAt >= Number.MAX_SAFE_INTEGER - 1)
-    return "Sync Paused indefinitely";
-  return `Sync Paused until ${format(new Date(resumeAt), "h:mm a, MMM d")}`;
-}
-
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const {
     setActiveProfileId,
     updateProfile,
     deleteProfile,
     isGoogleSignedIn,
-    needsReauth,
     openProfileManager,
   } = useProfileStore();
 
-  // Get profile edit functionality
   const { openProfileEditor } = useProfileEdit();
 
-  // Sync Hook (needed for actions and status)
   const {
-    syncProfile,
     uploadDriveFile,
     uploadMissingAudioFiles,
     syncStatus: driveHookStatus,
-    error: driveHookError,
     conflicts: driveHookConflicts,
     conflictData: driveHookConflictData,
     applyConflictResolution,
@@ -87,27 +83,21 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   const { openLazyModal, closeModal } = useModal();
 
-  const { pauseSync, resumeSync, isSyncPaused, getSyncResumeTime } =
-    useProfileStore();
+  const { isServerSignedIn, syncProfile: syncProfileToServer } =
+    useServerSync();
 
-  // Component State
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLinking, setIsLinking] = useState(false);
-  const [isSyncingNow, setIsSyncingNow] = useState(false);
-  const [isUnlinking, setIsUnlinking] = useState(false);
-  const [cardError, setCardError] = useState<string | null>(null); // Local error state for card actions
-  const [lastSyncInitiatedByThisCard, setLastSyncInitiatedByThisCard] =
-    useState(false); // Track if this card triggered the last sync
-
-  const [showSharingPanel, setShowSharingPanel] = useState(false);
-
-  // Server sync
-  const {
-    isServerSignedIn,
-    syncProfile: syncProfileToServer,
-    error: serverSyncError,
-  } = useServerSync();
   const [isLinkingServer, setIsLinkingServer] = useState(false);
+  const [isUnlinking, setIsUnlinking] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [syncPanelOpen, setSyncPanelOpen] = useState(false);
+
+  const syncState = getSyncState(profile);
+  const syncStatus = useProfileSyncStatus(profile.id);
+  const lastSyncedAt =
+    syncStatus.lastSyncedAt ??
+    (profile.id !== undefined ? getSyncTimestamp(profile.id) || null : null);
 
   /**
    * Move a local profile onto the server. The first sync uploads it as-is and
@@ -126,6 +116,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         // in a state the UI can't act on.
         await updateProfile(profile.id, { syncType: "local" });
         setCardError(result.error);
+      } else {
+        setSyncPanelOpen(true);
       }
     } catch (error) {
       await updateProfile(profile.id, { syncType: "local" });
@@ -136,14 +128,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       setIsLinkingServer(false);
     }
   };
-
-  // Sync pause states
-  const [isPausing, setIsPausing] = useState(false);
-  const [isResuming, setIsResuming] = useState(false);
-  const [selectedPauseDuration, setSelectedPauseDuration] =
-    useState<string>("2h");
-  const [customPauseHours, setCustomPauseHours] = useState<number>(1);
-  const [showPauseOptions, setShowPauseOptions] = useState(false);
 
   const handleDelete = async () => {
     if (isActive) {
@@ -170,8 +154,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   };
 
-  // --- Drive Action Handlers for this specific card ---
-
   const handleCreateAndLinkDriveFile = useCallback(async () => {
     if (!profile.id) return;
     setIsLinking(true);
@@ -189,13 +171,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         profile.id,
       );
 
-      // Update local profile with the new file ID
       await updateProfile(profile.id, { googleDriveFileId: uploadedFile.id });
-      console.log(
-        `Profile ${profile.id} linked to Drive file ${uploadedFile.id}`,
-      );
-      // Optionally trigger an immediate sync?
-      // await syncProfile(profile.id);
     } catch (error) {
       console.error("Failed to create and link Drive file:", error);
       setCardError(
@@ -213,34 +189,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     uploadMissingAudioFiles,
     updateProfile,
   ]);
-
-  const handleManualSync = useCallback(async () => {
-    if (!profile.id) return;
-    setIsSyncingNow(true);
-    setCardError(null);
-    setLastSyncInitiatedByThisCard(true); // Mark that this card initiated the sync
-    try {
-      // The syncProfile function handles status updates via the hook's state
-      const result = await syncProfile(profile.id);
-      if (result.status === "error") {
-        throw new Error(result.error || "Sync failed.");
-      }
-      if (result.status === "conflict") {
-        // Conflict modal will be shown by ProfileManager based on hook state
-        console.log(
-          `Sync conflict detected for profile ${profile.id}. Modal should appear.`,
-        );
-      }
-    } catch (error) {
-      console.error("Failed to manually sync profile:", error);
-      setCardError(
-        error instanceof Error ? error.message : "Failed to sync profile.",
-      );
-    } finally {
-      setIsSyncingNow(false);
-      // Don't reset lastSyncInitiatedByThisCard here, wait for status change effect
-    }
-  }, [profile.id, syncProfile]);
 
   const handleSyncToGoogleDrive = useCallback(async () => {
     if (!profile.id) return;
@@ -263,6 +211,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         googleDriveFileId: uploadedFile.id,
         syncType: "googleDrive",
       });
+      setSyncPanelOpen(true);
     } catch (error) {
       console.error("Failed to sync profile to Google Drive:", error);
       setCardError(
@@ -295,7 +244,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     try {
       await updateProfile(profile.id, { googleDriveFileId: null });
       await clearAudioFileDriveIds(profile.id);
-      console.log(`Profile ${profile.id} unlinked from Drive.`);
     } catch (error) {
       console.error("Failed to unlink profile:", error);
       setCardError(
@@ -306,107 +254,54 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   }, [profile.id, profile.name, updateProfile]);
 
-  // Clear the 'initiated by this card' flag when the hook goes back to idle.
+  // Open conflict resolution when a Drive sync of *this* profile finds
+  // conflicts.
   //
-  // Adjusted during render rather than in an effect — the pattern React
-  // documents for state that reacts to a value changing between renders.
-  //
-  // "success" used to clear it too, which made getSyncStatusDisplay's "Synced"
-  // message unreachable: that message renders only when the status is
-  // "success" AND this flag is set, so clearing on "success" cancelled the one
-  // thing it enables. Idle is the status that actually means "this card's sync
-  // is over and done with".
-  const [lastHookStatus, setLastHookStatus] = useState(driveHookStatus);
-  if (driveHookStatus !== lastHookStatus) {
-    setLastHookStatus(driveHookStatus);
-    if (driveHookStatus === "idle") {
-      setLastSyncInitiatedByThisCard(false);
-    }
-  }
-
-  // Open conflict resolution modal when this card's sync detects conflicts
+  // Matched on the Drive file id, which identifies the profile. The card used
+  // to track whether it had started the sync itself and only open the modal
+  // then — the conflict data carries no profile id, so that was the only
+  // handle available. It meant a conflict found by a background sync had
+  // nowhere to surface, and the profile just stopped converging.
   useEffect(() => {
     if (
-      driveHookStatus === "conflict" &&
-      lastSyncInitiatedByThisCard &&
-      driveHookConflictData &&
-      driveHookConflicts.length > 0
+      driveHookStatus !== "conflict" ||
+      !driveHookConflictData ||
+      driveHookConflicts.length === 0 ||
+      !profile.googleDriveFileId ||
+      driveHookConflictData.fileId !== profile.googleDriveFileId
     ) {
-      openLazyModal({
-        title: "Sync Conflict Resolution",
-        modalType: ModalType.CONFLICT_RESOLUTION,
-        modalProps: {
-          conflicts: driveHookConflicts,
-          conflictData: driveHookConflictData,
-          onResolve: (resolvedData: ProfileSyncData) => {
-            applyConflictResolution(
-              resolvedData,
-              driveHookConflictData.fileId,
-              profile.id!,
-            );
-            closeModal();
-          },
-          onCancel: () => {
-            closeModal();
-          },
-        },
-        showConfirmButton: false,
-        showCancelButton: false,
-        size: "xl",
-      });
+      return;
     }
+
+    openLazyModal({
+      title: "Sync Conflict Resolution",
+      modalType: ModalType.CONFLICT_RESOLUTION,
+      modalProps: {
+        conflicts: driveHookConflicts,
+        conflictData: driveHookConflictData,
+        onResolve: (resolvedData: ProfileSyncData) => {
+          applyConflictResolution(
+            resolvedData,
+            driveHookConflictData.fileId,
+            profile.id!,
+          );
+          closeModal();
+        },
+        onCancel: () => closeModal(),
+      },
+      showConfirmButton: false,
+      showCancelButton: false,
+      size: "xl",
+    });
   }, [
     driveHookStatus,
     driveHookConflictData,
     driveHookConflicts,
-    lastSyncInitiatedByThisCard,
     openLazyModal,
     closeModal,
     applyConflictResolution,
     profile.id,
-  ]);
-
-  // Determine what status to show based on global hook status and local interaction
-  const displayStatus = useMemo(() => {
-    // Authentication expired - show re-auth message
-    if (needsReauth) {
-      return {
-        text: "Authentication expired",
-        color: "text-red-600 dark:text-red-400",
-        needsAuth: true,
-      };
-    }
-
-    if (driveHookStatus === "syncing" && isSyncingNow)
-      return { text: "Syncing...", color: "text-blue-600 dark:text-blue-400" };
-    if (driveHookStatus === "conflict" && lastSyncInitiatedByThisCard)
-      return {
-        text: `Sync conflict (${driveHookConflicts.length} item${driveHookConflicts.length !== 1 ? "s" : ""}) — resolving now`,
-        color: "text-amber-600 dark:text-amber-300",
-      };
-    // Show global error if it exists, otherwise show local card error
-    const errorToShow = driveHookError || cardError;
-    if (
-      errorToShow &&
-      (lastSyncInitiatedByThisCard || driveHookStatus === "error")
-    )
-      return {
-        text: `Error: ${errorToShow.substring(0, 50)}${errorToShow.length > 50 ? "..." : ""}`,
-        color: "text-red-600 dark:text-red-400",
-      };
-    // Show success briefly if this card initiated it
-    if (driveHookStatus === "success" && lastSyncInitiatedByThisCard)
-      return { text: "Synced", color: "text-green-600 dark:text-green-400" };
-    // TODO: Add 'Synced [timestamp]' later if needed
-    return null; // Default: show nothing or 'Idle'
-  }, [
-    driveHookStatus,
-    driveHookError,
-    driveHookConflicts.length,
-    cardError,
-    isSyncingNow,
-    lastSyncInitiatedByThisCard,
-    needsReauth,
+    profile.googleDriveFileId,
   ]);
 
   return (
@@ -424,17 +319,15 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
             {profile.name}
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {profile.syncType === "googleDrive"
-              ? profile.readOnly
-                ? "Google Drive Sync (read-only)"
-                : "Google Drive Sync"
-              : profile.syncType === "server"
-                ? profile.readOnly
-                  ? "Server Sync (view-only)"
-                  : "Server Sync"
-                : "Local Storage Only"}
-          </p>
+
+          <SyncStatusChip
+            state={syncState}
+            lastSyncedAt={lastSyncedAt}
+            syncing={syncStatus.activity === "syncing"}
+            expanded={syncPanelOpen}
+            onToggle={() => setSyncPanelOpen((open) => !open)}
+          />
+
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
             Created{" "}
             {formatDistanceToNow(new Date(profile.createdAt), {
@@ -445,25 +338,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
             Backup Reminder:{" "}
             {formatReminderPeriod(profile.backupReminderPeriod)}
           </p>
-          {/* Sync Status Display */}
-          {profile.syncType === "googleDrive" &&
-            isGoogleSignedIn &&
-            displayStatus && (
-              <div className="mt-1">
-                <p className={`text-xs font-medium ${displayStatus.color}`}>
-                  Sync Status: {displayStatus.text}
-                </p>
-                {/* Add sign in again button if auth is expired */}
-                {displayStatus.needsAuth && (
-                  <button
-                    onClick={() => openProfileManager()}
-                    className="mt-1 px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-800/40"
-                  >
-                    Sign in again
-                  </button>
-                )}
-              </div>
-            )}
         </div>
         <div className="flex space-x-1">
           {isActive ? (
@@ -482,7 +356,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       </div>
 
       <div className="flex mt-4 space-x-2">
-        {/* Standard Edit/Delete Buttons */}
         <button
           onClick={() => openProfileEditor(profile)}
           className="px-3 py-1 bg-gray-100 text-gray-800 rounded-md text-sm hover:bg-gray-200 transition-colors dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
@@ -515,283 +388,80 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           ))}
       </div>
 
-      {/* Convert local profile to Google Drive sync */}
-      {profile.syncType !== "googleDrive" && isGoogleSignedIn && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <button
-            onClick={handleSyncToGoogleDrive}
-            disabled={isLinking}
-            className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
-          >
-            {isLinking ? "Syncing..." : "Sync to Google Drive"}
-          </button>
-          {cardError && (
-            <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-              Error: {cardError}
-            </p>
-          )}
-        </div>
-      )}
+      {syncPanelOpen && (
+        <>
+          <ProfileSyncPanel profile={profile} />
 
-      {/* Convert a local profile to server sync */}
-      {profile.syncType === "local" && isServerSignedIn && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <button
-            onClick={handleSyncToServer}
-            disabled={isLinkingServer}
-            data-testid="enable-server-sync"
-            className="px-3 py-1 text-xs bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200 transition-colors dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-800/40 disabled:opacity-50"
-          >
-            {isLinkingServer ? "Setting up…" : "Sync to ImpAmp server"}
-          </button>
-          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            Collaborators see edits within seconds. Sounds still come from
-            Google Drive.
-          </p>
-        </div>
-      )}
-
-      {/* Server sync status and sharing */}
-      {profile.syncType === "server" && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
-          <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
-            Server Sync
-          </h4>
-          {serverSyncError && (
-            <p className="text-xs text-red-600 dark:text-red-400">
-              {serverSyncError}
-            </p>
-          )}
-          {!profile.serverProfileId && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              Waiting for the first sync to reach the server.
-            </p>
-          )}
-          {profile.readOnly && (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              You have view-only access, so local edits are not sent back.
-            </p>
-          )}
-          {!profile.readOnly && profile.serverProfileId && (
-            <ServerSharingPanel serverProfileId={profile.serverProfileId} />
-          )}
-        </div>
-      )}
-
-      {/* Google Drive signed-out notice */}
-      {profile.syncType === "googleDrive" && !isGoogleSignedIn && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-amber-700 dark:text-amber-400">
-            {profile.readOnly
-              ? "This profile is synced from an external Google Drive file. Sign in to Google to update it from Drive."
-              : "This profile was synced with Google Drive. Sign in to Google to resume syncing."}
-          </p>
-        </div>
-      )}
-
-      {/* Google Drive Sync Actions (View Mode) */}
-      {profile.syncType === "googleDrive" && isGoogleSignedIn && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
-          <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
-            Google Drive Sync
-          </h4>
-          {cardError && (
-            <p className="text-xs text-red-600 dark:text-red-400">
-              Error: {cardError}
-            </p>
-          )}
-
-          {/* Pause Sync Status */}
-          {profile.googleDriveFileId && isSyncPaused(profile.id!) && (
-            <div className="px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-md">
-              <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
-                {syncPauseLabel(getSyncResumeTime(profile.id!))}
-              </p>
+          {/*
+            Turning syncing on, and off again. These still branch on the
+            current backend the way they always did; the panel's own axes take
+            over once choosing a destination is a supported move rather than a
+            one-way trapdoor.
+          */}
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-gray-200 pt-3 dark:border-gray-700">
+            {syncState.target !== "googleDrive" && isGoogleSignedIn && (
               <button
-                onClick={async () => {
-                  setIsResuming(true);
-                  setCardError(null);
-                  try {
-                    await resumeSync(profile.id!);
-                  } catch (error) {
-                    console.error("Error resuming sync:", error);
-                    setCardError("Failed to resume sync");
-                  } finally {
-                    setIsResuming(false);
-                  }
-                }}
-                disabled={isResuming}
-                className="mt-1 px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors dark:bg-purple-800/30 dark:text-purple-300 dark:hover:bg-purple-700/40 disabled:opacity-50"
-              >
-                {isResuming ? "Resuming..." : "Resume Now"}
-              </button>
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {!profile.googleDriveFileId ? (
-              <button
-                onClick={handleCreateAndLinkDriveFile}
+                onClick={handleSyncToGoogleDrive}
                 disabled={isLinking}
-                className="px-3 py-1 text-xs bg-green-100 text-green-800 rounded-md hover:bg-green-200 transition-colors dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40 disabled:opacity-50"
+                data-testid="enable-drive-sync"
+                className="rounded-md bg-green-100 px-3 py-1 text-xs text-green-800 transition-colors hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40"
               >
-                {isLinking ? "Linking..." : "Upload and Link to Drive"}
+                {isLinking ? "Syncing..." : "Sync to Google Drive"}
               </button>
-            ) : (
-              // Linked - Show sync controls
-              <>
-                <button
-                  onClick={handleManualSync}
-                  disabled={isSyncingNow || isSyncPaused(profile.id!)}
-                  title={
-                    isSyncPaused(profile.id!) ? "Syncing disabled" : undefined
-                  }
-                  className="px-3 py-1 text-xs bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50"
-                >
-                  {isSyncingNow
-                    ? "Syncing..."
-                    : profile.readOnly
-                      ? "Update from Drive"
-                      : "Sync Now"}
-                </button>
+            )}
 
-                {/* Pause Sync Button and Dropdown */}
-                {!isSyncPaused(profile.id!) ? (
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowPauseOptions(!showPauseOptions)}
-                      className="px-3 py-1 text-xs bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200 transition-colors dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/40"
-                    >
-                      Pause Sync
-                    </button>
+            {syncState.target === "local" && isServerSignedIn && (
+              <button
+                onClick={handleSyncToServer}
+                disabled={isLinkingServer}
+                data-testid="enable-server-sync"
+                className="rounded-md bg-indigo-100 px-3 py-1 text-xs text-indigo-800 transition-colors hover:bg-indigo-200 disabled:opacity-50 dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-800/40"
+              >
+                {isLinkingServer ? "Setting up…" : "Sync to ImpAmp server"}
+              </button>
+            )}
 
-                    {showPauseOptions && (
-                      <div className="absolute z-10 mt-1 bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 w-48 py-1">
-                        <div className="px-3 py-2">
-                          <select
-                            value={selectedPauseDuration}
-                            onChange={(e) =>
-                              setSelectedPauseDuration(e.target.value)
-                            }
-                            className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
-                          >
-                            <option value="2h">2 hours</option>
-                            <option value="4h">4 hours</option>
-                            <option value="8h">8 hours</option>
-                            <option value="1d">1 day</option>
-                            <option value="indefinite">
-                              Until turned on again
-                            </option>
-                            <option value="custom">Custom...</option>
-                          </select>
-                          {selectedPauseDuration === "custom" && (
-                            <div className="flex items-center gap-1 mt-1">
-                              <input
-                                type="number"
-                                min={1}
-                                value={customPauseHours}
-                                onChange={(e) =>
-                                  setCustomPauseHours(
-                                    Math.max(1, parseInt(e.target.value) || 1),
-                                  )
-                                }
-                                className="w-16 text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-gray-300"
-                              />
-                              <span className="text-xs text-gray-600 dark:text-gray-400">
-                                hours
-                              </span>
-                            </div>
-                          )}
-
-                          <div className="flex space-x-1 mt-2">
-                            <button
-                              onClick={async () => {
-                                setShowPauseOptions(false);
-                                setIsPausing(true);
-                                setCardError(null);
-
-                                try {
-                                  // Calculate duration in milliseconds
-                                  let durationMs = 0;
-                                  switch (selectedPauseDuration) {
-                                    case "2h":
-                                      durationMs = 2 * 60 * 60 * 1000;
-                                      break;
-                                    case "4h":
-                                      durationMs = 4 * 60 * 60 * 1000;
-                                      break;
-                                    case "8h":
-                                      durationMs = 8 * 60 * 60 * 1000;
-                                      break;
-                                    case "1d":
-                                      durationMs = 24 * 60 * 60 * 1000;
-                                      break;
-                                    case "indefinite":
-                                      durationMs =
-                                        Number.MAX_SAFE_INTEGER - Date.now();
-                                      break;
-                                    case "custom":
-                                      durationMs =
-                                        customPauseHours * 60 * 60 * 1000;
-                                      break;
-                                  }
-
-                                  await pauseSync(profile.id!, durationMs);
-                                } catch (error) {
-                                  console.error("Error pausing sync:", error);
-                                  setCardError("Failed to pause sync");
-                                } finally {
-                                  setIsPausing(false);
-                                }
-                              }}
-                              disabled={isPausing}
-                              className="px-2 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex-1"
-                            >
-                              {isPausing ? "Pausing..." : "Pause"}
-                            </button>
-                            <button
-                              onClick={() => setShowPauseOptions(false)}
-                              className="px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-
-                {!profile.readOnly && profile.googleDriveFolderId && (
-                  <button
-                    onClick={() => setShowSharingPanel((v) => !v)}
-                    className="px-3 py-1 text-xs bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200 transition-colors dark:bg-teal-900/30 dark:text-teal-300 dark:hover:bg-teal-800/40"
-                  >
-                    {showSharingPanel ? "Hide Sharing" : "Manage Sharing"}
-                  </button>
-                )}
-
+            {syncState.target === "googleDrive" &&
+              isGoogleSignedIn &&
+              (profile.googleDriveFileId ? (
                 <button
                   onClick={handleUnlinkDriveFile}
                   disabled={isUnlinking}
-                  className="px-3 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-md hover:bg-yellow-200 transition-colors dark:bg-yellow-900/30 dark:text-yellow-300 dark:hover:bg-yellow-800/40 disabled:opacity-50"
+                  className="rounded-md bg-yellow-100 px-3 py-1 text-xs text-yellow-800 transition-colors hover:bg-yellow-200 disabled:opacity-50 dark:bg-yellow-900/30 dark:text-yellow-300 dark:hover:bg-yellow-800/40"
                 >
-                  {isUnlinking ? "Unlinking..." : "Unlink"}
+                  {isUnlinking ? "Unlinking..." : "Unlink from Drive"}
                 </button>
-              </>
-            )}
+              ) : (
+                <button
+                  onClick={handleCreateAndLinkDriveFile}
+                  disabled={isLinking}
+                  className="rounded-md bg-green-100 px-3 py-1 text-xs text-green-800 transition-colors hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40"
+                >
+                  {isLinking ? "Linking..." : "Upload and Link to Drive"}
+                </button>
+              ))}
           </div>
 
-          {/* Sharing panel — shown for non-read-only profiles with a folder */}
-          {showSharingPanel &&
-            profile.googleDriveFolderId &&
-            profile.googleDriveFileId && (
-              <SharingPanel
-                folderId={profile.googleDriveFolderId}
-                profileFileId={profile.googleDriveFileId}
-              />
-            )}
-        </div>
+          {syncState.target === "googleDrive" && !isGoogleSignedIn && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+              {profile.readOnly
+                ? "This profile is synced from an external Google Drive file. Sign in to Google to update it from Drive."
+                : "This profile was synced with Google Drive. Sign in to Google to resume syncing."}
+              <button
+                onClick={() => openProfileManager()}
+                className="ml-1 underline"
+              >
+                Sign in
+              </button>
+            </p>
+          )}
+
+          {cardError && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              Error: {cardError}
+            </p>
+          )}
+        </>
       )}
     </div>
   );

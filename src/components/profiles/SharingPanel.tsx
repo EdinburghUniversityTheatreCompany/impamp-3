@@ -146,11 +146,7 @@ export default function SharingPanel({
   );
 
   return (
-    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-3">
-      <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
-        Sharing
-      </h4>
-
+    <div className="mt-2 space-y-3">
       {error && (
         <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
       )}
@@ -232,6 +228,7 @@ export default function SharingPanel({
         <input
           type="email"
           placeholder="Email address"
+          aria-label="Email address to invite"
           value={inviteEmail}
           onChange={(e) => setInviteEmail(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleInvite()}

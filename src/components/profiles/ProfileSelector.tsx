@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useProfileStore } from "@/store/profileStore";
+import { syncTargetLabel } from "@/lib/syncState";
+import ChevronDownIcon from "@/components/shared/ChevronDownIcon";
 
 export default function ProfileSelector() {
   const { profiles, activeProfileId, setActiveProfileId, openProfileManager } =
@@ -67,18 +69,9 @@ export default function ProfileSelector() {
         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[150px]">
           {activeProfile?.name || "No Profile"}
         </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
+        <ChevronDownIcon
           className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? "transform rotate-180" : ""}`}
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
-            clipRule="evenodd"
-          />
-        </svg>
+        />
       </button>
 
       {isOpen && (
@@ -114,10 +107,14 @@ export default function ProfileSelector() {
                       </svg>
                     )}
                   </div>
+                  {/*
+                    One vocabulary everywhere. This used to be a two-way
+                    ternary with no case for server sync, so every
+                    server-synced profile described itself as "Local" — in the
+                    one place a user looks to tell their profiles apart.
+                  */}
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {profile.syncType === "googleDrive"
-                      ? "Google Drive"
-                      : "Local"}
+                    {syncTargetLabel(profile.syncType)}
                   </div>
                 </button>
               ))}

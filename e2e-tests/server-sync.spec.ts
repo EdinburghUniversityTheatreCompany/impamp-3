@@ -254,6 +254,11 @@ test.describe("server sync UI", () => {
     const manage = page.getByText(/Manage Profiles/i).first();
     if (await manage.count()) await manage.click();
 
+    // Everything about syncing now lives behind the profile's status chip.
+    const chip = page.getByTestId("sync-status-chip").first();
+    await expect(chip).toHaveText(/This device only/);
+    await chip.click();
+
     const enable = page.getByTestId("enable-server-sync").first();
     await expect(enable).toBeVisible();
     await enable.click();
@@ -261,7 +266,8 @@ test.describe("server sync UI", () => {
     await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText("Server Sync").first()).toBeVisible();
+    // The chip is the profile's own account of itself, so it has to move too.
+    await expect(chip).toHaveText(/ImpAmp server/, { timeout: 15_000 });
 
     // The profile really reached the server, not just the local UI.
     await expect
