@@ -56,18 +56,12 @@ export const getLocalProfileSyncData = async (
   // Build audio file references — use driveFileId if available, otherwise omit
   // (uploadMissingAudioFiles in sync.ts ensures driveFileIds are set before this is called)
   //
-  // Every route to a sound that we know about goes in the blob, including a
-  // Drive id on a profile whose sounds are meant to be hosted. Withholding it
-  // in favour of the hosted route assumes the hosting *happened*, and when it
-  // silently did not — the deployment hosts nothing, the account is not
-  // approved, the quota is full — the blob advertised a sound nobody could
-  // fetch. The next pull then hit `updateLocalData`'s "unavailable locally"
-  // path, cleared the pads referencing it, and pushed the emptied pads back.
-  // That destroyed the author's own work, not just a collaborator's copy.
-  //
-  // `markHostedAudio` marks what is genuinely hosted, and the two downloaders
-  // dedupe by content hash, so a reference carrying both routes costs nothing
-  // and leaves Drive as a fallback when hosting is not there.
+  // Every route we know about goes in the blob, including a Drive id on a
+  // profile whose sounds are meant to be hosted. Withholding it assumes the
+  // hosting happened; when it silently does not, the blob names sounds nobody
+  // can fetch. `markHostedAudio` marks what is genuinely hosted, and the
+  // downloaders dedupe by hash, so carrying both routes costs nothing and
+  // leaves Drive as the fallback.
   const audioFiles = [];
   for (const audioFileId of audioFileIds) {
     const audioFile = await getAudioFile(audioFileId);
