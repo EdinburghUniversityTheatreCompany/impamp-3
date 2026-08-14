@@ -75,29 +75,35 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   // created before this feature, so every read falls back to the default.
   const normalisation = profile.normalisation ?? DEFAULT_NORMALISATION;
 
-  // Backfill progress for the "Analysing N/M…" indicator. Driven by calling
-  // runBackfill ourselves rather than observing some shared progress store,
-  // because the pipeline exposes progress only via this callback. Gated to
-  // the active profile's card: setNormalisation (like setActivePadBehavior,
+  // Backfill progress for the "Analysing N/M…" indicator. This card only
+  // observes — it never calls runBackfill itself. ClientSideInitializer is
+  // the pipeline's sole caller; runBackfill's generation-token supersede
+  // logic assumes exactly one caller, and a second one here would take a
+  // fresh token, supersede the initialiser's run, and could leave the
+  // in-memory loudness cache repopulated from a pre-analysis snapshot for
+  // any file the surviving run analyses in that window. Gated to the active
+  // profile's card because setNormalisation (like setActivePadBehavior,
   // which it is modelled on) always writes to the store's activeProfileId,
   // so a non-active card offering these controls would silently edit the
-  // wrong profile. Restricting the effect to isActive also keeps this from
-  // racing ClientSideInitializer's own runBackfill call for every profile
-  // card mounted in the manager list, so only one runs at a time.
+  // wrong profile.
   const [backfill, setBackfill] = useState({ done: 0, total: 0 });
   useEffect(() => {
     if (!isActive) return;
+    let unsubscribe: (() => void) | undefined;
     let cancelled = false;
-    void (async () => {
-      const { runBackfill } = await import("@/lib/audio/loudness/pipeline");
-      await runBackfill((done, total) => {
-        if (!cancelled) setBackfill({ done, total });
+
+    void import("@/lib/audio/loudness/pipeline")
+      .then(({ subscribeToBackfillProgress }) => {
+        if (cancelled) return;
+        unsubscribe = subscribeToBackfillProgress(setBackfill);
+      })
+      .catch((error) => {
+        console.warn("[Loudness] Could not observe backfill progress:", error);
       });
-    })().catch((error) => {
-      console.warn("[Loudness] Backfill failed:", error);
-    });
+
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, [isActive]);
 

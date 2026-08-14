@@ -45,6 +45,39 @@ export function clearFailedAnalysis(): void {
   failedAnalysis.clear();
 }
 
+export interface BackfillProgress {
+  done: number;
+  total: number;
+}
+
+// Last progress emitted, so a subscriber that mounts mid-backfill sees the
+// current state instead of waiting for the next tick.
+let backfillProgress: BackfillProgress = { done: 0, total: 0 };
+const progressListeners = new Set<(p: BackfillProgress) => void>();
+
+/**
+ * Observes backfill progress without starting one.
+ *
+ * `runBackfill` must have exactly one caller: a second caller takes a new
+ * generation token, supersedes the first, and can leave the in-memory cache
+ * repopulated from a snapshot taken before the surviving run's analyses
+ * landed. UI that wants to display progress subscribes here instead.
+ */
+export function subscribeToBackfillProgress(
+  listener: (progress: BackfillProgress) => void,
+): () => void {
+  progressListeners.add(listener);
+  listener(backfillProgress);
+  return () => {
+    progressListeners.delete(listener);
+  };
+}
+
+function emitBackfillProgress(done: number, total: number): void {
+  backfillProgress = { done, total };
+  for (const listener of progressListeners) listener(backfillProgress);
+}
+
 export function shouldAnalyse(loudness: LoudnessAnalysis | undefined): boolean {
   return !loudness || loudness.algoVersion !== LOUDNESS_ALGO_VERSION;
 }
@@ -161,6 +194,7 @@ export async function runBackfill(
   ).filter((id) => !failedAnalysis.has(id));
   const total = queue.length;
   if (total === 0) {
+    emitBackfillProgress(0, 0);
     onProgress?.(0, 0);
     return;
   }
@@ -184,6 +218,7 @@ export async function runBackfill(
 
       void Promise.all(batch.map((id) => analyseAndStore(id))).then(() => {
         done += batch.length;
+        emitBackfillProgress(done, total);
         onProgress?.(done, total);
         onIdle(step);
       });
