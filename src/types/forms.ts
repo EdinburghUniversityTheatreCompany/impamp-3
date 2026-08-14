@@ -18,9 +18,9 @@ export interface PadFormValues extends Record<string, unknown> {
   audioFileIds: number[];
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   /** Per-sound manual gain in dB, keyed by audio file ID */
-  audioGainSettings?: Record<number, number>;
+  audioGainSettings: Record<number, number> | undefined;
   /** Whole-pad manual gain in dB */
-  padGainDb?: number;
+  padGainDb: number | undefined;
   /** When true, the pad is configured but will not play from any trigger */
   isDisabled: boolean;
 }
