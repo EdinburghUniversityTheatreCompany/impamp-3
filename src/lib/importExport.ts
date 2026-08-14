@@ -14,8 +14,10 @@ import {
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
   collectReferencedAudioFileIds,
 } from "./db"; // Import necessary types and DB functions from db.ts
+import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
 import type { ProfileSyncData } from "./syncUtils";
+import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -74,6 +76,8 @@ export interface ProfileExport {
     name: string;
     type: string;
     data: string; // Base64 encoded audio data
+    /** Absent when the file has not been analysed yet. */
+    loudness?: SerialisedLoudness;
   }[];
 }
 
@@ -82,6 +86,84 @@ export interface MultiProfileExport {
   exportVersion: number; // e.g., 1 for this multi-export format
   exportDate: string;
   profiles: ProfileExport[]; // An array of individual profile exports
+}
+
+// --- Loudness analysis serialisation ---
+//
+// LoudnessAnalysis carries two Float32Arrays, which are not JSON-safe, so
+// exports base64-encode them. Exports are ZIP archives that already carry
+// the audio itself, so a few KB of manifest per file is negligible against
+// the payload — and it saves the importing device a full re-analysis sweep.
+
+export interface SerialisedLoudness {
+  algoVersion: number;
+  sampleRate: number;
+  duration: number;
+  /** base64 of the Float32Array buffer. */
+  blockMeanSquare: string;
+  /** base64 of the Float32Array buffer. */
+  hopTruePeak: string;
+}
+
+function floatsToBase64(values: Float32Array): string {
+  // A Float32Array's buffer may be a view into a larger ArrayBuffer with a
+  // non-zero byteOffset (e.g. a slice of another typed array's backing
+  // store), so byteOffset/byteLength must be respected rather than encoding
+  // values.buffer directly.
+  const bytes = new Uint8Array(
+    values.buffer,
+    values.byteOffset,
+    values.byteLength,
+  );
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToFloats(encoded: string): Float32Array {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
+}
+
+export function serialiseLoudness(
+  analysis: LoudnessAnalysis,
+): SerialisedLoudness {
+  return {
+    algoVersion: analysis.algoVersion,
+    sampleRate: analysis.sampleRate,
+    duration: analysis.duration,
+    blockMeanSquare: floatsToBase64(analysis.blockMeanSquare),
+    hopTruePeak: floatsToBase64(analysis.hopTruePeak),
+  };
+}
+
+/**
+ * Restores an exported analysis.
+ *
+ * Returns null when the analysis came from a different algorithm version or
+ * cannot be decoded — the file is then queued for local backfill. Accepting a
+ * stale measurement would produce confidently wrong levels, which is worse
+ * than having none.
+ */
+export function deserialiseLoudness(
+  serialised: SerialisedLoudness | undefined,
+): LoudnessAnalysis | null {
+  if (!serialised) return null;
+  if (serialised.algoVersion !== LOUDNESS_ALGO_VERSION) return null;
+
+  try {
+    return {
+      algoVersion: serialised.algoVersion,
+      sampleRate: serialised.sampleRate,
+      duration: serialised.duration,
+      blockMeanSquare: base64ToFloats(serialised.blockMeanSquare),
+      hopTruePeak: base64ToFloats(serialised.hopTruePeak),
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Note: blobToBase64 is intentionally gone — nothing in the app encodes
@@ -274,6 +356,8 @@ export interface ImportAudioSource {
    * (e.g. ZIP extraction) invoke onBytes with the number of bytes done so far.
    */
   getBlob: (onBytes?: (bytesDone: number) => void) => Promise<Blob>;
+  /** Carried analysis, if the exporting device had one. */
+  loudness?: SerialisedLoudness;
 }
 
 /** Progress information reported while importing audio files. */
@@ -334,6 +418,7 @@ async function importAudioSources(
         name: source.name,
         type: source.type,
         createdAt: now,
+        loudness: deserialiseLoudness(source.loudness) ?? undefined,
       });
       await audioTx.done;
       audioIdMap.set(source.originalId, newAudioId);
@@ -701,6 +786,7 @@ export async function importProfile(
       originalId: audioFileExport.id,
       name: audioFileExport.name,
       type: audioFileExport.type,
+      loudness: audioFileExport.loudness,
       getBlob: () => base64ToBlob(audioFileExport.data, audioFileExport.type),
     }),
   );
@@ -1210,6 +1296,8 @@ export interface AudioFileRef {
   id: number;
   name: string;
   type: string;
+  /** Absent when the file has not been analysed yet. */
+  loudness?: SerialisedLoudness;
 }
 
 export interface ProfileExportLean {
@@ -1258,6 +1346,9 @@ async function collectProfileDataForZip(profileId: number): Promise<{
         id: audioFileId,
         name: audioFile.name,
         type: audioFile.type,
+        loudness: audioFile.loudness
+          ? serialiseLoudness(audioFile.loudness)
+          : undefined,
       });
       audioBlobs.set(audioFileId, {
         blob: audioFile.blob,
@@ -1542,6 +1633,7 @@ export async function importProfilesFromZip(
             name: ref.name,
             type: ref.type,
             size: entry.uncompressedSize,
+            loudness: ref.loudness,
             getBlob: (onBytes) =>
               getData(new zipjs.BlobWriter(ref.type), {
                 onprogress: onBytes
