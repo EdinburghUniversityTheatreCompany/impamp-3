@@ -115,6 +115,7 @@ function syncData(padName: string, modifiedAt: number): ProfileSyncData {
 const callbacks = () => ({
   onStatusChange: vi.fn(),
   onError: vi.fn(),
+  onWarnings: vi.fn(),
   onConflictsDetected: vi.fn(),
 });
 
@@ -391,5 +392,115 @@ describe("syncServerProfile", () => {
 
     expect(a).toBe(b);
     expect(apiMocks.pushServerProfile).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * Only the profile's owner publishes its audio to Drive. The old condition
+ * was "not read-only, has a token, has a folder", which an *editor* satisfies
+ * — and their folder id came from the owner's blob, so they would try to write
+ * into someone else's Drive folder. `uploadMissingAudioFiles` treats per-file
+ * failures as non-fatal, so this failed silently and the sounds never landed.
+ */
+describe("syncServerProfile — who may publish audio to Drive", () => {
+  const withDrive = {
+    tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
+    onTokenRefresh: () => {},
+  };
+
+  beforeEach(() => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+  });
+
+  it("uploads for the owner", async () => {
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1", serverRole: "owner" }),
+    );
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).toHaveBeenCalledOnce();
+  });
+
+  it("does not upload for an editor who joined by link", async () => {
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({
+        googleDriveFolderId: "folder-1",
+        serverShareToken: "tok",
+      }),
+    );
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+  });
+
+  it("does not upload for an email-invited editor, who has no share token", async () => {
+    // The case a share-token check alone would miss.
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1", serverRole: "editor" }),
+    );
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+  });
+
+  it("still uploads for a profile that predates serverRole", async () => {
+    // Unknown ownership keeps the old behaviour. Guessing "collaborator" here
+    // would stop a real owner publishing at all.
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1" }),
+    );
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).toHaveBeenCalledOnce();
+  });
+});
+
+describe("syncServerProfile — warnings are not errors", () => {
+  beforeEach(() => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1", serverRole: "owner" }),
+    );
+    serverAudioMocks.uploadProfileAudio.mockResolvedValue({
+      hosted: [],
+      warnings: ['"horn.mp3" was too large to host'],
+      aborted: false,
+    });
+  });
+
+  it("reports a warning through its own channel, not as an error", async () => {
+    // Routing warnings through onError turned a sync that worked into a red
+    // banner on the profile card.
+    const cbs = callbacks();
+
+    const result = await syncServerProfile(PROFILE_ID, cbs, {
+      tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
+      onTokenRefresh: () => {},
+    });
+
+    expect(result.status).toBe("success");
+    expect(cbs.onError).not.toHaveBeenCalledWith(
+      expect.stringContaining("horn.mp3"),
+    );
+    expect(cbs.onWarnings).toHaveBeenCalledWith([
+      '"horn.mp3" was too large to host',
+    ]);
+  });
+
+  it("still reports the sync as successful", async () => {
+    const cbs = callbacks();
+
+    await syncServerProfile(PROFILE_ID, cbs, {
+      tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
+      onTokenRefresh: () => {},
+    });
+
+    expect(cbs.onStatusChange).toHaveBeenLastCalledWith("success");
   });
 });

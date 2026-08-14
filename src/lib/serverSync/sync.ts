@@ -17,6 +17,7 @@
 
 import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
+import { getSyncState } from "@/lib/syncState";
 import {
   getLocalProfileSyncData,
   updateLocalData,
@@ -47,6 +48,13 @@ import {
 export interface ServerSyncCallbacks {
   onStatusChange: (status: ServerSyncStatus) => void;
   onError: (error: string | null) => void;
+  /**
+   * Things that went wrong without failing the sync — a sound too large to
+   * host, say. Separate from `onError` because a sync that succeeded with
+   * warnings is not a failed sync, and reporting it through the error channel
+   * turned a partial success into a red banner on the profile card.
+   */
+  onWarnings?: (warnings: string[]) => void;
   onConflictsDetected: (conflicts: ItemConflict[]) => void;
 }
 
@@ -116,8 +124,22 @@ async function performServerSync(
     // Audio must reach its host before the blob that references it does,
     // otherwise a collaborator pulls pads pointing at files that aren't there
     // yet. Only the owner uploads, and only when Drive is actually connected.
+    //
+    // "Only the owner" has to be checked, not assumed. A collaborator's
+    // `googleDriveFolderId` was copied out of the owner's blob, so an editor
+    // reaching this line would write into someone else's Drive folder — and
+    // `uploadMissingAudioFiles` treats per-file failures as non-fatal, so it
+    // failed silently and the sounds never arrived. Ownership is "unknown" for
+    // profiles written before `serverRole` existed; those keep the old
+    // behaviour, because assuming they are collaborators would stop real
+    // owners publishing at all.
     const warnings: string[] = [];
-    if (!profile.readOnly && drive.tokenInfo && profile.googleDriveFolderId) {
+    const ownership = getSyncState(profile).ownership;
+    if (
+      ownership !== "collaborator" &&
+      drive.tokenInfo &&
+      profile.googleDriveFolderId
+    ) {
       await uploadMissingAudioFiles(
         profileId,
         drive.tokenInfo,
@@ -309,7 +331,7 @@ function finish(
   callbacks.onStatusChange("success");
   if (warnings.length > 0) {
     console.warn("Server sync completed with warnings:", warnings);
-    callbacks.onError(warnings.join("\n"));
+    callbacks.onWarnings?.(warnings);
   }
   return {
     status: "success",
