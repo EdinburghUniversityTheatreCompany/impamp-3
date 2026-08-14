@@ -25,12 +25,8 @@ function DriveOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const {
-    isGoogleSignedIn,
-    setGoogleAuthDetails,
-    updateProfile,
-    importProfileFromSyncData,
-  } = useProfileStore();
+  const { isGoogleSignedIn, setGoogleAuthDetails, importProfileFromSyncData } =
+    useProfileStore();
 
   const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
     useGoogleDriveSync();
@@ -99,9 +95,9 @@ function DriveOpenContent() {
           throw new Error("Not a valid ImpAmp profile file.");
         }
 
-        // Import as a new local profile, streaming each audio file straight
-        // into IndexedDB, then link it to the shared Drive folder.
-        const newProfileId = await importProfileFromSyncData(
+        // Import as a new profile linked to the shared Drive folder,
+        // streaming each audio file straight into IndexedDB.
+        await importProfileFromSyncData(
           syncData,
           downloadAudioFile,
           (p) =>
@@ -109,11 +105,16 @@ function DriveOpenContent() {
               kind: "connecting",
               progress: { current: p.processedFiles, total: p.totalFiles },
             }),
+          // The shared folder is what we are connecting to, so it is ours to
+          // sync against — unlike a server share link, where the Drive ids in
+          // the payload belong to the owner alone.
+          {
+            syncType: "googleDrive",
+            audioLocation: "googleDrive",
+            googleDriveFileId: profileFile.id,
+            googleDriveFolderId: folderId,
+          },
         );
-        await updateProfile(newProfileId, {
-          googleDriveFileId: profileFile.id,
-          googleDriveFolderId: folderId,
-        });
 
         sessionStorage.removeItem(PENDING_FOLDER_KEY);
         setPageState({
@@ -136,7 +137,6 @@ function DriveOpenContent() {
       downloadDriveFile,
       downloadAudioFile,
       importProfileFromSyncData,
-      updateProfile,
     ],
   );
 

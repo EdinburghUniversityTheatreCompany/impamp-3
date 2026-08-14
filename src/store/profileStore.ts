@@ -19,6 +19,7 @@ import type {
   TransferProgressCallback,
   ZipImportResult,
   ImportAudioProgress,
+  ImportLink,
 } from "../lib/importExport";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
@@ -100,7 +101,8 @@ interface ProfileState {
     syncData: ProfileSyncData,
     downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
     onProgress?: (progress: ImportAudioProgress) => void,
-  ) => Promise<number>; // For Google Drive connect flows
+    link?: ImportLink,
+  ) => Promise<number>; // For Drive and server connect flows
 
   // Profile manager UI state
   openProfileManager: () => void;
@@ -747,6 +749,7 @@ export const useProfileStore = create<ProfileState>()(
           syncData: ProfileSyncData,
           downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
           onProgress?: (progress: ImportAudioProgress) => void,
+          link?: ImportLink,
         ) => {
           try {
             const { importProfileFromSyncData } =
@@ -758,6 +761,7 @@ export const useProfileStore = create<ProfileState>()(
               syncData,
               downloadAudioBlob,
               onProgress,
+              link,
             );
 
             const newProfile = await getProfile(newProfileId);

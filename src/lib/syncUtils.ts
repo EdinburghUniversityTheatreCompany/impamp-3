@@ -342,10 +342,22 @@ const compareSyncableArrays = <T extends Syncable>(
  * would raise conflicts over values that are legitimately different on each.
  */
 const PROFILE_LOCATION_FIELDS = new Set([
+  // Where the profile itself syncs.
+  "syncType",
   "googleDriveFileId",
   "serverProfileId",
   "serverVersion",
   "serverShareToken",
+  // Where its audio lives. `googleDriveFolderId` used to travel, which is how
+  // a collaborator ended up holding the *owner's* folder id and then tried to
+  // upload into it — silently, because those failures are non-fatal.
+  "audioLocation",
+  "googleDriveFolderId",
+  // What we may do with it, and whether we are doing it right now. Both are
+  // answers about this device's access and this device's choice.
+  "serverRole",
+  "readOnly",
+  "syncPausedUntil",
 ]);
 
 const isComparableProfileField = (key: string): boolean =>

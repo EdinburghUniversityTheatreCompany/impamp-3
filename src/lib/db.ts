@@ -970,11 +970,19 @@ const BACKUP_ONLY_FIELDS = new Set([
   "syncType",
   "googleDriveFileId",
   "syncPausedUntil",
-  // Server-sync bookkeeping: where the profile lives and which version we
-  // last saw, none of which is user content.
+  // Where the audio lives, and the folder it lives in. Moving sounds between
+  // Drive and the server changes nothing about the soundboard itself, so it
+  // should not make the app ask for a fresh backup.
+  "audioLocation",
+  "googleDriveFolderId",
+  // Server-sync bookkeeping: where the profile lives, which version we last
+  // saw, and what we are allowed to do with it — none of which is user
+  // content.
   "serverProfileId",
   "serverVersion",
   "serverShareToken",
+  "serverRole",
+  "readOnly",
 ]);
 
 // Records restored from sync payloads can carry ISO strings rather than Dates,

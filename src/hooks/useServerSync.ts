@@ -78,6 +78,8 @@ export interface ServerSyncHook {
   isCheckingSession: boolean;
   syncStatus: ServerSyncStatus;
   error: string | null;
+  /** Non-fatal problems from the last sync. A sync with warnings still succeeded. */
+  warnings: string[];
   conflicts: ItemConflict[];
   syncProfile: (profileId: number) => Promise<ServerSyncResult>;
   refreshSession: () => Promise<void>;
@@ -114,6 +116,7 @@ export function useServerSync(): ServerSyncHook {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [syncStatus, setSyncStatus] = useState<ServerSyncStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [conflicts, setConflicts] = useState<ItemConflict[]>([]);
 
   // Re-checked whenever Google auth changes: signing in to Drive also
@@ -143,6 +146,7 @@ export function useServerSync(): ServerSyncHook {
     () => ({
       onStatusChange: setSyncStatus,
       onError: setError,
+      onWarnings: setWarnings,
       onConflictsDetected: setConflicts,
     }),
     [],
@@ -184,6 +188,7 @@ export function useServerSync(): ServerSyncHook {
     isCheckingSession,
     syncStatus,
     error,
+    warnings,
     conflicts,
     syncProfile: sync,
     refreshSession,

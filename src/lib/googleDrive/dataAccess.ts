@@ -276,18 +276,26 @@ export const updateLocalData = async (
       ...data.profile,
       id: profileId,
       name: existingLocalProfile?.name ?? data.profile.name,
-      readOnly: existingLocalProfile?.readOnly ?? data.profile.readOnly,
+      // Where this profile syncs, where its audio lives, and what we may do
+      // with it are all this device's own answers — a blob written by another
+      // device must never repoint them.
+      //
+      // Each falls back to a value of its own rather than to `data.profile`.
+      // Falling back to the remote is what made these dangerous: `readOnly`
+      // and `googleDriveFolderId` are unset on plenty of profiles, so a
+      // remote blob could silently mark a profile read-only, or hand this
+      // device the *owner's* Drive folder — after which it would try to
+      // upload into someone else's folder and fail without saying so.
       syncType: existingLocalProfile?.syncType ?? data.profile.syncType,
-      googleDriveFileId:
-        existingLocalProfile?.googleDriveFileId ??
-        data.profile.googleDriveFileId,
-      // Where this device syncs the profile is local bookkeeping — a blob
-      // written by another device must never repoint it.
+      googleDriveFileId: existingLocalProfile?.googleDriveFileId ?? null,
+      googleDriveFolderId: existingLocalProfile?.googleDriveFolderId ?? null,
+      audioLocation: existingLocalProfile?.audioLocation ?? null,
       serverProfileId: existingLocalProfile?.serverProfileId ?? null,
       serverVersion: existingLocalProfile?.serverVersion ?? null,
       serverShareToken: existingLocalProfile?.serverShareToken ?? null,
-      syncPausedUntil:
-        existingLocalProfile?.syncPausedUntil ?? data.profile.syncPausedUntil,
+      serverRole: existingLocalProfile?.serverRole ?? null,
+      readOnly: existingLocalProfile?.readOnly ?? false,
+      syncPausedUntil: existingLocalProfile?.syncPausedUntil,
       createdAt: toDate(
         existingLocalProfile?.createdAt ?? data.profile.createdAt,
       ),

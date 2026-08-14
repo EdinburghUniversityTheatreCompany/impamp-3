@@ -1,6 +1,7 @@
 import { IDBPDatabase } from "idb";
 import {
   AudioFile,
+  AudioLocation,
   Profile,
   PadConfiguration,
   DEFAULT_PLAYBACK_TYPE,
@@ -147,11 +148,62 @@ export async function getAllPadConfigurationsForProfile(
 
 // --- Profile Import Logic ---
 
+/**
+ * Where an imported profile should sync, decided by the caller.
+ *
+ * Only the flows that genuinely connect a profile to somewhere — the Drive
+ * "Open with" page, the Drive picker, a server share link — pass one. A plain
+ * file import passes nothing and gets a local, unlinked profile.
+ */
+export interface ImportLink {
+  syncType?: SyncType;
+  audioLocation?: AudioLocation | null;
+  googleDriveFileId?: string | null;
+  googleDriveFolderId?: string | null;
+}
+
+/**
+ * The fields a newly imported profile starts life with.
+ *
+ * An import must never inherit where the *donor* profile synced. It used to:
+ * `syncType`, `googleDriveFileId` and `googleDriveFolderId` were copied
+ * straight out of the incoming data. For a server share link that produced a
+ * profile marked `server` while holding the owner's Drive ids, which is how a
+ * collaborator ended up trying to write into someone else's Drive folder. For
+ * an ordinary file import it produced a second local profile syncing to the
+ * same Drive file as the first, and the two then fought.
+ *
+ * Pure, so the rule can be tested without a database.
+ */
+export function buildImportedProfileFields(
+  donor: Partial<Profile>,
+  profileName: string,
+  now: Date,
+  backupReminderDefault: number,
+  link: ImportLink = {},
+): Omit<Profile, "id"> {
+  return {
+    name: profileName,
+    syncType: link.syncType ?? "local",
+    audioLocation: link.audioLocation ?? null,
+    googleDriveFileId: link.googleDriveFileId ?? null,
+    googleDriveFolderId: link.googleDriveFolderId ?? null,
+    activePadBehavior: donor.activePadBehavior,
+    // Importing is not backing up, but it does mean a copy exists elsewhere,
+    // so the clock starts now rather than at the donor's last backup.
+    lastBackedUpAt: now.getTime(),
+    backupReminderPeriod: donor.backupReminderPeriod ?? backupReminderDefault,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 // Helper function to create a new profile for import, handling name conflicts
 async function createImportedProfile(
   db: IDBPDatabase<ImpAmpDBSchema>,
   exportData: ProfileExport | { profile: Partial<Profile> & { name: string } }, // Allow partial for impamp2
   now: Date,
+  link: ImportLink = {},
 ): Promise<number> {
   // Import DEFAULT_BACKUP_REMINDER_PERIOD_MS for default value during import
   const { DEFAULT_BACKUP_REMINDER_PERIOD_MS } = await import("./db");
@@ -189,23 +241,13 @@ async function createImportedProfile(
   const profileTx = db.transaction("profiles", "readwrite");
   const profileStore = profileTx.objectStore("profiles");
 
-  const newProfileData: Omit<Profile, "id"> = {
-    name: profileName,
-    // Use syncType from export if available, otherwise default to 'local'
-    syncType: (exportData.profile as Profile).syncType || "local",
-    googleDriveFileId:
-      (exportData.profile as Profile).googleDriveFileId ?? null,
-    googleDriveFolderId:
-      (exportData.profile as Profile).googleDriveFolderId ?? null,
-    activePadBehavior: (exportData.profile as Profile).activePadBehavior,
-    // Handle backup fields on import
-    lastBackedUpAt: now.getTime(), // Set lastBackedUpAt to import time
-    backupReminderPeriod:
-      (exportData.profile as Profile).backupReminderPeriod ?? // Use imported value if present
-      DEFAULT_BACKUP_REMINDER_PERIOD_MS, // Otherwise use default
-    createdAt: now,
-    updatedAt: now,
-  };
+  const newProfileData = buildImportedProfileFields(
+    exportData.profile as Partial<Profile>,
+    profileName,
+    now,
+    DEFAULT_BACKUP_REMINDER_PERIOD_MS,
+    link,
+  );
 
   const profileId = await profileStore.add(newProfileData);
   await profileTx.done;
@@ -482,6 +524,7 @@ async function importProfileCore(
   audioSources: ImportAudioSource[],
   onAudioProgress?: (progress: ImportAudioProgress) => void,
   audioConcurrency = 1,
+  link: ImportLink = {},
 ): Promise<number> {
   let profileId: number | undefined = undefined;
   const now = new Date();
@@ -540,7 +583,7 @@ async function importProfileCore(
     // --- End Backward Compatibility Check ---
 
     // Step 1: Create the new profile entry (handles name conflicts)
-    profileId = await createImportedProfile(db, exportData, now);
+    profileId = await createImportedProfile(db, exportData, now, link);
     console.log(`Created imported profile with ID ${profileId}`);
 
     // Step 2: Import audio files (one short transaction per file)
@@ -635,6 +678,7 @@ export async function importProfileFromSyncData(
   syncData: ProfileSyncData,
   downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
   onProgress?: (progress: ImportAudioProgress) => void,
+  link: ImportLink = {},
 ): Promise<number> {
   // Strip fields the import must not carry over (a fresh id is assigned and
   // lastBackedUpAt is stamped by the import itself).
@@ -644,7 +688,9 @@ export async function importProfileFromSyncData(
   const meta: ProfileImportMeta = {
     exportVersion: 2,
     exportDate: new Date().toISOString(),
-    profile: { ...profileRest, syncType: "googleDrive" },
+    // Content only. Where the new profile syncs comes from `link`, never from
+    // the donor — see buildImportedProfileFields.
+    profile: profileRest,
     padConfigurations: syncData.padConfigurations ?? [],
     pageMetadata: syncData.pageMetadata ?? [],
   };
@@ -692,6 +738,7 @@ export async function importProfileFromSyncData(
     audioSources,
     onProgress,
     DRIVE_DOWNLOAD_CONCURRENCY,
+    link,
   );
 }
 
