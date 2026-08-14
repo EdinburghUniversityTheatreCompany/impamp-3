@@ -3,16 +3,12 @@
 Things noticed while working on other tasks, deliberately left out of scope.
 Each entry: what, where, why it matters.
 
-## Tooling
-
-## Dependencies
-
-- **Two upgrades are held back deliberately** — TypeScript 7 and ESLint 10, both
-  blocked on lint tooling that has no compatible release yet. Reasons and retry
-  conditions in `plans/deferred-upgrades.md`.
+Drained on 2026-08-14 — everything that was here is either landed (see the
+`chore/drain-backlog` commits) or listed below because it is genuinely still
+open. Deferred dependency upgrades live in `plans/deferred-upgrades.md`, not
+here.
 
 ## Code
-
 
 - **The profile selector button has no accessible name of its own.** It is
   labelled only by the active profile's name, so a name-based locator (or a
@@ -20,8 +16,16 @@ Each entry: what, where, why it matters.
   whose sound is named similarly — `createAndSwitchToProfile` in the E2E
   helpers has to match it by `aria-haspopup` instead.
 
-## Docs
+- **`ProfileCard`'s "Synced" status can never be seen.** `getSyncStatusDisplay`
+  returns "Synced" only when `driveHookStatus === "success"` _and_
+  `lastSyncInitiatedByThisCard` — but the flag is cleared on exactly those two
+  statuses, "idle" and "success". So the message is unreachable in practice.
+  Clearing on "idle" alone looks like the intent. Left alone because it is a UI
+  behaviour change rather than a refactor, and the path needs a real Google
+  account to exercise (the OAuth origin is `localhost:3000` only, so it cannot
+  be checked from a worktree on another port).
 
+## Docs
 
 ## Done
 
