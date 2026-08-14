@@ -1,7 +1,11 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
-import type { LoudnessAnalysis } from "@/lib/audio/loudness/types";
+import type {
+  LoudnessAnalysis,
+  NormalisationSettings,
+} from "@/lib/audio/loudness/types";
 
-export type { LoudnessAnalysis };
+export type { LoudnessAnalysis, NormalisationSettings };
+export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 
 const DB_NAME = "impamp3DB";
 const DB_VERSION = 6; // DB version for per-profile driveFileIds map
@@ -63,6 +67,8 @@ export interface Profile {
   // the next sync of any folder you happen to have write access to.
   followOnly?: boolean;
   activePadBehavior?: ActivePadBehavior;
+  /** Loudness normalisation settings. Absent means DEFAULT_NORMALISATION. */
+  normalisation?: NormalisationSettings;
   syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
   lastBackedUpAt: number;
   backupReminderPeriod: number;
@@ -97,6 +103,14 @@ export interface PadConfiguration {
   name?: string;
   audioFileIds: number[];
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
+  /**
+   * Per-sound manual gain in dB, keyed by audio file ID. Absent or 0 means
+   * unity. Applied on top of automatic normalisation, so re-normalising never
+   * discards a manual adjustment.
+   */
+  audioGainSettings?: Record<number, number>;
+  /** Whole-pad manual gain in dB, applied on top of per-sound gain. */
+  padGainDb?: number;
   playbackType: PlaybackType;
   /**
    * When true the pad keeps its sounds but refuses to play from any trigger
@@ -1142,12 +1156,43 @@ export async function upsertPadConfiguration(
   }
 }
 
+/**
+ * Everything the playback path needs from a pad.
+ *
+ * This exists because the trigger arguments used to be hand-copied at roughly
+ * ten call sites, and every field on it is optional — so adding a field and
+ * missing one site produced no compiler error, just a pad that played at the
+ * wrong level when triggered from one particular path. Funnel every site
+ * through extractPadPlaybackSettings instead.
+ */
+export type PadPlaybackSettings = Pick<
+  PadConfiguration,
+  | "audioFileIds"
+  | "audioTrimSettings"
+  | "audioGainSettings"
+  | "padGainDb"
+  | "playbackType"
+  | "isDisabled"
+  | "name"
+>;
+
+export function extractPadPlaybackSettings(
+  pad: Partial<PadConfiguration>,
+): PadPlaybackSettings {
+  return {
+    audioFileIds: pad.audioFileIds ?? [],
+    audioTrimSettings: pad.audioTrimSettings,
+    audioGainSettings: pad.audioGainSettings,
+    padGainDb: pad.padGainDb,
+    playbackType: pad.playbackType ?? DEFAULT_PLAYBACK_TYPE,
+    isDisabled: pad.isDisabled ?? false,
+    name: pad.name,
+  };
+}
+
 // The part of a pad configuration that moves with the sound during a swap.
 // Key bindings are deliberately excluded: they belong to the pad position.
-type PadContent = Pick<
-  PadConfiguration,
-  "audioFileIds" | "audioTrimSettings" | "playbackType" | "name" | "isDisabled"
->;
+type PadContent = PadPlaybackSettings;
 
 // Swap the contents of two pads on the same page in a single transaction, so a
 // failure can never leave a sound assigned to neither pad.
@@ -1177,20 +1222,8 @@ export async function swapPadConfigurations(
       );
     }
 
-    const fromContent: PadContent = {
-      audioFileIds: fromExisting.audioFileIds ?? [],
-      audioTrimSettings: fromExisting.audioTrimSettings,
-      playbackType: fromExisting.playbackType ?? DEFAULT_PLAYBACK_TYPE,
-      name: fromExisting.name,
-      isDisabled: fromExisting.isDisabled ?? false,
-    };
-    const toContent: PadContent = {
-      audioFileIds: toExisting?.audioFileIds ?? [],
-      audioTrimSettings: toExisting?.audioTrimSettings,
-      playbackType: toExisting?.playbackType ?? DEFAULT_PLAYBACK_TYPE,
-      name: toExisting?.name,
-      isDisabled: toExisting?.isDisabled ?? false,
-    };
+    const fromContent: PadContent = extractPadPlaybackSettings(fromExisting);
+    const toContent: PadContent = extractPadPlaybackSettings(toExisting ?? {});
 
     const writePad = async (
       padIndex: number,
