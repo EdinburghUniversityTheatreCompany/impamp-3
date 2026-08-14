@@ -1,18 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LOUDNESS_ALGO_VERSION, LOUDNESS_OFFSET_DB } from "./constants";
 import { analyseLoudness } from "./analyse";
-
-const SAMPLE_RATE = 48000;
-
-function sine(freq: number, seconds: number, dbfs: number): Float32Array {
-  const amplitude = 10 ** (dbfs / 20);
-  const n = Math.floor(SAMPLE_RATE * seconds);
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    out[i] = amplitude * Math.sin((2 * Math.PI * freq * i) / SAMPLE_RATE);
-  }
-  return out;
-}
+import { sine, TEST_SAMPLE_RATE as SAMPLE_RATE } from "./testFixtures";
 
 /** Ungated mean of block loudness — enough to check the constant-signal case. */
 function meanBlockLufs(blockMeanSquare: Float32Array): number {

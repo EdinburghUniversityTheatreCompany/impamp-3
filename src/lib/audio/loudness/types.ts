@@ -32,3 +32,13 @@ export interface LoudnessAnalysis {
    */
   hopTruePeak: Float32Array;
 }
+
+/** Loudness and peak over one region of a file. */
+export interface RangeLoudness {
+  /** Integrated loudness over the range, LUFS. null when silent or unmeasurable. */
+  lufs: number | null;
+  /** True peak over the range, dBTP. -Infinity for digital silence. */
+  truePeakDb: number;
+  /** True when derived from a partial block (range shorter than 400 ms). */
+  estimated: boolean;
+}
