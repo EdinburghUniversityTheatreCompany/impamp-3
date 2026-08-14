@@ -504,3 +504,90 @@ describe("syncServerProfile — warnings are not errors", () => {
     expect(cbs.onStatusChange).toHaveBeenLastCalledWith("success");
   });
 });
+
+/**
+ * `audioLocation` is the user's instruction about where their sounds go, and
+ * until now nothing read it: Drive uploads happened whenever a folder existed,
+ * and hosted uploads whenever the account was approved. Both are now gated on
+ * the answer.
+ */
+describe("syncServerProfile — where the sounds are published", () => {
+  const withDrive = {
+    tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
+    onTokenRefresh: () => {},
+  };
+
+  const owning = (audioLocation: string | undefined) =>
+    localProfile({
+      serverRole: "owner",
+      googleDriveFolderId: "folder-1",
+      ...(audioLocation === undefined ? {} : { audioLocation }),
+    } as Partial<Profile>);
+
+  beforeEach(() => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+  });
+
+  it("publishes to Drive when that is where the sounds live", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("googleDrive"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).toHaveBeenCalledOnce();
+    expect(serverAudioMocks.uploadProfileAudio).not.toHaveBeenCalled();
+  });
+
+  it("publishes to the server when that is where the sounds live", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("server"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+    expect(serverAudioMocks.uploadProfileAudio).toHaveBeenCalledOnce();
+  });
+
+  it("publishes nowhere when the sounds are meant to stay put", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("local"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+    expect(serverAudioMocks.uploadProfileAudio).not.toHaveBeenCalled();
+  });
+
+  it("keeps hosting for a profile that predates the setting", async () => {
+    // Hosted audio leaves no local trace, so an unset value cannot be read as
+    // "not hosted" — doing so would silently stop uploads for every approved
+    // account already relying on them.
+    dbMocks.getProfile.mockResolvedValue(owning(undefined));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(serverAudioMocks.uploadProfileAudio).toHaveBeenCalledOnce();
+  });
+
+  it("still downloads from both backends whatever the setting says", async () => {
+    // A collaborator must fetch whatever the owner published, regardless of
+    // where this device would put its own sounds.
+    dbMocks.getProfile.mockResolvedValue(owning("local"));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: {
+        ...syncData("remote pad", BEFORE_SYNC),
+        audioFiles: [
+          { id: 1, name: "horn.mp3", type: "audio/mpeg", driveFileId: "d1" },
+        ],
+      },
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.downloadMissingAudioFiles).toHaveBeenCalled();
+    expect(serverAudioMocks.downloadProfileAudio).toHaveBeenCalled();
+  });
+});

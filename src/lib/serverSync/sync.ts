@@ -134,8 +134,9 @@ async function performServerSync(
     // behaviour, because assuming they are collaborators would stop real
     // owners publishing at all.
     const warnings: string[] = [];
-    const ownership = getSyncState(profile).ownership;
+    const { ownership, audio, audioIsExplicit } = getSyncState(profile);
     if (
+      audio === "googleDrive" &&
       ownership !== "collaborator" &&
       drive.tokenInfo &&
       profile.googleDriveFolderId
@@ -151,8 +152,15 @@ async function performServerSync(
     // Optional, gated server-hosted audio. Silently does nothing when the
     // deployment hosts none or the account is not approved, which is the
     // default — see docs/wasabi-audio.md.
+    //
+    // A profile that predates `audioLocation` has no stored answer, and one
+    // cannot be inferred: hosted audio leaves no local trace. Those keep the
+    // old behaviour of uploading whenever the account is approved, because
+    // reading the inferred "not hosted" as an instruction would silently stop
+    // uploads for everyone already relying on them.
     const hostedHashes = new Set<string>();
-    if (!profile.readOnly) {
+    const mayHost = audioIsExplicit ? audio === "server" : true;
+    if (!profile.readOnly && mayHost) {
       const upload = await uploadProfileAudio([
         ...(await getAudioFileIdsForProfile(profileId)),
       ]);

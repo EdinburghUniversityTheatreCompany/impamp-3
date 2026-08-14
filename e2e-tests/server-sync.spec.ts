@@ -254,14 +254,14 @@ test.describe("server sync UI", () => {
     const manage = page.getByText(/Manage Profiles/i).first();
     if (await manage.count()) await manage.click();
 
-    // Everything about syncing now lives behind the profile's status chip.
+    // Everything about syncing now lives behind the profile's status chip,
+    // and turning it on is choosing where the profile syncs rather than
+    // pressing a button that only exists in one direction.
     const chip = page.getByTestId("sync-status-chip").first();
     await expect(chip).toHaveText(/This device only/);
     await chip.click();
 
-    const enable = page.getByTestId("enable-server-sync").first();
-    await expect(enable).toBeVisible();
-    await enable.click();
+    await page.getByTestId("sync-target-server").getByRole("radio").click();
 
     await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
       timeout: 15_000,

@@ -160,7 +160,7 @@ describe("planTransition — the specific moves", () => {
     // The stale profile JSON must not be relinked by find-by-name on a later
     // Drive sync.
     expect(plan.fieldUpdates.googleDriveFileId).toBeNull();
-    expect(plan.warnings.join(" ")).toMatch(/Google Drive/i);
+    expect(plan.confirmations.join(" ")).toMatch(/Google Drive/i);
   });
 
   it("server → Drive leaves no server bookkeeping and offers to tidy up", () => {
@@ -209,7 +209,9 @@ describe("planTransition — the specific moves", () => {
       googleDriveFolderId: null,
     });
     expect(plan.effects).toContain("clearAudioDriveIds");
+    // Reversible, so it is stated rather than gated on.
     expect(plan.warnings.join(" ")).toMatch(/collaborator/i);
+    expect(plan.confirmations).toEqual([]);
   });
 
   it("does not offer to delete a server profile that was never adopted", () => {

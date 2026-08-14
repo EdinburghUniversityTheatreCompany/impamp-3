@@ -185,6 +185,33 @@ export async function uploadMissingAudioFiles(
 }
 
 /**
+ * Make sure a profile has a Drive folder to publish its sounds into, and
+ * return it.
+ *
+ * The Drive sync creates one as a side effect of its first run, but a profile
+ * that syncs to the *server* while keeping its audio in Drive never takes that
+ * path — so without this it would sit with `audioLocation: "googleDrive"` and
+ * nowhere to put anything, which is the `audio-drive-without-folder` defect.
+ */
+export async function ensureProfileDriveFolder(
+  profileId: number,
+  profileName: string,
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string> {
+  const existing = (await getProfile(profileId))?.googleDriveFolderId;
+  if (existing) return existing;
+
+  const folderId = await getOrCreateProfileFolder(
+    profileName,
+    tokenInfo,
+    refreshCallback,
+  );
+  await updateProfile(profileId, { googleDriveFolderId: folderId });
+  return folderId;
+}
+
+/**
  * Migrate a profile from the flat ImpAmp_Data layout to a per-profile folder.
  * Moves the existing profile JSON and any Drive audio files into the new folder.
  * Returns the new folder ID.

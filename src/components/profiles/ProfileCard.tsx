@@ -1,23 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
-import {
-  Profile,
-  DEFAULT_BACKUP_REMINDER_PERIOD_MS,
-  clearAudioFileDriveIds,
-} from "@/lib/db";
-import {
-  useGoogleDriveSync,
-  getLocalProfileSyncData,
-  getProfileSyncFilename,
-} from "@/hooks/useGoogleDriveSync";
+import { Profile, DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
+import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import { useServerSync } from "@/hooks/useServerSync";
 import { getSyncState } from "@/lib/syncState";
 import { useProfileSyncStatus } from "@/store/syncStatusStore";
 import { getSyncTimestamp } from "@/lib/googleDrive/utils";
@@ -57,24 +48,16 @@ interface ProfileCardProps {
  * up with a manual sync, a pause and a status line while server sync had none
  * of them.
  *
- * The buttons that *change* where a profile syncs are still here. They are
- * replaced by the panel's own controls once transitions land; removing them
- * first would leave no way to turn syncing on at all.
+ * What is left is the profile itself: its name, when it was made, and the
+ * three things you can do to it. Where it syncs is one click away and no
+ * longer competes with them for the reader's attention.
  */
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
-  const {
-    setActiveProfileId,
-    updateProfile,
-    deleteProfile,
-    isGoogleSignedIn,
-    openProfileManager,
-  } = useProfileStore();
+  const { setActiveProfileId, deleteProfile } = useProfileStore();
 
   const { openProfileEditor } = useProfileEdit();
 
   const {
-    uploadDriveFile,
-    uploadMissingAudioFiles,
     syncStatus: driveHookStatus,
     conflicts: driveHookConflicts,
     conflictData: driveHookConflictData,
@@ -83,14 +66,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   const { openLazyModal, closeModal } = useModal();
 
-  const { isServerSignedIn, syncProfile: syncProfileToServer } =
-    useServerSync();
-
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isLinking, setIsLinking] = useState(false);
-  const [isLinkingServer, setIsLinkingServer] = useState(false);
-  const [isUnlinking, setIsUnlinking] = useState(false);
-  const [cardError, setCardError] = useState<string | null>(null);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
 
   const syncState = getSyncState(profile);
@@ -98,36 +74,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   const lastSyncedAt =
     syncStatus.lastSyncedAt ??
     (profile.id !== undefined ? getSyncTimestamp(profile.id) || null : null);
-
-  /**
-   * Move a local profile onto the server. The first sync uploads it as-is and
-   * records the id the server assigned; from then on the normal sync loop
-   * keeps it current.
-   */
-  const handleSyncToServer = async () => {
-    if (profile.id === undefined) return;
-    setIsLinkingServer(true);
-    setCardError(null);
-    try {
-      await updateProfile(profile.id, { syncType: "server" });
-      const result = await syncProfileToServer(profile.id);
-      if (result.status === "error") {
-        // Leaving it on "server" with no server id would strand the profile
-        // in a state the UI can't act on.
-        await updateProfile(profile.id, { syncType: "local" });
-        setCardError(result.error);
-      } else {
-        setSyncPanelOpen(true);
-      }
-    } catch (error) {
-      await updateProfile(profile.id, { syncType: "local" });
-      setCardError(
-        error instanceof Error ? error.message : "Could not enable server sync",
-      );
-    } finally {
-      setIsLinkingServer(false);
-    }
-  };
 
   const handleDelete = async () => {
     if (isActive) {
@@ -153,106 +99,6 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       setActiveProfileId(profile.id!);
     }
   };
-
-  const handleCreateAndLinkDriveFile = useCallback(async () => {
-    if (!profile.id) return;
-    setIsLinking(true);
-    setCardError(null);
-    try {
-      await uploadMissingAudioFiles(profile.id);
-      const syncData = await getLocalProfileSyncData(profile.id);
-      if (!syncData) throw new Error("Could not load profile data.");
-
-      const fileName = getProfileSyncFilename(profile.name);
-      const uploadedFile = await uploadDriveFile(
-        fileName,
-        syncData,
-        null,
-        profile.id,
-      );
-
-      await updateProfile(profile.id, { googleDriveFileId: uploadedFile.id });
-    } catch (error) {
-      console.error("Failed to create and link Drive file:", error);
-      setCardError(
-        error instanceof Error
-          ? error.message
-          : "Failed to link profile to Google Drive.",
-      );
-    } finally {
-      setIsLinking(false);
-    }
-  }, [
-    profile.id,
-    profile.name,
-    uploadDriveFile,
-    uploadMissingAudioFiles,
-    updateProfile,
-  ]);
-
-  const handleSyncToGoogleDrive = useCallback(async () => {
-    if (!profile.id) return;
-    setIsLinking(true);
-    setCardError(null);
-    try {
-      await uploadMissingAudioFiles(profile.id);
-      const syncData = await getLocalProfileSyncData(profile.id);
-      if (!syncData) throw new Error("Could not load profile data.");
-
-      const fileName = getProfileSyncFilename(profile.name);
-      const uploadedFile = await uploadDriveFile(
-        fileName,
-        syncData,
-        null,
-        profile.id,
-      );
-
-      await updateProfile(profile.id, {
-        googleDriveFileId: uploadedFile.id,
-        syncType: "googleDrive",
-      });
-      setSyncPanelOpen(true);
-    } catch (error) {
-      console.error("Failed to sync profile to Google Drive:", error);
-      setCardError(
-        error instanceof Error
-          ? error.message
-          : "Failed to sync profile to Google Drive.",
-      );
-    } finally {
-      setIsLinking(false);
-    }
-  }, [
-    profile.id,
-    profile.name,
-    uploadDriveFile,
-    uploadMissingAudioFiles,
-    updateProfile,
-  ]);
-
-  const handleUnlinkDriveFile = useCallback(async () => {
-    if (!profile.id) return;
-    if (
-      !window.confirm(
-        `Are you sure you want to unlink profile "${profile.name}" from Google Drive? The file in Drive will not be deleted, but the link will be removed.`,
-      )
-    ) {
-      return;
-    }
-    setIsUnlinking(true);
-    setCardError(null);
-    try {
-      await updateProfile(profile.id, { googleDriveFileId: null });
-      await clearAudioFileDriveIds(profile.id);
-    } catch (error) {
-      console.error("Failed to unlink profile:", error);
-      setCardError(
-        error instanceof Error ? error.message : "Failed to unlink profile.",
-      );
-    } finally {
-      setIsUnlinking(false);
-    }
-  }, [profile.id, profile.name, updateProfile]);
 
   // Open conflict resolution when a Drive sync of *this* profile finds
   // conflicts.
@@ -388,81 +234,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
           ))}
       </div>
 
-      {syncPanelOpen && (
-        <>
-          <ProfileSyncPanel profile={profile} />
-
-          {/*
-            Turning syncing on, and off again. These still branch on the
-            current backend the way they always did; the panel's own axes take
-            over once choosing a destination is a supported move rather than a
-            one-way trapdoor.
-          */}
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-gray-200 pt-3 dark:border-gray-700">
-            {syncState.target !== "googleDrive" && isGoogleSignedIn && (
-              <button
-                onClick={handleSyncToGoogleDrive}
-                disabled={isLinking}
-                data-testid="enable-drive-sync"
-                className="rounded-md bg-green-100 px-3 py-1 text-xs text-green-800 transition-colors hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40"
-              >
-                {isLinking ? "Syncing..." : "Sync to Google Drive"}
-              </button>
-            )}
-
-            {syncState.target === "local" && isServerSignedIn && (
-              <button
-                onClick={handleSyncToServer}
-                disabled={isLinkingServer}
-                data-testid="enable-server-sync"
-                className="rounded-md bg-indigo-100 px-3 py-1 text-xs text-indigo-800 transition-colors hover:bg-indigo-200 disabled:opacity-50 dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-800/40"
-              >
-                {isLinkingServer ? "Setting up…" : "Sync to ImpAmp server"}
-              </button>
-            )}
-
-            {syncState.target === "googleDrive" &&
-              isGoogleSignedIn &&
-              (profile.googleDriveFileId ? (
-                <button
-                  onClick={handleUnlinkDriveFile}
-                  disabled={isUnlinking}
-                  className="rounded-md bg-yellow-100 px-3 py-1 text-xs text-yellow-800 transition-colors hover:bg-yellow-200 disabled:opacity-50 dark:bg-yellow-900/30 dark:text-yellow-300 dark:hover:bg-yellow-800/40"
-                >
-                  {isUnlinking ? "Unlinking..." : "Unlink from Drive"}
-                </button>
-              ) : (
-                <button
-                  onClick={handleCreateAndLinkDriveFile}
-                  disabled={isLinking}
-                  className="rounded-md bg-green-100 px-3 py-1 text-xs text-green-800 transition-colors hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-800/40"
-                >
-                  {isLinking ? "Linking..." : "Upload and Link to Drive"}
-                </button>
-              ))}
-          </div>
-
-          {syncState.target === "googleDrive" && !isGoogleSignedIn && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-              {profile.readOnly
-                ? "This profile is synced from an external Google Drive file. Sign in to Google to update it from Drive."
-                : "This profile was synced with Google Drive. Sign in to Google to resume syncing."}
-              <button
-                onClick={() => openProfileManager()}
-                className="ml-1 underline"
-              >
-                Sign in
-              </button>
-            </p>
-          )}
-
-          {cardError && (
-            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-              Error: {cardError}
-            </p>
-          )}
-        </>
-      )}
+      {syncPanelOpen && <ProfileSyncPanel profile={profile} />}
     </div>
   );
 }

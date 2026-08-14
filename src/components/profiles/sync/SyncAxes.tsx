@@ -9,12 +9,13 @@
  * combination that `serverSync/sync.ts` implements and nothing displayed, so
  * people arrived at it by accident and could not tell they were in it.
  *
- * Read-only for now: this shows the state honestly. Choosing between the
- * options comes with the transitions.
+ * Choosing an option moves the profile there. What that costs is said before
+ * it happens, not after.
  */
 
 import {
   audioLocationLabel,
+  isLegalPair,
   syncTargetLabel,
   type SyncState,
 } from "@/lib/syncState";
@@ -24,7 +25,7 @@ import type { AudioLocation, SyncType } from "@/lib/db";
 const TARGETS: SyncType[] = ["local", "googleDrive", "server"];
 const AUDIO: AudioLocation[] = ["googleDrive", "server", "local"];
 
-/** Why each target is worth having, in the terms someone choosing would use. */
+/** Why each option is worth having, in the terms someone choosing would use. */
 const TARGET_NOTES: Record<SyncType, string> = {
   local: "Nothing leaves this browser.",
   googleDrive: "Backed up to your own Drive; share the folder to collaborate.",
@@ -38,68 +39,90 @@ const AUDIO_NOTES: Record<AudioLocation, string> = {
   local: "Nobody else can hear them.",
 };
 
-interface AxisProps {
+interface AxisProps<T extends string> {
   legend: string;
-  options: string[];
-  labelFor: (value: string) => string;
-  noteFor: (value: string) => string;
-  selected: string;
-  availabilityFor: (value: string) => Availability | undefined;
+  name: string;
+  options: T[];
+  labelFor: (value: T) => string;
+  noteFor: (value: T) => string;
+  selected: T;
+  availabilityFor: (value: T) => Availability | undefined;
+  disabled: boolean;
+  onChoose: (value: T) => void;
   testIdPrefix: string;
 }
 
 /**
- * One axis. Options that are unavailable stay visible with the reason
- * attached — the old UI hid the server-sync button when signed out, so the
- * feature was invisible rather than merely unavailable.
+ * One axis, as a radio group.
+ *
+ * Options that are unavailable stay visible and disabled with the reason
+ * attached. The old UI hid the server-sync button when signed out, so the
+ * feature was invisible rather than merely out of reach — and nothing told
+ * anyone it existed.
  */
-function Axis({
+function Axis<T extends string>({
   legend,
+  name,
   options,
   labelFor,
   noteFor,
   selected,
   availabilityFor,
+  disabled,
+  onChoose,
   testIdPrefix,
-}: AxisProps) {
+}: AxisProps<T>) {
   return (
-    <fieldset>
+    <fieldset disabled={disabled}>
       <legend className="text-xs font-semibold uppercase text-gray-600 dark:text-gray-400">
         {legend}
       </legend>
-      <ul className="mt-2 space-y-1">
+      <div className="mt-2 space-y-1">
         {options.map((option) => {
-          const isSelected = option === selected;
           const availability = availabilityFor(option);
-          const unavailable = availability && !availability.ok;
+          const unavailable = Boolean(availability && !availability.ok);
+          const isSelected = option === selected;
+          const id = `${testIdPrefix}-${option}-input`;
 
           return (
-            <li
+            <div
               key={option}
               data-testid={`${testIdPrefix}-${option}`}
               data-selected={isSelected}
-              className={`rounded-md px-2 py-1 text-xs ${
+              className={`flex items-start gap-2 rounded-md px-2 py-1 text-xs ${
                 isSelected
-                  ? "bg-blue-50 text-blue-900 dark:bg-blue-900/30 dark:text-blue-200"
-                  : "text-gray-600 dark:text-gray-400"
+                  ? "bg-blue-50 dark:bg-blue-900/30"
+                  : unavailable
+                    ? "opacity-70"
+                    : ""
               }`}
             >
-              <span className="font-medium">
-                {isSelected ? "● " : "○ "}
-                {labelFor(option)}
-              </span>
-              <span className="ml-1 text-gray-500 dark:text-gray-500">
-                {noteFor(option)}
-              </span>
-              {unavailable && !isSelected && (
-                <span className="mt-0.5 block text-gray-400 italic dark:text-gray-500">
-                  {availability.reason}
+              <input
+                type="radio"
+                id={id}
+                name={name}
+                checked={isSelected}
+                disabled={disabled || (unavailable && !isSelected)}
+                onChange={() => onChoose(option)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
+              <label htmlFor={id} className="flex-1">
+                <span className="font-medium text-gray-800 dark:text-gray-200">
+                  {labelFor(option)}
+                </span>{" "}
+                <span className="text-gray-500 dark:text-gray-400">
+                  {noteFor(option)}
                 </span>
-              )}
-            </li>
+                {unavailable && !isSelected && (
+                  <span className="mt-0.5 block text-gray-400 italic dark:text-gray-500">
+                    {availability?.reason}
+                  </span>
+                )}
+              </label>
+            </div>
           );
         })}
-      </ul>
+      </div>
     </fieldset>
   );
 }
@@ -111,16 +134,27 @@ interface SyncAxesProps {
     server: Availability;
     hostedAudio: Availability;
   };
+  /** True while a move is being carried out, or when none is allowed. */
+  disabled: boolean;
+  onChooseTarget: (target: SyncType) => void;
+  onChooseAudio: (audio: AudioLocation) => void;
 }
 
-export default function SyncAxes({ state, availability }: SyncAxesProps) {
+export default function SyncAxes({
+  state,
+  availability,
+  disabled,
+  onChooseTarget,
+  onChooseAudio,
+}: SyncAxesProps) {
   return (
     <div className="space-y-3" data-testid="sync-axes">
       <Axis
         legend="Profile syncs to"
+        name="sync-target"
         options={TARGETS}
-        labelFor={(v) => syncTargetLabel(v as SyncType)}
-        noteFor={(v) => TARGET_NOTES[v as SyncType]}
+        labelFor={syncTargetLabel}
+        noteFor={(v) => TARGET_NOTES[v]}
         selected={state.target}
         availabilityFor={(v) =>
           v === "googleDrive"
@@ -129,12 +163,14 @@ export default function SyncAxes({ state, availability }: SyncAxesProps) {
               ? availability.server
               : undefined
         }
+        disabled={disabled}
+        onChoose={onChooseTarget}
         testIdPrefix="sync-target"
       />
 
       {state.target === "local" ? (
         // With nowhere to sync there is nobody to publish sounds to, so the
-        // second axis has exactly one answer and asking it would be noise.
+        // second question has one answer and asking it would be noise.
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Sounds stay on this device — there is nowhere else for them to go
           until this profile syncs somewhere.
@@ -142,17 +178,16 @@ export default function SyncAxes({ state, availability }: SyncAxesProps) {
       ) : (
         <Axis
           legend="Sounds are stored in"
-          options={AUDIO.filter(
-            // A Drive profile's blob carries no server id, so a collaborator
-            // would have no route to ask this server for the bytes.
-            (a) => !(state.target === "googleDrive" && a === "server"),
-          )}
-          labelFor={(v) => audioLocationLabel(v as AudioLocation)}
-          noteFor={(v) => AUDIO_NOTES[v as AudioLocation]}
+          name="audio-location"
+          options={AUDIO.filter((a) => isLegalPair(state.target, a))}
+          labelFor={audioLocationLabel}
+          noteFor={(v) => AUDIO_NOTES[v]}
           selected={state.audio}
           availabilityFor={(v) =>
             v === "server" ? availability.hostedAudio : undefined
           }
+          disabled={disabled}
+          onChoose={onChooseAudio}
           testIdPrefix="audio-location"
         />
       )}

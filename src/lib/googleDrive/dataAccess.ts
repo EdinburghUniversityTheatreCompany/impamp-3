@@ -55,6 +55,14 @@ export const getLocalProfileSyncData = async (
 
   // Build audio file references — use driveFileId if available, otherwise omit
   // (uploadMissingAudioFiles in sync.ts ensures driveFileIds are set before this is called)
+  //
+  // A profile publishing its sounds through the server advertises no Drive
+  // ids, even though the local records may still hold them. The two download
+  // paths are disjoint by construction — one reads `serverHosted`, the other
+  // `driveFileId` — and quietly leaving both set would break that. Keeping
+  // the local mapping is deliberate: switching back costs nothing, where
+  // re-linking would re-upload every sound and leave duplicates in the folder.
+  const publishesToDrive = profile.audioLocation !== "server";
   const audioFiles = [];
   for (const audioFileId of audioFileIds) {
     const audioFile = await getAudioFile(audioFileId);
@@ -64,7 +72,9 @@ export const getLocalProfileSyncData = async (
         name: audioFile.name,
         type: audioFile.type,
         hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
-        driveFileId: audioFile.driveFileIds?.[profileId],
+        driveFileId: publishesToDrive
+          ? audioFile.driveFileIds?.[profileId]
+          : undefined,
       });
     } else {
       console.warn(
