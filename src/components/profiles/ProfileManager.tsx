@@ -8,7 +8,7 @@ import ProfileCard from "./ProfileCard";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import type { TransferProgress } from "@/lib/importExport";
+import type { ImportLink, TransferProgress } from "@/lib/importExport";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -202,13 +202,18 @@ export default function ProfileManager() {
    */
   const connectSyncedProfile = async (
     syncData: ProfileSyncData,
+    link: ImportLink,
   ): Promise<number> => {
     try {
-      return await importProfileFromSyncData(syncData, downloadAudioFile, (p) =>
-        setAudioDownloadProgress({
-          current: p.processedFiles,
-          total: p.totalFiles,
-        }),
+      return await importProfileFromSyncData(
+        syncData,
+        downloadAudioFile,
+        (p) =>
+          setAudioDownloadProgress({
+            current: p.processedFiles,
+            total: p.totalFiles,
+          }),
+        link,
       );
     } finally {
       setAudioDownloadProgress(null);
@@ -361,11 +366,15 @@ export default function ProfileManager() {
       const syncData = await downloadDriveFile(fileId);
 
       if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
-        const newProfileId = await connectSyncedProfile(syncData);
-
-        // Link the newly created profile to the Drive file for ongoing sync
-        await updateProfile(newProfileId, {
+        // Where it syncs is decided here, not inherited from the file's
+        // contents: the donor's own ids describe *their* copy.
+        const newProfileId = await connectSyncedProfile(syncData, {
+          syncType: "googleDrive",
+          audioLocation: "googleDrive",
           googleDriveFileId: fileId,
+        });
+
+        await updateProfile(newProfileId, {
           readOnly: readOnly || undefined,
         });
 
@@ -413,11 +422,14 @@ export default function ProfileManager() {
         throw new Error("Not a valid ImpAmp profile file.");
       }
 
-      // Import as a new local profile and link it to the shared Drive folder
-      const newProfileId = await connectSyncedProfile(syncData);
-      await updateProfile(newProfileId, {
+      // Import as a new profile linked to the shared Drive folder
+      const newProfileId = await connectSyncedProfile(syncData, {
+        syncType: "googleDrive",
+        audioLocation: "googleDrive",
         googleDriveFileId: fileId,
         googleDriveFolderId: folderId,
+      });
+      await updateProfile(newProfileId, {
         readOnly: shareConnectReadOnly || undefined,
       });
 
@@ -530,9 +542,12 @@ export default function ProfileManager() {
         throw new Error("Not a valid ImpAmp profile file.");
       }
 
-      const newProfileId = await connectSyncedProfile(syncData);
-      await updateProfile(newProfileId, {
+      const newProfileId = await connectSyncedProfile(syncData, {
+        syncType: "googleDrive",
+        audioLocation: "googleDrive",
         googleDriveFileId: fileId,
+      });
+      await updateProfile(newProfileId, {
         readOnly: forceReadOnly || shareConnectReadOnly || undefined,
       });
 

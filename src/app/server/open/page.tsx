@@ -100,14 +100,18 @@ function ServerOpenContent() {
                 total: progress.totalFiles,
               },
             }),
+          // Explicitly *not* the owner's Drive ids, which the payload carries.
+          // Inheriting them used to make this device try to publish audio into
+          // someone else's Drive folder. The sounds arrive by download here.
+          { syncType: "server" },
         );
 
         const readOnly = payload.access === "viewer";
         await updateProfileRef.current(localProfileId, {
-          syncType: "server",
           serverProfileId,
           serverShareToken: shareToken,
           serverVersion: payload.version,
+          serverRole: payload.access,
           readOnly,
         });
 
