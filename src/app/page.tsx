@@ -8,6 +8,7 @@ import ArmedTracksPanel from "@/components/ArmedTracksPanel";
 import {
   HelpButton,
   DeleteMoveModeButton,
+  LoudnessOverviewButton,
   SearchButton,
   EditModeButton,
 } from "@/components/buttons";
@@ -234,6 +235,9 @@ export default function Home() {
 
             {/* Help Button */}
             <HelpButton />
+
+            {/* Loudness Overview Button */}
+            <LoudnessOverviewButton />
 
             {/* Edit Mode Button */}
             <EditModeButton />

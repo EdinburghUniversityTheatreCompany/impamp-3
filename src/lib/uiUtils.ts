@@ -17,3 +17,23 @@ export const openHelpModal = () => {
     cancelText: "Close",
   });
 };
+
+/**
+ * Opens the loudness overview modal using the UI store with lazy loading.
+ *
+ * `size: "full"` because the table is wide (eight sortable columns plus an
+ * inline gain control) — the default modal widths clip it.
+ */
+export const openLoudnessOverviewModal = () => {
+  const openModalFn = useUIStore.getState().openModal;
+
+  openModalFn({
+    title: "Loudness overview",
+    modalType: ModalType.LOUDNESS_OVERVIEW,
+    modalProps: {},
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelText: "Close",
+    size: "full",
+  });
+};

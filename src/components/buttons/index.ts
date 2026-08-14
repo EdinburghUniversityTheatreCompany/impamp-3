@@ -9,4 +9,5 @@
 export { default as DeleteMoveModeButton } from "./DeleteMoveModeButton";
 export { default as EditModeButton } from "./EditModeButton";
 export { default as HelpButton } from "./HelpButton";
+export { default as LoudnessOverviewButton } from "./LoudnessOverviewButton";
 export { default as SearchButton } from "./SearchButton";
