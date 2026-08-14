@@ -34,6 +34,23 @@ export function formatGainDb(db: number): string {
   return db > 0 ? `+${magnitude}` : `${MINUS}${magnitude}`;
 }
 
+/**
+ * Formats an unsigned dB magnitude — for values that are already known to be
+ * an overshoot or a distance rather than a gain, where a leading "+" would
+ * misread as a boost. `formatGainDb` always signs its output because a gain
+ * can go either way; this is for the one case where the caller already knows
+ * the sign (over/positive) and printing it would be redundant at best and
+ * misleading at worst — e.g. "clips by +2.3 dB" reads as though a boost was
+ * applied, when it is actually how far the output exceeds full scale.
+ *
+ * Same non-finite guard as `formatGainDb`, for the same reason: a bare
+ * `Math.abs(NaN).toFixed(1)` is the string `"NaN"`.
+ */
+export function formatDbMagnitude(db: number): string {
+  if (!Number.isFinite(db)) return "0.0";
+  return Math.abs(db).toFixed(1);
+}
+
 /** Formats a LUFS measurement, or an em dash when there is nothing to show. */
 export function formatLufs(lufs: number | null): string {
   if (lufs === null || !Number.isFinite(lufs)) return "—";

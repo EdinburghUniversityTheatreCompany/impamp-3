@@ -15,11 +15,33 @@ import type { LoudnessAnalysis } from "./types";
 
 const cache = new Map<number, LoudnessAnalysis>();
 
+const cacheListeners = new Set<() => void>();
+
+function notifyCacheListeners(): void {
+  for (const listener of cacheListeners) listener();
+}
+
+/**
+ * Notifies when the cache contents change, so UI showing a measurement can
+ * pick up an analysis that lands after it rendered.
+ *
+ * Analysis reaches the cache by two routes — the idle backfill and the
+ * analyse-on-import path — and only this one is common to both. Backfill
+ * progress covers just the former.
+ */
+export function subscribeToLoudnessCache(listener: () => void): () => void {
+  cacheListeners.add(listener);
+  return () => {
+    cacheListeners.delete(listener);
+  };
+}
+
 export function setCachedLoudness(
   audioFileId: number,
   analysis: LoudnessAnalysis,
 ): void {
   cache.set(audioFileId, analysis);
+  notifyCacheListeners();
 }
 
 export function getCachedLoudness(
@@ -34,10 +56,12 @@ export function warmLoudnessCache(
 ): void {
   cache.clear();
   for (const [id, analysis] of entries) cache.set(id, analysis);
+  notifyCacheListeners();
 }
 
 export function clearLoudnessCache(): void {
   cache.clear();
+  notifyCacheListeners();
 }
 
 export function getLoudnessCacheSize(): number {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatGainDb, formatLufs, gainToneClass } from "./format";
+import {
+  formatDbMagnitude,
+  formatGainDb,
+  formatLufs,
+  gainToneClass,
+} from "./format";
 
 describe("formatGainDb", () => {
   it("shows a sign for boost", () => {
@@ -24,6 +29,30 @@ describe("formatGainDb", () => {
   it("renders Infinity as unity rather than propagating it", () => {
     expect(formatGainDb(Infinity)).toBe("0.0");
     expect(formatGainDb(-Infinity)).toBe("0.0");
+  });
+});
+
+describe("formatDbMagnitude", () => {
+  it("renders a positive value with no sign", () => {
+    expect(formatDbMagnitude(2.3)).toBe("2.3");
+  });
+
+  it("renders a negative value's magnitude with no sign", () => {
+    expect(formatDbMagnitude(-2.3)).toBe("2.3");
+  });
+
+  it("rounds to one decimal", () => {
+    expect(formatDbMagnitude(2.34)).toBe("2.3");
+  });
+
+  it("renders zero as 0.0", () => {
+    expect(formatDbMagnitude(0)).toBe("0.0");
+  });
+
+  it("renders a non-finite value as 0.0 rather than propagating it", () => {
+    expect(formatDbMagnitude(NaN)).toBe("0.0");
+    expect(formatDbMagnitude(Infinity)).toBe("0.0");
+    expect(formatDbMagnitude(-Infinity)).toBe("0.0");
   });
 });
 

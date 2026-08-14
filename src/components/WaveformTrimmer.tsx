@@ -20,8 +20,15 @@ import { getAudioFile } from "@/lib/db";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
 import { playBuffer, stopTrack } from "@/lib/audio/playback";
 import { resolveGain } from "@/lib/audio/loudness/gain";
-import { getCachedLoudness } from "@/lib/audio/loudness/cache";
-import { formatGainDb, formatLufs } from "@/lib/audio/loudness/format";
+import {
+  getCachedLoudness,
+  subscribeToLoudnessCache,
+} from "@/lib/audio/loudness/cache";
+import {
+  formatDbMagnitude,
+  formatGainDb,
+  formatLufs,
+} from "@/lib/audio/loudness/format";
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import { useProfileStore } from "@/store/profileStore";
 
@@ -114,6 +121,19 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
   const bufferRef = useRef<AudioBuffer | null>(null);
   const initialTrimEndRef = useRef(initialTrimEnd);
 
+  // Bumped whenever the loudness cache changes, so the readout below can pick
+  // up an analysis that lands while the trimmer is already open — e.g. a
+  // just-imported file the idle backfill (or the analyse-on-import path)
+  // hasn't reached yet when the modal is opened. Neither route is optional to
+  // cover: analyse-on-import calls setCachedLoudness directly, with no
+  // backfill-progress event, so subscribing to backfill progress instead
+  // would miss it.
+  const [cacheVersion, setCacheVersion] = useState(0);
+  useEffect(
+    () => subscribeToLoudnessCache(() => setCacheVersion((v) => v + 1)),
+    [],
+  );
+
   // Live loudness readout for the currently-dragged trim range. `measureRange`
   // is a slice over cached per-block floats (see LoudnessAnalysis), so this is
   // cheap enough to recompute on every frame of a drag — no decoding, nothing
@@ -133,7 +153,12 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
       padGainDb,
       normalisation,
     });
-  }, [audioFileId, trimStart, trimEnd, soundGainDb, padGainDb]);
+    // cacheVersion is intentionally in the dep array though unused in the
+    // body: it's the signal that getCachedLoudness's return value may have
+    // changed since the last render (the cache is a plain Map, not reactive
+    // state React can see on its own).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioFileId, trimStart, trimEnd, soundGainDb, padGainDb, cacheVersion]);
 
   // Load and decode audio
   useEffect(() => {
@@ -500,7 +525,8 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
 
                     {resolved.willClip && (
                       <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-800 dark:bg-red-900/40 dark:text-red-200">
-                        ⚠ clips by {formatGainDb(resolved.predictedPeakDb)} dB
+                        ⚠ clips by {formatDbMagnitude(resolved.predictedPeakDb)}{" "}
+                        dB
                       </span>
                     )}
                   </>
