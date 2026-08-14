@@ -45,6 +45,24 @@ async function mintSession(
   return (await response.json()).token as string;
 }
 
+/**
+ * A throwaway account per run, signed in on both the page and the API client.
+ *
+ * Fresh because the E2E database persists between runs and `mintSession`
+ * reuses the user for a given address, so a fixed one accumulates state and
+ * any count or version becomes a lie.
+ */
+async function signedInAs(
+  page: Page,
+  request: APIRequestContext,
+  who: string,
+): Promise<{ cookie: string }> {
+  const email = `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+  const token = await mintSession(request, email);
+  await signIn(page, token);
+  return { cookie: `${SESSION_COOKIE}=${token}` };
+}
+
 async function signIn(page: Page, token: string): Promise<void> {
   await page.context().addCookies([
     {
@@ -54,6 +72,37 @@ async function signIn(page: Page, token: string): Promise<void> {
       path: "/",
     },
   ]);
+}
+
+/** An empty profile on the server, for a test to then connect or watch. */
+async function createServerProfile(
+  request: APIRequestContext,
+  cookie: { cookie: string },
+  name: string,
+): Promise<string> {
+  const now = Date.now();
+  const created = await request.post("/api/profiles", {
+    headers: cookie,
+    data: {
+      name,
+      data: {
+        _syncFormatVersion: 1,
+        profile: {
+          name,
+          syncType: "server",
+          lastBackedUpAt: now,
+          backupReminderPeriod: 30,
+          createdAt: new Date(now).toISOString(),
+          updatedAt: new Date(now).toISOString(),
+        },
+        padConfigurations: [],
+        pageMetadata: [],
+        audioFiles: [],
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  return (await created.json()).id as string;
 }
 
 const SAMPLE = {
@@ -487,54 +536,12 @@ test.describe("server sync conflicts", () => {
  * a list; the server had nothing.
  */
 test.describe("connecting a profile", () => {
-  /**
-   * A fresh account per run. The E2E database persists between runs and
-   * `mintSession` reuses the user for a given address, so a fixed one
-   * accumulates a profile every time and any count becomes a lie.
-   */
-  const freshEmail = (who: string) =>
-    `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-
-  async function seedServerProfile(
-    request: APIRequestContext,
-    cookie: { cookie: string },
-    name: string,
-  ) {
-    const now = Date.now();
-    const created = await request.post("/api/profiles", {
-      headers: cookie,
-      data: {
-        name,
-        data: {
-          _syncFormatVersion: 1,
-          profile: {
-            name,
-            syncType: "server",
-            lastBackedUpAt: now,
-            backupReminderPeriod: 30,
-            createdAt: new Date(now).toISOString(),
-            updatedAt: new Date(now).toISOString(),
-          },
-          padConfigurations: [],
-          pageMetadata: [],
-          audioFiles: [],
-        },
-      },
-    });
-    expect(created.status()).toBe(201);
-  }
-
   test("lists your server profiles, with no Google account involved", async ({
     page,
     request,
   }) => {
-    const token = await mintSession(request, freshEmail("lister"));
-    await signIn(page, token);
-    await seedServerProfile(
-      request,
-      { cookie: `${SESSION_COOKIE}=${token}` },
-      "Panto 2026",
-    );
+    const cookie = await signedInAs(page, request, "lister");
+    await createServerProfile(request, cookie, "Panto 2026");
 
     await gotoApp(page);
     await openProfileManager(page);
@@ -553,13 +560,8 @@ test.describe("connecting a profile", () => {
     page,
     request,
   }) => {
-    const token = await mintSession(request, freshEmail("connector"));
-    await signIn(page, token);
-    await seedServerProfile(
-      request,
-      { cookie: `${SESSION_COOKIE}=${token}` },
-      "Fringe Tech Run",
-    );
+    const cookie = await signedInAs(page, request, "connector");
+    await createServerProfile(request, cookie, "Fringe Tech Run");
 
     await gotoApp(page);
     await openProfileManager(page);
@@ -594,6 +596,86 @@ test.describe("connecting a profile", () => {
     expect(connected?.serverProfileId).toBeTruthy();
     // The payload carries the owner's Drive ids; a connect must not adopt them.
     expect(connected?.googleDriveFileId ?? null).toBeNull();
+  });
+});
+
+/**
+ * Following holds the push back, against the real server.
+ *
+ * The unit tests cover the decision; this covers the promise. A follower that
+ * still writes is the failure the feature exists to prevent, and it is visible
+ * from outside: the profile's version on the server stops moving.
+ */
+test.describe("a follower does not write", () => {
+  async function seedAndConnect(
+    page: Page,
+    request: APIRequestContext,
+    cookie: { cookie: string },
+    followOnly: boolean,
+  ) {
+    const id = await createServerProfile(request, cookie, "Watched Board");
+    const now = Date.now();
+
+    await gotoApp(page);
+    await seedActiveProfileSync(page, {
+      syncType: "server",
+      serverProfileId: id,
+      serverRole: "owner",
+      audioLocation: "server",
+      followOnly,
+      // A local edit worth pushing, if we were going to push.
+      name: `Edited locally ${now}`,
+    });
+    return id as string;
+  }
+
+  const versionOf = async (
+    request: APIRequestContext,
+    cookie: { cookie: string },
+    id: string,
+  ) =>
+    (
+      await (
+        await request.get(`/api/profiles/${id}`, { headers: cookie })
+      ).json()
+    ).version as number;
+
+  test("leaves the server version alone while following", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "follower");
+
+    const id = await seedAndConnect(page, request, cookie, true);
+    const before = await versionOf(request, cookie, id);
+
+    await page.reload();
+    await waitForAppReady(page);
+    await page.waitForTimeout(3_000);
+
+    expect(
+      await versionOf(request, cookie, id),
+      "a follower must not write, even to a profile it owns",
+    ).toBe(before);
+  });
+
+  test("writes as usual when nobody is following", async ({
+    page,
+    request,
+  }) => {
+    // The control: without this, the test above would pass on a sync that
+    // never ran.
+    const cookie = await signedInAs(page, request, "contributor");
+
+    const id = await seedAndConnect(page, request, cookie, false);
+    const before = await versionOf(request, cookie, id);
+
+    await page.reload();
+    await waitForAppReady(page);
+
+    await expect
+      .poll(() => versionOf(request, cookie, id), { timeout: 20_000 })
+      .toBeGreaterThan(before);
   });
 });
 
