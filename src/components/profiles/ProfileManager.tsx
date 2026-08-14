@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef, ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
+import ServerAccountPanel from "./ServerAccountPanel";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
@@ -55,6 +57,27 @@ function TransferProgressBar({
   );
 }
 
+/**
+ * An ImpAmp share link, if that is what this is.
+ *
+ * Matched on the path and the two parameters rather than on the origin: a
+ * deployment can be reached by more than one hostname, and a link copied from
+ * one is still a link to the same profile on the same server.
+ */
+function parseServerShareUrl(
+  raw: string,
+): { id: string; token: string } | null {
+  try {
+    const url = new URL(raw.trim(), window.location.origin);
+    if (!url.pathname.endsWith("/server/open")) return null;
+    const id = url.searchParams.get("id");
+    const token = url.searchParams.get("token");
+    return id && token ? { id, token } : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ProfileManager() {
   const {
     profiles,
@@ -75,6 +98,8 @@ export default function ProfileManager() {
     setGoogleAuthDetails,
     clearGoogleAuthDetails,
   } = useProfileStore();
+
+  const router = useRouter();
 
   // State management
   const [newProfileName, setNewProfileName] = useState("");
@@ -329,10 +354,20 @@ export default function ProfileManager() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     googleLogout();
     clearGoogleAuthDetails();
-    console.log("Logged out from Google");
+    // The Google sign-in established the server session too, so leaving one
+    // and not the other leaves an account behind that nothing here mentions.
+    try {
+      const { signOutOfServer } = await import("@/lib/serverSync/api");
+      const { forgetAudioCapability } =
+        await import("@/lib/serverAudio/transfer");
+      await signOutOfServer();
+      forgetAudioCapability();
+    } catch (error) {
+      console.warn("Could not end the server session:", error);
+    }
   };
 
   // Load Drive files inline (no modal)
@@ -482,6 +517,18 @@ export default function ProfileManager() {
     e.preventDefault();
     setConnectError(null);
 
+    // A server share link is a link to this app, and `/server/open` already
+    // knows how to honour one. Sending the user there beats telling them this
+    // box only understands the other kind of link — which is what it did, in
+    // a field whose placeholder said "share link" without qualification.
+    const serverShare = parseServerShareUrl(shareUrl);
+    if (serverShare) {
+      router.push(
+        `/server/open?id=${encodeURIComponent(serverShare.id)}&token=${encodeURIComponent(serverShare.token)}`,
+      );
+      return;
+    }
+
     const fileMatch = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
     const folderMatch = shareUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
     const fileId = fileMatch
@@ -493,7 +540,7 @@ export default function ProfileManager() {
 
     if (!fileId && !folderId) {
       setConnectError(
-        "Please enter a valid Google Drive share URL or file ID.",
+        "That doesn't look like a Google Drive share link or an ImpAmp share link.",
       );
       return;
     }
@@ -1108,10 +1155,10 @@ export default function ProfileManager() {
                 </div>
               </section>
 
-              {/* Google Drive Integration section */}
+              {/* Accounts section */}
               <section>
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
-                  Google Drive Integration
+                  Accounts
                 </h3>
 
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4">
@@ -1164,18 +1211,29 @@ export default function ProfileManager() {
                     </p>
                   )}
 
+                  {/*
+                    One Google sign-in also establishes a session on this
+                    ImpAmp server, so the account exists whether or not anyone
+                    was told about it. Now they are told, and can leave it.
+                  */}
+                  <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <h4 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      ImpAmp server
+                    </h4>
+                    <ServerAccountPanel />
+                  </div>
+
                   {isGoogleSignedIn && (
                     <>
                       <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Profile sync actions (Link, Sync Now, Unlink) are on
-                        individual profile cards in the{" "}
+                        Where each profile syncs is set on its own card in the{" "}
                         <button
                           onClick={() => setActiveTab("profiles")}
                           className="text-blue-600 dark:text-blue-400 hover:underline"
                         >
                           Profiles tab
                         </button>
-                        .
+                        , behind its sync status.
                       </p>
 
                       {/* ── Connect from your Drive ── */}
@@ -1345,7 +1403,7 @@ export default function ProfileManager() {
                                 setConnectSuccess(null);
                                 setConnectError(null);
                               }}
-                              placeholder="Or paste a public share link…"
+                              placeholder="Or paste a share link (Drive or ImpAmp)…"
                               className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
                             />
                             <button

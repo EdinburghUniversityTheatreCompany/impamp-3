@@ -329,7 +329,7 @@ function DriveOpenContent() {
               </svg>
               <span>
                 {pageState.progress
-                  ? `Downloading audio (${pageState.progress.current}/${pageState.progress.total})…`
+                  ? `Downloading sounds (${pageState.progress.current} of ${pageState.progress.total})…`
                   : "Connecting…"}
               </span>
             </div>
@@ -355,17 +355,17 @@ function DriveOpenContent() {
             </div>
             <div>
               <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                &ldquo;{pageState.profileName}&rdquo; connected!
+                Added &ldquo;{pageState.profileName}&rdquo;.
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                The profile has been added to your ImpAmp3.
+                It stays in sync with the shared Drive folder.
               </p>
             </div>
             <button
               onClick={handleGoToApp}
               className="w-full px-4 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 transition-colors"
             >
-              Open ImpAmp3
+              Go to the soundboard
             </button>
           </div>
         )}
@@ -389,17 +389,17 @@ function DriveOpenContent() {
             </div>
             <div>
               <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                &ldquo;{pageState.profileName}&rdquo; is already connected.
+                You already have &ldquo;{pageState.profileName}&rdquo;.
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                This profile is already in your ImpAmp3.
+                It stays in sync automatically.
               </p>
             </div>
             <button
               onClick={handleGoToApp}
               className="w-full px-4 py-2.5 bg-teal-500 text-white rounded-lg text-sm font-medium hover:bg-teal-600 transition-colors"
             >
-              Open ImpAmp3
+              Go to the soundboard
             </button>
           </div>
         )}
@@ -433,7 +433,7 @@ function DriveOpenContent() {
               onClick={handleGoToApp}
               className="w-full px-4 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
             >
-              Go to ImpAmp3
+              Go to the soundboard
             </button>
           </div>
         )}

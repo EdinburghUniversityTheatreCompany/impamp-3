@@ -9,6 +9,7 @@ import {
   gotoApp,
   openProfileManager,
   seedActiveProfileSync,
+  waitForAppReady,
 } from "./test-helpers";
 
 /**
@@ -316,8 +317,10 @@ async function stageServerConflict(
   await openProfileManager(page);
   await page.getByTestId("sync-status-chip").first().click();
   await page.getByTestId("sync-target-server").getByRole("radio").click();
+  // Generous: this is setup, and it is a real adopt over the network competing
+  // with every other spec in the run.
   await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
-    timeout: 15_000,
+    timeout: 30_000,
   });
 
   // updateProfile stamps _fieldsModified.name, which is what makes this side
@@ -362,31 +365,22 @@ async function stageServerConflict(
 }
 
 /**
- * Wait for the conflict to surface, nudging a sync while we wait.
+ * Reload, which syncs on load, and wait for the conflict to surface.
  *
- * The change reaches the client over SSE, but only once it has subscribed —
- * and under a parallel run the write can land in that gap, leaving the
- * 30-second poll as the next trigger. Pressing "Sync now" while waiting makes
- * the test about whether a conflict surfaces at all, rather than about how
- * quickly a background timer happens to fire.
+ * Deliberately not a wait on the background timers. The change reaches a
+ * running client over SSE, but only once it has subscribed, and under a
+ * parallel run the write can land in that gap — leaving a 30-second poll as
+ * the next trigger and the test failing on how busy the machine is rather than
+ * on anything about the app. `ClientSideInitializer` syncs every server-synced
+ * profile when it mounts, so a reload is a trigger we control.
  */
-async function waitForConflictModal(page: Page) {
-  await expect
-    .poll(
-      async () => {
-        if ((await page.getByTestId("custom-modal").count()) > 0) return true;
-        const syncNow = page.getByTestId("sync-now");
-        if ((await syncNow.count()) > 0 && (await syncNow.isEnabled())) {
-          // Short timeout on purpose: once the modal opens it covers this
-          // button, and click()'s default 30s retry would eat the whole poll
-          // window waiting for something that is never going to be clickable.
-          await syncNow.click({ timeout: 1_000 }).catch(() => {});
-        }
-        return false;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(true);
+async function reloadAndWaitForConflict(page: Page) {
+  await page.reload();
+  await waitForAppReady(page);
+  await openProfileManager(page);
+  await expect(page.getByTestId("custom-modal")).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 test.describe("server sync conflicts", () => {
@@ -403,7 +397,7 @@ test.describe("server sync conflicts", () => {
     // The sync that finds this runs in the initializer's hook instance, not
     // the card's — the case that used to be detected, recorded, and shown to
     // nobody.
-    await waitForConflictModal(page);
+    await reloadAndWaitForConflict(page);
     const modal = page.getByTestId("custom-modal");
     // The copy used to say "Google Drive" whichever backend it was about.
     await expect(modal).toContainText(/the ImpAmp server/);
@@ -451,6 +445,49 @@ test.describe("server sync conflicts", () => {
         { timeout: 15_000 },
       )
       .toBeGreaterThan(version + 1);
+  });
+});
+
+/**
+ * Signing in with Google establishes a session on this server as a side effect
+ * of the same code exchange, so anyone using Drive sync had an account here and
+ * was never told. `signOutOfServer` existed and was called from nowhere, so
+ * "Sign Out" ended the Google session and left the server cookie in place.
+ */
+test.describe("the server account", () => {
+  test("says who you are here, and lets you leave", async ({
+    page,
+    request,
+  }) => {
+    await signIn(page, await mintSession(request, "account@example.com"));
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    const account = page.getByTestId("server-account");
+    await expect(account).toContainText("account@example.com");
+    // The link to the storage page, which nothing in the app pointed at.
+    await expect(page.getByTestId("server-storage-link")).toBeVisible();
+
+    await page.getByTestId("server-sign-out").click();
+
+    await expect(account).toContainText(/No account/i);
+    // Really gone, not just hidden: the session cookie no longer authenticates.
+    await expect
+      .poll(async () => (await request.get("/api/auth/session")).status(), {
+        timeout: 10_000,
+      })
+      .toBe(401);
+  });
+
+  test("says plainly when there is no account", async ({ page }) => {
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    await expect(page.getByTestId("server-account")).toContainText(
+      /No account/i,
+    );
   });
 });
 

@@ -260,104 +260,92 @@ const HelpModalContent: React.FC = () => {
       ),
     },
     {
-      id: "google-drive",
-      label: "Google Drive Sync",
+      id: "sync",
+      label: "Syncing",
       content: (
         <div className="space-y-4">
-          <h3 className="text-lg font-medium">Google Drive Synchronization</h3>
+          <h3 className="text-lg font-medium">Syncing and sharing</h3>
 
           <div className="p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 rounded-md">
-            <p className="font-medium">
-              Collaborative Profile Sync via Google Drive
-            </p>
-            <p className="mt-2">
-              You can synchronize your profiles across devices and share them
-              with others using Google Drive. ImpAmp3 uses Google Drive&apos;s
-              hidden AppData folder for storing files, which doesn&apos;t count
-              toward your storage quota and keeps your main Drive organized.
+            <p className="font-medium">Two questions, not one</p>
+            <p className="mt-1 text-sm">
+              Where a profile <em>syncs</em> and where its <em>sounds</em> live
+              are separate choices. A profile can sync through the ImpAmp server
+              while its sounds stay in your Google Drive — that is a normal,
+              working arrangement, not a half-finished one.
             </p>
           </div>
 
-          <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Linking a Profile to Google Drive</h4>
+          <div className="space-y-2">
+            <h4 className="font-medium">Finding the settings</h4>
             <p>
-              Each profile can be linked to a Google Drive file, enabling
-              automatic synchronization:
+              Open <strong>Manage Profiles</strong>, then click the grey line
+              under a profile&apos;s name — it says where that profile syncs.
+              Everything about syncing is behind it.
             </p>
-            <ol className="list-decimal pl-5 space-y-1">
-              <li>Sign in with your Google account in the Profile Manager</li>
-              <li>On any profile card, click:</li>
-              <ul className="list-disc pl-5 space-y-1 mt-1">
-                <li>
-                  <strong>Link to new Drive file</strong> - Create a new sync
-                  file in Drive
-                </li>
-                <li>
-                  <strong>Link to existing file</strong> - Connect to a file
-                  already in Drive
-                </li>
-              </ul>
-              <li>
-                Once linked, you&apos;ll see the sync status displayed on the
-                profile card
-              </li>
-            </ol>
           </div>
 
-          <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Automatic Synchronization</h4>
-            <p>For linked profiles, synchronization happens automatically:</p>
+          <div className="space-y-2">
+            <h4 className="font-medium">Where a profile syncs</h4>
             <ul className="list-disc pl-5 space-y-1">
-              <li>When the application loads</li>
               <li>
-                When your internet connection is restored after being offline
+                <strong>This device only</strong> — nothing leaves this browser.
+                Export a backup file yourself.
               </li>
-              <li>Every 15 minutes while the application is open</li>
               <li>
-                You can also manually sync anytime by clicking &quot;Sync
-                Now&quot; on the profile card
+                <strong>Google Drive</strong> — kept in your own Drive. Share
+                the folder to let others use it. Changes appear within a minute
+                or so.
+              </li>
+              <li>
+                <strong>ImpAmp server</strong> — collaborators see edits within
+                seconds and can be invited by email or a share link. Needs an
+                account on this server, which signing in with Google creates.
+              </li>
+            </ul>
+            <p className="text-sm">
+              Options you cannot use right now stay visible and say why, rather
+              than disappearing.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-medium">Where the sounds live</h4>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                <strong>Google Drive folder</strong> — collaborators fetch them
+                from there, so keep the folder shared.
+              </li>
+              <li>
+                <strong>ImpAmp server</strong> — hosted here, so nobody needs
+                Drive access. Only available if this server is set up for it and
+                your account is approved.
+              </li>
+              <li>
+                <strong>This device only</strong> — nobody else can hear them.
+                The profile still syncs; collaborators get silent pads.
               </li>
             </ul>
           </div>
 
-          <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Conflict Resolution</h4>
-            <p>If changes are made to the same profile on different devices:</p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>
-                ImpAmp3 will detect conflicts and display a resolution modal
-              </li>
-              <li>
-                You can choose which version to keep for each changed field
-              </li>
-              <li>
-                The system preserves both local-only and remote-only data
-                automatically
-              </li>
-              <li>
-                Once resolved, changes are synchronized back to Google Drive
-              </li>
-            </ul>
+          <div className="space-y-2">
+            <h4 className="font-medium">Sharing</h4>
+            <p>
+              Sharing the profile and sharing its sounds are separate grants,
+              and the panel shows both when they apply. Someone who can edit a
+              profile but cannot reach its sounds gets silent pads — which is
+              why the two sit side by side.
+            </p>
           </div>
 
-          <div className="space-y-2 mt-4">
-            <h4 className="font-medium">Collaboration with Others</h4>
+          <div className="space-y-2">
+            <h4 className="font-medium">When something is wrong</h4>
             <p>
-              Share your profiles with others for collaborative soundboards:
+              The status line turns amber and says &quot;needs attention&quot;,
+              and the panel explains what happened in words. If two people
+              changed the same thing, a window asks which version to keep,
+              naming the backend the conflict is with.
             </p>
-            <ol className="list-decimal pl-5 space-y-1">
-              <li>Link a profile to Google Drive</li>
-              <li>Open Google Drive in your browser</li>
-              <li>
-                Find the linked file (format:{" "}
-                <code>impamp-profile-profilename.json</code>)
-              </li>
-              <li>Right-click and select &quot;Share&quot;</li>
-              <li>Add email addresses of people you want to share with</li>
-              <li>
-                They can then link their local profiles to this shared file
-              </li>
-            </ol>
           </div>
         </div>
       ),

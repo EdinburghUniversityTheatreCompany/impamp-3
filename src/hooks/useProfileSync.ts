@@ -166,6 +166,11 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
             activity: "error",
             error: result.error,
           });
+        } else if (result.status === "conflict") {
+          // A sync that ended in a conflict has not synced. Recording it as a
+          // success would stamp a "synced just now" the profile has not
+          // earned, and hide the one state that needs the user.
+          syncStatusActions.patch(profileId, { activity: "conflict" });
         } else {
           syncStatusActions.noteSynced(profileId, Date.now());
         }
