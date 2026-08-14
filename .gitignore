@@ -61,3 +61,6 @@ certificates
 
 # git worktrees (dev-hooks worktree-per-agent workflow) — never tracked
 /.worktrees/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+/.superpowers/
