@@ -273,6 +273,7 @@ export function buildImportedProfileFields(
     activePadBehavior: donor.activePadBehavior,
     // Following is a decision about this device, never inherited.
     followOnly: false,
+    normalisation: donor.normalisation,
     // Importing is not backing up, but it does mean a copy exists elsewhere,
     // so the clock starts now rather than at the donor's last backup.
     lastBackedUpAt: now.getTime(),

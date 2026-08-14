@@ -29,6 +29,7 @@ const donor: Partial<Profile> = {
   readOnly: true,
   backupReminderPeriod: 999,
   activePadBehavior: "stop",
+  normalisation: { enabled: false, targetLufs: -20 },
 };
 
 const build = (link = {}) =>
@@ -88,6 +89,7 @@ describe("buildImportedProfileFields", () => {
     expect(fields.name).toBe("My Copy");
     expect(fields.activePadBehavior).toBe("stop");
     expect(fields.backupReminderPeriod).toBe(999);
+    expect(fields.normalisation).toEqual({ enabled: false, targetLufs: -20 });
   });
 
   it("falls back to the default reminder period", () => {
