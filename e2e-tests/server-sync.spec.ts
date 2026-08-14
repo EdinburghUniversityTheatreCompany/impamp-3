@@ -361,6 +361,34 @@ async function stageServerConflict(
   throw new Error("Could not stage a conflict: the client kept winning.");
 }
 
+/**
+ * Wait for the conflict to surface, nudging a sync while we wait.
+ *
+ * The change reaches the client over SSE, but only once it has subscribed —
+ * and under a parallel run the write can land in that gap, leaving the
+ * 30-second poll as the next trigger. Pressing "Sync now" while waiting makes
+ * the test about whether a conflict surfaces at all, rather than about how
+ * quickly a background timer happens to fire.
+ */
+async function waitForConflictModal(page: Page) {
+  await expect
+    .poll(
+      async () => {
+        if ((await page.getByTestId("custom-modal").count()) > 0) return true;
+        const syncNow = page.getByTestId("sync-now");
+        if ((await syncNow.count()) > 0 && (await syncNow.isEnabled())) {
+          // Short timeout on purpose: once the modal opens it covers this
+          // button, and click()'s default 30s retry would eat the whole poll
+          // window waiting for something that is never going to be clickable.
+          await syncNow.click({ timeout: 1_000 }).catch(() => {});
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
 test.describe("server sync conflicts", () => {
   test("a conflict opens the resolution modal, naming the server", async ({
     page,
@@ -372,12 +400,11 @@ test.describe("server sync conflicts", () => {
 
     await stageServerConflict(page, request, cookie);
 
-    // No click needed: the server pushes the change over SSE and the periodic
-    // sync picks it up. That is the case that used to be lost entirely —
-    // the sync that finds a conflict runs in the initializer's hook instance,
-    // and hook state does not reach the card holding a different one.
+    // The sync that finds this runs in the initializer's hook instance, not
+    // the card's — the case that used to be detected, recorded, and shown to
+    // nobody.
+    await waitForConflictModal(page);
     const modal = page.getByTestId("custom-modal");
-    await expect(modal).toBeVisible({ timeout: 20_000 });
     // The copy used to say "Google Drive" whichever backend it was about.
     await expect(modal).toContainText(/the ImpAmp server/);
     await expect(modal).toContainText(/Mine|Theirs/);

@@ -382,8 +382,7 @@ describe("syncServerProfile", () => {
   });
 
   it("surfaces a genuine conflict instead of guessing", async () => {
-    // Both sides changed the same pad name since their last sync.
-    const { local, remote } = stageConflict();
+    stageConflict();
 
     const cbs = callbacks();
     const result = await syncServerProfile(PROFILE_ID, cbs);
