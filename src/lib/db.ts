@@ -1,4 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
+import type { LoudnessAnalysis } from "@/lib/audio/loudness/types";
+
+export type { LoudnessAnalysis };
 
 const DB_NAME = "impamp3DB";
 const DB_VERSION = 6; // DB version for per-profile driveFileIds map
@@ -12,6 +15,8 @@ export interface AudioFile {
   hash?: string; // SHA-256 hex digest of blob content
   createdAt: Date;
   driveFileIds?: Record<number, string>; // profileId → Google Drive file ID
+  /** BS.1770-4 analysis. Absent until the file has been analysed. */
+  loudness?: LoudnessAnalysis;
 }
 
 // Define the structure of profile data
