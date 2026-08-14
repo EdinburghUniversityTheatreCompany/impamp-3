@@ -73,6 +73,16 @@ export default function GainControl({
         </span>
         <button
           type="button"
+          // Without this, clicking Reset while the slider has focus first
+          // shifts focus to this button — blurring the slider and firing
+          // GainControl's own onBlur commit with the pre-reset value — and
+          // then this handler's onCommit?.(0) fires a second, unordered
+          // write against the same record. Whichever of the two lands last
+          // in IndexedDB silently wins, so Reset could visibly fail to
+          // reset. preventDefault on mousedown stops the focus shift (the
+          // click still fires normally), so the slider never blurs and this
+          // is the only commit.
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             onChange(0);
             onCommit?.(0);

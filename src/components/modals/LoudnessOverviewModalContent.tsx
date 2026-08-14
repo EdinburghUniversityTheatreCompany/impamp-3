@@ -158,7 +158,13 @@ export default function LoudnessOverviewModalContent() {
 
   // Called once, from GainControl's onCommit (pointer release / blur) — not
   // from onChange, which only updates the local `pendingGain` buffer above.
+  // Takes the row's own key rather than reconstructing it, and only ever
+  // clears `pendingGain` if it still holds that same key when this resolves
+  // — a second row's drag (or a re-drag of this same row) may have started
+  // while this write was in flight, and an older commit settling late must
+  // not wipe a newer, still-live buffer out from under the user.
   const commitSoundGain = async (
+    rowKey: string,
     pageIndex: number,
     padIndex: number,
     audioFileId: number,
@@ -171,7 +177,7 @@ export default function LoudnessOverviewModalContent() {
       console.warn(
         `[LoudnessOverview] No pad found at ${pageIndex}-${padIndex} for sound ${audioFileId}; discarding gain edit.`,
       );
-      setPendingGain(null);
+      setPendingGain((current) => (current?.key === rowKey ? null : current));
       return;
     }
 
@@ -216,7 +222,7 @@ export default function LoudnessOverviewModalContent() {
         error,
       );
     } finally {
-      setPendingGain(null);
+      setPendingGain((current) => (current?.key === rowKey ? null : current));
     }
   };
 
@@ -338,6 +344,7 @@ export default function LoudnessOverviewModalContent() {
                       onChange={(db) => setPendingGain({ key: row.key, db })}
                       onCommit={(db) =>
                         void commitSoundGain(
+                          row.key,
                           row.pageIndex,
                           row.padIndex,
                           row.audioFileId,
