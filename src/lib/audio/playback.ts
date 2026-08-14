@@ -11,6 +11,19 @@ import { getAudioContext } from "./context";
 import { ActiveTrack, PlayAudioParams, TrackSource } from "./types";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { exposeE2EHook } from "@/lib/testHooks";
+import { MAX_GAIN } from "./loudness/constants";
+
+/**
+ * Clamps a resolved gain for the gain node.
+ *
+ * The ceiling used to be 1, which meant normalisation could attenuate a loud
+ * file but never raise a quiet one. A non-finite value falls back to unity so
+ * a bad measurement mutes nothing.
+ */
+export function clampPlaybackGain(volume: number): number {
+  if (!Number.isFinite(volume)) return 1;
+  return Math.max(0, Math.min(MAX_GAIN, volume));
+}
 
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
@@ -60,10 +73,7 @@ function createAudioSource(
 
   // Create gain node for volume control and fading
   const gainNode = context.createGain();
-  gainNode.gain.setValueAtTime(
-    Math.max(0, Math.min(1, volume)), // Clamp volume between 0 and 1
-    context.currentTime,
-  );
+  gainNode.gain.setValueAtTime(clampPlaybackGain(volume), context.currentTime);
 
   // Connect nodes together
   source.connect(gainNode);
@@ -371,7 +381,7 @@ export function playBlobStreaming(
     const sourceNode = context.createMediaElementSource(element);
     const gainNode = context.createGain();
     gainNode.gain.setValueAtTime(
-      Math.max(0, Math.min(1, volume)),
+      clampPlaybackGain(volume),
       context.currentTime,
     );
     sourceNode.connect(gainNode);

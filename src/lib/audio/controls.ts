@@ -39,6 +39,9 @@ import {
   PlayAudioParams,
   generatePlaybackKey,
 } from "./types";
+import { getCachedLoudness } from "./loudness/cache";
+import { resolveGain } from "./loudness/gain";
+import { exposeE2EHook } from "@/lib/testHooks";
 
 /**
  * Type for loading state callback function
@@ -272,6 +275,8 @@ export async function triggerAudioForPadInstant(
     currentPageIndex,
     name,
     audioTrimSettings,
+    audioGainSettings,
+    padGainDb,
     isDisabled,
     onLoadingStateChange,
     onInstantFeedback,
@@ -368,8 +373,18 @@ export async function triggerAudioForPadInstant(
     const strategy = getStrategy(playbackType, playbackKey);
     const { audioFileId, index } = strategy.selectNextSound(audioFileIds);
 
-    // Look up trim settings for this specific audio file
+    // Look up trim and gain for this specific audio file. Gain resolution is
+    // synchronous by design — the analysis is held in memory precisely so the
+    // trigger path never has to await a database read.
     const trimForFile = audioTrimSettings?.[audioFileId];
+    const resolvedGain = resolveGain({
+      analysis: getCachedLoudness(audioFileId),
+      trimStart: trimForFile?.trimStart ?? 0,
+      trimEnd: trimForFile?.trimEnd,
+      soundGainDb: audioGainSettings?.[audioFileId] ?? 0,
+      padGainDb: padGainDb ?? 0,
+      normalisation: useProfileStore.getState().getNormalisationSettings(),
+    });
 
     // Advance the playback strategy at most once, even if the first
     // playback attempt fails and we fall back to another method
@@ -383,31 +398,46 @@ export async function triggerAudioForPadInstant(
 
     // Build playback params. Must be called after ensureStrategyUpdated so
     // the round-robin available indices reflect the sound being played.
-    const buildPlayParams = (): PlayAudioParams => ({
-      name: name || `Pad ${padIndex + 1}`,
-      padInfo: {
-        profileId: activeProfileId,
-        pageIndex: currentPageIndex,
-        padIndex,
-      },
-      trimStart: trimForFile?.trimStart,
-      trimEnd: trimForFile?.trimEnd,
-      multiSoundState: {
-        playbackType,
-        allAudioFileIds: audioFileIds,
-        currentAudioFileId: audioFileId,
-        currentAudioIndex: index,
-        availableAudioIndices:
-          playbackType === "round-robin"
-            ? (
-                getStrategy(
-                  "round-robin",
-                  playbackKey,
-                ) as import("./strategies/roundRobin").RoundRobinStrategy
-              ).getAvailableIndices?.()
-            : undefined,
-      },
-    });
+    const buildPlayParams = (): PlayAudioParams => {
+      // Resolved gain is not observable from the DOM, so E2E asserts on it
+      // here. Read-only view of state the UI cannot otherwise reveal.
+      exposeE2EHook("__impampLastResolvedGain", {
+        playbackKey,
+        audioFileId,
+        totalDb: resolvedGain.totalDb,
+        normDb: resolvedGain.normDb,
+        linear: resolvedGain.linear,
+        willClip: resolvedGain.willClip,
+        unmeasured: resolvedGain.unmeasured,
+      });
+
+      return {
+        name: name || `Pad ${padIndex + 1}`,
+        padInfo: {
+          profileId: activeProfileId,
+          pageIndex: currentPageIndex,
+          padIndex,
+        },
+        volume: resolvedGain.linear,
+        trimStart: trimForFile?.trimStart,
+        trimEnd: trimForFile?.trimEnd,
+        multiSoundState: {
+          playbackType,
+          allAudioFileIds: audioFileIds,
+          currentAudioFileId: audioFileId,
+          currentAudioIndex: index,
+          availableAudioIndices:
+            playbackType === "round-robin"
+              ? (
+                  getStrategy(
+                    "round-robin",
+                    playbackKey,
+                  ) as import("./strategies/roundRobin").RoundRobinStrategy
+                ).getAvailableIndices?.()
+              : undefined,
+        },
+      };
+    };
 
     // 1. Fast path: a decoded buffer is already cached (e.g. the current
     //    page has been preloaded) — play it with sample-accurate buffer

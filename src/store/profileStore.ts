@@ -10,6 +10,8 @@ import {
   deleteProfile,
   getProfile,
   ActivePadBehavior,
+  DEFAULT_NORMALISATION,
+  NormalisationSettings,
 } from "@/lib/db";
 // Import/export utilities will be loaded dynamically to reduce bundle size
 // Types are imported separately for type checking
@@ -64,6 +66,7 @@ interface ProfileState {
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
   setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
+  getNormalisationSettings: () => NormalisationSettings; // Get the loudness normalisation settings for the active profile
 
   // Auto-sync after edits
   syncRequestQueue: Record<number, number>; // profileId → last request timestamp
@@ -870,6 +873,12 @@ export const useProfileStore = create<ProfileState>()(
           const activeProfile = profiles.find((p) => p.id === activeProfileId);
           // Default to 'continue' if profile not found or behavior not set
           return activeProfile?.activePadBehavior || "continue";
+        },
+
+        getNormalisationSettings: () => {
+          const { profiles, activeProfileId } = get();
+          const activeProfile = profiles.find((p) => p.id === activeProfileId);
+          return activeProfile?.normalisation ?? DEFAULT_NORMALISATION;
         },
 
         setActivePadBehavior: async (behavior: ActivePadBehavior) => {
