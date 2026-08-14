@@ -81,6 +81,15 @@ describe("buildSoundRows", () => {
     expect(rows[0].soundGainDb).toBe(4);
     expect(rows[0].padGainDb).toBe(-2);
   });
+
+  it("gives duplicate sounds on the same pad distinct rows and keys", () => {
+    const rows = buildSoundRows([pad({ audioFileIds: [10, 10] })], options);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].audioFileId).toBe(10);
+    expect(rows[1].audioFileId).toBe(10);
+    expect(rows[0].key).not.toBe(rows[1].key);
+    expect(buildPadRows(rows)[0].soundCount).toBe(2);
+  });
 });
 
 describe("sortRows", () => {
@@ -118,6 +127,54 @@ describe("sortRows", () => {
       row({ key: "a", soundName: "apple" }),
     ];
     expect(sortRows(rows, "soundName", "asc", -16)[0].soundName).toBe("apple");
+  });
+
+  it("sorts by bank/pad position", () => {
+    const rows = [
+      row({ key: "later", pageIndex: 2, padIndex: 0 }),
+      row({ key: "earlier", pageIndex: 0, padIndex: 3 }),
+    ];
+    expect(sortRows(rows, "bank", "asc", -16)[0].key).toBe("earlier");
+  });
+
+  it("sorts by measured loudness", () => {
+    const rows = [
+      row({ key: "loud", gain: { ...row({}).gain, measuredLufs: -10 } }),
+      row({ key: "quiet", gain: { ...row({}).gain, measuredLufs: -30 } }),
+    ];
+    expect(sortRows(rows, "measured", "asc", -16)[0].key).toBe("quiet");
+  });
+
+  it("sorts by normalisation gain applied", () => {
+    const rows = [
+      row({ key: "big", gain: { ...row({}).gain, normDb: 8 } }),
+      row({ key: "small", gain: { ...row({}).gain, normDb: 1 } }),
+    ];
+    expect(sortRows(rows, "norm", "asc", -16)[0].key).toBe("small");
+  });
+
+  it("sorts by manual sound gain", () => {
+    const rows = [
+      row({ key: "high", soundGainDb: 5 }),
+      row({ key: "low", soundGainDb: -5 }),
+    ];
+    expect(sortRows(rows, "soundGain", "asc", -16)[0].key).toBe("low");
+  });
+
+  it("sorts by manual pad gain", () => {
+    const rows = [
+      row({ key: "high", padGainDb: 5 }),
+      row({ key: "low", padGainDb: -5 }),
+    ];
+    expect(sortRows(rows, "padGain", "asc", -16)[0].key).toBe("low");
+  });
+
+  it("sorts by final loudness", () => {
+    const rows = [
+      row({ key: "loud", gain: { ...row({}).gain, finalLufs: -10 } }),
+      row({ key: "quiet", gain: { ...row({}).gain, finalLufs: -30 } }),
+    ];
+    expect(sortRows(rows, "final", "asc", -16)[0].key).toBe("quiet");
   });
 });
 
@@ -184,5 +241,30 @@ describe("buildPadRows", () => {
       row({ gain: { ...row({}).gain, finalLufs: null } }),
     ]);
     expect(padRows[0].spreadDb).toBeNull();
+  });
+
+  it("keeps pads on different banks separate even when padIndex matches", () => {
+    const rows = [
+      row({
+        key: "a",
+        pageIndex: 0,
+        padIndex: 0,
+        gain: { ...row({}).gain, finalLufs: -20 },
+      }),
+      row({
+        key: "b",
+        pageIndex: 1,
+        padIndex: 0,
+        gain: { ...row({}).gain, finalLufs: -16 },
+      }),
+    ];
+    const padRows = buildPadRows(rows);
+    expect(padRows).toHaveLength(2);
+    const bank0 = padRows.find((p) => p.pageIndex === 0)!;
+    const bank1 = padRows.find((p) => p.pageIndex === 1)!;
+    expect(bank0.spreadDb).toBeCloseTo(0, 1);
+    expect(bank1.spreadDb).toBeCloseTo(0, 1);
+    expect(bank0.minLufs).toBeCloseTo(-20, 1);
+    expect(bank1.minLufs).toBeCloseTo(-16, 1);
   });
 });

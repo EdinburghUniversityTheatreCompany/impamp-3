@@ -59,13 +59,16 @@ export function buildSoundRows(
   const rows: SoundRow[] = [];
 
   for (const pad of pads) {
-    for (const audioFileId of pad.audioFileIds ?? []) {
+    (pad.audioFileIds ?? []).forEach((audioFileId, index) => {
       const trim = pad.audioTrimSettings?.[audioFileId];
       const soundGainDb = pad.audioGainSettings?.[audioFileId] ?? 0;
       const padGainDb = pad.padGainDb ?? 0;
 
       rows.push({
-        key: `${pad.pageIndex}-${pad.padIndex}-${audioFileId}`,
+        // Index, not just audioFileId — a pad can legitimately hold the same
+        // sound twice (it plays twice as often under round-robin), and a key
+        // keyed only on audioFileId would collide for the duplicate.
+        key: `${pad.pageIndex}-${pad.padIndex}-${index}-${audioFileId}`,
         pageIndex: pad.pageIndex,
         padIndex: pad.padIndex,
         bankName: options.getBankName(pad.pageIndex),
@@ -83,7 +86,7 @@ export function buildSoundRows(
         soundGainDb,
         padGainDb,
       });
-    }
+    });
   }
 
   return rows;
