@@ -13,6 +13,18 @@ describe("formatGainDb", () => {
   it("shows unity without a sign", () => {
     expect(formatGainDb(0)).toBe("0.0");
   });
+
+  // A non-finite gain must never render as "-NaN" or any other string that
+  // reads as a plausible value — it renders as unity (0.0 dB), matching
+  // what clampPlaybackGain resolves a non-finite requested gain to.
+  it("renders NaN as unity rather than propagating it", () => {
+    expect(formatGainDb(NaN)).toBe("0.0");
+  });
+
+  it("renders Infinity as unity rather than propagating it", () => {
+    expect(formatGainDb(Infinity)).toBe("0.0");
+    expect(formatGainDb(-Infinity)).toBe("0.0");
+  });
 });
 
 describe("gainToneClass", () => {
@@ -30,6 +42,19 @@ describe("gainToneClass", () => {
     for (const db of [-24, -1, 0, 1, 12]) {
       expect(typeof gainToneClass(db)).toBe("string");
     }
+  });
+
+  // The number and the colour must never disagree: formatGainDb renders a
+  // non-finite gain as unity ("0.0"), so the colour must be the unity
+  // (gray) class too, not the cut/blue class it would otherwise fall
+  // through to (every comparison against NaN is false).
+  it("treats NaN as unity, matching formatGainDb", () => {
+    expect(gainToneClass(NaN)).toBe(gainToneClass(0));
+  });
+
+  it("treats Infinity as unity, matching formatGainDb", () => {
+    expect(gainToneClass(Infinity)).toBe(gainToneClass(0));
+    expect(gainToneClass(-Infinity)).toBe(gainToneClass(0));
   });
 });
 
