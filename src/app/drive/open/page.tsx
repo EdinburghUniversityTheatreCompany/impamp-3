@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useGoogleLogin } from "@react-oauth/google";
-import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
+import {
+  useProfileStore,
+  whenProfilesLoaded,
+  GoogleUserInfo,
+} from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
 
@@ -23,7 +27,6 @@ function DriveOpenContent() {
 
   const {
     isGoogleSignedIn,
-    profiles,
     setGoogleAuthDetails,
     updateProfile,
     importProfileFromSyncData,
@@ -32,11 +35,8 @@ function DriveOpenContent() {
   const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
     useGoogleDriveSync();
 
-  const [pageState, setPageState] = useState<PageState>({ kind: "loading" });
-  const [signInError, setSignInError] = useState<string | null>(null);
-
-  // Parse the folder ID from the Google Drive "Open with" state param
-  const getFolderIdFromParams = useCallback((): string | null => {
+  // The folder ID out of the Google Drive "Open with" state param.
+  const initialFolderId = useMemo((): string | null => {
     const rawState = searchParams.get("state");
     if (!rawState) return null;
     try {
@@ -47,15 +47,30 @@ function DriveOpenContent() {
     }
   }, [searchParams]);
 
+  // The first three outcomes are decided by the URL and the sign-in state, so
+  // they are the initial state rather than something the mount effect below
+  // pushes in: a link with no folder id is an error, and a valid one is either
+  // already connecting or waiting for sign-in.
+  const [pageState, setPageState] = useState<PageState>(() =>
+    !initialFolderId
+      ? { kind: "error", message: "No folder ID found in the URL." }
+      : useProfileStore.getState().isGoogleSignedIn
+        ? { kind: "connecting", progress: null }
+        : { kind: "needs-signin" },
+  );
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  // Callers put the page into "connecting" themselves — the mount path starts
+  // there (see the initial state below) and the sign-in handler is an event,
+  // so neither needs this function to set state before its first await.
   const connectToFolder = useCallback(
     async (folderId: string) => {
-      setPageState({ kind: "connecting", progress: null });
-
       try {
-        // Check if already connected
-        const existing = profiles.find(
-          (p) => p.googleDriveFolderId === folderId,
-        );
+        // Wait for the initial profile load before deciding: this page can
+        // mount before it finishes, and an empty list then reads as "not
+        // connected yet" and imports a second copy of the profile.
+        const loaded = await whenProfilesLoaded();
+        const existing = loaded.find((p) => p.googleDriveFolderId === folderId);
         if (existing) {
           setPageState({
             kind: "already-connected",
@@ -117,7 +132,6 @@ function DriveOpenContent() {
       }
     },
     [
-      profiles,
       listFilesInFolder,
       downloadDriveFile,
       downloadAudioFile,
@@ -126,23 +140,21 @@ function DriveOpenContent() {
     ],
   );
 
-  // On mount: parse state param and either connect (if signed in) or prompt sign-in
+  // On mount: start connecting, or park the folder id until sign-in completes.
   useEffect(() => {
-    const folderId = getFolderIdFromParams();
-    if (!folderId) {
-      setPageState({
-        kind: "error",
-        message: "No folder ID found in the URL.",
-      });
+    if (!initialFolderId) return;
+
+    if (!isGoogleSignedIn) {
+      sessionStorage.setItem(PENDING_FOLDER_KEY, initialFolderId);
       return;
     }
 
-    if (isGoogleSignedIn) {
-      connectToFolder(folderId);
-    } else {
-      sessionStorage.setItem(PENDING_FOLDER_KEY, folderId);
-      setPageState({ kind: "needs-signin" });
-    }
+    // connectToFolder sets no state before its first await, so this cannot
+    // cascade a render — but the rule cannot see through a call into an async
+    // function, only through one written inline, and inlining a 50-line import
+    // that the sign-in handler below also calls would be worse.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void connectToFolder(initialFolderId);
     // Run once on mount — connectToFolder is stable via useCallback
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

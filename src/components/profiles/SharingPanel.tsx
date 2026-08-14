@@ -9,6 +9,9 @@ interface SharingPanelProps {
   profileFileId: string;
 }
 
+const loadFailureMessage = (err: unknown) =>
+  err instanceof Error ? err.message : "Failed to load permissions";
+
 export default function SharingPanel({
   folderId,
   profileFileId,
@@ -38,30 +41,54 @@ export default function SharingPanel({
   );
   const [shareCopied, setShareCopied] = useState(false);
 
-  const loadPermissions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const perms = await listFolderPermissions(folderId);
-      setPermissions(perms);
-      const anyonePerm = perms.find((p) => p.type === "anyone");
-      if (!anyonePerm) {
-        setPublicAccess("off");
-      } else {
-        setPublicAccess(anyonePerm.role === "writer" ? "writer" : "reader");
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load permissions",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [folderId, listFolderPermissions]);
+  const fetchPermissions = useCallback(
+    () => listFolderPermissions(folderId),
+    [folderId, listFolderPermissions],
+  );
 
+  const applyPermissions = useCallback((perms: DrivePermission[]) => {
+    setPermissions(perms);
+    const anyonePerm = perms.find((p) => p.type === "anyone");
+    setPublicAccess(
+      !anyonePerm ? "off" : anyonePerm.role === "writer" ? "writer" : "reader",
+    );
+    setError(null);
+  }, []);
+
+  // The initial load, in the shape React documents for fetching in an effect:
+  // state is set from the promise's callbacks, and a cancelled flag stops a
+  // slow response from landing after unmount or after the panel has moved to
+  // another folder. It used to call a shared loader that set state before its
+  // first await, and had no cancellation at all.
   useEffect(() => {
-    loadPermissions();
-  }, [loadPermissions]);
+    let cancelled = false;
+    fetchPermissions().then(
+      (perms) => {
+        if (cancelled) return;
+        applyPermissions(perms);
+        setLoading(false);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setError(loadFailureMessage(err));
+        setLoading(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchPermissions, applyPermissions]);
+
+  // Reload after a change. No spinner: every caller already shows its own
+  // in-flight state, and leaving the current list on screen while it refreshes
+  // beats blanking it out.
+  const loadPermissions = useCallback(async () => {
+    try {
+      applyPermissions(await fetchPermissions());
+    } catch (err) {
+      setError(loadFailureMessage(err));
+    }
+  }, [fetchPermissions, applyPermissions]);
 
   const handlePublicAccessChange = async (
     access: "off" | "reader" | "writer",

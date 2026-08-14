@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { getPadConfigurationsForProfilePage, PadConfiguration } from "@/lib/db"; // Assuming PadConfiguration is exported from db.ts
 import { useProfileStore } from "@/store/profileStore";
 
@@ -7,6 +7,32 @@ interface UsePadConfigurationsResult {
   isLoading: boolean;
   error: Error | null;
   refetch: () => void; // Added a refetch function for manual refresh if needed
+}
+
+const NO_CONFIGS: Map<number, PadConfiguration> = new Map();
+
+/** What we last finished fetching, and for which request. */
+interface FetchResult {
+  requestKey: string;
+  padConfigs: Map<number, PadConfiguration>;
+  error: Error | null;
+}
+
+function toConfigMap(
+  configArray: PadConfiguration[],
+): Map<number, PadConfiguration> {
+  const configMap = new Map<number, PadConfiguration>();
+  for (const config of configArray) {
+    if (config.padIndex === undefined) {
+      console.warn(
+        "usePadConfigurations: Found config without padIndex, skipping:",
+        config,
+      );
+      continue;
+    }
+    configMap.set(config.padIndex, config);
+  }
+  return configMap;
 }
 
 /**
@@ -20,77 +46,71 @@ export function usePadConfigurations(
   pageIndex: number,
 ): UsePadConfigurationsResult {
   const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
-  const [padConfigs, setPadConfigs] = useState<Map<number, PadConfiguration>>(
-    new Map(),
-  );
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<Error | null>(null);
+  // Bumped by refetch(). A counter rather than a callback so that a manual
+  // refresh is just another request, handled by the same effect.
+  const [reloadToken, setReloadToken] = useState(0);
+  const [result, setResult] = useState<FetchResult | null>(null);
 
-  const fetchConfigs = useCallback(async () => {
-    if (!profileId) {
-      // If there's no profile ID, clear existing configs and don't fetch.
-      setPadConfigs(new Map());
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    console.log(
-      `usePadConfigurations: Fetching for profile ${profileId}, page ${pageIndex}`,
-    );
-
-    try {
-      // Convert profileId string to number before calling DB function
-      const numericProfileId = parseInt(profileId, 10);
-      if (isNaN(numericProfileId)) {
-        throw new Error(`Invalid profileId format: ${profileId}`);
-      }
-
-      // Fetch the configurations as an array using the numeric ID
-      const configArray = await getPadConfigurationsForProfilePage(
-        numericProfileId,
-        pageIndex,
-      );
-      console.log(
-        `usePadConfigurations: Fetched ${configArray.length} configs for profile ID ${numericProfileId}`,
-      );
-
-      // Convert the array to a Map, using padIndex as the key
-      const configMap = new Map<number, PadConfiguration>();
-      configArray.forEach((config) => {
-        if (config.padIndex !== undefined) {
-          // Ensure padIndex exists
-          configMap.set(config.padIndex, config);
-        } else {
-          console.warn(
-            "usePadConfigurations: Found config without padIndex, skipping:",
-            config,
-          );
-        }
-      });
-
-      setPadConfigs(configMap);
-    } catch (err) {
-      console.error(
-        "usePadConfigurations: Error fetching pad configurations:",
-        err,
-      );
-      setError(
-        err instanceof Error
-          ? err
-          : new Error("Failed to fetch pad configurations"),
-      );
-      setPadConfigs(new Map()); // Clear configs on error
-    } finally {
-      setIsLoading(false);
-    }
-  }, [profileId, pageIndex, padConfigsVersion]);
+  // Everything that means "a different set of configurations". padConfigsVersion
+  // is in here because the store bumps it whenever pads change elsewhere.
+  const requestKey = `${profileId}|${pageIndex}|${padConfigsVersion}|${reloadToken}`;
 
   useEffect(() => {
-    fetchConfigs();
-  }, [fetchConfigs]); // Dependency array includes fetchConfigs, which changes when profileId or pageIndex changes
+    if (!profileId) return;
 
-  return { padConfigs, isLoading, error, refetch: fetchConfigs };
+    let cancelled = false;
+    const numericProfileId = parseInt(profileId, 10);
+
+    const request = Number.isNaN(numericProfileId)
+      ? Promise.reject(new Error(`Invalid profileId format: ${profileId}`))
+      : getPadConfigurationsForProfilePage(numericProfileId, pageIndex);
+
+    request.then(
+      (configArray) => {
+        if (cancelled) return;
+        setResult({
+          requestKey,
+          padConfigs: toConfigMap(configArray),
+          error: null,
+        });
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        console.error(
+          "usePadConfigurations: Error fetching pad configurations:",
+          err,
+        );
+        setResult({
+          requestKey,
+          padConfigs: NO_CONFIGS,
+          error:
+            err instanceof Error
+              ? err
+              : new Error("Failed to fetch pad configurations"),
+        });
+      },
+    );
+
+    // A bank switch or profile change must not be overwritten by the response
+    // to the request it replaced.
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, pageIndex, requestKey]);
+
+  const refetch = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  // isLoading is derived rather than stored: we are loading exactly while the
+  // newest result on hand is not the one for the request now in flight. Storing
+  // it meant setting state synchronously inside the effect, one extra render
+  // per fetch, purely to say something the state we already have implies.
+  return useMemo(
+    () => ({
+      padConfigs: profileId ? (result?.padConfigs ?? NO_CONFIGS) : NO_CONFIGS,
+      isLoading: profileId !== null && result?.requestKey !== requestKey,
+      error: profileId ? (result?.error ?? null) : null,
+      refetch,
+    }),
+    [profileId, requestKey, result, refetch],
+  );
 }

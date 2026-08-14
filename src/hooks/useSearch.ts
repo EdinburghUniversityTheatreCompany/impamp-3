@@ -52,6 +52,8 @@ export interface SearchOptions {
  * @param searchOptions - Configuration options for the search
  * @returns Object containing search state and functions
  */
+const NO_RESULTS: SearchResult[] = [];
+
 export function useSearch(searchOptions: SearchOptions = {}) {
   const { debounceTime = 300 } = searchOptions;
 
@@ -66,12 +68,15 @@ export function useSearch(searchOptions: SearchOptions = {}) {
   // Cache of audio file names, so each file is only read from IndexedDB once
   const audioFileNamesRef = useRef(new Map<number, string>());
 
+  // Whether there is anything to search for at all. Used below to decide
+  // whether the stored results are worth showing, instead of clearing them
+  // from inside the effect: emptying the box is not an event that needs to
+  // reach into state, it just means there is nothing to show.
+  const hasQuery = searchTerm.trim().length > 0 && activeProfileId !== null;
+
   // Handle search
   useEffect(() => {
-    if (!searchTerm.trim() || !activeProfileId) {
-      setResults([]);
-      return;
-    }
+    if (!hasQuery) return;
 
     let cancelled = false;
 
@@ -193,13 +198,13 @@ export function useSearch(searchOptions: SearchOptions = {}) {
       cancelled = true;
       clearTimeout(debounceTimeout);
     };
-  }, [searchTerm, activeProfileId, debounceTime]);
+  }, [searchTerm, activeProfileId, debounceTime, hasQuery]);
 
   return {
     searchTerm,
     setSearchTerm,
-    results,
-    isLoading,
+    results: hasQuery ? results : NO_RESULTS,
+    isLoading: hasQuery && isLoading,
 
     // Helper method to clear the search
     clearSearch: () => setSearchTerm(""),

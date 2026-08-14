@@ -1057,3 +1057,28 @@ export const useProfileStore = create<ProfileState>()(
 );
 
 exposeE2EHook("__profileStore", useProfileStore);
+
+/**
+ * Resolves once the initial profile load has finished.
+ *
+ * A page can mount before ClientSideInitializer's fetchProfiles() resolves, so
+ * a `profiles` list read at that moment is empty and says nothing about what
+ * the user actually has. The share-link pages need the real answer before
+ * deciding whether a shared profile is already connected — otherwise they
+ * import a second copy of it.
+ */
+export function whenProfilesLoaded(): Promise<Profile[]> {
+  const { isLoading, profiles } = useProfileStore.getState();
+  if (!isLoading) return Promise.resolve(profiles);
+
+  return new Promise((resolve) => {
+    const unsubscribe = useProfileStore.subscribe(
+      (state) => state.isLoading,
+      (loading) => {
+        if (loading) return;
+        unsubscribe();
+        resolve(useProfileStore.getState().profiles);
+      },
+    );
+  });
+}

@@ -221,6 +221,12 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   >({});
 
   useEffect(() => {
+    // Captured once: the ref holds a single object that is mutated in place and
+    // never reassigned, so this is the same map the cleanup needs — but reading
+    // ref.current inside a cleanup is a pattern the lint rule cannot tell apart
+    // from the dangerous kind, and the fix costs nothing.
+    const debounceTimers = debounceTimersRef.current;
+
     const unsubscribe = useProfileStore.subscribe(
       (state) => state.syncRequestQueue,
       (syncRequestQueue) => {
@@ -255,7 +261,7 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 
     return () => {
       unsubscribe();
-      Object.values(debounceTimersRef.current).forEach(clearTimeout);
+      Object.values(debounceTimers).forEach(clearTimeout);
     };
   }, [syncAndRecord, syncServerProfile]);
 

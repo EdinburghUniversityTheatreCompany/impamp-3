@@ -202,32 +202,28 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [],
   );
 
-  // Subscribe to profile store changes in useEffect
-  useEffect(() => {
-    // Get initial state
-    const store = useProfileStore.getState();
-    const initialState = selectAuthState(store);
-    setAuthState(initialState);
-
-    // Subscribe to store changes, ignoring mutations that leave auth untouched —
-    // pushing a fresh object on every store change re-renders the whole app
-    const unsubscribe = useProfileStore.subscribe((state) => {
-      const newState = selectAuthState(state);
-      setAuthState((prev) =>
-        prev.googleAccessToken === newState.googleAccessToken &&
-        prev.googleRefreshToken === newState.googleRefreshToken &&
-        prev.tokenExpiresAt === newState.tokenExpiresAt &&
-        prev.isGoogleSignedIn === newState.isGoogleSignedIn &&
-        prev.needsReauth === newState.needsReauth &&
-        prev.googleUser === newState.googleUser
-          ? prev
-          : newState,
-      );
-    });
-
-    // Cleanup subscription
-    return () => unsubscribe();
-  }, [selectAuthState]);
+  // Mirror the store's auth slice into React state.
+  //
+  // Selector-based (see subscribeWithSelector in profileStore), so the
+  // listener is woken only when one of these six fields changes rather than on
+  // every store mutation, and the hand-rolled six-way equality check that used
+  // to guard against re-rendering the whole app goes with it. setAuthState is
+  // passed as the subscription callback rather than called in the effect body,
+  // which is the shape React wants for syncing with an external store.
+  useEffect(
+    () =>
+      useProfileStore.subscribe(selectAuthState, setAuthState, {
+        equalityFn: (a, b) =>
+          a.googleAccessToken === b.googleAccessToken &&
+          a.googleRefreshToken === b.googleRefreshToken &&
+          a.tokenExpiresAt === b.tokenExpiresAt &&
+          a.isGoogleSignedIn === b.isGoogleSignedIn &&
+          a.needsReauth === b.needsReauth &&
+          a.googleUser === b.googleUser,
+        fireImmediately: true,
+      }),
+    [selectAuthState],
+  );
 
   // Prepare token info based on local state
   const currentTokenInfo = useMemo<TokenInfo | null>(() => {

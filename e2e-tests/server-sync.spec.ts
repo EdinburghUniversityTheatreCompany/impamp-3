@@ -190,6 +190,56 @@ test.describe("server sync UI", () => {
     await expect(page.getByText(/missing its profile or token/i)).toBeVisible();
   });
 
+  test("a share link imports the profile it points at", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "linksharer@example.com");
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    // A full ProfileSyncData payload: the client-side import needs the
+    // `profile` metadata, which SAMPLE (written for the API tests) omits.
+    const now = Date.now();
+    const syncData = {
+      _syncFormatVersion: 1,
+      profile: {
+        name: "Shared By Link",
+        syncType: "server",
+        lastBackedUpAt: now,
+        backupReminderPeriod: 30,
+        createdAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      },
+      padConfigurations: [],
+      pageMetadata: [],
+      audioFiles: [],
+    };
+
+    const { id } = await (
+      await request.post("/api/profiles", {
+        headers: cookie,
+        data: { name: "Shared By Link", data: syncData },
+      })
+    ).json();
+
+    const { share } = await (
+      await request.post(`/api/profiles/${id}/shares`, {
+        headers: cookie,
+        data: { role: "viewer" },
+      })
+    ).json();
+
+    // Anonymous: the link token is the whole credential.
+    await page.goto(`/server/open?id=${id}&token=${share.linkToken}`);
+    await expect(page.getByText("Shared By Link")).toBeVisible();
+    await expect(page.getByText(/view-only/i)).toBeVisible();
+
+    // Opening the same link again recognises the profile instead of importing
+    // a second copy.
+    await page.goto(`/server/open?id=${id}&token=${share.linkToken}`);
+    await expect(page.getByText(/already have/i)).toBeVisible();
+  });
+
   test("enabling server sync exposes the sharing controls", async ({
     page,
     request,

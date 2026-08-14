@@ -306,12 +306,19 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   }, [profile.id, profile.name, updateProfile]);
 
-  // Effect to clear the 'initiated by this card' flag when hook status resets
-  useEffect(() => {
+  // Clear the 'initiated by this card' flag when the hook status resets.
+  //
+  // Adjusted during render rather than in an effect — the pattern React
+  // documents for state that reacts to a value changing between renders. The
+  // condition is unchanged: it fires on a transition into "idle" or "success",
+  // which is exactly when the effect's dependency array used to run it.
+  const [lastHookStatus, setLastHookStatus] = useState(driveHookStatus);
+  if (driveHookStatus !== lastHookStatus) {
+    setLastHookStatus(driveHookStatus);
     if (driveHookStatus === "idle" || driveHookStatus === "success") {
       setLastSyncInitiatedByThisCard(false);
     }
-  }, [driveHookStatus]);
+  }
 
   // Open conflict resolution modal when this card's sync detects conflicts
   useEffect(() => {

@@ -282,13 +282,26 @@ export default function ProfileManager() {
     scope: "https://www.googleapis.com/auth/drive.file",
   });
 
-  // Sync hook status/error to local state
-  useEffect(() => {
-    if (driveHookStatus === "error" && driveHookError) {
-      setDriveActionStatus("error");
-      setDriveActionError(driveHookError);
-    }
-  }, [driveHookStatus, driveHookError]);
+  // Surface an error raised by the Drive hook in this panel's own status.
+  //
+  // Adjusted during render rather than in an effect — the pattern React
+  // documents for "state that depends on a value seen last render". An effect
+  // would render once with the stale status and then again with the error,
+  // and the local status is deliberately sticky: it holds the error until the
+  // user starts another action, rather than clearing itself the moment the
+  // hook moves on.
+  const [lastReportedHookError, setLastReportedHookError] = useState<
+    string | null
+  >(null);
+  if (
+    driveHookStatus === "error" &&
+    driveHookError &&
+    driveHookError !== lastReportedHookError
+  ) {
+    setLastReportedHookError(driveHookError);
+    setDriveActionStatus("error");
+    setDriveActionError(driveHookError);
+  }
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();

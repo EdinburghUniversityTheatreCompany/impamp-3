@@ -130,24 +130,24 @@ export const AuthNotification: React.FC<AuthNotificationProps> = ({
     scope: "https://www.googleapis.com/auth/drive.file",
   });
 
-  // Use useEffect to access the store only on the client side
-  useEffect(() => {
-    // Get initial state
-    const storeState = useProfileStore.getState();
-    setAuthState({
-      isGoogleSignedIn: storeState.isGoogleSignedIn,
-      needsReauth: storeState.needsReauth,
-    });
-
-    // Subscribe to store changes
-    const unsubscribe = useProfileStore.subscribe((state) => {
-      const newState = selectAuthState(state);
-      setAuthState(newState);
-    });
-
-    // Cleanup subscription
-    return () => unsubscribe();
-  }, [selectAuthState]);
+  // Mirror the store's auth slice into React state, rather than reading it
+  // through useProfileStore(...) directly: the store is persisted, so what the
+  // server rendered and what localStorage holds can differ, and this keeps the
+  // first client render matching the server's.
+  //
+  // Selector-based (see subscribeWithSelector in profileStore), so it is woken
+  // only when one of these two fields changes; fireImmediately replaces the
+  // separate read-initial-state step.
+  useEffect(
+    () =>
+      useProfileStore.subscribe(selectAuthState, setAuthState, {
+        equalityFn: (a, b) =>
+          a.isGoogleSignedIn === b.isGoogleSignedIn &&
+          a.needsReauth === b.needsReauth,
+        fireImmediately: true,
+      }),
+    [selectAuthState],
+  );
 
   // Only show when signed in but needs reauth
   if (!authState.isGoogleSignedIn || !authState.needsReauth) {

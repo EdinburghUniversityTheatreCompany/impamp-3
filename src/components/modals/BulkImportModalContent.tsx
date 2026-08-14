@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { addAudioFile, upsertPadConfiguration } from "@/lib/db";
 import { useProfileStore } from "@/store/profileStore";
@@ -38,6 +38,20 @@ interface DragEndResult {
   destination?: { droppableId: string; index: number } | null;
 }
 
+function initialAssignments(
+  existingPadConfigs: Map<number, { name?: string; soundCount: number }>,
+): PadAssignment[] {
+  return Array.from({ length: TOTAL_PADS }, (_, padIndex) => {
+    const config = existingPadConfigs.get(padIndex);
+    return {
+      padIndex,
+      fileName: config?.name || null,
+      fileId: null,
+      isConfigured: (config?.soundCount || 0) > 0,
+    };
+  });
+}
+
 const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   profileId,
   pageIndex,
@@ -46,27 +60,18 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
 }) => {
   // State for files to be imported
   const [fileList, setFileList] = useState<AudioFilePreview[]>([]);
-  const [padAssignments, setPadAssignments] = useState<PadAssignment[]>([]);
+  // Seeded once, with a lazy initialiser rather than an effect. As an effect it
+  // re-ran whenever existingPadConfigs changed identity, which would throw away
+  // whatever the user had assigned so far; the modal is opened against one
+  // snapshot of the grid and edits from there.
+  const [padAssignments, setPadAssignments] = useState<PadAssignment[]>(() =>
+    initialAssignments(existingPadConfigs),
+  );
   const [isDragging, setIsDragging] = useState(false); // State needed for drag/drop callbacks
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Initialize pad assignments based on existing configurations
-  useEffect(() => {
-    const initialAssignments: PadAssignment[] = [];
-    for (let i = 0; i < TOTAL_PADS; i++) {
-      const config = existingPadConfigs.get(i);
-      initialAssignments.push({
-        padIndex: i,
-        fileName: config?.name || null,
-        fileId: null,
-        isConfigured: (config?.soundCount || 0) > 0,
-      });
-    }
-    setPadAssignments(initialAssignments);
-  }, [existingPadConfigs]);
 
   // Handle file selection from input
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {

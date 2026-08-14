@@ -27,6 +27,9 @@ function shareUrlFor(serverProfileId: string, token: string): string {
  * sign in — there is no Picker grant to chase, because the server owns the
  * permission rather than Google Drive.
  */
+const loadFailureMessage = (err: unknown) =>
+  err instanceof Error ? err.message : "Failed to load sharing";
+
 export default function ServerSharingPanel({
   serverProfileId,
 }: ServerSharingPanelProps) {
@@ -44,21 +47,47 @@ export default function ServerSharingPanel({
   const [isCreatingLink, setIsCreatingLink] = useState(false);
   const [copiedShareId, setCopiedShareId] = useState<number | null>(null);
 
-  const loadShares = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setShares(await listShares(serverProfileId));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sharing");
-    } finally {
-      setLoading(false);
-    }
-  }, [serverProfileId, listShares]);
+  const fetchShares = useCallback(
+    () => listShares(serverProfileId),
+    [serverProfileId, listShares],
+  );
 
+  // The initial load, in the shape React documents for fetching in an effect:
+  // state is set from the promise's callbacks, and a cancelled flag stops a
+  // slow response from landing after unmount or after the panel has moved to
+  // another profile. It used to call a shared loader that set state before its
+  // first await, and had no cancellation at all.
   useEffect(() => {
-    loadShares();
-  }, [loadShares]);
+    let cancelled = false;
+    fetchShares().then(
+      (next) => {
+        if (cancelled) return;
+        setShares(next);
+        setError(null);
+        setLoading(false);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setError(loadFailureMessage(err));
+        setLoading(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchShares]);
+
+  // Reload after a change. No spinner: every caller already shows its own
+  // in-flight state (isInviting, isCreatingLink, …), and leaving the current
+  // list on screen while it refreshes beats blanking it out.
+  const loadShares = useCallback(async () => {
+    try {
+      setShares(await fetchShares());
+      setError(null);
+    } catch (err) {
+      setError(loadFailureMessage(err));
+    }
+  }, [fetchShares]);
 
   const handleInvite = async () => {
     if (!inviteEmail.trim()) return;

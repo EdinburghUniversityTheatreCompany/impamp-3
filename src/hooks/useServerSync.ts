@@ -8,7 +8,7 @@
  * when there is one — a signed-out viewer falls back to the public proxy.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import type { TokenInfo } from "@/lib/googleDrive/types";
 import { applySyncedProfile } from "./applySyncedProfile";

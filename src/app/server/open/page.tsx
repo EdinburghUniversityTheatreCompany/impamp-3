@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProfileStore } from "@/store/profileStore";
+import { useProfileStore, whenProfilesLoaded } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { fetchServerProfile } from "@/lib/serverSync/api";
 
@@ -17,7 +17,10 @@ import { fetchServerProfile } from "@/lib/serverSync/api";
  */
 
 type PageState =
-  | { kind: "loading" }
+  // "connecting" is the initial state: opening the link is the only thing this
+  // page does on mount, so there is no earlier state to render. It used to
+  // start at "loading" and have the connect() call switch it over, which meant
+  // setting state synchronously from the mount effect for a screen nobody saw.
   | { kind: "connecting"; progress: { current: number; total: number } | null }
   | { kind: "success"; profileName: string; readOnly: boolean }
   | { kind: "already-connected"; profileName: string }
@@ -27,40 +30,70 @@ function ServerOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { profiles, updateProfile, importProfileFromSyncData } =
-    useProfileStore();
+  const { updateProfile, importProfileFromSyncData } = useProfileStore();
   const { downloadAudioFile } = useGoogleDriveSync();
 
-  const [pageState, setPageState] = useState<PageState>({ kind: "loading" });
+  const [pageState, setPageState] = useState<PageState>({
+    kind: "connecting",
+    progress: null,
+  });
 
   const serverProfileId = searchParams.get("id");
   const shareToken = searchParams.get("token");
 
-  const connect = useCallback(
-    async (id: string, token: string) => {
-      setPageState({ kind: "connecting", progress: null });
+  // Everything the page does, in the effect that does it. It used to be a
+  // useCallback called from the effect, which needed an eslint-disable to stop
+  // the effect re-running every time the profile list changed — the one thing
+  // that must never happen here, since it would import the profile twice.
+  // Inline, the dependencies are just the two halves of the link.
+  //
+  // The hook functions are read through refs so that a change in their
+  // identity (useGoogleDriveSync rebuilds downloadAudioFile whenever the
+  // Google token moves) cannot restart the import either.
+  const importRef = useRef(importProfileFromSyncData);
+  const updateProfileRef = useRef(updateProfile);
+  const downloadAudioFileRef = useRef(downloadAudioFile);
+  useEffect(() => {
+    importRef.current = importProfileFromSyncData;
+    updateProfileRef.current = updateProfile;
+    downloadAudioFileRef.current = downloadAudioFile;
+  });
 
+  useEffect(() => {
+    if (!serverProfileId || !shareToken) return;
+
+    let cancelled = false;
+    const show = (next: PageState) => {
+      if (!cancelled) setPageState(next);
+    };
+
+    void (async () => {
       try {
-        const existing = profiles.find((p) => p.serverProfileId === id);
+        // Wait for the initial profile load before deciding: this page can
+        // mount before it finishes, and an empty list then reads as "not
+        // connected yet" and imports a second copy of the profile.
+        const loaded = await whenProfilesLoaded();
+        const existing = loaded.find(
+          (p) => p.serverProfileId === serverProfileId,
+        );
         if (existing) {
-          setPageState({
-            kind: "already-connected",
-            profileName: existing.name,
-          });
+          show({ kind: "already-connected", profileName: existing.name });
           return;
         }
 
-        const payload = await fetchServerProfile(id, { shareToken: token });
+        const payload = await fetchServerProfile(serverProfileId, {
+          shareToken,
+        });
         if (!payload) {
           // Only a conditional request can 304, and we didn't make one.
           throw new Error("The server returned no profile data.");
         }
 
-        const localProfileId = await importProfileFromSyncData(
+        const localProfileId = await importRef.current(
           payload.data,
-          downloadAudioFile,
+          downloadAudioFileRef.current,
           (progress) =>
-            setPageState({
+            show({
               kind: "connecting",
               progress: {
                 current: progress.processedFiles,
@@ -70,21 +103,17 @@ function ServerOpenContent() {
         );
 
         const readOnly = payload.access === "viewer";
-        await updateProfile(localProfileId, {
+        await updateProfileRef.current(localProfileId, {
           syncType: "server",
-          serverProfileId: id,
-          serverShareToken: token,
+          serverProfileId,
+          serverShareToken: shareToken,
           serverVersion: payload.version,
           readOnly,
         });
 
-        setPageState({
-          kind: "success",
-          profileName: payload.name,
-          readOnly,
-        });
+        show({ kind: "success", profileName: payload.name, readOnly });
       } catch (error) {
-        setPageState({
+        show({
           kind: "error",
           message:
             error instanceof Error
@@ -92,24 +121,24 @@ function ServerOpenContent() {
               : "Could not open this shared profile.",
         });
       }
-    },
-    [profiles, updateProfile, importProfileFromSyncData, downloadAudioFile],
-  );
+    })();
 
-  useEffect(() => {
-    if (!serverProfileId || !shareToken) {
-      setPageState({
-        kind: "error",
-        message:
-          "This link is missing its profile or token. Ask whoever shared it for a fresh link.",
-      });
-      return;
-    }
-    void connect(serverProfileId, shareToken);
-    // Connecting once per link is the whole job; `connect` changes identity
-    // whenever the profile list does, which must not re-run the import.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+    };
   }, [serverProfileId, shareToken]);
+
+  // A link without both parameters is not a state the page transitions into,
+  // it is what the URL already says — so it is derived rather than pushed into
+  // state from the effect above.
+  const displayState: PageState =
+    serverProfileId && shareToken
+      ? pageState
+      : {
+          kind: "error",
+          message:
+            "This link is missing its profile or token. Ask whoever shared it for a fresh link.",
+        };
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-900">
@@ -118,24 +147,18 @@ function ServerOpenContent() {
           Shared profile
         </h1>
 
-        {pageState.kind === "loading" && (
+        {displayState.kind === "connecting" && (
           <p className="text-sm text-gray-600 dark:text-gray-400">
-            Opening the link…
-          </p>
-        )}
-
-        {pageState.kind === "connecting" && (
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            {pageState.progress
-              ? `Downloading sounds (${pageState.progress.current} of ${pageState.progress.total})…`
+            {displayState.progress
+              ? `Downloading sounds (${displayState.progress.current} of ${displayState.progress.total})…`
               : "Fetching the profile…"}
           </p>
         )}
 
-        {pageState.kind === "already-connected" && (
+        {displayState.kind === "already-connected" && (
           <>
             <p className="text-sm text-gray-700 dark:text-gray-300">
-              You already have <strong>{pageState.profileName}</strong>. It
+              You already have <strong>{displayState.profileName}</strong>. It
               stays in sync automatically.
             </p>
             <button
@@ -147,11 +170,11 @@ function ServerOpenContent() {
           </>
         )}
 
-        {pageState.kind === "success" && (
+        {displayState.kind === "success" && (
           <>
             <p className="text-sm text-gray-700 dark:text-gray-300">
-              Added <strong>{pageState.profileName}</strong>
-              {pageState.readOnly ? " as view-only." : " — you can edit it."}
+              Added <strong>{displayState.profileName}</strong>
+              {displayState.readOnly ? " as view-only." : " — you can edit it."}
             </p>
             <button
               onClick={() => router.push("/")}
@@ -163,10 +186,10 @@ function ServerOpenContent() {
           </>
         )}
 
-        {pageState.kind === "error" && (
+        {displayState.kind === "error" && (
           <>
             <p className="text-sm text-red-600 dark:text-red-400">
-              {pageState.message}
+              {displayState.message}
             </p>
             <button
               onClick={() => router.push("/")}

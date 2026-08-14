@@ -7,23 +7,6 @@ Each entry: what, where, why it matters.
 
 ## Dependencies
 
-- **15 react-hooks findings are demoted to warnings, not fixed.**
-  `eslint-config-next` 16 turns on the React Compiler-era rules, which flag
-  long-standing patterns across the codebase. `eslint.config.mjs` sets the four
-  new rules to `"warn"` so CI stays green on pre-existing code; promote each
-  back to `"error"` as it is cleared.
-
-  | Rule                                   | Sites                                                                                                                                                                                                                                         |
-  | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `react-hooks/set-state-in-effect` (10) | `app/drive/open/page.tsx`, `AuthNotification.tsx`, `ClientSideInitializer.tsx`, `BulkImportModalContent.tsx`, `ProfileCard.tsx`, `ProfileManager.tsx`, `SharingPanel.tsx`, `useGoogleDriveSync.ts`, `usePadConfigurations.ts`, `useSearch.ts` |
-  | `react-hooks/immutability` (2)         | `WaveformTrimmer.tsx`, `hooks/pad/usePadInteractions.ts`                                                                                                                                                                                      |
-  | `react-hooks/refs` (2)                 | `WaveformTrimmer.tsx`, `useKeyboardListener.ts`                                                                                                                                                                                               |
-  | `react-hooks/purity` (1)               | `ProfileCard.tsx`                                                                                                                                                                                                                             |
-
-  `set-state-in-effect` is the one worth real attention: each site writes state
-  during an effect, the pattern React Compiler refuses to optimise. That is a
-  refactor of the audio/profile/sync paths, not a lint sweep.
-
 - **Two upgrades are held back deliberately** — TypeScript 7 and ESLint 10, both
   blocked on lint tooling that has no compatible release yet. Reasons and retry
   conditions in `plans/deferred-upgrades.md`.

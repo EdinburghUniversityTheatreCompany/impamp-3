@@ -26,18 +26,6 @@ const eslintConfig = [
   // JSON.stringify's it and dies on the circular `plugins.react` reference.
   ...nextCoreWebVitals,
   ...nextTypeScript,
-  {
-    // eslint-config-next 16 turns on the React Compiler-era react-hooks rules,
-    // which flagged long-standing patterns across this codebase. They were all
-    // demoted to warnings at the time so CI stayed green on pre-existing code.
-    //
-    // immutability, refs and purity are cleared and back to "error" — the
-    // remaining set-state-in-effect sites are still being worked through, and
-    // it stays a warning until the last one goes.
-    rules: {
-      "react-hooks/set-state-in-effect": "warn",
-    },
-  },
 ];
 
 export default eslintConfig;
