@@ -12,6 +12,7 @@ import {
   EditModeButton,
 } from "@/components/buttons";
 import { useProfileStore } from "@/store/profileStore";
+import { getSyncState } from "@/lib/syncState";
 import { useUIStore } from "@/store/uiStore";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import EditBankForm from "@/components/modals/EditBankForm";
@@ -44,6 +45,15 @@ export default function Home() {
   const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
+  const readOnlyReason = useProfileStore((state) => {
+    const active = state.profiles.find((p) => p.id === state.activeProfileId);
+    if (!active) return null;
+    const sync = getSyncState(active);
+    if (sync.canEdit) return null;
+    return sync.following
+      ? "You are following this profile — stop following it to make changes."
+      : "You have view-only access to this profile.";
+  });
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   ); // Get the action
@@ -194,6 +204,20 @@ export default function Home() {
         <div className="fixed top-0 left-0 right-0 bg-red-500 text-white text-center py-1 z-50">
           <span className="font-bold">DELETE AND MOVE MODE</span>{" "}
           <span className="text-sm">(Click the button again to exit)</span>
+        </div>
+      )}
+      {/*
+        Say why the pads will not respond to Shift, rather than letting the
+        key silently do nothing. Editing is refused for a profile that cannot
+        push, because the next sync would overwrite the changes anyway.
+      */}
+      {readOnlyReason && (
+        <div
+          data-testid="read-only-banner"
+          className="fixed top-0 right-0 left-0 z-50 bg-slate-600 py-1 text-center text-white"
+        >
+          <span className="font-bold">VIEW ONLY</span>{" "}
+          <span className="text-sm">{readOnlyReason}</span>
         </div>
       )}
       {/* Fixed position header to prevent layout shifts */}

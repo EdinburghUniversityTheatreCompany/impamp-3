@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useProfileSync } from "@/hooks/useProfileSync";
 import type { AudioLocation, Profile, SyncType } from "@/lib/db";
 import { useModal } from "@/hooks/modal/useModal";
+import { useProfileStore } from "@/store/profileStore";
 import type { SyncDestination } from "@/lib/syncTransitions";
 import SharingPanel from "@/components/profiles/SharingPanel";
 import ServerSharingPanel from "@/components/profiles/ServerSharingPanel";
@@ -34,9 +35,48 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
     commit,
   } = useProfileSync(profile);
   const { openConfirmModal, closeModal } = useModal();
+  const updateProfile = useProfileStore((s) => s.updateProfile);
+  const fetchProfiles = useProfileStore((s) => s.fetchProfiles);
+  const setActiveProfileId = useProfileStore((s) => s.setActiveProfileId);
+  const setEditMode = useProfileStore((s) => s.setEditMode);
 
   const [moving, setMoving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+
+  const setFollowing = async (following: boolean) => {
+    if (profile.id === undefined) return;
+    await updateProfile(profile.id, { followOnly: following });
+    // Editing is refused while following, and a mode left switched on would
+    // sit there doing nothing.
+    if (following) setEditMode(false);
+  };
+
+  /**
+   * Fork a profile you cannot change into one you can.
+   *
+   * Local and unlinked on purpose: it is yours now, and connecting it
+   * anywhere is a separate decision made on its own card.
+   */
+  const makeMyOwnCopy = async () => {
+    if (profile.id === undefined) return;
+    setCopying(true);
+    try {
+      const { duplicateProfileLocally } = await import("@/lib/db");
+      const copyId = await duplicateProfileLocally(
+        profile.id,
+        `${profile.name} (my copy)`,
+      );
+      await fetchProfiles();
+      setActiveProfileId(copyId);
+    } catch (error) {
+      setRefusal(
+        error instanceof Error ? error.message : "Could not copy that profile.",
+      );
+    } finally {
+      setCopying(false);
+    }
+  };
 
   /**
    * Ask, then move.
@@ -146,11 +186,65 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
         </p>
       )}
 
-      {state.isViewerOfSomeoneElses && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          You have view-only access, so your edits stay on this device and where
-          this syncs is not yours to change.
-        </p>
+      {/*
+        Following, and the ways out of it. A profile that cannot push is not
+        editable either — the next sync would overwrite the changes — so the
+        panel has to offer something better than a dead end.
+      */}
+      {state.target !== "local" && (
+        <div className="space-y-2" data-testid="follow-controls">
+          {state.canEdit ? (
+            <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={state.following}
+                onChange={(e) => void setFollowing(e.target.checked)}
+                data-testid="follow-toggle"
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium text-gray-800 dark:text-gray-200">
+                  Follow only
+                </span>{" "}
+                — receive changes but never send any. This profile becomes
+                view-only on this device.
+              </span>
+            </label>
+          ) : (
+            <p
+              data-testid="follow-explainer"
+              className="text-xs text-gray-500 dark:text-gray-400"
+            >
+              {state.following
+                ? "You are following this profile: you receive changes and send none, and it cannot be edited here."
+                : "You have view-only access, so this profile cannot be edited here — any change would be overwritten by the next sync."}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {state.canUnfollow && (
+              <button
+                type="button"
+                onClick={() => void setFollowing(false)}
+                data-testid="unfollow"
+                className="rounded-md bg-gray-100 px-3 py-1 text-xs text-gray-800 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              >
+                Stop following
+              </button>
+            )}
+            {!state.canEdit && (
+              <button
+                type="button"
+                onClick={() => void makeMyOwnCopy()}
+                disabled={copying}
+                data-testid="make-own-copy"
+                className="rounded-md bg-blue-100 px-3 py-1 text-xs text-blue-800 transition-colors hover:bg-blue-200 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40"
+              >
+                {copying ? "Copying…" : "Make my own copy"}
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       <SyncControls

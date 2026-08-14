@@ -27,6 +27,7 @@ import { convertBankNumberToIndex } from "@/lib/bankUtils";
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { exposeE2EHook } from "@/lib/testHooks";
+import { getSyncState } from "@/lib/syncState";
 
 // Define a type for the decoded Google user info (adjust as needed)
 // Export this type so it can be used elsewhere (like in ProfileManager)
@@ -53,6 +54,8 @@ interface ProfileState {
   setActiveProfileId: (id: number | null) => void;
   setCurrentPageIndex: (bankNumber: number) => void; // Changed param name to bankNumber for clarity
   setEditMode: (isActive: boolean) => void; // Set edit mode
+  /** False when the active profile is followed, or the remote refuses writes. */
+  canEditActiveProfile: () => boolean;
   setDeleteMoveMode: (isActive: boolean) => void; // Set delete/move mode
   toggleDeleteMoveMode: () => void; // Toggle delete/move mode
   incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
@@ -363,6 +366,7 @@ export const useProfileStore = create<ProfileState>()(
         },
 
         setEditMode: (isActive: boolean) => {
+          if (isActive && !get().canEditActiveProfile()) return;
           console.log(`Setting edit mode to: ${isActive}`);
           // If enabling edit mode, disable delete/move mode
           if (isActive && get().isDeleteMoveMode) {
@@ -373,6 +377,7 @@ export const useProfileStore = create<ProfileState>()(
         },
 
         setDeleteMoveMode: (isActive: boolean) => {
+          if (isActive && !get().canEditActiveProfile()) return;
           console.log(`Setting delete/move mode to: ${isActive}`);
           // If enabling delete/move mode, disable edit mode
           if (isActive && get().isEditMode) {
@@ -384,6 +389,7 @@ export const useProfileStore = create<ProfileState>()(
 
         toggleDeleteMoveMode: () => {
           const currentMode = get().isDeleteMoveMode;
+          if (!currentMode && !get().canEditActiveProfile()) return;
           console.log(
             `Toggling delete/move mode from ${currentMode} to ${!currentMode}`,
           );
@@ -395,6 +401,21 @@ export const useProfileStore = create<ProfileState>()(
           } else {
             set({ isDeleteMoveMode: newMode });
           }
+        },
+
+        /**
+         * Whether the active profile may be changed at all.
+         *
+         * Blocked here rather than in each control, because the ways in are
+         * the Shift key, two buttons and a hook, and one of them will always
+         * be missed. A profile that cannot push does not merely keep your
+         * edits private: the next sync applies the merged remote state over
+         * them, so they are destroyed. Refusing the edit is the honest answer.
+         */
+        canEditActiveProfile: () => {
+          const { profiles, activeProfileId } = get();
+          const active = profiles.find((p) => p.id === activeProfileId);
+          return active ? getSyncState(active).canEdit : true;
         },
 
         incrementPadConfigsVersion: () => {

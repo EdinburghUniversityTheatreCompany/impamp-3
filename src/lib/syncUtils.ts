@@ -357,6 +357,10 @@ const PROFILE_LOCATION_FIELDS = new Set([
   // answers about this device's access and this device's choice.
   "serverRole",
   "readOnly",
+  // Following is this device's decision about this device. Letting it travel
+  // would mean one person choosing to follow silently stopped everyone else
+  // contributing.
+  "followOnly",
   "syncPausedUntil",
 ]);
 

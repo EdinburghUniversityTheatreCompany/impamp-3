@@ -17,7 +17,7 @@
 
 import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
 import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
-import { getSyncState } from "@/lib/syncState";
+import { getSyncState, isReadOnlyForSync } from "@/lib/syncState";
 import {
   getLocalProfileSyncData,
   updateLocalData,
@@ -170,7 +170,7 @@ async function performServerSync(
     // uploads for everyone already relying on them.
     const hostedHashes = new Set<string>();
     const mayHost = audioIsExplicit ? audio === "server" : true;
-    if (!profile.readOnly && mayHost) {
+    if (!isReadOnlyForSync(profile) && mayHost) {
       const upload = await uploadProfileAudio([
         ...(await getAudioFileIdsForProfile(profileId)),
       ]);

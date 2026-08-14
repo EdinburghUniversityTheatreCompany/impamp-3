@@ -305,6 +305,7 @@ export const updateLocalData = async (
       serverShareToken: existingLocalProfile?.serverShareToken ?? null,
       serverRole: existingLocalProfile?.serverRole ?? null,
       readOnly: existingLocalProfile?.readOnly ?? false,
+      followOnly: existingLocalProfile?.followOnly ?? false,
       syncPausedUntil: existingLocalProfile?.syncPausedUntil,
       createdAt: toDate(
         existingLocalProfile?.createdAt ?? data.profile.createdAt,

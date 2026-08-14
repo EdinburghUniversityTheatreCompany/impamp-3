@@ -41,6 +41,8 @@ export function useConnectServerProfile() {
       serverProfileId: string,
       options: {
         shareToken?: string | null;
+        /** Receive changes but never send any. */
+        followOnly?: boolean;
         onProgress?: (progress: ImportAudioProgress) => void;
       } = {},
     ): Promise<ConnectServerOutcome> => {
@@ -83,6 +85,7 @@ export function useConnectServerProfile() {
         serverVersion: payload.version,
         serverRole: payload.access,
         readOnly,
+        followOnly: options.followOnly ?? false,
       });
 
       return {

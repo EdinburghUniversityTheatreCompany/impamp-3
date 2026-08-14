@@ -378,9 +378,25 @@ async function reloadAndWaitForConflict(page: Page) {
   await page.reload();
   await waitForAppReady(page);
   await openProfileManager(page);
-  await expect(page.getByTestId("custom-modal")).toBeVisible({
-    timeout: 20_000,
-  });
+
+  // The reload is the deterministic trigger, but under a parallel run that
+  // first sync can still be slow, so nudge as well rather than let the test
+  // turn on how busy the machine is. The click timeout is short on purpose:
+  // once the modal opens it covers this button, and click()'s default 30s
+  // retry would eat the whole poll window.
+  await expect
+    .poll(
+      async () => {
+        if ((await page.getByTestId("custom-modal").count()) > 0) return true;
+        const syncNow = page.getByTestId("sync-now");
+        if ((await syncNow.count()) > 0 && (await syncNow.isEnabled())) {
+          await syncNow.click({ timeout: 1_000 }).catch(() => {});
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
 }
 
 test.describe("server sync conflicts", () => {

@@ -15,6 +15,7 @@ import {
   ensureAudioFileHash,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
+import { isReadOnlyForSync } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import {
   getLocalProfileSyncData,
@@ -542,7 +543,7 @@ const performProfileSync = async (
     if (!tokenInfo?.accessToken) {
       // No sign-in needed for read-only profiles that are publicly shared:
       // pull them through the server-side proxy instead.
-      if (localProfile.readOnly && localProfile.googleDriveFileId) {
+      if (isReadOnlyForSync(localProfile) && localProfile.googleDriveFileId) {
         return await pullPublicReadOnlyProfile(
           profileId,
           localProfile.googleDriveFileId,
@@ -578,7 +579,11 @@ const performProfileSync = async (
     // it). Pull it through the public proxy — do NOT fall through to the
     // name-lookup/initial-upload path, which would wrongly create a folder in
     // this user's own Drive and flip the profile to read-write.
-    if (!fileId && localProfile.readOnly && localProfile.googleDriveFileId) {
+    if (
+      !fileId &&
+      isReadOnlyForSync(localProfile) &&
+      localProfile.googleDriveFileId
+    ) {
       return await pullPublicReadOnlyProfile(
         profileId,
         localProfile.googleDriveFileId,
@@ -677,7 +682,7 @@ const performProfileSync = async (
     }
 
     // 1b. Upload any audio files that still don't have a Drive file ID (genuinely new)
-    if (!localProfile.readOnly) {
+    if (!isReadOnlyForSync(localProfile)) {
       await uploadMissingAudioFiles(
         profileId,
         tokenInfo,
@@ -754,7 +759,7 @@ const performProfileSync = async (
 
       mergedData._lastSyncTimestamp = Date.now();
 
-      if (localProfile.readOnly) {
+      if (isReadOnlyForSync(localProfile)) {
         // Read-only: apply remote changes locally but never write back to Drive
         console.log(`Profile ${profileId} is read-only — skipping upload.`);
         warnings.push(...(await updateLocalData(profileId, mergedData)));

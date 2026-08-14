@@ -424,6 +424,22 @@ describe("syncChipText", () => {
     );
   });
 
+  it("says when you are following, since it explains why editing is off", () => {
+    const followed = getSyncState(
+      profile({
+        syncType: "googleDrive",
+        audioLocation: "googleDrive",
+        googleDriveFileId: "file-1",
+        googleDriveFolderId: "folder-1",
+        followOnly: true,
+      }),
+      NOW,
+    );
+    expect(syncChipText(followed, "2 minutes ago")).toBe(
+      "Google Drive · following",
+    );
+  });
+
   it("leads with the pause, since nothing is syncing", () => {
     const paused = getSyncState(
       profile({
@@ -441,5 +457,83 @@ describe("syncChipText", () => {
   it("leads with a defect, since it needs a decision", () => {
     const broken = getSyncState(profile({ syncType: "googleDrive" }), NOW);
     expect(syncChipText(broken, null)).toBe("Google Drive · needs attention");
+  });
+});
+
+/**
+ * Following is a decision; read-only is a permission. Keeping them apart is
+ * the whole point: the Drive reconciler rewrites `readOnly` in both directions
+ * on every sync, so a preference stored there is cleared by the first sync of
+ * any folder you happen to have write access to — which is exactly what the
+ * old "Read-only" checkbox did.
+ */
+describe("following", () => {
+  it("is off unless chosen", () => {
+    expect(getSyncState(HEALTHY["drive / drive"], NOW).following).toBe(false);
+  });
+
+  it("makes a profile read-only even where the remote would allow writes", () => {
+    const followed = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      googleDriveFolderId: "folder-1",
+      followOnly: true,
+      readOnly: false,
+    });
+
+    const state = getSyncState(followed, NOW);
+    expect(state.following).toBe(true);
+    expect(state.readOnly).toBe(true);
+    expect(state.canEdit).toBe(false);
+  });
+
+  it("still reports read-only when the remote refuses writes", () => {
+    const viewer = profile({
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "viewer",
+      readOnly: true,
+    });
+
+    const state = getSyncState(viewer, NOW);
+    expect(state.following).toBe(false);
+    expect(state.readOnly).toBe(true);
+    expect(state.canEdit).toBe(false);
+  });
+
+  it("lets you edit a profile you can push to and have not followed", () => {
+    expect(getSyncState(HEALTHY["drive / drive"], NOW).canEdit).toBe(true);
+    expect(getSyncState(HEALTHY["local / device"], NOW).canEdit).toBe(true);
+  });
+
+  it("does not call a followed profile someone else's", () => {
+    // Following your own board is a choice about contributing, not a
+    // statement that it belongs to somebody else.
+    const followed = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    expect(getSyncState(followed, NOW).isViewerOfSomeoneElses).toBe(false);
+    expect(getSyncState(followed, NOW).ownership).toBe("owner");
+  });
+
+  it("can be unfollowed only where the remote would accept writes", () => {
+    const followedOwner = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    expect(getSyncState(followedOwner, NOW).canUnfollow).toBe(true);
+
+    const followedViewer = profile({
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "viewer",
+      readOnly: true,
+      followOnly: true,
+    });
+    // Unfollowing would promise writes the server will refuse.
+    expect(getSyncState(followedViewer, NOW).canUnfollow).toBe(false);
   });
 });

@@ -264,7 +264,11 @@ test.describe("changing where a profile syncs", () => {
     await expect(
       page.getByTestId("sync-target-local").getByRole("radio"),
     ).toBeDisabled();
-    await expect(page.getByText(/not yours to change/)).toBeVisible();
+    // A viewer is told why, and offered the only thing that would help.
+    await expect(page.getByTestId("follow-explainer")).toContainText(
+      /view-only access/i,
+    );
+    await expect(page.getByTestId("make-own-copy")).toBeVisible();
   });
 
   test("switching a synced profile back to this device warns first", async ({

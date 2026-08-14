@@ -66,7 +66,23 @@ export interface SyncState {
   /** False when `audio` was inferred because the profile predates the field. */
   audioIsExplicit: boolean;
   ownership: Ownership;
+  /**
+   * Nothing local will be pushed — because the remote refuses writes, or
+   * because you chose to follow rather than contribute.
+   */
   readOnly: boolean;
+  /** Your own choice to follow rather than contribute. */
+  following: boolean;
+  /**
+   * Whether this profile may be changed at all.
+   *
+   * A profile that cannot push is not merely private to edit: the next sync
+   * applies the merged remote state over your changes, so they are destroyed
+   * rather than kept to yourself. Blocking the edit is the honest behaviour.
+   */
+  canEdit: boolean;
+  /** Whether dropping the follow would leave a profile you can actually write. */
+  canUnfollow: boolean;
   /** True when this is someone else's profile that we can only read. */
   isViewerOfSomeoneElses: boolean;
   paused: boolean;
@@ -170,6 +186,16 @@ function detectDefects(
   return defects;
 }
 
+/**
+ * Whether this device will push changes for a profile.
+ *
+ * The sync paths used to read `profile.readOnly` directly, which is only what
+ * the *remote* permits. Following is a separate decision and has to be
+ * honoured just as firmly, so both go through here.
+ */
+export const isReadOnlyForSync = (profile: Profile): boolean =>
+  Boolean(profile.readOnly) || Boolean(profile.followOnly);
+
 export function getSyncState(profile: Profile, now = Date.now()): SyncState {
   const target = profile.syncType;
 
@@ -180,7 +206,10 @@ export function getSyncState(profile: Profile, now = Date.now()): SyncState {
     : inferAudioLocation(profile, target);
 
   const ownership = resolveOwnership(profile, target);
-  const readOnly = Boolean(profile.readOnly);
+  // What the remote permits, before any choice of ours.
+  const remoteReadOnly = Boolean(profile.readOnly);
+  const following = Boolean(profile.followOnly);
+  const readOnly = remoteReadOnly || following;
 
   const isLinked =
     target === "googleDrive"
@@ -200,7 +229,14 @@ export function getSyncState(profile: Profile, now = Date.now()): SyncState {
     audioIsExplicit,
     ownership,
     readOnly,
-    isViewerOfSomeoneElses: target !== "local" && readOnly,
+    following,
+    canEdit: !readOnly,
+    // Unfollowing a profile the remote will not accept writes to would promise
+    // something it cannot deliver.
+    canUnfollow: following && !remoteReadOnly,
+    // "Someone else's" is about permission, not preference: following your own
+    // board does not make it theirs.
+    isViewerOfSomeoneElses: target !== "local" && remoteReadOnly,
     paused: pausedUntil !== null,
     pausedUntil,
     isLinked,
@@ -262,6 +298,9 @@ export function syncChipText(
   if (state.defects.length > 0) return `${base} · needs attention`;
   if (state.isViewerOfSomeoneElses) return `${base} · view only`;
   if (state.paused) return `${base} · paused`;
+  // A steady state rather than an alert, but still the thing you most need to
+  // know about this profile — it explains why the pads will not edit.
+  if (state.following) return `${base} · following`;
 
   const parts = [base];
   // Under a Drive target, "sounds in Drive" only repeats the target.

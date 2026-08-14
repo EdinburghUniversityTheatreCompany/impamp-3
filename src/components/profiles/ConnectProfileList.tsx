@@ -61,7 +61,7 @@ export default function ConnectProfileList({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [readOnlyKeys, setReadOnlyKeys] = useState<Set<string>>(new Set());
+  const [followKeys, setFollowKeys] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<string | null>(null);
 
   /**
@@ -155,6 +155,7 @@ export default function ConnectProfileList({
     try {
       if (item.source === "server") {
         const outcome = await connectServerProfile(item.id, {
+          followOnly: followKeys.has(item.key),
           onProgress: (p) =>
             setProgress(
               `Downloading sounds (${p.processedFiles} of ${p.totalFiles})…`,
@@ -183,8 +184,8 @@ export default function ConnectProfileList({
             googleDriveFileId: item.id,
           },
         );
-        if (readOnlyKeys.has(item.key)) {
-          await updateProfile(localProfileId, { readOnly: true });
+        if (followKeys.has(item.key)) {
+          await updateProfile(localProfileId, { followOnly: true });
         }
         onConnected?.(item.name);
       }
@@ -277,20 +278,20 @@ export default function ConnectProfileList({
               </div>
 
               {/*
-                Drive cannot tell us whether this file is ours to write to
-                until a sync reconciles it, so the choice is offered up front.
-                A server profile already knows, from `access`.
+                Following is a choice about contributing, so it is offered
+                wherever you *could* contribute. A server row you can only view
+                is already view-only and has nothing to choose.
               */}
-              {!local && item.source === "googleDrive" && (
+              {!local && item.access !== "viewer" && (
                 <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
                   <input
                     type="checkbox"
-                    // Every row's label reads "Read-only", so on its own it
+                    // Every row's label reads "Follow only", so on its own it
                     // tells a screen reader nothing about which profile.
-                    aria-label={`Connect "${item.name}" as read-only`}
-                    checked={readOnlyKeys.has(item.key)}
+                    aria-label={`Follow "${item.name}" without contributing`}
+                    checked={followKeys.has(item.key)}
                     onChange={(e) =>
-                      setReadOnlyKeys((prev) => {
+                      setFollowKeys((prev) => {
                         const next = new Set(prev);
                         if (e.target.checked) next.add(item.key);
                         else next.delete(item.key);
@@ -298,7 +299,7 @@ export default function ConnectProfileList({
                       })
                     }
                   />
-                  Read-only
+                  Follow only
                 </label>
               )}
 
