@@ -16,6 +16,19 @@ export interface AudioFile {
 
 // Define the structure of profile data
 export type SyncType = "local" | "googleDrive" | "server";
+
+/**
+ * Where a profile publishes its audio for other devices and people.
+ *
+ * Deliberately separate from `syncType`: the two are independent axes. A
+ * server-synced profile has always been able to keep its audio in Drive — the
+ * server stores only the blob — and hosting it on the server instead is a
+ * gated extra (docs/wasabi-audio.md). What was missing was a way to *say*
+ * which, so the choice was made implicitly by whatever happened to be
+ * configured. See `src/lib/syncState.ts`.
+ */
+export type AudioLocation = "googleDrive" | "server" | "local";
+
 export interface Profile {
   id?: number;
   name: string;
@@ -27,6 +40,14 @@ export interface Profile {
   serverProfileId?: string | null; // Profile UUID on the ImpAmp server
   serverVersion?: number | null; // Last version we successfully pulled or pushed
   serverShareToken?: string | null; // Link-share token, for profiles opened via a share URL
+  // Our access on the server, as the server reported it. Distinguishes an
+  // owner from an email-invited editor, which `serverShareToken` cannot:
+  // an invited editor has no token. Absent on rows written before this
+  // existed — treat that as "unknown", never as "owner".
+  serverRole?: "owner" | "editor" | "viewer" | null;
+  // The user's intent for this profile's audio. Absent on rows written before
+  // this existed; `getSyncState` infers a value for those.
+  audioLocation?: AudioLocation | null;
   readOnly?: boolean; // If true, sync only downloads from Drive, never uploads
   activePadBehavior?: ActivePadBehavior;
   syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
