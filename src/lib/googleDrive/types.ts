@@ -1,5 +1,9 @@
 // Re-export types from other files that we need
-import type { ProfileSyncData, ItemConflict } from "@/lib/syncUtils";
+import type {
+  ProfileSyncData,
+  ItemConflict,
+  ConflictOrigin,
+} from "@/lib/syncUtils";
 
 // Google Drive Permissions API types
 export interface DrivePermission {
@@ -42,7 +46,10 @@ export interface SyncConflictData {
   local: ProfileSyncData;
   remote: ProfileSyncData;
   merged: ProfileSyncData;
+  /** The Drive file the conflict is against. Empty for a server conflict. */
   fileId: string;
+  /** Which backend this is a conflict with, and what is needed to resolve it. */
+  origin: ConflictOrigin;
 }
 
 // These interfaces are part of the SyncResult type union

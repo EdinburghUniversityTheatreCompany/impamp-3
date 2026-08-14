@@ -16,12 +16,13 @@
  */
 
 import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
-import { detectProfileConflicts } from "@/lib/syncUtils";
+import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
 import { getSyncState } from "@/lib/syncState";
 import {
   getLocalProfileSyncData,
   updateLocalData,
 } from "@/lib/googleDrive/dataAccess";
+import { updateSyncTimestamp } from "@/lib/googleDrive/utils";
 import {
   downloadMissingAudioFiles,
   uploadMissingAudioFiles,
@@ -31,7 +32,7 @@ import {
   markHostedAudio,
   uploadProfileAudio,
 } from "@/lib/serverAudio/transfer";
-import type { TokenInfo } from "@/lib/googleDrive/types";
+import type { SyncConflictData, TokenInfo } from "@/lib/googleDrive/types";
 import {
   createServerProfile,
   fetchServerProfile,
@@ -56,6 +57,15 @@ export interface ServerSyncCallbacks {
    */
   onWarnings?: (warnings: string[]) => void;
   onConflictsDetected: (conflicts: ItemConflict[]) => void;
+  /**
+   * The three versions a conflict is between, so a human can settle it.
+   *
+   * Server sync used to report only the *list* of conflicts and an error
+   * string. The list had no consumer and the error was a red line under the
+   * profile with nothing to click, so a server conflict simply stopped the
+   * profile converging until someone changed something by hand.
+   */
+  onConflictDataAvailable?: (data: SyncConflictData | null) => void;
 }
 
 /**
@@ -246,6 +256,22 @@ async function pullMergePush(
 
     if (requiresManualResolution) {
       onConflictsDetected(conflicts);
+      if (remote) {
+        callbacks.onConflictDataAvailable?.({
+          local: localData,
+          // mergedData carries every automatically resolved change; it is the
+          // base a resolution builds on, and resolving from local alone would
+          // silently drop all of it.
+          remote: remote.data,
+          merged: mergedData,
+          fileId: "",
+          origin: {
+            kind: "server",
+            serverProfileId: serverId,
+            version: remoteVersion,
+          },
+        });
+      }
       onStatusChange("conflict");
       onError("Sync conflicts detected. Manual resolution required.");
       return { status: "conflict", conflicts };
@@ -347,4 +373,44 @@ function finish(
     data,
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/**
+ * Settle a server-sync conflict with the version the user chose.
+ *
+ * Pushed at the version the conflict was detected against, so a third writer
+ * landing in between is refused rather than silently overwritten — the same
+ * optimistic-concurrency rule every other write obeys. A refusal here is not
+ * an error to hide: the next sync re-merges against the newer state and asks
+ * again if it still cannot decide.
+ */
+export async function applyServerConflictResolution(
+  profileId: number,
+  resolvedData: ProfileSyncData,
+  origin: Extract<ConflictOrigin, { kind: "server" }>,
+): Promise<ServerSyncResult> {
+  try {
+    const pushed = await pushServerProfile(
+      origin.serverProfileId,
+      resolvedData.profile.name,
+      resolvedData,
+      origin.version,
+    );
+    await updateLocalData(profileId, resolvedData);
+    await updateProfile(profileId, { serverVersion: pushed.version });
+    updateSyncTimestamp(profileId);
+    return { status: "success", version: pushed.version, data: resolvedData };
+  } catch (error) {
+    if (error instanceof VersionConflictError) {
+      return {
+        status: "error",
+        error:
+          "Someone else saved while you were choosing. Your choices were not applied — sync again to see the newer version.",
+      };
+    }
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : "Could not resolve.",
+    };
+  }
 }

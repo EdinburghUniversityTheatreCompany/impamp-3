@@ -16,6 +16,8 @@
  */
 
 import { create } from "zustand";
+import type { ItemConflict } from "@/lib/syncUtils";
+import type { SyncConflictData } from "@/lib/googleDrive/types";
 
 export type SyncActivity =
   "idle" | "syncing" | "success" | "conflict" | "error";
@@ -33,6 +35,17 @@ export interface ProfileSyncStatus {
   lastSyncedAt: number | null;
   /** A live change channel is connected. Only server sync has one. */
   live: boolean;
+  /**
+   * A conflict waiting for a human, and the three versions it is between.
+   *
+   * Here rather than in the sync hooks because the sync that finds a conflict
+   * is usually not the one a profile card is holding: the scheduled syncs run
+   * in `ClientSideInitializer`'s hook instance, and hook state does not cross
+   * instances. A conflict found in the background would otherwise be detected,
+   * recorded, and never shown to anyone.
+   */
+  conflicts: ItemConflict[];
+  conflictData: SyncConflictData | null;
 }
 
 /**
@@ -46,6 +59,8 @@ export const IDLE_SYNC_STATUS: ProfileSyncStatus = Object.freeze({
   warnings: Object.freeze([]) as unknown as string[],
   lastSyncedAt: null,
   live: false,
+  conflicts: Object.freeze([]) as unknown as ItemConflict[],
+  conflictData: null,
 });
 
 interface SyncStatusStoreState {

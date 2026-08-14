@@ -7,6 +7,7 @@ import {
 } from "@/lib/syncUtils"; // Removed FieldConflict (unused in this file)
 import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import type { SyncConflictData } from "@/lib/googleDrive/types";
+import { conflictOriginLabel } from "@/lib/syncUtils";
 
 type ResolutionChoice =
   "local" | "remote" | "keep" | "delete" | "accept" | "discard";
@@ -323,8 +324,9 @@ export const ConflictResolutionModal: React.FC<
       <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto text-sm">
         <div className="text-sm text-yellow-800 dark:text-yellow-200 bg-yellow-100 dark:bg-yellow-900/40 p-3 rounded border border-yellow-200 dark:border-yellow-700 space-y-2">
           <p>
-            Both your local copy and Google Drive were modified since the last
-            sync. Choose which version to keep for each conflict below.
+            Both your local copy and {conflictOriginLabel(conflictData.origin)}{" "}
+            were modified since the last sync. Choose which version to keep for
+            each conflict below.
           </p>
           <div className="text-xs text-yellow-700 dark:text-yellow-300 space-y-0.5">
             {conflictData.local._lastSyncTimestamp && (

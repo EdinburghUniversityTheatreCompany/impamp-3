@@ -41,7 +41,8 @@ vi.mock("@/lib/googleDrive/sync", () => driveMocks);
 vi.mock("./api", () => apiMocks);
 vi.mock("@/lib/serverAudio/transfer", () => serverAudioMocks);
 
-const { syncServerProfile } = await import("./sync");
+const { syncServerProfile, applyServerConflictResolution } =
+  await import("./sync");
 const { VersionConflictError } = await import("./types");
 
 const PROFILE_ID = 1;
@@ -112,11 +113,33 @@ function syncData(padName: string, modifiedAt: number): ProfileSyncData {
   };
 }
 
+/**
+ * Both sides changed the same pad name since the other's last sync, which is
+ * the only thing the merge calls a real conflict.
+ */
+function stageConflict() {
+  const local = syncData("local pad", AFTER_SYNC);
+  const remote = syncData("remote pad", AFTER_SYNC + 1000);
+
+  dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(local);
+  apiMocks.fetchServerProfile.mockResolvedValue({
+    id: SERVER_ID,
+    name: "Panto",
+    version: 5,
+    updatedAt: 0,
+    access: "editor",
+    data: remote,
+  });
+
+  return { local, remote };
+}
+
 const callbacks = () => ({
   onStatusChange: vi.fn(),
   onError: vi.fn(),
   onWarnings: vi.fn(),
   onConflictsDetected: vi.fn(),
+  onConflictDataAvailable: vi.fn(),
 });
 
 beforeEach(() => {
@@ -360,18 +383,7 @@ describe("syncServerProfile", () => {
 
   it("surfaces a genuine conflict instead of guessing", async () => {
     // Both sides changed the same pad name since their last sync.
-    const local = syncData("local pad", AFTER_SYNC);
-    const remote = syncData("remote pad", AFTER_SYNC + 1000);
-
-    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(local);
-    apiMocks.fetchServerProfile.mockResolvedValue({
-      id: SERVER_ID,
-      name: "Panto",
-      version: 5,
-      updatedAt: 0,
-      access: "editor",
-      data: remote,
-    });
+    const { local, remote } = stageConflict();
 
     const cbs = callbacks();
     const result = await syncServerProfile(PROFILE_ID, cbs);
@@ -379,6 +391,28 @@ describe("syncServerProfile", () => {
     expect(result.status).toBe("conflict");
     expect(cbs.onConflictsDetected).toHaveBeenCalled();
     expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+  });
+
+  it("hands over the three versions a human needs to settle it", async () => {
+    // The list of conflicts alone had no consumer, and the error string it
+    // set was a red line with nothing to click — so a server conflict simply
+    // stopped the profile converging.
+    const { local, remote } = stageConflict();
+
+    const cbs = callbacks();
+    await syncServerProfile(PROFILE_ID, cbs);
+
+    expect(cbs.onConflictDataAvailable).toHaveBeenCalledOnce();
+    const handed = cbs.onConflictDataAvailable.mock.calls[0][0];
+    expect(handed.local).toEqual(local);
+    expect(handed.remote).toEqual(remote);
+    // The version the push must be checked against, so a third writer landing
+    // in between is refused rather than silently overwritten.
+    expect(handed.origin).toEqual({
+      kind: "server",
+      serverProfileId: SERVER_ID,
+      version: 5,
+    });
   });
 
   it("shares one in-flight run between concurrent callers", async () => {
@@ -589,5 +623,65 @@ describe("syncServerProfile — where the sounds are published", () => {
 
     expect(driveMocks.downloadMissingAudioFiles).toHaveBeenCalled();
     expect(serverAudioMocks.downloadProfileAudio).toHaveBeenCalled();
+  });
+});
+
+describe("applyServerConflictResolution", () => {
+  const origin = {
+    kind: "server" as const,
+    serverProfileId: SERVER_ID,
+    version: 5,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.updateProfile.mockResolvedValue(undefined);
+    dataAccessMocks.updateLocalData.mockResolvedValue([]);
+  });
+
+  it("pushes the chosen version and records the new one", async () => {
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+    const resolved = syncData("resolved pad", AFTER_SYNC);
+
+    const result = await applyServerConflictResolution(
+      PROFILE_ID,
+      resolved,
+      origin,
+    );
+
+    expect(result.status).toBe("success");
+    // Pushed *at the version the conflict was against*, so a third writer who
+    // landed while the user was choosing is refused, not overwritten.
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledWith(
+      SERVER_ID,
+      resolved.profile.name,
+      resolved,
+      5,
+    );
+    expect(dataAccessMocks.updateLocalData).toHaveBeenCalledWith(
+      PROFILE_ID,
+      resolved,
+    );
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
+      serverVersion: 6,
+    });
+  });
+
+  it("explains a lost race instead of applying anything", async () => {
+    apiMocks.pushServerProfile.mockRejectedValue(
+      new VersionConflictError(7, "Panto", syncData("theirs", AFTER_SYNC)),
+    );
+
+    const result = await applyServerConflictResolution(
+      PROFILE_ID,
+      syncData("mine", AFTER_SYNC),
+      origin,
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.status === "error" && result.error).toMatch(
+      /Someone else saved/,
+    );
+    expect(dataAccessMocks.updateLocalData).not.toHaveBeenCalled();
   });
 });

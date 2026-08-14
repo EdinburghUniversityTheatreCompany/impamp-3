@@ -733,6 +733,7 @@ const performProfileSync = async (
           remote: remoteData,
           merged: mergedData,
           fileId: fileId,
+          origin: { kind: "drive", fileId },
         };
 
         onConflictDataAvailable(conflictData);

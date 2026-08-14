@@ -5,6 +5,11 @@ import {
   type Page,
 } from "@playwright/test";
 import { E2E_SIGNIN_SECRET } from "../playwright.config";
+import {
+  gotoApp,
+  openProfileManager,
+  seedActiveProfileSync,
+} from "./test-helpers";
 
 /**
  * End-to-end coverage for server sync.
@@ -281,6 +286,144 @@ test.describe("server sync UI", () => {
         { timeout: 15_000 },
       )
       .toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A server-sync conflict used to be a dead end. `useServerSync` computed the
+ * list of conflicts and nothing consumed it; the only visible sign was a red
+ * line reading "Sync conflicts detected. Manual resolution required." with
+ * nothing to click, so the profile stopped converging until someone changed
+ * something by hand.
+ *
+ * Staged for real: enable server sync, rename the profile locally, then write
+ * a different name to the server with a newer stamp. Both sides have moved
+ * since the other last saw it, which is exactly what the merge calls a
+ * conflict.
+ */
+/**
+ * Turn a freshly server-synced profile into a genuine conflict: rename it
+ * locally, then write a different name to the server with a later stamp. Both
+ * sides have moved since the other last saw it, which is the only thing the
+ * merge treats as a conflict rather than a merge.
+ */
+async function stageServerConflict(
+  page: Page,
+  request: APIRequestContext,
+  cookie: { cookie: string },
+): Promise<{ serverId: string; version: number }> {
+  await gotoApp(page);
+  await openProfileManager(page);
+  await page.getByTestId("sync-status-chip").first().click();
+  await page.getByTestId("sync-target-server").getByRole("radio").click();
+  await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // updateProfile stamps _fieldsModified.name, which is what makes this side
+  // "changed since the server last saw it".
+  await seedActiveProfileSync(page, { name: "Mine" });
+
+  const list = await (
+    await request.get("/api/profiles", { headers: cookie })
+  ).json();
+  const serverId = list.profiles[0].id as string;
+
+  // The app is syncing this profile at the same time, so the version can move
+  // between reading it and writing — which is the whole point of If-Match.
+  // Re-read and retry rather than pretending the race isn't there.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await (
+      await request.get(`/api/profiles/${serverId}`, { headers: cookie })
+    ).json();
+
+    const put = await request.put(`/api/profiles/${serverId}`, {
+      headers: { ...cookie, "if-match": `"${current.version}"` },
+      data: {
+        name: "Theirs",
+        data: {
+          ...current.data,
+          _lastSyncTimestamp: 0,
+          profile: {
+            ...current.data.profile,
+            name: "Theirs",
+            _fieldsModified: { name: Date.now() + 60_000 },
+          },
+        },
+      },
+    });
+    if (put.status() === 200) {
+      return { serverId, version: current.version as number };
+    }
+    expect(put.status(), "only a lost race is worth retrying").toBe(409);
+  }
+
+  throw new Error("Could not stage a conflict: the client kept winning.");
+}
+
+test.describe("server sync conflicts", () => {
+  test("a conflict opens the resolution modal, naming the server", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "conflicted@example.com");
+    await signIn(page, token);
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    await stageServerConflict(page, request, cookie);
+
+    // No click needed: the server pushes the change over SSE and the periodic
+    // sync picks it up. That is the case that used to be lost entirely —
+    // the sync that finds a conflict runs in the initializer's hook instance,
+    // and hook state does not reach the card holding a different one.
+    const modal = page.getByTestId("custom-modal");
+    await expect(modal).toBeVisible({ timeout: 20_000 });
+    // The copy used to say "Google Drive" whichever backend it was about.
+    await expect(modal).toContainText(/the ImpAmp server/);
+    await expect(modal).toContainText(/Mine|Theirs/);
+  });
+
+  test("resolving a conflict settles it and clears the modal", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "resolver@example.com");
+    await signIn(page, token);
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    const { serverId, version } = await stageServerConflict(
+      page,
+      request,
+      cookie,
+    );
+
+    await expect(page.getByTestId("custom-modal")).toBeVisible({
+      timeout: 20_000,
+    });
+    // The button stays disabled until every conflict has an answer, so choose
+    // one first — this is a real decision, not a rubber stamp.
+    await page
+      .getByRole("radio", { name: /Keep Local/i })
+      .first()
+      .check();
+    await page.getByRole("button", { name: /Resolve Conflicts/i }).click();
+
+    // Settled: the modal goes, and the server holds a newer version than the
+    // one the conflict was against.
+    await expect(page.getByTestId("custom-modal")).toBeHidden({
+      timeout: 15_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          const after = await (
+            await request.get(`/api/profiles/${serverId}`, { headers: cookie })
+          ).json();
+          return after.version;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(version + 1);
   });
 });
 

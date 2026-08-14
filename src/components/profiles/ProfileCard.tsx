@@ -9,6 +9,7 @@ import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { ProfileSyncData } from "@/lib/syncUtils";
+import { useServerSync } from "@/hooks/useServerSync";
 import { getSyncState } from "@/lib/syncState";
 import { useProfileSyncStatus } from "@/store/syncStatusStore";
 import { getSyncTimestamp } from "@/lib/googleDrive/utils";
@@ -57,12 +58,8 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
 
   const { openProfileEditor } = useProfileEdit();
 
-  const {
-    syncStatus: driveHookStatus,
-    conflicts: driveHookConflicts,
-    conflictData: driveHookConflictData,
-    applyConflictResolution,
-  } = useGoogleDriveSync();
+  const { applyConflictResolution } = useGoogleDriveSync();
+  const { resolveConflict: resolveServerConflict } = useServerSync();
 
   const { openLazyModal, closeModal } = useModal();
 
@@ -100,37 +97,44 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     }
   };
 
-  // Open conflict resolution when a Drive sync of *this* profile finds
-  // conflicts.
-  //
-  // Matched on the Drive file id, which identifies the profile. The card used
-  // to track whether it had started the sync itself and only open the modal
-  // then — the conflict data carries no profile id, so that was the only
-  // handle available. It meant a conflict found by a background sync had
-  // nowhere to surface, and the profile just stopped converging.
+  /**
+   * Open the resolution modal when a sync of *this* profile hits a conflict,
+   * whichever backend it was with.
+   *
+   * Read from the shared store, keyed by profile, because the sync that finds
+   * a conflict is usually not the one this card is holding — the scheduled
+   * syncs run in `ClientSideInitializer`'s hook instance and hook state does
+   * not cross instances. The card used to work around that by tracking whether
+   * it had started the sync itself and only opening the modal then, which
+   * meant a conflict found in the background was detected, recorded, and shown
+   * to nobody. Server conflicts had nowhere to surface at all: the list of them
+   * was computed and never read.
+   */
+  const { conflicts, conflictData } = syncStatus;
+
   useEffect(() => {
-    if (
-      driveHookStatus !== "conflict" ||
-      !driveHookConflictData ||
-      driveHookConflicts.length === 0 ||
-      !profile.googleDriveFileId ||
-      driveHookConflictData.fileId !== profile.googleDriveFileId
-    ) {
-      return;
-    }
+    if (!conflictData || conflicts.length === 0) return;
 
     openLazyModal({
       title: "Sync Conflict Resolution",
       modalType: ModalType.CONFLICT_RESOLUTION,
       modalProps: {
-        conflicts: driveHookConflicts,
-        conflictData: driveHookConflictData,
+        conflicts,
+        conflictData,
         onResolve: (resolvedData: ProfileSyncData) => {
-          applyConflictResolution(
-            resolvedData,
-            driveHookConflictData.fileId,
-            profile.id!,
-          );
+          if (conflictData.origin.kind === "drive") {
+            applyConflictResolution(
+              resolvedData,
+              conflictData.origin.fileId,
+              profile.id!,
+            );
+          } else {
+            void resolveServerConflict(
+              profile.id!,
+              resolvedData,
+              conflictData.origin,
+            );
+          }
           closeModal();
         },
         onCancel: () => closeModal(),
@@ -140,14 +144,13 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       size: "xl",
     });
   }, [
-    driveHookStatus,
-    driveHookConflictData,
-    driveHookConflicts,
+    conflictData,
+    conflicts,
     openLazyModal,
     closeModal,
     applyConflictResolution,
+    resolveServerConflict,
     profile.id,
-    profile.googleDriveFileId,
   ]);
 
   return (

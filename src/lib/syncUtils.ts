@@ -392,6 +392,23 @@ export interface ProfileSyncData {
 }
 
 /**
+ * Which remote a conflict is against.
+ *
+ * The merge is backend-agnostic — `detectProfileConflicts` is the same code
+ * for both — but resolving one is not: a Drive conflict is settled by writing
+ * a file, a server one by a version-checked push. Carrying the origin with the
+ * conflict is what lets a single modal serve both, instead of one modal whose
+ * copy says "Google Drive" no matter which backend it is talking about.
+ */
+export type ConflictOrigin =
+  | { kind: "drive"; fileId: string }
+  | { kind: "server"; serverProfileId: string; version: number };
+
+/** How to name the other side of a conflict, in a sentence. */
+export const conflictOriginLabel = (origin: ConflictOrigin): string =>
+  origin.kind === "drive" ? "Google Drive" : "the ImpAmp server";
+
+/**
  * Detects conflicts between local and remote sync data for a single profile.
  * @param localData Local version of ProfileSyncData.
  * @param remoteData Remote version of ProfileSyncData.
