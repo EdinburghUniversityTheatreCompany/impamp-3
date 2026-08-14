@@ -449,6 +449,123 @@ test.describe("server sync conflicts", () => {
 });
 
 /**
+ * `listServerProfiles` existed and was called from nowhere, so signing in on a
+ * new device showed no sign of your own server profiles — the only route back
+ * to one was a share link, which assumes somebody else is involved. Drive had
+ * a list; the server had nothing.
+ */
+test.describe("connecting a profile", () => {
+  /**
+   * A fresh account per run. The E2E database persists between runs and
+   * `mintSession` reuses the user for a given address, so a fixed one
+   * accumulates a profile every time and any count becomes a lie.
+   */
+  const freshEmail = (who: string) =>
+    `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+
+  async function seedServerProfile(
+    request: APIRequestContext,
+    cookie: { cookie: string },
+    name: string,
+  ) {
+    const now = Date.now();
+    const created = await request.post("/api/profiles", {
+      headers: cookie,
+      data: {
+        name,
+        data: {
+          _syncFormatVersion: 1,
+          profile: {
+            name,
+            syncType: "server",
+            lastBackedUpAt: now,
+            backupReminderPeriod: 30,
+            createdAt: new Date(now).toISOString(),
+            updatedAt: new Date(now).toISOString(),
+          },
+          padConfigurations: [],
+          pageMetadata: [],
+          audioFiles: [],
+        },
+      },
+    });
+    expect(created.status()).toBe(201);
+  }
+
+  test("lists your server profiles, with no Google account involved", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, freshEmail("lister"));
+    await signIn(page, token);
+    await seedServerProfile(
+      request,
+      { cookie: `${SESSION_COOKIE}=${token}` },
+      "Panto 2026",
+    );
+
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    const rows = page.getByTestId("connect-profile-row");
+    await expect(rows).toHaveCount(1, { timeout: 15_000 });
+    await expect(rows.first()).toContainText("Panto 2026");
+    // Each row says where it lives, since one list covers both sources.
+    await expect(rows.first().getByTestId("connect-profile-source")).toHaveText(
+      "ImpAmp server",
+    );
+  });
+
+  test("connecting one brings it here and stops offering it again", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, freshEmail("connector"));
+    await signIn(page, token);
+    await seedServerProfile(
+      request,
+      { cookie: `${SESSION_COOKIE}=${token}` },
+      "Fringe Tech Run",
+    );
+
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    await page.getByTestId("connect-profile-button").first().click();
+
+    // Offering it again would just make a second copy of a profile that is
+    // already syncing here.
+    await expect(page.getByTestId("connect-profile-already")).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const profiles = await page.evaluate(() =>
+      (
+        window as unknown as {
+          __profileStore: {
+            getState(): { profiles: Array<Record<string, unknown>> };
+          };
+        }
+      ).__profileStore
+        .getState()
+        .profiles.map((p) => ({
+          name: p.name,
+          syncType: p.syncType,
+          serverProfileId: p.serverProfileId,
+          googleDriveFileId: p.googleDriveFileId,
+        })),
+    );
+    const connected = profiles.find((p) => p.name === "Fringe Tech Run");
+    expect(connected?.syncType).toBe("server");
+    expect(connected?.serverProfileId).toBeTruthy();
+    // The payload carries the owner's Drive ids; a connect must not adopt them.
+    expect(connected?.googleDriveFileId ?? null).toBeNull();
+  });
+});
+
+/**
  * Signing in with Google establishes a session on this server as a side effect
  * of the same code exchange, so anyone using Drive sync had an account here and
  * was never told. `signOutOfServer` existed and was called from nowhere, so

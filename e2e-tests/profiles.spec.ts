@@ -175,7 +175,9 @@ test.describe("ImpAmp3 Profile Management", () => {
     await expect(successMessage).toBeVisible();
 
     // Switch back to Profiles tab
-    await page.getByRole("button", { name: "Profiles" }).click();
+    // `exact` because "Profiles tab" elsewhere in the modal also matches
+    // otherwise — the convention the other specs already follow.
+    await page.getByRole("button", { name: "Profiles", exact: true }).click();
 
     // Verify the new profile exists in the manager list
     const newProfileHeading = page.getByRole("heading", {
