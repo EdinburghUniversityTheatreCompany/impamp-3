@@ -4,7 +4,7 @@ import {
   PageMetadata,
   ensureAudioFileHash,
 } from "./db"; // Import main data types
-import { remapAudioFileIdKeys } from "./importExport";
+import { remapPadSettingsOnMerge } from "./importExport";
 
 // Type guard to check if an object has sync fields
 // Exporting Syncable type for use in other modules
@@ -589,15 +589,13 @@ export const detectProfileConflicts = async (
         // (rather than dropped) — this merge path isn't discarding audio
         // files the way import/Drive-write can, so the setting should
         // survive under whatever ID eventually resolves it.
-        const translatedTrimSettings = remapAudioFileIdKeys(
+        const translatedTrimSettings = remapPadSettingsOnMerge(
           pad.audioTrimSettings,
           remoteToLocalIdMap,
-          "keep",
         );
-        const translatedGainSettings = remapAudioFileIdKeys(
+        const translatedGainSettings = remapPadSettingsOnMerge(
           pad.audioGainSettings,
           remoteToLocalIdMap,
-          "keep",
         );
 
         return {

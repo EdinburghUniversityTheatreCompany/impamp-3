@@ -16,7 +16,7 @@ import {
   computeBlobHash,
 } from "@/lib/db";
 import { ProfileSyncData, resolveSyncedPadAudio } from "@/lib/syncUtils";
-import { base64ToBlob, remapAudioFileIdKeys } from "@/lib/importExport";
+import { base64ToBlob, remapPadSettingsOnImport } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
 /**
@@ -363,15 +363,13 @@ export const updateLocalData = async (
           padWithProfileId.audioTrimSettings = existing?.audioTrimSettings;
           padWithProfileId.audioGainSettings = existing?.audioGainSettings;
         } else {
-          padWithProfileId.audioTrimSettings = remapAudioFileIdKeys(
+          padWithProfileId.audioTrimSettings = remapPadSettingsOnImport(
             padWithProfileId.audioTrimSettings,
             audioIdMap,
-            "drop",
           );
-          padWithProfileId.audioGainSettings = remapAudioFileIdKeys(
+          padWithProfileId.audioGainSettings = remapPadSettingsOnImport(
             padWithProfileId.audioGainSettings,
             audioIdMap,
-            "drop",
           );
         }
         padWithProfileId.audioFileIds = resolved.audioFileIds;

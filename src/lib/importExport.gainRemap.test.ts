@@ -81,6 +81,20 @@ describe("remapAudioFileIdKeys", () => {
 
       expect(result).toEqual({ 10: 3.5, 11: -2 });
     });
+
+    it("self-mapping (old id === new id) behaves the same as no mapping at all", () => {
+      // This is the one case where the old `map.get(id) ?? id` fallback and
+      // the current `newId !== undefined` branch could have diverged: both
+      // read as "the value maps to itself", but they reach that outcome via
+      // different code paths (an explicit hit vs. falling through to the
+      // `?? id` default). Pin that they still agree.
+      const idMap = new Map<number, number>([[10, 10]]);
+      const settings = { 10: 3.5 };
+
+      const result = remapAudioFileIdKeys(settings, idMap, "keep");
+
+      expect(result).toEqual({ 10: 3.5 });
+    });
   });
 
   it("the two modes diverge on the exact case that matters: an unmapped key", () => {

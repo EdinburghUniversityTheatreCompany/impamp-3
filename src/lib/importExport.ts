@@ -452,6 +452,31 @@ export function remapAudioFileIdKeys<T>(
   return result;
 }
 
+/**
+ * Remaps a pad's audio-file-keyed settings for the import and Drive-sync
+ * paths, where an ID with no mapping means the referenced audio did not come
+ * across — so the setting is dropped rather than left pointing at nothing.
+ */
+export function remapPadSettingsOnImport<T>(
+  settings: Record<number, T> | undefined,
+  idMap: Map<number, number>,
+): Record<number, T> | undefined {
+  return remapAudioFileIdKeys(settings, idMap, "drop");
+}
+
+/**
+ * Remaps a pad's audio-file-keyed settings for the sync-merge path, where an
+ * unmapped ID is a file that simply has no local counterpart yet — so the
+ * setting is kept under its original ID to survive under whatever eventually
+ * resolves it.
+ */
+export function remapPadSettingsOnMerge<T>(
+  settings: Record<number, T> | undefined,
+  idMap: Map<number, number>,
+): Record<number, T> | undefined {
+  return remapAudioFileIdKeys(settings, idMap, "keep");
+}
+
 // Helper function to import pad configurations (Refactored for single transaction)
 async function importPadConfigurations(
   db: IDBPDatabase<ImpAmpDBSchema>,
@@ -491,15 +516,13 @@ async function importPadConfigurations(
     // new audioFileId). An ID with no mapping is dropped: it addresses audio
     // that was not (or could not be) imported, so keeping it would leave a
     // setting pointing at nothing.
-    const mappedTrimSettings = remapAudioFileIdKeys(
+    const mappedTrimSettings = remapPadSettingsOnImport(
       pad.audioTrimSettings,
       audioIdMap,
-      "drop",
     );
-    const mappedGainSettings = remapAudioFileIdKeys(
+    const mappedGainSettings = remapPadSettingsOnImport(
       pad.audioGainSettings,
       audioIdMap,
-      "drop",
     );
 
     // Construct the new pad configuration using the updated structure
