@@ -13,6 +13,10 @@ import {
   useServerSync,
 } from "@/hooks/useServerSync";
 import { getAllProfiles, getProfile, Profile } from "@/lib/db";
+import {
+  BORROWED_LINK_SWEEP_KEY,
+  reconcileBorrowedDriveLinks,
+} from "@/lib/syncReconcile";
 
 /**
  * A profile can sync right now if it's Drive-linked and either the user is
@@ -66,6 +70,24 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
     console.log("ClientSideInitializer mounted, fetching initial profiles...");
     useProfileStore.getState().fetchProfiles();
   }, []); // Empty dependency array ensures this runs only once on mount
+
+  // One-off repair for profiles imported from a server share link before the
+  // import stopped copying the owner's Drive ids. Left in place, those ids
+  // make server sync attempt uploads into a folder this device does not own.
+  // Runs before the first sync so a stale link never gets used, and the flag
+  // keeps it from walking every profile on every load.
+  useEffect(() => {
+    if (localStorage.getItem(BORROWED_LINK_SWEEP_KEY)) return;
+    void reconcileBorrowedDriveLinks()
+      .then((repaired) => {
+        localStorage.setItem(BORROWED_LINK_SWEEP_KEY, "1");
+        if (repaired > 0) useProfileStore.getState().fetchProfiles();
+      })
+      .catch((error) => {
+        // Leave the flag unset so the next load tries again.
+        console.warn("Could not reconcile borrowed Drive links:", error);
+      });
+  }, []);
 
   // Last-seen remote version token per profile. Updated after every sync so
   // the remote-change poller doesn't re-trigger on our own uploads.
