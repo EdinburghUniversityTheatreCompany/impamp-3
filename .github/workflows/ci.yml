@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger, which is also the only thing that runs the cross-browser
+  # e2e job — see the note above it.
+  workflow_dispatch:
 
 # Default GITHUB_TOKEN to read-only; a job needing more declares its own permissions: block.
 permissions:
@@ -133,9 +136,9 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-  # Firefox and WebKit, reporting but NOT gating — deliberately, and for good.
+  # Firefox and WebKit — ON DEMAND ONLY. This job does not run on push or PR.
   #
-  # Both have been run to completion and triaged; see docs/cross-browser-e2e.md.
+  # Both were run to completion and triaged; see docs/cross-browser-e2e.md.
   # Neither red run reflects a bug a user would hit:
   #
   #   webkit  — Playwright's Linux WebKit build cannot write ANY Blob to
@@ -144,14 +147,19 @@ jobs:
   #   firefox — 64/64 green on a developer machine. The 17 CI failures are all
   #             "playback never starts", because the runner has no audio device.
   #
-  # So do not delete `continue-on-error` expecting a green gate. Read that doc
+  # Since both are known-red for reasons outside the app, running them every
+  # push cost ~35 minutes of Actions time for no signal anyone acts on. They
+  # are kept, rather than deleted, because they are worth running deliberately
+  # — after a dependency upgrade, or when touching storage or playback.
+  #
+  # To run: Actions → ci → "Run workflow" (workflow_dispatch), or
+  # `gh workflow run ci`. Locally: `npx playwright test --project=webkit`.
+  #
+  # Do not delete `continue-on-error` expecting a green gate. Read that doc
   # first — making either one gate means changing the app's storage schema or
   # the runner's audio setup, not fixing a test.
-  #
-  # It is a separate job so it runs in parallel with the chromium gate rather
-  # than doubling that job's wall-clock, and it is not run locally by default:
-  # downloading these browsers is slow and the everyday loop stays chromium.
   e2e-cross-browser:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     # These jobs normally take 12–21 minutes. On 2026-08-14 the WebKit one hung

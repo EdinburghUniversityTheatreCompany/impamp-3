@@ -150,12 +150,15 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
-- E2E gates on **chromium only**. Firefox and WebKit run non-gating in CI and
-  are expected to be red — the causes are triaged and are not app bugs. Read
+- E2E gates on **chromium only**. Firefox and WebKit are **on demand only** —
+  they do not run on push or PR (Actions → ci → Run workflow, or
+  `gh workflow run ci`). Both are known-red for reasons outside the app, so
+  running them every push cost ~35 minutes for no actionable signal. Read
   `docs/cross-browser-e2e.md` before acting on either. In short: Playwright's
   Linux WebKit cannot write a `Blob` to IndexedDB (so no pad ever gets a
   sound), and CI's runner has no audio device (so Firefox never starts
-  playback, though it is 64/64 locally)
+  playback, though it is 64/64 locally). Worth running deliberately after a
+  dependency upgrade, or when touching storage or playback
 
 ### Audio File Handling
 

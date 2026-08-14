@@ -1,7 +1,13 @@
 # Cross-browser E2E: what Firefox and WebKit actually tell us
 
-The Playwright suite gates on **chromium only**. Firefox and WebKit run in CI
-as a separate, non-gating `e2e-cross-browser` job (`continue-on-error: true`).
+The Playwright suite gates on **chromium only**. Firefox and WebKit live in a
+separate `e2e-cross-browser` job that is **on demand only** — it does not run on
+push or PR, because both are known-red for reasons outside the app and running
+them every push cost roughly 35 minutes of Actions time for signal nobody acts
+on. Trigger it from Actions → ci → "Run workflow", or `gh workflow run ci`.
+
+It is still worth running deliberately: after a dependency upgrade, or when
+touching the audio-storage or playback paths.
 
 This document records why, so nobody re-triages these failures from scratch or
 "fixes" them by changing the app. Both browsers were run to completion locally
