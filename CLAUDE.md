@@ -93,6 +93,11 @@ IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
   PUT/GET straight to Wasabi; the app never handles the bytes.
   `src/lib/serverAudio/` (client), `src/lib/server/s3/` (signing + client).
   See `docs/wasabi-audio.md`.
+- **Loudness normalisation** - every audio file is analysed once for
+  BS.1770-4 loudness, stored as per-block mean squares so any trimmed
+  sub-range can be measured exactly without re-decoding. Gain resolves as
+  normalisation x per-sound gain x per-pad gain into `PlayAudioParams.volume`.
+  `src/lib/audio/loudness/`. See `docs/loudness-normalisation.md`.
 - **PWA Support** - Service worker, manifest, offline capabilities
 
 ### Import/Export System
@@ -190,6 +195,15 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
   cannot constrain the upload
 - Once audio is hosted, the SQLite database and the bucket must be backed up
   and restored **together**; either one alone leaves dangling references
+- All level arithmetic lives in `src/lib/audio/loudness/gain.ts`. The overview
+  table and the playback path both call `resolveGain`; a second implementation
+  would let the table disagree with what is heard
+- `audioGainSettings` is keyed by audio file ID, and those IDs are remapped on
+  import and sync in three places — `importExport.ts`, `googleDrive/dataAccess.ts`
+  and `syncUtils.ts`. Any new `Record<audioFileId, …>` field must be remapped in
+  all three or it silently attaches to the wrong sounds
+- Gain resolution at trigger time is synchronous on purpose. The analysis cache
+  is warmed on profile activation so the playback path never awaits a DB read
 
 ## Pinned Versions
 
