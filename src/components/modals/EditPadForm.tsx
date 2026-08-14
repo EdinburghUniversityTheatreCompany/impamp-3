@@ -22,6 +22,7 @@ import {
 } from "@hello-pangea/dnd";
 import { Checkbox, FormField, RadioGroup } from "@/components/forms";
 import { TextInput } from "@/components/forms";
+import GainControl from "@/components/GainControl";
 import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
 import { getAudioFile, addAudioFile, PlaybackType } from "@/lib/db";
@@ -329,6 +330,20 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                             {sound.name}
                           </span>
                           <div className="flex items-center gap-2 ml-2 shrink-0">
+                            <GainControl
+                              compact
+                              label={`Gain for ${sound.name}`}
+                              valueDb={
+                                values.audioGainSettings?.[sound.fileId] ?? 0
+                              }
+                              testId={`edit-pad-gain-sound-${sound.fileId}`}
+                              onChange={(db) =>
+                                updateValue("audioGainSettings", {
+                                  ...(values.audioGainSettings ?? {}),
+                                  [sound.fileId]: db,
+                                })
+                              }
+                            />
                             <button
                               onClick={() => setTrimmingSound(sound)}
                               className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
@@ -360,6 +375,22 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
             </Droppable>
           </DragDropContext>
         )}
+      </div>
+
+      {/* Whole-pad gain */}
+      <div>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Pad gain
+        </span>
+        <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">
+          Applied on top of every sound&apos;s own gain.
+        </p>
+        <GainControl
+          label="Pad gain"
+          valueDb={values.padGainDb ?? 0}
+          testId="edit-pad-gain-pad"
+          onChange={(db) => updateValue("padGainDb", db)}
+        />
       </div>
 
       {/* Waveform Trimmer Overlay */}
