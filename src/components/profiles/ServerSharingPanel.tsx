@@ -140,14 +140,7 @@ export default function ServerSharingPanel({
   const linkShares = shares.filter((s) => s.linkToken !== null);
 
   return (
-    <div
-      className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-3"
-      data-testid="server-sharing-panel"
-    >
-      <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
-        Sharing
-      </h4>
-
+    <div className="mt-2 space-y-3" data-testid="server-sharing-panel">
       {error && (
         <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
       )}
@@ -273,9 +266,8 @@ export default function ServerSharingPanel({
       </div>
 
       <p className="text-xs text-gray-400 dark:text-gray-500">
-        Audio is served from the owner&rsquo;s Google Drive, so keep the
-        profile&rsquo;s Drive folder shared as well for sound to reach
-        collaborators.
+        This governs the profile. Whether collaborators can <em>hear</em> it
+        depends on where its sounds are stored.
       </p>
     </div>
   );

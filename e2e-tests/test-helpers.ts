@@ -495,3 +495,59 @@ export async function savePadEditModal(page: Page) {
   console.log(`[Test Helper] Saved pad edit modal`);
   await exitEditMode(page);
 }
+
+// --- Profile sync state -----------------------------------------------------
+//
+// Sync state is a combination of stored fields, and most of the interesting
+// combinations cannot be reached by clicking: they need a Google account, a
+// server share link, or a profile that predates a field. The store exposes
+// itself as `window.__profileStore` under NEXT_PUBLIC_E2E_HOOKS (set by
+// e2e-tests/env.js), so a spec can seed a state directly and assert on what the
+// app makes of it.
+
+type ProfileSyncFields = Record<string, unknown>;
+
+interface ProfileStoreHook {
+  getState(): {
+    activeProfileId: number | null;
+    updateProfile(id: number, updates: unknown): Promise<void>;
+    fetchProfiles(): Promise<unknown>;
+    profiles: Array<Record<string, unknown>>;
+  };
+}
+
+/** Write sync bookkeeping straight onto the active profile. */
+export async function seedActiveProfileSync(
+  page: Page,
+  fields: ProfileSyncFields,
+) {
+  await page.evaluate(async (patch) => {
+    const store = (window as unknown as { __profileStore: ProfileStoreHook })
+      .__profileStore;
+    const { activeProfileId, updateProfile } = store.getState();
+    await updateProfile(activeProfileId!, patch);
+  }, fields);
+}
+
+/** Read the active profile back out of the store, refreshing it from the DB. */
+export async function readActiveProfile(
+  page: Page,
+): Promise<ProfileSyncFields> {
+  return page.evaluate(async () => {
+    const store = (window as unknown as { __profileStore: ProfileStoreHook })
+      .__profileStore;
+    await store.getState().fetchProfiles();
+    const { activeProfileId, profiles } = store.getState();
+    return profiles.find((p) => p.id === activeProfileId) as ProfileSyncFields;
+  });
+}
+
+/** Open the Profile Manager through the header, as a user would. */
+export async function openProfileManager(page: Page) {
+  await page
+    .getByRole("button", { name: /Profile/i })
+    .first()
+    .click();
+  const manage = page.getByText(/Manage Profiles/i).first();
+  if (await manage.count()) await manage.click();
+}

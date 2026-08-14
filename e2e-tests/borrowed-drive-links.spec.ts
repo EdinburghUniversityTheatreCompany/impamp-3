@@ -1,5 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { gotoApp, waitForAppReady } from "./test-helpers";
+import {
+  gotoApp,
+  readActiveProfile,
+  seedActiveProfileSync,
+  waitForAppReady,
+} from "./test-helpers";
 
 /**
  * Opening a server share link used to copy the *owner's* Google Drive ids into
@@ -19,49 +24,6 @@ import { gotoApp, waitForAppReady } from "./test-helpers";
 
 const SWEEP_KEY = "impamp.reconciledBorrowedDriveLinks.v1";
 
-type ProfileFields = Record<string, unknown>;
-
-/** Write sync bookkeeping straight onto the active profile. */
-async function seedActiveProfile(page: Page, fields: ProfileFields) {
-  await page.evaluate(async (patch) => {
-    const store = (
-      window as unknown as {
-        __profileStore: {
-          getState(): {
-            activeProfileId: number | null;
-            updateProfile(id: number, updates: unknown): Promise<void>;
-          };
-        };
-      }
-    ).__profileStore;
-    const { activeProfileId, updateProfile } = store.getState();
-    await updateProfile(activeProfileId!, patch);
-  }, fields);
-}
-
-/** Read the active profile back, after letting the store refresh. */
-async function readActiveProfile(page: Page): Promise<ProfileFields> {
-  return page.evaluate(async () => {
-    const store = (
-      window as unknown as {
-        __profileStore: {
-          getState(): {
-            activeProfileId: number | null;
-            fetchProfiles(): Promise<unknown>;
-            profiles: Array<{ id?: number } & Record<string, unknown>>;
-          };
-        };
-      }
-    ).__profileStore;
-    await store.getState().fetchProfiles();
-    const { activeProfileId, profiles } = store.getState();
-    return profiles.find((p) => p.id === activeProfileId) as Record<
-      string,
-      unknown
-    >;
-  });
-}
-
 /** Re-run the sweep by forgetting that it already ran, then reloading. */
 async function reloadWithSweepArmed(page: Page) {
   await page.evaluate((key) => localStorage.removeItem(key), SWEEP_KEY);
@@ -75,7 +37,7 @@ test.describe("borrowed Drive links", () => {
   }) => {
     await gotoApp(page);
 
-    await seedActiveProfile(page, {
+    await seedActiveProfileSync(page, {
       syncType: "server",
       serverProfileId: "srv-1",
       serverShareToken: "share-token",
@@ -99,7 +61,7 @@ test.describe("borrowed Drive links", () => {
   test("an owner's own Drive folder is left alone", async ({ page }) => {
     await gotoApp(page);
 
-    await seedActiveProfile(page, {
+    await seedActiveProfileSync(page, {
       syncType: "server",
       serverProfileId: "srv-2",
       serverRole: "owner",
@@ -115,7 +77,7 @@ test.describe("borrowed Drive links", () => {
   test("a plain Drive profile is left alone", async ({ page }) => {
     await gotoApp(page);
 
-    await seedActiveProfile(page, {
+    await seedActiveProfileSync(page, {
       syncType: "googleDrive",
       googleDriveFileId: "my-file",
       googleDriveFolderId: "my-folder",
@@ -133,7 +95,7 @@ test.describe("borrowed Drive links", () => {
 
     // First load already swept, so the flag is set and a profile seeded now
     // survives an ordinary reload.
-    await seedActiveProfile(page, {
+    await seedActiveProfileSync(page, {
       syncType: "server",
       serverProfileId: "srv-3",
       serverShareToken: "share-token",
