@@ -7,18 +7,33 @@
  * @module components/WaveformTrimmer
  */
 
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import { createPortal } from "react-dom";
 import { getWaveformPeaks, WaveformPeak } from "@/lib/audio/waveform";
 import { getAudioFile } from "@/lib/db";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
 import { playBuffer, stopTrack } from "@/lib/audio/playback";
+import { resolveGain } from "@/lib/audio/loudness/gain";
+import { getCachedLoudness } from "@/lib/audio/loudness/cache";
+import { formatGainDb, formatLufs } from "@/lib/audio/loudness/format";
+import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
+import { useProfileStore } from "@/store/profileStore";
 
 interface WaveformTrimmerProps {
   audioFileId: number;
   audioFileName: string;
   trimStart: number;
   trimEnd: number;
+  /** This sound's own gain offset, dB. Form state — not yet saved. */
+  soundGainDb: number;
+  /** The pad's gain offset, dB, applied on top of every sound on it. Form state — not yet saved. */
+  padGainDb: number;
   onTrimChange: (trimStart: number, trimEnd: number) => void;
   onClose: () => void;
 }
@@ -81,6 +96,8 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
   audioFileName,
   trimStart: initialTrimStart,
   trimEnd: initialTrimEnd,
+  soundGainDb,
+  padGainDb,
   onTrimChange,
   onClose,
 }) => {
@@ -96,6 +113,27 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
   const initialTrimEndRef = useRef(initialTrimEnd);
+
+  // Live loudness readout for the currently-dragged trim range. `measureRange`
+  // is a slice over cached per-block floats (see LoudnessAnalysis), so this is
+  // cheap enough to recompute on every frame of a drag — no decoding, nothing
+  // async. `normalisation` is read from the profile store the same way
+  // src/lib/audio/controls.ts does (a non-reactive snapshot at compute time);
+  // it is not form state like the two gains, so EditPadForm has nothing to
+  // forward for it.
+  const resolved = useMemo(() => {
+    const normalisation =
+      useProfileStore.getState().getNormalisationSettings() ??
+      DEFAULT_NORMALISATION;
+    return resolveGain({
+      analysis: getCachedLoudness(audioFileId),
+      trimStart,
+      trimEnd,
+      soundGainDb,
+      padGainDb,
+      normalisation,
+    });
+  }, [audioFileId, trimStart, trimEnd, soundGainDb, padGainDb]);
 
   // Load and decode audio
   useEffect(() => {
@@ -415,6 +453,58 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
                   {formatTime(duration)}
                 </span>
                 <span>End: {formatTime(trimEnd)}</span>
+              </div>
+
+              {/* Live loudness readout for the current trim range */}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                {resolved.unmeasured ? (
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Loudness not analysed yet
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Measured{" "}
+                      <span className="font-mono tabular-nums">
+                        {formatLufs(resolved.measuredLufs)}
+                      </span>{" "}
+                      LUFS
+                      {resolved.estimated && (
+                        <span className="ml-1 text-gray-500 dark:text-gray-400">
+                          (estimated)
+                        </span>
+                      )}
+                    </span>
+
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Normalisation{" "}
+                      <span className="font-mono tabular-nums">
+                        {formatGainDb(resolved.normDb)}
+                      </span>{" "}
+                      dB
+                    </span>
+
+                    <span className="text-gray-900 dark:text-gray-100">
+                      Plays at{" "}
+                      <span className="font-mono tabular-nums">
+                        {formatLufs(resolved.finalLufs)}
+                      </span>{" "}
+                      LUFS
+                    </span>
+
+                    {resolved.peakLimited && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                        ⚠ peak limited
+                      </span>
+                    )}
+
+                    {resolved.willClip && (
+                      <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-800 dark:bg-red-900/40 dark:text-red-200">
+                        ⚠ clips by {formatGainDb(resolved.predictedPeakDb)} dB
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}

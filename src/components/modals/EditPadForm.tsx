@@ -405,6 +405,8 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
             trimEnd={
               values.audioTrimSettings?.[trimmingSound.fileId]?.trimEnd ?? 0
             }
+            soundGainDb={values.audioGainSettings?.[trimmingSound.fileId] ?? 0}
+            padGainDb={values.padGainDb ?? 0}
             onTrimChange={(trimStart, trimEnd) => {
               const current = values.audioTrimSettings ?? {};
               updateValue("audioTrimSettings", {
