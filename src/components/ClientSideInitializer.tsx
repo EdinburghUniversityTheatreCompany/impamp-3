@@ -97,6 +97,47 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
       });
   }, []);
 
+  // Loudness: keep the in-memory gain-resolution cache in sync with whichever
+  // profile is active, and sweep older files for measurement in the
+  // background. `warmLoudnessCache` (called inside `loadProfileLoudness`)
+  // replaces the whole cache, so this effect is what honours that contract —
+  // without it, the previous profile's analysis would stay resident and a
+  // different profile's sounds would resolve gain from it.
+  const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
+
+  useEffect(
+    () =>
+      useProfileStore.subscribe(
+        (state) => state.activeProfileId,
+        setActiveProfileId,
+        { fireImmediately: true },
+      ),
+    [],
+  );
+
+  useEffect(() => {
+    if (activeProfileId === null) return;
+
+    let cancelled = false;
+    void (async () => {
+      const { loadProfileLoudness, runBackfill } =
+        await import("@/lib/audio/loudness/pipeline");
+      await loadProfileLoudness(activeProfileId);
+      if (cancelled) return;
+      await runBackfill();
+      if (cancelled) return;
+      // Pick up anything the backfill just measured.
+      await loadProfileLoudness(activeProfileId);
+    })();
+
+    // Guards against a backfill still in flight for the *previous* profile
+    // finishing after this effect's cleanup and re-populating the cache with
+    // stale entries once the new profile's loadProfileLoudness has already run.
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId]);
+
   // Last-seen remote version token per profile. Updated after every sync so
   // the remote-change poller doesn't re-trigger on our own uploads.
   const lastRemoteTokenRef = useRef<Map<number, string>>(new Map());

@@ -501,6 +501,17 @@ export async function addAudioFile(
   const id = await tx.store.add({ ...audioFile, hash, createdAt: new Date() });
   await tx.done;
   console.log(`Added audio file with id: ${id}`);
+
+  // Analyse in the background. A file being imported is already being
+  // decoded, so this is nearly free — but it must never block the import, so
+  // it is fired without awaiting. The file plays at 0 dB normalisation until
+  // this lands, which is exactly how it behaved before this feature existed.
+  if (typeof window !== "undefined") {
+    void import("@/lib/audio/loudness/pipeline").then(({ analyseAndStore }) =>
+      analyseAndStore(id),
+    );
+  }
+
   return id;
 }
 
@@ -508,6 +519,46 @@ export async function addAudioFile(
 export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   const db = await getDb();
   return db.get("audioFiles", id);
+}
+
+/** Stores a loudness analysis against an audio file. */
+export async function updateAudioFileLoudness(
+  id: number,
+  loudness: LoudnessAnalysis,
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  const existing = await tx.store.get(id);
+  if (existing) {
+    await tx.store.put({ ...existing, loudness });
+  }
+  await tx.done;
+}
+
+/**
+ * Lists audio file IDs that need analysis.
+ *
+ * Iterates with a cursor and reads only the two fields it needs — pulling
+ * whole records here would materialise every audio blob at once, since each
+ * audioFiles record carries a Blob. `cursor.value.blob` is never read or
+ * retained.
+ */
+export async function findUnanalysedAudioFileIds(
+  currentAlgoVersion: number,
+): Promise<number[]> {
+  const db = await getDb();
+  const ids: number[] = [];
+  let cursor = await db.transaction("audioFiles").store.openCursor();
+
+  while (cursor) {
+    const loudness = cursor.value.loudness;
+    if (!loudness || loudness.algoVersion !== currentAlgoVersion) {
+      if (cursor.value.id !== undefined) ids.push(cursor.value.id);
+    }
+    cursor = await cursor.continue();
+  }
+
+  return ids;
 }
 
 // Delete an audio file by ID
