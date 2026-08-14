@@ -61,14 +61,14 @@ env:
     # then, no account can upload until an admin approves it at
     # /server/storage. See docs/wasabi-audio.md — the bucket also needs a CORS
     # policy, and must stay private.
-    # IMPAMP_S3_ENDPOINT: https://s3.eu-central-2.wasabisys.com
-    # IMPAMP_S3_REGION: eu-central-2
-    # IMPAMP_S3_BUCKET: impamp-audio
+    IMPAMP_S3_ENDPOINT: https://s3.eu-west-1.wasabisys.com
+    IMPAMP_S3_REGION: eu-west-1
+    IMPAMP_S3_BUCKET: impamp-audio
     #
     # Limits, with their defaults: 100 GiB across everyone, 2 GiB each,
     # 100 MB per file.
     # IMPAMP_AUDIO_GLOBAL_CAP_BYTES: "107374182400"
-    # IMPAMP_AUDIO_USER_QUOTA_BYTES: "2147483648"
+    IMPAMP_AUDIO_USER_QUOTA_BYTES: "5368709120"
     # IMPAMP_AUDIO_MAX_OBJECT_BYTES: "104857600"
   secret:
     - GOOGLE_CLIENT_SECRET
