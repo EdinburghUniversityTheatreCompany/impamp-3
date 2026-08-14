@@ -154,6 +154,13 @@ jobs:
   e2e-cross-browser:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # These jobs normally take 12–21 minutes. On 2026-08-14 the WebKit one hung
+    # instead, and because `continue-on-error` means it cannot fail the run, it
+    # would have sat there until GitHub's 6-hour default killed it — burning
+    # Actions minutes and holding the run `in_progress`, which also keeps every
+    # other job's logs unreadable. 30 minutes is generous headroom over the
+    # slowest real run; anything past it is a hang, not slowness.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
