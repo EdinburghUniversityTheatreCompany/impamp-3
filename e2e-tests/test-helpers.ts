@@ -288,10 +288,7 @@ export async function createAndSwitchToProfile(
   page: Page,
   name: string,
 ): Promise<void> {
-  // Matched by its popup role rather than by name: the profile selector is
-  // named after the active profile, so a name-based locator collides with any
-  // pad or armed-track button whose sound happens to be named similarly.
-  const profileSelector = page.locator('button[aria-haspopup="true"]');
+  const profileSelector = page.getByRole("button", { name: /^Profile: / });
   await profileSelector.click();
   await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
   await expect(page.getByText(/Profile Manager/i)).toBeVisible();

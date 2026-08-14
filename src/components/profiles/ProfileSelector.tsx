@@ -36,11 +36,20 @@ export default function ProfileSelector() {
 
   return (
     <div className="relative inline-block" ref={dropdownRef}>
+      {/*
+        The visible label is just the active profile's name, which on its own
+        says nothing about what the control does — and collides with any pad or
+        armed-track button named after a similarly-named sound. Naming it
+        "Profile: <name>" keeps the visible text inside the accessible name
+        (WCAG 2.5.3, Label in Name) while making the button's purpose clear to a
+        screen reader, and gives tests something specific to match.
+      */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-2 bg-white dark:bg-gray-700 rounded-lg shadow-sm flex items-center space-x-2 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
         aria-expanded={isOpen}
         aria-haspopup="true"
+        aria-label={`Profile: ${activeProfile?.name || "No Profile"}`}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

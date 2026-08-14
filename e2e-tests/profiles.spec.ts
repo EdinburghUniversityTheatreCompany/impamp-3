@@ -9,6 +9,20 @@ test.describe("ImpAmp3 Profile Management", () => {
     await prepareAudioContext(page);
   });
 
+  test("the profile selector names its purpose, not just the profile", async ({
+    page,
+  }) => {
+    // Its visible label is only the active profile's name, which says nothing
+    // about what the control does and collides with any pad or armed-track
+    // button named after a similar sound.
+    const selector = page.getByRole("button", {
+      name: /^Profile: Default Local Profile$/,
+    });
+    await expect(selector).toBeVisible();
+    // The visible text is still part of the accessible name (WCAG 2.5.3).
+    await expect(selector).toContainText("Default Local Profile");
+  });
+
   test("Can create a new profile and switch to it", async ({ page }) => {
     // Find and click profile selector
     const profileSelector = await page.getByRole("button", {
