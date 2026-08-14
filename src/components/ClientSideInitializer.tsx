@@ -13,6 +13,7 @@ import {
   useServerSync,
 } from "@/hooks/useServerSync";
 import { getAllProfiles, getProfile, Profile } from "@/lib/db";
+import { isReadOnlyForSync } from "@/lib/syncState";
 import {
   BORROWED_LINK_SWEEP_KEY,
   reconcileBorrowedDriveLinks,
@@ -27,7 +28,10 @@ const canSyncNow = (profile: Profile, isGoogleSignedIn: boolean): boolean =>
   profile.id !== undefined &&
   profile.syncType === "googleDrive" &&
   !!profile.googleDriveFileId &&
-  (isGoogleSignedIn || !!profile.readOnly);
+  // A follower is promised it keeps receiving. The engine can pull a
+  // read-only profile anonymously through the public proxy, so gating this on
+  // the Google token alone quietly stopped that the moment the token lapsed.
+  (isGoogleSignedIn || isReadOnlyForSync(profile));
 
 /**
  * Server-synced profiles need no sign-in check here: a link-share token is

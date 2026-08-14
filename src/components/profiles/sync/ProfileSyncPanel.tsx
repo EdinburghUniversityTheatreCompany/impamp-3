@@ -39,6 +39,7 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
   const fetchProfiles = useProfileStore((s) => s.fetchProfiles);
   const setActiveProfileId = useProfileStore((s) => s.setActiveProfileId);
   const setEditMode = useProfileStore((s) => s.setEditMode);
+  const setDeleteMoveMode = useProfileStore((s) => s.setDeleteMoveMode);
 
   const [moving, setMoving] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -49,7 +50,10 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
     await updateProfile(profile.id, { followOnly: following });
     // Editing is refused while following, and a mode left switched on would
     // sit there doing nothing.
-    if (following) setEditMode(false);
+    if (following) {
+      setEditMode(false);
+      setDeleteMoveMode(false);
+    }
   };
 
   /**
@@ -93,7 +97,14 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
       setRefusal(plan.reason ?? "That combination is not possible.");
       return;
     }
-    if (Object.keys(plan.fieldUpdates).length === 0) return;
+    // Effect-only plans are real work — creating a Drive folder writes no
+    // fields — so only a plan with neither is nothing to do.
+    if (
+      Object.keys(plan.fieldUpdates).length === 0 &&
+      plan.effects.length === 0
+    ) {
+      return;
+    }
 
     const run = async () => {
       setMoving(true);
@@ -156,6 +167,39 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
     return bestAudioHome();
   }
 
+  /**
+   * Put the sounds somewhere they can reach someone.
+   *
+   * Not simply a move: when the answer is where they already claim to be —
+   * a server profile set to Drive audio with no folder yet, which is the
+   * default deployment's shape — the plan writes no fields, and a plan with
+   * no fields is a no-op. The work is the effect, so run it directly, and say
+   * so when there is nowhere to publish to at all.
+   */
+  const publishTheSounds = async () => {
+    const home = bestAudioHome();
+    if (home === "local") {
+      setRefusal(
+        "There is nowhere to publish these sounds yet. Sign in with Google to use a Drive folder, or ask an admin to let this account store them on the server.",
+      );
+      return;
+    }
+
+    const plan = planChange({ target: state.target, audio: home });
+    if (!plan.ok) {
+      setRefusal(plan.reason ?? "Those sounds cannot be published from here.");
+      return;
+    }
+
+    setRefusal(null);
+    setMoving(true);
+    try {
+      await commit(plan, async () => false);
+    } finally {
+      setMoving(false);
+    }
+  };
+
   /** Somewhere the sounds can actually reach other people, if there is one. */
   function bestAudioHome(): AudioLocation {
     if (state.target === "googleDrive") return "googleDrive";
@@ -170,10 +214,7 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
       data-testid="profile-sync-panel"
       className="mt-3 space-y-3 border-t border-gray-200 pt-3 dark:border-gray-700"
     >
-      <SyncDefectBanner
-        defects={state.defects}
-        onFix={() => move({ target: state.target, audio: bestAudioHome() })}
-      />
+      <SyncDefectBanner defects={state.defects} onFix={publishTheSounds} />
 
       <SyncAxes
         state={state}

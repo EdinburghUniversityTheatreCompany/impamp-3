@@ -95,6 +95,46 @@ test.describe("following a profile", () => {
     await page.keyboard.up("Shift");
   });
 
+  test("a latched edit mode does not survive switching to a followed profile", async ({
+    page,
+  }) => {
+    // Refusing to *enter* the mode is not enough on its own: a mode already
+    // on would otherwise stay on across the switch, leaving the pads editable
+    // on a profile whose next sync overwrites the work.
+    await gotoApp(page);
+    await page.evaluate(() => {
+      (
+        window as unknown as {
+          __profileStore: { getState(): { setEditMode(on: boolean): void } };
+        }
+      ).__profileStore
+        .getState()
+        .setEditMode(true);
+    });
+    await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
+
+    await seedActiveProfileSync(page, {
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    await page.evaluate(() => {
+      const store = (
+        window as unknown as {
+          __profileStore: {
+            getState(): {
+              activeProfileId: number | null;
+              setActiveProfileId(id: number): void;
+            };
+          };
+        }
+      ).__profileStore;
+      store.getState().setActiveProfileId(store.getState().activeProfileId!);
+    });
+
+    await expect(page.getByText("EDIT MODE", { exact: true })).toHaveCount(0);
+  });
+
   test("lets you edit again once you stop following", async ({ page }) => {
     await gotoApp(page);
     await seedActiveProfileSync(page, {

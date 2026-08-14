@@ -351,12 +351,12 @@ export const updateLocalData = async (
           warnings.push(
             `Pad ${pad.pageIndex}-${pad.padIndex}: kept the sound already on this device, because the synced copy referenced audio that could not be fetched`,
           );
+          // Already keyed by this device's ids, so it must skip the remap
+          // below — running it would translate them as though they were the
+          // sender's, dropping the trim or, on an id collision, moving it to
+          // a different sound.
           padWithProfileId.audioTrimSettings = existing?.audioTrimSettings;
-        }
-        padWithProfileId.audioFileIds = resolved.audioFileIds;
-
-        // Also map audioTrimSettings keys
-        if (padWithProfileId.audioTrimSettings) {
+        } else if (padWithProfileId.audioTrimSettings) {
           const mappedTrim: Record<
             number,
             { trimStart: number; trimEnd: number }
@@ -371,6 +371,7 @@ export const updateLocalData = async (
           }
           padWithProfileId.audioTrimSettings = mappedTrim;
         }
+        padWithProfileId.audioFileIds = resolved.audioFileIds;
       }
 
       // Check if pad exists locally

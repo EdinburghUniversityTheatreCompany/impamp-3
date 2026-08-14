@@ -15,7 +15,12 @@
  * `src/lib/serverAudio/` and docs/wasabi-audio.md.
  */
 
-import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
+import {
+  getAudioFileIdsForProfile,
+  getProfile,
+  updateProfile,
+  type Profile,
+} from "@/lib/db";
 import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
 import { getSyncState, isReadOnlyForSync } from "@/lib/syncState";
 import {
@@ -44,6 +49,7 @@ import {
   type ProfileSyncData,
   type ServerSyncResult,
   type ServerSyncStatus,
+  type ServerRole,
 } from "./types";
 
 export interface ServerSyncCallbacks {
@@ -244,7 +250,10 @@ async function pullMergePush(
   // 304: the server is where we left it. Local edits, if any, still need
   // pushing, so carry on with the version we already know.
   let remoteVersion = remote?.version ?? profile.serverVersion ?? 1;
-  let readOnly = remote ? remote.access === "viewer" : !!profile.readOnly;
+  // What the server permits, which it restates on every pull.
+  let remoteReadOnly = remote ? remote.access === "viewer" : !!profile.readOnly;
+  // Our own choice not to contribute, which the server knows nothing about.
+  const following = Boolean(profile.followOnly);
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
     const raw = await getLocalProfileSyncData(profileId);
@@ -308,11 +317,15 @@ async function pullMergePush(
 
     mergedData._lastSyncTimestamp = Date.now();
 
-    if (readOnly) {
+    // Two separate reasons not to push, and both must hold it back: the
+    // server refusing writes, and us choosing not to make any. Gating on the
+    // first alone let a follower keep writing to a profile it could write to
+    // — which is the one thing following promises not to do.
+    if (remoteReadOnly || following) {
       warnings.push(...(await updateLocalData(profileId, mergedData)));
       await updateProfile(profileId, {
         serverVersion: remoteVersion,
-        readOnly: true,
+        ...accessFields(remote),
       });
       return finish(callbacks, remoteVersion, mergedData, warnings);
     }
@@ -327,7 +340,10 @@ async function pullMergePush(
       );
 
       warnings.push(...(await updateLocalData(profileId, mergedData)));
-      await updateProfile(profileId, { serverVersion: pushed.version });
+      await updateProfile(profileId, {
+        serverVersion: pushed.version,
+        ...accessFields(remote),
+      });
       return finish(callbacks, pushed.version, mergedData, warnings);
     } catch (error) {
       if (!(error instanceof VersionConflictError)) throw error;
@@ -346,7 +362,7 @@ async function pullMergePush(
         access: remote?.access ?? "editor",
         data: error.currentData,
       };
-      readOnly = remote.access === "viewer";
+      remoteReadOnly = remote.access === "viewer";
     }
   }
 
@@ -354,6 +370,18 @@ async function pullMergePush(
   onError(message);
   onStatusChange("error");
   return { status: "error", error: message };
+}
+
+/**
+ * The access the server just reported, written back every sync.
+ *
+ * Recorded rather than assumed, because nothing else refreshes it: a device
+ * that once had viewer access kept `readOnly: true` forever, and now that
+ * editing is gated on it, being promoted to editor would never take effect.
+ */
+function accessFields(remote: { access: ServerRole } | null): Partial<Profile> {
+  if (!remote) return {};
+  return { readOnly: remote.access === "viewer", serverRole: remote.access };
 }
 
 function finish(

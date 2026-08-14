@@ -59,6 +59,31 @@ describe("applyTransition", () => {
     expect(r.updateProfile).not.toHaveBeenCalled();
   });
 
+  it("runs the effects even when there is nothing to write", async () => {
+    // Creating the folder a profile already claims to publish into writes no
+    // fields. Skipping it made the "Publish the sounds" button a no-op.
+    const from = profile({
+      syncType: "server",
+      audioLocation: "googleDrive",
+      serverProfileId: "srv-1",
+      serverRole: "owner",
+    });
+    const plan = planTransition(from, {
+      target: "server",
+      audio: "googleDrive",
+    });
+    const r = runner();
+
+    expect(plan.fieldUpdates).toEqual({});
+    expect(plan.effects).toContain("ensureDriveFolder");
+
+    const result = await applyTransition(from, plan, r);
+
+    expect(result.ok).toBe(true);
+    expect(r.ensureDriveFolder).toHaveBeenCalledWith(PROFILE_ID);
+    expect(r.updateProfile).not.toHaveBeenCalled();
+  });
+
   it("does nothing at all for a no-op", async () => {
     const from = SERVER_PROFILE;
     const plan = planTransition(from, {

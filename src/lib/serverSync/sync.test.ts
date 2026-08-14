@@ -240,9 +240,10 @@ describe("syncServerProfile", () => {
       5,
       null,
     );
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 6,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 6 }),
+    );
   });
 
   it("still pushes local edits when the server answers 304", async () => {
@@ -287,9 +288,10 @@ describe("syncServerProfile", () => {
     expect(apiMocks.pushServerProfile).toHaveBeenCalledTimes(2);
     // The retry is based on the version that beat us, not the one we pulled.
     expect(apiMocks.pushServerProfile.mock.calls[1][3]).toBe(6);
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 7,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 7 }),
+    );
   });
 
   it("gives up after repeated races rather than looping forever", async () => {
@@ -329,10 +331,15 @@ describe("syncServerProfile", () => {
     expect(result.status).toBe("success");
     expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
     expect(dataAccessMocks.updateLocalData).toHaveBeenCalledOnce();
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 5,
-      readOnly: true,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({
+        serverVersion: 5,
+        readOnly: true,
+        // Written back every sync, so a promotion to editor actually lands.
+        serverRole: "viewer",
+      }),
+    );
   });
 
   it("postpones rather than dropping pads when audio can't be fetched", async () => {
@@ -544,6 +551,73 @@ describe("syncServerProfile — warnings are not errors", () => {
  * and hosted uploads whenever the account was approved. Both are now gated on
  * the answer.
  */
+/**
+ * Following is our decision, and the server knows nothing about it. Gating the
+ * push on the server's answer alone let a follower keep writing to a profile it
+ * was allowed to write to — the one thing following promises not to do.
+ */
+describe("syncServerProfile — following holds the push back", () => {
+  beforeEach(() => {
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+  });
+
+  it("does not push a followed profile, even as its editor", async () => {
+    dbMocks.getProfile.mockResolvedValue(localProfile({ followOnly: true }));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+    // Still receives: that is the half a follower is promised.
+    expect(dataAccessMocks.updateLocalData).toHaveBeenCalledOnce();
+    expect(result.status).toBe("success");
+  });
+
+  it("does not mistake following for the server refusing writes", async () => {
+    // `readOnly` is the server's answer. Writing our preference into it would
+    // survive unfollowing and lock the profile out of editing.
+    dbMocks.getProfile.mockResolvedValue(localProfile({ followOnly: true }));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ readOnly: false, serverRole: "editor" }),
+    );
+  });
+
+  it("still pushes a profile nobody has followed", async () => {
+    dbMocks.getProfile.mockResolvedValue(localProfile());
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledOnce();
+  });
+});
+
 describe("syncServerProfile — where the sounds are published", () => {
   const withDrive = {
     tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
@@ -661,9 +735,10 @@ describe("applyServerConflictResolution", () => {
       PROFILE_ID,
       resolved,
     );
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 6,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 6 }),
+    );
   });
 
   it("explains a lost race instead of applying anything", async () => {

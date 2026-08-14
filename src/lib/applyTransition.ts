@@ -62,12 +62,16 @@ export async function applyTransition(
   // informational warnings travel onward alongside anything that goes wrong.
   const warnings = [...plan.warnings];
 
-  if (Object.keys(plan.fieldUpdates).length === 0) {
+  const writes = Object.keys(plan.fieldUpdates).length > 0;
+  if (!writes && plan.effects.length === 0) {
     return { ok: true, warnings };
   }
 
+  // A plan can have work to do and nothing to write — creating the Drive
+  // folder a profile already claims to publish into, say. Returning early on
+  // "no fields" made that button do nothing at all.
   try {
-    await runner.updateProfile(profileId, plan.fieldUpdates);
+    if (writes) await runner.updateProfile(profileId, plan.fieldUpdates);
   } catch (error) {
     // Nothing was written, so there is nothing to undo. A rollback here would
     // be a second failing write for no reason.

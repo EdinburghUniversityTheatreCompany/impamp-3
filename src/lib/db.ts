@@ -1605,6 +1605,9 @@ export async function duplicateProfileLocally(
       keyBinding: pad.keyBinding,
       name: pad.name,
       audioFileIds: [...(pad.audioFileIds ?? [])],
+      // The copy references the same audio, so the ids these are keyed by
+      // still mean the same sounds.
+      audioTrimSettings: pad.audioTrimSettings,
       playbackType: pad.playbackType,
       isDisabled: pad.isDisabled,
     });

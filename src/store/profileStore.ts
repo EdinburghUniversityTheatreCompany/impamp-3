@@ -281,7 +281,15 @@ export const useProfileStore = create<ProfileState>()(
           );
           if (id === null || profileExists) {
             const previousId = get().activeProfileId;
-            set({ activeProfileId: id });
+            // Refusing to *enter* a mode is not enough: a mode already latched
+            // on an editable profile would otherwise stay on across a switch
+            // to one that cannot be edited, leaving its pads fully editable
+            // and both banners stacked on top of each other.
+            set({
+              activeProfileId: id,
+              isEditMode: false,
+              isDeleteMoveMode: false,
+            });
             // TODO: Trigger loading of pad configurations for the new active profile
 
             // Cues belong to the profile they were armed in. Profiles are
