@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { formatBytes, usedFraction } from "@/lib/serverAudio/format";
 
 interface UserRow {
@@ -32,22 +32,34 @@ export default function AudioAdminPanel() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
-    const response = await fetch("/api/admin/audio");
-    if (!response.ok) {
-      // 404 is the ordinary answer for a non-admin, not a failure to report.
-      if (response.status !== 404 && response.status !== 501) {
-        setError("Could not load audio administration");
-      }
-      setData(null);
-      return;
-    }
-    setData(await response.json());
-  }, []);
+  /** Bumped to ask the effect below for a fresh read. */
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    fetch("/api/admin/audio")
+      .then(async (response) => {
+        if (!response.ok) {
+          // 404 is the ordinary answer for a non-admin, and 501 for a
+          // deployment that hosts no audio — neither is a failure to report.
+          if (!cancelled) {
+            if (response.status !== 404 && response.status !== 501) {
+              setError("Could not load audio administration");
+            }
+            setData(null);
+          }
+          return;
+        }
+        const body = await response.json();
+        if (!cancelled) setData(body);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load audio administration");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
 
   const patch = async (userId: number, body: Record<string, unknown>) => {
     setSaving(userId);
@@ -59,7 +71,7 @@ export default function AudioAdminPanel() {
         body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error("Update refused");
-      await load();
+      setReloadToken((token) => token + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");
     } finally {

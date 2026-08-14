@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AudioHostingUnavailableError,
   deleteHostedAudio,
@@ -32,27 +32,33 @@ export default function AudioStoragePanel() {
       }
   >({ kind: "loading" });
   const [deleting, setDeleting] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const library = await fetchAudioLibrary();
-      setState({ kind: "ready", ...library });
-    } catch (error) {
-      if (error instanceof AudioHostingUnavailableError) {
-        setState({ kind: "unavailable" });
-        return;
-      }
-      setState({
-        kind: "error",
-        message:
-          error instanceof Error ? error.message : "Could not read storage",
-      });
-    }
-  }, []);
+  /** Bumped to ask the effect below for a fresh read. */
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    fetchAudioLibrary().then(
+      (library) => {
+        if (!cancelled) setState({ kind: "ready", ...library });
+      },
+      (error: unknown) => {
+        if (cancelled) return;
+        // The ordinary answer on a deployment that hosts nothing.
+        if (error instanceof AudioHostingUnavailableError) {
+          setState({ kind: "unavailable" });
+          return;
+        }
+        setState({
+          kind: "error",
+          message:
+            error instanceof Error ? error.message : "Could not read storage",
+        });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
 
   const remove = async (hash: string, name: string) => {
     if (!confirm(`Remove "${name}" from server storage?`)) return;
@@ -61,7 +67,7 @@ export default function AudioStoragePanel() {
       await deleteHostedAudio(hash);
       // The allowance changed, so the cached "may I upload" answer is stale.
       forgetAudioCapability();
-      await load();
+      setReloadToken((token) => token + 1);
     } catch (error) {
       setState({
         kind: "error",
