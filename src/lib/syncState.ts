@@ -58,7 +58,9 @@ export type SyncDefect =
   /** A collaborator holding the owner's Drive ids — writes there fail silently. */
   | "borrowed-drive-folder"
   /** Publishes audio to Drive, but has no folder to publish it into. */
-  | "audio-drive-without-folder";
+  | "audio-drive-without-folder"
+  /** Syncs somewhere, but publishes its sounds nowhere. */
+  | "audio-reaches-nobody";
 
 export interface SyncState {
   target: SyncTarget;
@@ -104,6 +106,23 @@ export function isLegalPair(target: SyncTarget, audio: AudioLocation): boolean {
   if (target === "local") return audio === "local";
   if (target === "googleDrive") return audio !== "server";
   return true;
+}
+
+/**
+ * Whether a pair is worth *offering*, as opposed to merely describing.
+ *
+ * A synced profile whose sounds stay on this device is a state profiles land
+ * in — a sync that ran before the sounds had anywhere to go leaves one — so it
+ * has to be representable. It is not something to offer as a choice: it syncs
+ * a soundboard whose pads are silent on every other device including your own.
+ * It appears as a defect with a way out instead.
+ */
+export function isChoosablePair(
+  target: SyncTarget,
+  audio: AudioLocation,
+): boolean {
+  if (!isLegalPair(target, audio)) return false;
+  return target === "local" || audio !== "local";
 }
 
 /**
@@ -170,6 +189,9 @@ function detectDefects(
   }
   if (target === "server" && ownership === "collaborator" && hasDriveIds) {
     defects.push("borrowed-drive-folder");
+  }
+  if (target !== "local" && audio === "local" && isLinked) {
+    defects.push("audio-reaches-nobody");
   }
   if (
     target === "server" &&

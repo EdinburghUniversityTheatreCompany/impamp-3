@@ -629,3 +629,39 @@ export const detectProfileConflicts = async (
   );
   return { conflicts, requiresManualResolution, mergedData };
 };
+
+/**
+ * Which local audio a synced pad should end up pointing at.
+ *
+ * Synced ids are the *sender's*, so each has to be translated. An id that
+ * cannot be translated is dropped rather than kept: kept, it would address a
+ * different recording on this device, and a silent pad beats the wrong sound.
+ *
+ * Dropping every reference is another matter. It is right for a pad new to
+ * this device, and destructive for one that already plays something: the sound
+ * is here and wired up, and the only problem is that the blob describes it in
+ * terms we cannot translate. Emptying it loses local work — and the emptied
+ * pad is pushed back on the next sync, so everyone loses it. That is not
+ * hypothetical: a profile set to host its sounds, on a deployment that hosted
+ * nothing, published references with no route to them and erased its own
+ * author's pads one sync at a time.
+ */
+export function resolveSyncedPadAudio(
+  syncedIds: number[],
+  audioIdMap: Map<number, number>,
+  existingIds: number[] | undefined,
+): { audioFileIds: number[]; keptLocal: boolean; unresolved: number[] } {
+  const audioFileIds: number[] = [];
+  const unresolved: number[] = [];
+
+  for (const syncedId of syncedIds) {
+    const localId = audioIdMap.get(syncedId);
+    if (localId === undefined) unresolved.push(syncedId);
+    else audioFileIds.push(localId);
+  }
+
+  if (audioFileIds.length === 0 && existingIds?.length) {
+    return { audioFileIds: existingIds, keptLocal: true, unresolved };
+  }
+  return { audioFileIds, keptLocal: false, unresolved };
+}

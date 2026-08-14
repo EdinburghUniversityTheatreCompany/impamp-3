@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AudioLocation, Profile } from "@/lib/db";
-import { getSyncState, isLegalPair, type SyncTarget } from "@/lib/syncState";
+import {
+  getSyncState,
+  isChoosablePair,
+  isLegalPair,
+  type SyncTarget,
+} from "@/lib/syncState";
 import {
   planTransition,
   type SyncDestination,
@@ -311,6 +316,11 @@ describe("planTransition — invariants across every legal move", () => {
 
   it("never leaves a profile in a state it flags as defective", () => {
     for (const { name, from, dest, plan } of accepted) {
+      // Only over destinations the UI can ask for. A synced profile whose
+      // sounds stay on this device stays *representable* — profiles land in
+      // it — but it is a defect rather than a choice, so a transition into it
+      // is expected to be defective.
+      if (!isChoosablePair(dest.target, dest.audio)) continue;
       const after = { ...from, ...plan.fieldUpdates } as Profile;
       // The plan's effects supply what the write alone cannot: an id from the
       // backend, and a folder. Stand those in so the check is about the

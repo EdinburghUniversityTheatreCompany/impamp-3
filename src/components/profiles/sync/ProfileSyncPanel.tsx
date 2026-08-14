@@ -153,8 +153,15 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
     if (target === "local") return "local";
     if (target === "googleDrive") return "googleDrive";
     if (state.audioIsExplicit && state.audio !== "local") return state.audio;
-    if (availability.google.ok) return "googleDrive";
+    return bestAudioHome();
+  }
+
+  /** Somewhere the sounds can actually reach other people, if there is one. */
+  function bestAudioHome(): AudioLocation {
+    if (state.target === "googleDrive") return "googleDrive";
     if (availability.hostedAudio.ok) return "server";
+    if (availability.google.ok) return "googleDrive";
+    // Nowhere works yet; the transition refuses and says why.
     return "local";
   }
 
@@ -163,7 +170,10 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
       data-testid="profile-sync-panel"
       className="mt-3 space-y-3 border-t border-gray-200 pt-3 dark:border-gray-700"
     >
-      <SyncDefectBanner defects={state.defects} />
+      <SyncDefectBanner
+        defects={state.defects}
+        onFix={() => move({ target: state.target, audio: bestAudioHome() })}
+      />
 
       <SyncAxes
         state={state}

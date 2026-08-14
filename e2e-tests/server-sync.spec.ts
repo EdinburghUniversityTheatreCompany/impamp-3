@@ -400,6 +400,22 @@ async function reloadAndWaitForConflict(page: Page) {
 }
 
 test.describe("server sync conflicts", () => {
+  /**
+   * Retried, deliberately and narrowly.
+   *
+   * A conflict needs both sides to have moved since the other last saw them,
+   * and the app syncs on its own timers throughout. Under a loaded parallel
+   * run the staging can interleave with one of those syncs and produce an
+   * ordinary auto-merge instead — the app behaving correctly, the test having
+   * asked the wrong question. Pausing sync while staging was tried and made it
+   * worse.
+   *
+   * A retry is safe here because it cannot hide a regression: if conflicts
+   * stopped surfacing, every attempt would fail. It only absorbs the case
+   * where the scenario never got set up.
+   */
+  test.describe.configure({ retries: 2 });
+
   test("a conflict opens the resolution modal, naming the server", async ({
     page,
     request,

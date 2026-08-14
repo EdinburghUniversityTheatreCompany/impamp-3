@@ -15,7 +15,7 @@ import {
   collectReferencedAudioFileIds,
   computeBlobHash,
 } from "@/lib/db";
-import { ProfileSyncData } from "@/lib/syncUtils";
+import { ProfileSyncData, resolveSyncedPadAudio } from "@/lib/syncUtils";
 import { base64ToBlob } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
@@ -56,13 +56,18 @@ export const getLocalProfileSyncData = async (
   // Build audio file references — use driveFileId if available, otherwise omit
   // (uploadMissingAudioFiles in sync.ts ensures driveFileIds are set before this is called)
   //
-  // A profile publishing its sounds through the server advertises no Drive
-  // ids, even though the local records may still hold them. The two download
-  // paths are disjoint by construction — one reads `serverHosted`, the other
-  // `driveFileId` — and quietly leaving both set would break that. Keeping
-  // the local mapping is deliberate: switching back costs nothing, where
-  // re-linking would re-upload every sound and leave duplicates in the folder.
-  const publishesToDrive = profile.audioLocation !== "server";
+  // Every route to a sound that we know about goes in the blob, including a
+  // Drive id on a profile whose sounds are meant to be hosted. Withholding it
+  // in favour of the hosted route assumes the hosting *happened*, and when it
+  // silently did not — the deployment hosts nothing, the account is not
+  // approved, the quota is full — the blob advertised a sound nobody could
+  // fetch. The next pull then hit `updateLocalData`'s "unavailable locally"
+  // path, cleared the pads referencing it, and pushed the emptied pads back.
+  // That destroyed the author's own work, not just a collaborator's copy.
+  //
+  // `markHostedAudio` marks what is genuinely hosted, and the two downloaders
+  // dedupe by content hash, so a reference carrying both routes costs nothing
+  // and leaves Drive as a fallback when hosting is not there.
   const audioFiles = [];
   for (const audioFileId of audioFileIds) {
     const audioFile = await getAudioFile(audioFileId);
@@ -72,9 +77,7 @@ export const getLocalProfileSyncData = async (
         name: audioFile.name,
         type: audioFile.type,
         hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
-        driveFileId: publishesToDrive
-          ? audioFile.driveFileIds?.[profileId]
-          : undefined,
+        driveFileId: audioFile.driveFileIds?.[profileId],
       });
     } else {
       console.warn(
@@ -336,22 +339,27 @@ export const updateLocalData = async (
         updatedAt: toDate(pad.updatedAt),
       };
 
-      // Translate the synced audio IDs into local IDs. Anything that cannot be
-      // resolved is dropped — an untranslated ID would address a different
-      // local recording, so a silent pad is the safer outcome.
+      // Translate the synced audio IDs into this device's IDs.
       if (hasAudioReferences && padWithProfileId.audioFileIds?.length) {
-        const resolvedIds: number[] = [];
-        for (const syncedId of padWithProfileId.audioFileIds) {
-          const localId = audioIdMap.get(syncedId);
-          if (localId === undefined) {
-            warnings.push(
-              `Pad ${pad.pageIndex}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
-            );
-            continue;
-          }
-          resolvedIds.push(localId);
+        const existing = existingPadMap.get(key);
+        const resolved = resolveSyncedPadAudio(
+          padWithProfileId.audioFileIds,
+          audioIdMap,
+          existing?.audioFileIds,
+        );
+
+        for (const syncedId of resolved.unresolved) {
+          warnings.push(
+            `Pad ${pad.pageIndex}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
+          );
         }
-        padWithProfileId.audioFileIds = resolvedIds;
+        if (resolved.keptLocal) {
+          warnings.push(
+            `Pad ${pad.pageIndex}-${pad.padIndex}: kept the sound already on this device, because the synced copy referenced audio that could not be fetched`,
+          );
+          padWithProfileId.audioTrimSettings = existing?.audioTrimSettings;
+        }
+        padWithProfileId.audioFileIds = resolved.audioFileIds;
 
         // Also map audioTrimSettings keys
         if (padWithProfileId.audioTrimSettings) {

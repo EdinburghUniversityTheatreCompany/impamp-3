@@ -41,11 +41,12 @@ test.describe("the sync status chip", () => {
     );
   });
 
-  test("a server profile with no Drive folder admits its sounds go nowhere", async ({
+  test("calls out a synced profile whose sounds reach nobody", async ({
     page,
   }) => {
     // The state that was completely invisible before: server-synced, so it
-    // looks shared, but nothing publishes the audio.
+    // looks shared, but nothing publishes the audio. It is no longer offered
+    // as a choice, so the chip's job is to say something is wrong.
     await openPanelWith(page, {
       syncType: "server",
       serverProfileId: "srv-1",
@@ -54,8 +55,27 @@ test.describe("the sync status chip", () => {
     });
 
     await expect(page.getByTestId("sync-status-chip").first()).toHaveText(
-      /ImpAmp server.*sounds stay on this device/,
+      /needs attention/,
     );
+    await expect(
+      page
+        .getByTestId("sync-defect-banner")
+        .locator('[data-defect="audio-reaches-nobody"]'),
+    ).toContainText(/silent everywhere else/);
+    await expect(page.getByTestId("fix-audio-reaches-nobody")).toBeVisible();
+  });
+
+  test("does not offer to keep the sounds here on a profile that syncs", async ({
+    page,
+  }) => {
+    await openPanelWith(page, {
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "owner",
+      audioLocation: "server",
+    });
+
+    await expect(page.getByTestId("audio-location-local")).toHaveCount(0);
   });
 
   test("a profile needing attention says so rather than a sync time", async ({
@@ -127,7 +147,8 @@ test.describe("the two axes", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
     });
 
     const hosted = page.getByTestId("audio-location-server");
@@ -192,7 +213,8 @@ test.describe("controls", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
     });
 
     await expect(page.getByTestId("sync-now")).toBeVisible();
@@ -212,7 +234,7 @@ test.describe("controls", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      audioLocation: "server",
     });
 
     await page.getByTestId("sync-pause").click();
@@ -256,7 +278,8 @@ test.describe("changing where a profile syncs", () => {
       serverShareToken: "tok",
       serverRole: "viewer",
       readOnly: true,
-      audioLocation: "local",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
     });
 
     // Publishing someone else's profile under your own account would fork it

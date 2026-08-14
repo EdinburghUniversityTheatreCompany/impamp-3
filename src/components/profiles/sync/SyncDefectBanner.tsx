@@ -31,12 +31,22 @@ const EXPLANATIONS: Record<SyncDefect, string> = {
     "This profile still points at the Google Drive folder of whoever shared it. Sounds you add cannot be published there.",
   "audio-drive-without-folder":
     "Sounds are set to live in Google Drive, but this profile has no Drive folder — so nobody else can hear them.",
+  "audio-reaches-nobody":
+    "This profile syncs, but its sounds stay on this device — so its pads are silent everywhere else, including your own other devices.",
+};
+
+/** Defects the panel can offer to put right in one move. */
+const FIXABLE: Partial<Record<SyncDefect, string>> = {
+  "audio-reaches-nobody": "Publish the sounds",
+  "audio-drive-without-folder": "Publish the sounds",
 };
 
 export default function SyncDefectBanner({
   defects,
+  onFix,
 }: {
   defects: SyncDefect[];
+  onFix?: (defect: SyncDefect) => void;
 }) {
   if (defects.length === 0) return null;
 
@@ -53,6 +63,16 @@ export default function SyncDefectBanner({
             className="text-xs text-amber-800 dark:text-amber-300"
           >
             {EXPLANATIONS[defect]}
+            {onFix && FIXABLE[defect] && (
+              <button
+                type="button"
+                onClick={() => onFix(defect)}
+                data-testid={`fix-${defect}`}
+                className="ml-2 rounded bg-amber-200 px-2 py-0.5 font-medium text-amber-900 transition-colors hover:bg-amber-300 dark:bg-amber-800/50 dark:text-amber-100 dark:hover:bg-amber-700/60"
+              >
+                {FIXABLE[defect]}
+              </button>
+            )}
           </li>
         ))}
       </ul>

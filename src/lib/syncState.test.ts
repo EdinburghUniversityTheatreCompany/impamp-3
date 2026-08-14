@@ -3,6 +3,7 @@ import type { Profile } from "@/lib/db";
 import {
   audioLocationLabel,
   getSyncState,
+  isChoosablePair,
   isLegalPair,
   syncChipText,
   syncTargetLabel,
@@ -38,11 +39,7 @@ const HEALTHY: Record<string, Profile> = {
     googleDriveFileId: "file-1",
     googleDriveFolderId: "folder-1",
   }),
-  "drive / device": profile({
-    syncType: "googleDrive",
-    audioLocation: "local",
-    googleDriveFileId: "file-1",
-  }),
+
   "server / drive": profile({
     syncType: "server",
     audioLocation: "googleDrive",
@@ -56,13 +53,25 @@ const HEALTHY: Record<string, Profile> = {
     serverProfileId: "srv-1",
     serverRole: "owner",
   }),
-  "server / device": profile({
-    syncType: "server",
-    audioLocation: "local",
-    serverProfileId: "srv-1",
-    serverRole: "owner",
-  }),
 };
+
+describe("isChoosablePair", () => {
+  it("does not offer to keep the sounds here on a profile that syncs", () => {
+    // Representable, because profiles land in it — but a soundboard whose
+    // pads are silent everywhere else is a trap, not a trade-off.
+    expect(isLegalPair("server", "local")).toBe(true);
+    expect(isChoosablePair("server", "local")).toBe(false);
+    expect(isChoosablePair("googleDrive", "local")).toBe(false);
+  });
+
+  it("still offers the only answer a local profile has", () => {
+    expect(isChoosablePair("local", "local")).toBe(true);
+  });
+
+  it("offers nothing that is not coherent in the first place", () => {
+    expect(isChoosablePair("googleDrive", "server")).toBe(false);
+  });
+});
 
 describe("isLegalPair", () => {
   it("allows only device-only audio when the profile does not sync", () => {
@@ -337,6 +346,25 @@ describe("detectDefects, via getSyncState", () => {
     ).toContain("audio-drive-without-folder");
   });
 
+  it("flags a synced profile whose sounds reach nobody", () => {
+    expect(
+      defectsOf(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "owner",
+          audioLocation: "local",
+        }),
+      ),
+    ).toContain("audio-reaches-nobody");
+  });
+
+  it("stays quiet about it until the profile has actually synced", () => {
+    expect(
+      defectsOf(profile({ syncType: "server", audioLocation: "local" })),
+    ).not.toContain("audio-reaches-nobody");
+  });
+
   it("stays quiet about the missing folder before the first sync", () => {
     // "You haven't synced yet" is the useful message; the folder is downstream
     // of that and repeating it is noise.
@@ -401,11 +429,21 @@ describe("syncChipText", () => {
     ).toBe("ImpAmp server · sounds in Drive · synced 2 minutes ago");
   });
 
-  it("says plainly when a synced profile keeps its sounds to itself", () => {
-    // The state that is completely invisible today.
-    expect(
-      syncChipText(getSyncState(HEALTHY["server / device"], NOW), null),
-    ).toBe("ImpAmp server · sounds stay on this device");
+  it("leads with the defect when the sounds reach nobody", () => {
+    // Silent pads on every other device is the thing worth interrupting for,
+    // so it outranks any description of where things live.
+    const stranded = getSyncState(
+      profile({
+        syncType: "server",
+        serverProfileId: "srv-1",
+        serverRole: "owner",
+        audioLocation: "local",
+      }),
+      NOW,
+    );
+    expect(syncChipText(stranded, "2 minutes ago")).toBe(
+      "ImpAmp server · needs attention",
+    );
   });
 
   it("leads with view-only rather than a sync time", () => {

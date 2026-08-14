@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "@/lib/db";
-import { detectProfileConflicts, type ProfileSyncData } from "@/lib/syncUtils";
+import {
+  detectProfileConflicts,
+  resolveSyncedPadAudio,
+  type ProfileSyncData,
+} from "@/lib/syncUtils";
 
 /**
  * Where a profile syncs is per-device bookkeeping, not content. Comparing it
@@ -152,5 +156,46 @@ describe("detectProfileConflicts — content still converges", () => {
 
     expect(result.requiresManualResolution).toBe(true);
     expect(result.conflicts[0].fieldConflicts?.[0].field).toBe("name");
+  });
+});
+
+describe("resolveSyncedPadAudio", () => {
+  const map = new Map<number, number>([[7, 100]]);
+
+  it("translates synced ids into this device's ids", () => {
+    const result = resolveSyncedPadAudio([7], map, undefined);
+    expect(result.audioFileIds).toEqual([100]);
+    expect(result.keptLocal).toBe(false);
+  });
+
+  it("drops an id it cannot translate rather than guessing", () => {
+    // Keeping it would address a different recording on this device.
+    const result = resolveSyncedPadAudio([7, 999], map, undefined);
+    expect(result.audioFileIds).toEqual([100]);
+    expect(result.unresolved).toEqual([999]);
+  });
+
+  it("leaves a pad silent when it had nothing to begin with", () => {
+    const result = resolveSyncedPadAudio([999], map, undefined);
+    expect(result.audioFileIds).toEqual([]);
+    expect(result.keptLocal).toBe(false);
+  });
+
+  it("keeps the sound already here when nothing resolves", () => {
+    // The regression: a profile hosting its sounds on a deployment that hosts
+    // nothing published references with no route to them, and every sync
+    // erased another of its author's own pads.
+    const result = resolveSyncedPadAudio([999], map, [42]);
+    expect(result.audioFileIds).toEqual([42]);
+    expect(result.keptLocal).toBe(true);
+    expect(result.unresolved).toEqual([999]);
+  });
+
+  it("prefers what the blob says when the blob makes sense", () => {
+    // Keeping the local sound is a fallback, not a veto: a pad really can be
+    // pointed at a different sound by someone else.
+    const result = resolveSyncedPadAudio([7], map, [42]);
+    expect(result.audioFileIds).toEqual([100]);
+    expect(result.keptLocal).toBe(false);
   });
 });

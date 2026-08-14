@@ -15,7 +15,7 @@
 
 import {
   audioLocationLabel,
-  isLegalPair,
+  isChoosablePair,
   syncTargetLabel,
   type SyncState,
 } from "@/lib/syncState";
@@ -179,7 +179,11 @@ export default function SyncAxes({
         <Axis
           legend="Sounds are stored in"
           name="audio-location"
-          options={AUDIO.filter((a) => isLegalPair(state.target, a))}
+          // Only what is worth offering. "This device only" is a state a
+          // profile can be in, not a choice to hand someone: it syncs a board
+          // whose pads are silent everywhere else. It shows up as a defect
+          // with a way out instead.
+          options={AUDIO.filter((a) => isChoosablePair(state.target, a))}
           labelFor={audioLocationLabel}
           noteFor={(v) => AUDIO_NOTES[v]}
           selected={state.audio}
