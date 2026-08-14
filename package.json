@@ -20,6 +20,7 @@
     "test:e2e:profiles": "playwright test profiles.spec.ts",
     "test:e2e:edit": "playwright test edit-mode.spec.ts",
     "test:e2e:keyboard": "playwright test keyboard-shortcuts.spec.ts",
+    "test:e2e:loudness": "playwright test loudness.spec.ts",
     "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
