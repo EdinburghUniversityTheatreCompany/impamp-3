@@ -36,6 +36,11 @@ export function hasBorrowedDriveLink(profile: Profile): boolean {
   return (
     profile.syncType === "server" &&
     Boolean(profile.serverShareToken) &&
+    // An owner can hold a token for their own profile — opening your own
+    // share link to see what recipients get is enough. Their Drive folder is
+    // genuinely theirs, and clearing it made the next sync build a new one and
+    // re-upload every sound into it.
+    profile.serverRole !== "owner" &&
     Boolean(profile.googleDriveFileId || profile.googleDriveFolderId)
   );
 }

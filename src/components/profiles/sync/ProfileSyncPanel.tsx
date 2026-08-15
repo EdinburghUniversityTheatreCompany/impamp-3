@@ -112,12 +112,20 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
 
     const run = async () => {
       setMoving(true);
+      setRefusal(null);
       try {
-        await commit(plan, async () =>
+        const outcome = await commit(plan, async () =>
           window.confirm(
             "Also delete this profile's copy on the ImpAmp server? Collaborators lose access to it immediately.",
           ),
         );
+        // A move *out of* local that fails reported nothing anywhere: the only
+        // error channel is `SyncControls`, which renders nothing while the
+        // target is still local, and a failed move leaves it exactly there.
+        // So the radio snapped back and the user was told why by no one.
+        if (!outcome.ok) {
+          setRefusal(outcome.error ?? "That change could not be made.");
+        }
       } finally {
         setMoving(false);
       }

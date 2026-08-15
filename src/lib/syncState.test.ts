@@ -627,3 +627,35 @@ describe("ownsDriveFolder", () => {
     ).toBe(true);
   });
 });
+
+describe("getSyncState — a profile that syncs nowhere", () => {
+  it("is editable even when it kept a read-only flag", () => {
+    // Only a remote can refuse writes, and a local profile has none. A
+    // leftover flag made one permanently uneditable: `canUnfollow` was false,
+    // no defect was raised, and the UI explained "you have view-only access"
+    // about a profile nobody else can see.
+    const stranded = profile({ syncType: "local", readOnly: true });
+    const state = getSyncState(stranded, NOW);
+
+    expect(state.canEdit).toBe(true);
+    expect(state.isViewerOfSomeoneElses).toBe(false);
+  });
+
+  it("says out loud that it still points at the server", () => {
+    // The mirrored Drive case was detected; this one was not, so a profile
+    // claiming "This device only" could still have a live copy on the server
+    // with collaborators attached, and nothing said so.
+    const stranded = profile({ syncType: "local", serverProfileId: "srv-1" });
+    expect(getSyncState(stranded, NOW).defects).toContain("stale-server-link");
+  });
+
+  it("carries a defect into the chip rather than only into the panel", () => {
+    const stranded = profile({
+      syncType: "local",
+      googleDriveFileId: "file-1",
+    });
+    expect(syncChipText(getSyncState(stranded, NOW), null)).toMatch(
+      /needs attention/i,
+    );
+  });
+});

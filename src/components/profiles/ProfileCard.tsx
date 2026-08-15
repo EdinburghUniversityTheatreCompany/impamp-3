@@ -18,7 +18,10 @@ import { ProfileSyncData } from "@/lib/syncUtils";
 import { formatLufs } from "@/lib/audio/loudness/format";
 import { useServerSync } from "@/hooks/useServerSync";
 import { getSyncState } from "@/lib/syncState";
-import { useProfileSyncStatus } from "@/store/syncStatusStore";
+import {
+  syncStatusActions,
+  useProfileSyncStatus,
+} from "@/store/syncStatusStore";
 import { getSyncTimestamp } from "@/lib/googleDrive/utils";
 import ProfileSyncPanel from "./sync/ProfileSyncPanel";
 import SyncStatusChip from "./sync/SyncStatusChip";
@@ -205,19 +208,42 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
         conflicts,
         conflictData,
         onResolve: (resolvedData: ProfileSyncData) => {
-          if (conflictData.origin.kind === "drive") {
-            applyConflictResolution(
-              resolvedData,
-              conflictData.origin.fileId,
-              profile.id!,
-            );
-          } else {
-            void resolveServerConflict(
-              profile.id!,
-              resolvedData,
-              conflictData.origin,
-            );
-          }
+          void (async () => {
+            try {
+              if (conflictData.origin.kind === "drive") {
+                // Awaited, and its outcome kept. The Drive branch used to fire
+                // and forget, so a resolution that failed still closed the
+                // modal and said nothing.
+                await applyConflictResolution(
+                  resolvedData,
+                  conflictData.origin.fileId,
+                  profile.id!,
+                );
+              } else {
+                await resolveServerConflict(
+                  profile.id!,
+                  resolvedData,
+                  conflictData.origin,
+                );
+              }
+              // Cleared here rather than only inside the server hook. Left in
+              // place, the stale conflict reopened this modal the next time
+              // the card mounted, with data already settled, and resolving it
+              // again re-applied it.
+              syncStatusActions.patch(profile.id!, {
+                conflicts: [],
+                conflictData: null,
+              });
+            } catch (error) {
+              syncStatusActions.patch(profile.id!, {
+                activity: "error",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not apply that resolution.",
+              });
+            }
+          })();
           closeModal();
         },
         onCancel: () => closeModal(),

@@ -101,7 +101,16 @@ async function throwForStatus(response: Response, fallback: string) {
     );
   }
 
-  throw new Error(body.error ?? fallback);
+  // The status rides along so a caller can tell "this object is gone" from
+  // "the server is having a moment". Getting that wrong in either direction is
+  // costly: retrying a permanent failure blocks the profile from ever syncing
+  // again, and warning on a transient one lets the pull apply without the
+  // audio, which strips the pads.
+  const error = new Error(body.error ?? fallback) as Error & {
+    status?: number;
+  };
+  error.status = response.status;
+  throw error;
 }
 
 /** What the signed-in user is storing, and whether they may store more. */

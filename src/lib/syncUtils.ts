@@ -16,100 +16,6 @@ export type Syncable = (Profile | PadConfiguration | PageMetadata) & {
 };
 
 /**
- * Merges two syncable items (Profile, PadConfiguration, PageMetadata) with field-level tracking.
- * Prefers the item with the most recent modification time for each field.
- * Handles nested objects/arrays with simple JSON string comparison.
- *
- * @param localItem The local version of the item.
- * @param remoteItem The remote version of the item from Drive.
- * @returns The merged item.
- */
-export const mergeFieldBasedChanges = <T extends Syncable>(
-  localItem: T,
-  remoteItem: T,
-): T => {
-  // Start with a copy of the local item as the base for the merge result
-  const result = { ...localItem };
-
-  // Ensure sync metadata exists, defaulting if necessary
-  const now = Date.now();
-  const localCreated = localItem._created ?? now;
-  const remoteCreated = remoteItem._created ?? now;
-  const localModified = localItem._modified ?? localCreated;
-  const remoteModified = remoteItem._modified ?? remoteCreated;
-  const localFields = localItem._fieldsModified ?? {};
-  const remoteFields = remoteItem._fieldsModified ?? {};
-
-  // Gather all unique field names from both items (excluding internal DB/sync fields)
-  const allFields = new Set([
-    ...Object.keys(localItem).filter(
-      (key) =>
-        !key.startsWith("_") &&
-        key !== "id" &&
-        key !== "createdAt" &&
-        key !== "updatedAt",
-    ),
-    ...Object.keys(remoteItem).filter(
-      (key) =>
-        !key.startsWith("_") &&
-        key !== "id" &&
-        key !== "createdAt" &&
-        key !== "updatedAt",
-    ),
-  ]);
-
-  const mergedFieldsModified: Record<string, number> = { ...localFields };
-
-  // Iterate through each field to decide which version to keep
-  allFields.forEach((field) => {
-    const key = field as keyof T; // Assert key type
-
-    const localModTime = localFields[field] ?? 0;
-    const remoteModTime = remoteFields[field] ?? 0;
-    const localValue = localItem[key];
-    const remoteValue = remoteItem[key];
-
-    // Determine if the values are different (using JSON.stringify for simple deep compare)
-    const valuesDiffer =
-      JSON.stringify(localValue) !== JSON.stringify(remoteValue);
-
-    // Decision logic:
-    // 1. If only remote was modified OR remote was modified more recently AND values differ: use remote
-    if (
-      (remoteModTime > 0 && localModTime === 0 && valuesDiffer) ||
-      (remoteModTime > localModTime && valuesDiffer)
-    ) {
-      result[key] = remoteValue;
-      mergedFieldsModified[field] = remoteModTime;
-    }
-    // 2. If only local was modified OR local was modified more recently AND values differ: keep local (already in result)
-    else if (
-      (localModTime > 0 && remoteModTime === 0 && valuesDiffer) ||
-      (localModTime > remoteModTime && valuesDiffer)
-    ) {
-      // Keep local value (already spread)
-      mergedFieldsModified[field] = localModTime; // Ensure timestamp is the local one
-    }
-    // 3. If both modified at the same time OR neither modified OR values are the same:
-    //    Keep the value from the overall more recently modified record, update timestamp if needed.
-    else {
-      if (remoteModified > localModified && valuesDiffer) {
-        result[key] = remoteValue; // Prefer remote if record is newer and values differ
-      }
-      // Update the timestamp in mergedFieldsModified to the latest known modification time for that field
-      mergedFieldsModified[field] = Math.max(localModTime, remoteModTime);
-    }
-  });
-
-  // Set the merged sync metadata
-  result._created = Math.min(localCreated, remoteCreated); // Keep the earliest creation time
-  result._modified = Math.max(localModified, remoteModified); // Use the latest modification time
-  result._fieldsModified = mergedFieldsModified;
-
-  return result;
-};
-
-/**
  * Generates a consistent timestamp (milliseconds since epoch) for synchronization.
  */
 export const generateTimestamp = (): number => {
@@ -305,7 +211,12 @@ const compareSyncableArrays = <T extends Syncable>(
       }
     } else if (localItem) {
       const localCreated = localItem._created ?? 0;
-      if (localCreated > remoteLastSync) {
+      // Against *our* last sync, not the remote's last write. The question is
+      // "did this appear since I last looked at the remote", and only
+      // `localLastSync` answers it: `remoteLastSync` is stamped by every push
+      // including one that changed nothing, so a peer syncing first was enough
+      // to make a pad you had just made look like one the remote had deleted.
+      if (localCreated > localLastSync) {
         mergedItems.push(localItem);
       } else {
         conflicts.push({
@@ -375,11 +286,41 @@ const isComparableProfileField = (key: string): boolean =>
 // --- Data Structure for Syncing ---
 // Represents the entire dataset to be synced for a specific profile
 // This structure will be stored as a single JSON file per profile in Drive
+/**
+ * A pad as it travels, which is not quite a pad as it is stored.
+ *
+ * `audioFileIds` are IndexedDB autoincrement keys, so id 3 names a different
+ * recording on every device. Everything a reader does with them depends on
+ * knowing whose ids they are, and the merge could not know: it translated
+ * every pad through a map keyed by the sender, so a pad the remote had never
+ * touched came back pointing at a different sound, and was then published.
+ *
+ * The hash fields are the answer, and they are additive on purpose. A content
+ * hash means the same thing on every device, so a reader that understands
+ * these never has to ask who wrote the pad. A client running older code still
+ * finds the id fields exactly where they were, so no migration and no compat
+ * window is needed: the two describe the same pad, and the hashes simply win
+ * wherever both are present.
+ */
+export interface SyncedPadConfiguration extends PadConfiguration {
+  /**
+   * Content hashes for `audioFileIds`, in the same order and the same length.
+   * An entry is null for audio that predates hashing, which falls back to the
+   * id.
+   */
+  audioFileHashes?: (string | null)[];
+  audioTrimSettingsByHash?: Record<
+    string,
+    { trimStart: number; trimEnd: number }
+  >;
+  audioGainSettingsByHash?: Record<string, number>;
+}
+
 export interface ProfileSyncData {
   _syncFormatVersion: number; // To handle future format changes
   _lastSyncTimestamp?: number; // Timestamp of the last successful sync with this file
   profile: Profile; // The profile metadata itself
-  padConfigurations: PadConfiguration[];
+  padConfigurations: SyncedPadConfiguration[];
   pageMetadata: PageMetadata[];
   // Include audio files to ensure complete sync
   audioFiles: {
@@ -581,6 +522,12 @@ export const detectProfileConflicts = async (
 
     if (remoteToLocalIdMap.size > 0) {
       mergedData.padConfigurations = mergedData.padConfigurations.map((pad) => {
+        // A pad that names its audio by hash needs no translation, and must
+        // not be given any: the map is keyed by the sender's ids, and this pad
+        // may never have come from the sender. Translating it anyway is what
+        // turned a local pad's kick into a snare.
+        if (pad.audioFileHashes?.length) return pad;
+
         const translatedIds = pad.audioFileIds?.map(
           (id) => remoteToLocalIdMap.get(id) ?? id,
         );
@@ -616,12 +563,22 @@ export const detectProfileConflicts = async (
     const mergedAudioKeys = new Set(
       mergedData.audioFiles.map((f) => f.hash ?? `${f.name}|${f.type}`),
     );
+    // Ids are the sender's, so an appended entry can land on one already in
+    // use. Two entries sharing an id makes the blob ambiguous for everyone:
+    // `updateLocalData` builds its map in list order, so the second silently
+    // wins and pads resolve to the other recording.
+    const usedIds = new Set(mergedData.audioFiles.map((f) => f.id));
+    let nextFreeId = Math.max(0, ...usedIds) + 1;
+
     for (const remoteFile of remoteData.audioFiles) {
       if (remoteFile.hash && localAudioHashes.has(remoteFile.hash)) continue;
       const key = remoteFile.hash ?? `${remoteFile.name}|${remoteFile.type}`;
       if (mergedAudioKeys.has(key)) continue;
       mergedAudioKeys.add(key);
-      mergedData.audioFiles.push(remoteFile);
+
+      const id = usedIds.has(remoteFile.id) ? nextFreeId++ : remoteFile.id;
+      usedIds.add(id);
+      mergedData.audioFiles.push({ ...remoteFile, id });
     }
   }
 
@@ -652,17 +609,43 @@ export function resolveSyncedPadAudio(
   syncedIds: number[],
   audioIdMap: Map<number, number>,
   existingIds: number[] | undefined,
+  /**
+   * Hashes for `syncedIds`, in the same order, and a hash→local-id lookup.
+   * Preferred where both are present: a hash names the same recording on every
+   * device, so it needs no translation and cannot be misread.
+   */
+  syncedHashes?: (string | null)[],
+  localIdByHash?: Map<string, number>,
 ): { audioFileIds: number[]; keptLocal: boolean; unresolved: number[] } {
   const audioFileIds: number[] = [];
   const unresolved: number[] = [];
 
-  for (const syncedId of syncedIds) {
+  for (const [index, syncedId] of syncedIds.entries()) {
+    const hash = syncedHashes?.[index];
+    if (hash && localIdByHash) {
+      const byHash = localIdByHash.get(hash);
+      if (byHash !== undefined) {
+        audioFileIds.push(byHash);
+      } else {
+        unresolved.push(syncedId);
+      }
+      continue;
+    }
+
     const localId = audioIdMap.get(syncedId);
     if (localId === undefined) unresolved.push(syncedId);
     else audioFileIds.push(localId);
   }
 
-  if (audioFileIds.length === 0 && existingIds?.length) {
+  // Any reference we could not resolve means audio that has not arrived, not
+  // audio someone removed: a removal simply would not be in the blob. Writing
+  // what did resolve would publish a pad with the missing sounds edited out,
+  // and every other device would then drop them too. Holding the local set
+  // costs nothing, because the next sync resolves them once the audio lands.
+  //
+  // Only a partial failure used to be treated this way when *nothing*
+  // resolved, so a three-sound pad missing one came back with two.
+  if (unresolved.length > 0 && existingIds?.length) {
     return { audioFileIds: existingIds, keptLocal: true, unresolved };
   }
   return { audioFileIds, keptLocal: false, unresolved };

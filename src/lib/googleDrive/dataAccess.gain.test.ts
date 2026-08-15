@@ -17,6 +17,7 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it } from "vitest";
+import { addAudioFiles as addAudio } from "@/lib/testSupport/audioFixtures";
 
 const { updateLocalData } = await import("./dataAccess");
 const { getDb } = await import("@/lib/db");
@@ -91,26 +92,6 @@ function pad(overrides: Partial<PadConfiguration> = {}): PadConfiguration {
     updatedAt: new Date(1000),
     ...overrides,
   } as PadConfiguration;
-}
-
-/** Adds audio files, returning the ids the store actually allocated. */
-async function addAudio(files: { name: string; hash: string }[]) {
-  const db = await getDb();
-  const tx = db.transaction("audioFiles", "readwrite");
-  const ids: number[] = [];
-  for (const file of files) {
-    ids.push(
-      await tx.objectStore("audioFiles").add({
-        blob: new Blob([file.name]),
-        name: file.name,
-        type: "audio/mpeg",
-        hash: file.hash,
-        createdAt: new Date(0),
-      }),
-    );
-  }
-  await tx.done;
-  return ids;
 }
 
 async function putLocalPad(config: Partial<PadConfiguration>) {

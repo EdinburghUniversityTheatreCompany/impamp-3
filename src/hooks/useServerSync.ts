@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import type { TokenInfo } from "@/lib/googleDrive/types";
 import { applySyncedProfile } from "./applySyncedProfile";
-import { syncStatusActions } from "@/store/syncStatusStore";
+import { mirrorToProfile, syncStatusActions } from "@/store/syncStatusStore";
 import {
   applyServerConflictResolution,
   syncServerProfile,
@@ -115,12 +115,31 @@ export interface ServerSyncHook {
  */
 let sessionRequest: Promise<ServerUser | null> | null = null;
 
+/** The Google token the cached answer was fetched under. */
+let sessionToken: string | null | undefined;
+
+/**
+ * Every mounted instance, so a reload of the session reaches all of them.
+ *
+ * Without this, `refreshSession` updated only the instance that called it —
+ * and `ServerAccountPanel` is the only caller. Signing out of server sync left
+ * every profile card still believing it was signed in, so the server option
+ * stayed enabled and the SSE streams and scheduled syncs kept firing against a
+ * dead cookie until the page was reloaded.
+ */
+const sessionListeners = new Set<(user: ServerUser | null) => void>();
+
 function loadSession(force: boolean): Promise<ServerUser | null> {
   if (force || !sessionRequest) {
-    sessionRequest = fetchCurrentUser().catch((error) => {
-      console.warn("Could not check server session:", error);
-      return null;
-    });
+    sessionRequest = fetchCurrentUser()
+      .catch((error) => {
+        console.warn("Could not check server session:", error);
+        return null;
+      })
+      .then((user) => {
+        sessionListeners.forEach((notify) => notify(user));
+        return user;
+      });
   }
   return sessionRequest;
 }
@@ -146,10 +165,21 @@ export function useServerSync(): ServerSyncHook {
   }, []);
 
   useEffect(() => {
+    sessionListeners.add(setServerUser);
+    return () => {
+      sessionListeners.delete(setServerUser);
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
-    // A change of Google token means sign-in happened, so re-ask rather than
-    // reusing the cached answer.
-    void loadSession(googleAccessToken !== null).then((user) => {
+    // A *change* of Google token means sign-in happened, so re-ask rather than
+    // reusing the cached answer. Asking whether one merely exists forced a
+    // fresh request from every signed-in instance, which is exactly the ten
+    // identical requests the shared promise was written to avoid.
+    const changed = sessionToken !== googleAccessToken;
+    sessionToken = googleAccessToken;
+    void loadSession(changed).then((user) => {
       if (cancelled) return;
       setServerUser(user);
       setIsCheckingSession(false);
@@ -191,19 +221,10 @@ export function useServerSync(): ServerSyncHook {
 
       const result = await syncServerProfile(
         profileId,
-        {
-          ...callbacks,
-          // Bound to *this* profile so a conflict found by the scheduled sync
-          // reaches the card, which holds a different hook instance.
-          onConflictsDetected: (conflicts) => {
-            setConflicts(conflicts);
-            syncStatusActions.patch(profileId, { conflicts });
-          },
-          onConflictDataAvailable: (conflictData) => {
-            setConflictData(conflictData);
-            syncStatusActions.patch(profileId, { conflictData });
-          },
-        },
+        mirrorToProfile(profileId, callbacks, {
+          setConflicts,
+          setConflictData,
+        }),
         driveAccess,
       );
 

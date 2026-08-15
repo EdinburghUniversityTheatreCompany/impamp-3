@@ -17,6 +17,7 @@ import {
   getAudioFile,
   getAudioFileByHash,
   getDb,
+  markAudioFilesHosted,
   type AudioFile,
 } from "@/lib/db";
 import {
@@ -120,6 +121,9 @@ export async function uploadProfileAudio(
         extension,
       });
       hosted.push(hash);
+      // Remembered locally so a later sync that cannot upload — unapproved,
+      // capped, or just unlucky — still tells readers where these bytes are.
+      await markAudioFilesHosted([hash]);
     } catch (error) {
       // These two mean every later file would fail the same way.
       if (
@@ -144,6 +148,28 @@ export async function uploadProfileAudio(
   }
 
   return { hosted, warnings, aborted: false };
+}
+
+/**
+ * Whether a download failure will still be a failure next time.
+ *
+ * Everything else is worth retrying, because the caller postpones the whole
+ * pull while anything is retryable, and applying a pull whose audio never
+ * arrived is what strips the pads and publishes them empty. The bias is
+ * deliberate: a wrong "retryable" costs one more attempt, a wrong "permanent"
+ * costs the sounds.
+ */
+function isPermanentAudioFailure(error: unknown): boolean {
+  if (
+    error instanceof NotApprovedForAudioError ||
+    error instanceof AudioHostingUnavailableError
+  ) {
+    return true;
+  }
+  // The object is gone from the bucket for good. Retrying forever would stop
+  // the profile syncing at all, which is worse than losing the one sound —
+  // the same call the Drive downloader makes when a file has left the folder.
+  return (error as { status?: number })?.status === 404;
 }
 
 /**
@@ -208,16 +234,22 @@ export async function downloadProfileAudio(
         type: ref.type || ticket.contentType,
         blob,
         hash: ref.hash,
+        // It came from the object store, so that is where it lives.
+        serverHosted: true,
       };
       await addAudioFile(stored);
       downloaded++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // Anything network-shaped is retryable; a refusal is not.
-      if (error instanceof TypeError) {
-        retryable.push(`${ref.name}: ${message}`);
-      } else {
+      // Retryable unless the failure is permanent for this device. Only
+      // `TypeError` used to count, so an expired session or a 5xx read as a
+      // refusal: the sync carried on, `updateLocalData` could not resolve the
+      // audio, and the pads were cleared and published empty. The Drive
+      // downloader has always treated every throw as worth another go.
+      if (isPermanentAudioFailure(error)) {
         warnings.push(`${ref.name}: ${message}`);
+      } else {
+        retryable.push(`${ref.name}: ${message}`);
       }
     }
   }

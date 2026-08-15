@@ -21,6 +21,16 @@ export interface AudioFile {
   driveFileIds?: Record<number, string>; // profileId → Google Drive file ID
   /** BS.1770-4 analysis. Absent until the file has been analysed. */
   loudness?: LoudnessAnalysis;
+  /**
+   * True once this deployment's object store holds these bytes.
+   *
+   * Recorded rather than re-derived each sync. It used to be worked out from
+   * whatever the current run managed to upload, so any abort — an unapproved
+   * account, a full cap, one transient failure — published a blob with the
+   * flag stripped from files that really were hosted, and readers were left
+   * with no route to the bytes and cleared the pads.
+   */
+  serverHosted?: boolean;
 }
 
 // Define the structure of profile data
@@ -640,6 +650,26 @@ export async function ensureAudioFileHash(id: number): Promise<string | null> {
   }
   await tx.done;
   return hash;
+}
+
+/**
+ * Record that this deployment's object store holds these files' bytes.
+ *
+ * Keyed by hash because that is what the hosting side deals in, and because a
+ * hash identifies the bytes rather than any one profile's reference to them.
+ */
+export async function markAudioFilesHosted(hashes: string[]): Promise<void> {
+  if (hashes.length === 0) return;
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  const index = tx.store.index("hash");
+  for (const hash of hashes) {
+    for (const file of await index.getAll(hash)) {
+      if (file.serverHosted) continue;
+      await tx.store.put({ ...file, serverHosted: true });
+    }
+  }
+  await tx.done;
 }
 
 // Update the Drive file ID for a specific profile on an audio file record

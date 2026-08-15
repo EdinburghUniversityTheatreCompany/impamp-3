@@ -23,6 +23,7 @@ import {
   transaction,
   type AudioObjectRow,
 } from "./db";
+import { objectKeyForHash } from "./s3/client";
 
 export interface AudioUsage {
   /** Bytes this user is charged for. */
@@ -137,6 +138,86 @@ export function userHoldsReference(userId: number, hash: string): boolean {
   );
 }
 
+/**
+ * Whether this sound could legitimately have been put on this profile.
+ *
+ * Access to the profile is necessary but not sufficient, because a caller
+ * writes their own profile's data: naming someone else's hash in a board you
+ * own used to be enough to be handed that sound. The blob is the caller's
+ * word; a reference row is the server's own record of who uploaded what.
+ *
+ * "Could have put it there" means the owner or one of the profile's editors
+ * holds it. Restricting it to the owner alone would refuse an owner the
+ * sounds their own collaborators added.
+ */
+export function profileMayServeHash(
+  profileId: string,
+  ownerId: number,
+  hash: string,
+): boolean {
+  return (
+    queryOne<{ one: number }>(
+      `SELECT 1 AS one
+         FROM audio_references r
+        WHERE r.hash = ?
+          AND (
+            r.user_id = ?
+            OR r.user_id IN (
+              SELECT u.id
+                FROM users u
+                JOIN profile_shares s ON s.email = lower(trim(u.email))
+               WHERE s.profile_id = ? AND s.role = 'editor'
+            )
+          )
+        LIMIT 1`,
+      hash,
+      ownerId,
+      profileId,
+    ) !== undefined
+  );
+}
+
+/**
+ * The key an object lives under, honouring the extension it was *stored*
+ * with rather than the one this caller happens to be using.
+ *
+ * Keys are content-addressed but carry an extension, so the same bytes named
+ * `kick.mp3` and `kick` produced two different keys. The second uploader was
+ * told the bytes were already stored — true, the hash was known — handed no
+ * upload URL, and then 404'd at commit against a key nothing had ever written.
+ * They could never host that file.
+ */
+export function storageKeyForHash(
+  hash: string,
+  fallbackExtension: string,
+): string {
+  return objectKeyForHash(
+    hash,
+    getAudioObject(hash)?.extension ?? fallbackExtension,
+  );
+}
+
+/**
+ * Whether any stored profile still names this sound.
+ *
+ * Deleting from a library used to drop the bucket object the moment the last
+ * *reference* went, without asking whether a board still played it — so an
+ * owner tidying their library could make their own live profile 404.
+ */
+export function hashIsUsedByAnyProfile(hash: string): boolean {
+  for (const row of queryAll<{ data: string }>("SELECT data FROM profiles")) {
+    try {
+      const parsed = JSON.parse(row.data) as {
+        audioFiles?: { hash?: string }[];
+      };
+      if (parsed.audioFiles?.some((file) => file?.hash === hash)) return true;
+    } catch {
+      // A profile whose blob will not parse cannot be shown to reference it.
+    }
+  }
+  return false;
+}
+
 export type UploadDecision =
   | { allowed: true; alreadyStored: boolean }
   | {
@@ -175,8 +256,19 @@ export function canUpload({
   // Checked before the size ceiling on purpose: re-adding a sound the user
   // already holds changes nothing, and must not start failing because the
   // deployment lowered maxObjectBytes after they uploaded it.
+  //
+  // "Changes nothing" has to be verified, not assumed. A presigned PUT signs
+  // only `host`, so the holder can overwrite the object with something far
+  // larger and commit again; skipping the checks then let the new size be
+  // recorded straight past the ceiling and the quota, which is the very thing
+  // charging from the bucket at commit exists to prevent. A different size
+  // means different bytes, so it goes through the full decision.
   const existing = getAudioObject(hash);
-  if (existing && userHoldsReference(userId, hash)) {
+  if (
+    existing &&
+    existing.size_bytes === sizeBytes &&
+    userHoldsReference(userId, hash)
+  ) {
     return { allowed: true, alreadyStored: true };
   }
 

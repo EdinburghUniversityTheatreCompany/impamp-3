@@ -33,8 +33,6 @@ export interface ProfileSyncStatus {
    */
   warnings: string[];
   lastSyncedAt: number | null;
-  /** A live change channel is connected. Only server sync has one. */
-  live: boolean;
   /**
    * A conflict waiting for a human, and the three versions it is between.
    *
@@ -58,7 +56,6 @@ export const IDLE_SYNC_STATUS: ProfileSyncStatus = Object.freeze({
   error: null,
   warnings: Object.freeze([]) as unknown as string[],
   lastSyncedAt: null,
-  live: false,
   conflicts: Object.freeze([]) as unknown as ItemConflict[],
   conflictData: null,
 });
@@ -122,3 +119,48 @@ export const useProfileSyncStatus = (
       ? IDLE_SYNC_STATUS
       : (state.byProfileId.get(profileId) ?? IDLE_SYNC_STATUS),
   );
+
+/**
+ * Wrap a sync engine's callbacks so everything they report also lands in the
+ * shared store, keyed by profile.
+ *
+ * Both engines need exactly this and had it written out separately, which is
+ * how they drifted: only the conflict half was ever bound, so a background
+ * sync's status and errors stayed inside `ClientSideInitializer`'s hook
+ * instance and no card could see them.
+ */
+export function mirrorToProfile<
+  C extends {
+    onStatusChange: (activity: never) => void;
+    onError: (error: string | null) => void;
+    onConflictsDetected: (conflicts: ItemConflict[]) => void;
+    onConflictDataAvailable?: (data: SyncConflictData | null) => void;
+  },
+>(
+  profileId: number,
+  callbacks: C,
+  local: {
+    setConflicts: (conflicts: ItemConflict[]) => void;
+    setConflictData: (data: SyncConflictData | null) => void;
+  },
+): C {
+  return {
+    ...callbacks,
+    onStatusChange: (activity: SyncActivity) => {
+      (callbacks.onStatusChange as (a: SyncActivity) => void)(activity);
+      syncStatusActions.patch(profileId, { activity });
+    },
+    onError: (error: string | null) => {
+      callbacks.onError(error);
+      syncStatusActions.patch(profileId, { error });
+    },
+    onConflictsDetected: (conflicts: ItemConflict[]) => {
+      local.setConflicts(conflicts);
+      syncStatusActions.patch(profileId, { conflicts });
+    },
+    onConflictDataAvailable: (conflictData: SyncConflictData | null) => {
+      local.setConflictData(conflictData);
+      syncStatusActions.patch(profileId, { conflictData });
+    },
+  } as unknown as C;
+}

@@ -5,6 +5,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProfileSyncData } from "@/lib/syncUtils";
+import { NotSignedInError } from "@/lib/serverSync/types";
 
 const dbMocks = vi.hoisted(() => ({
   addAudioFile: vi.fn(),
@@ -13,6 +14,7 @@ const dbMocks = vi.hoisted(() => ({
   getAudioFile: vi.fn(),
   getAudioFileByHash: vi.fn(),
   getDb: vi.fn(),
+  markAudioFilesHosted: vi.fn(),
 }));
 
 const apiMocks = vi.hoisted(() => ({
@@ -308,6 +310,60 @@ describe("downloadProfileAudio", () => {
     expect(result.retryable).toHaveLength(1);
     expect(result.downloaded).toBe(0);
     expect(dbMocks.addAudioFile).not.toHaveBeenCalled();
+  });
+
+  it("remembers locally that the bytes are hosted", async () => {
+    // The flag used to be worked out afresh each sync from whatever that run
+    // uploaded, so any abort published a blob claiming nothing was hosted, and
+    // readers had no route to the bytes.
+    apiMocks.requestProfileDownloadUrl.mockResolvedValue({
+      url: "https://bucket.test/get",
+      sizeBytes: 4,
+      contentType: "audio/wav",
+      expiresInSeconds: 3600,
+    });
+    vi.mocked(fetch).mockResolvedValue(new Response(new Blob(["abcd"])));
+
+    await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(dbMocks.addAudioFile).toHaveBeenCalledWith(
+      expect.objectContaining({ serverHosted: true }),
+    );
+  });
+
+  it("retries a session that expired mid-sync instead of losing the pads", async () => {
+    // Only `TypeError` counted as retryable, so a 401 read as a refusal: the
+    // sync carried on, the audio never arrived, and `updateLocalData` cleared
+    // every pad that referenced it and published them empty.
+    apiMocks.requestProfileDownloadUrl.mockRejectedValue(
+      new NotSignedInError(),
+    );
+
+    const result = await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(result.retryable).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("gives up on an object the bucket no longer has", async () => {
+    // The one failure that must not be retried: retrying forever would stop
+    // the profile syncing at all, which costs more than the one sound.
+    const gone = Object.assign(new Error("Not found"), { status: 404 });
+    apiMocks.requestProfileDownloadUrl.mockRejectedValue(gone);
+
+    const result = await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(result.retryable).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
   });
 });
 

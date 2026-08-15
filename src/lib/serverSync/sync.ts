@@ -271,32 +271,15 @@ async function pullMergePush(
     const { requiresManualResolution, conflicts, mergedData } =
       await detectProfileConflicts(localData, remote?.data ?? null);
 
-    if (requiresManualResolution) {
-      onConflictsDetected(conflicts);
-      if (remote) {
-        callbacks.onConflictDataAvailable?.({
-          local: localData,
-          // mergedData carries every automatically resolved change; it is the
-          // base a resolution builds on, and resolving from local alone would
-          // silently drop all of it.
-          remote: remote.data,
-          merged: mergedData,
-          fileId: "",
-          origin: {
-            kind: "server",
-            serverProfileId: serverId,
-            version: remoteVersion,
-          },
-        });
-      }
-      onStatusChange("conflict");
-      onError("Sync conflicts detected. Manual resolution required.");
-      return { status: "conflict", conflicts };
-    }
-
     // Fetch any audio the merged state references but this device lacks.
     // Applying the merge without it would clear those pads locally — and
     // then push that loss to everyone else.
+    //
+    // Before the conflict check, not after. A resolution is applied through
+    // the same `updateLocalData`, so a conflict that returned early left the
+    // user settling it against audio that had never been fetched, and the
+    // pads were cleared the moment they chose. The Drive engine has always
+    // downloaded first, which is why it never had this hole.
     if (remote?.data.audioFiles?.length) {
       // Server-hosted files first: they carry `serverHosted` and have no
       // Drive file ID, so the Drive path would skip them entirely.
@@ -321,6 +304,29 @@ async function pullMergePush(
           `Could not download ${retryable.length} audio file(s) — sync postponed: ${retryable.join("; ")}`,
         );
       }
+    }
+
+    if (requiresManualResolution) {
+      onConflictsDetected(conflicts);
+      if (remote) {
+        callbacks.onConflictDataAvailable?.({
+          local: localData,
+          // mergedData carries every automatically resolved change; it is the
+          // base a resolution builds on, and resolving from local alone would
+          // silently drop all of it.
+          remote: remote.data,
+          merged: mergedData,
+          fileId: "",
+          origin: {
+            kind: "server",
+            serverProfileId: serverId,
+            version: remoteVersion,
+          },
+        });
+      }
+      onStatusChange("conflict");
+      onError("Sync conflicts detected. Manual resolution required.");
+      return { status: "conflict", conflicts };
     }
 
     mergedData._lastSyncTimestamp = Date.now();
@@ -426,16 +432,28 @@ export async function applyServerConflictResolution(
   origin: Extract<ConflictOrigin, { kind: "server" }>,
 ): Promise<ServerSyncResult> {
   try {
+    // The token is how a link-share editor is allowed to write at all.
+    // Without it their resolution came back "no longer available on the
+    // server", and the conflict never cleared.
+    const profile = await getProfile(profileId);
     const pushed = await pushServerProfile(
       origin.serverProfileId,
       resolvedData.profile.name,
       resolvedData,
       origin.version,
+      profile?.serverShareToken ?? null,
     );
-    await updateLocalData(profileId, resolvedData);
+    // These say which sounds a pad could not be given. Dropping them meant a
+    // resolution could quietly land with pads it had emptied.
+    const warnings = await updateLocalData(profileId, resolvedData);
     await updateProfile(profileId, { serverVersion: pushed.version });
     updateSyncTimestamp(profileId);
-    return { status: "success", version: pushed.version, data: resolvedData };
+    return {
+      status: "success",
+      version: pushed.version,
+      data: resolvedData,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   } catch (error) {
     if (error instanceof VersionConflictError) {
       return {
