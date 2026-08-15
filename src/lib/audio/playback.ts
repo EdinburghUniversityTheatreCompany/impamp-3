@@ -28,8 +28,20 @@ export function clampPlaybackGain(volume: number): number {
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
 
-// Incremented whenever playback is stopped, so in-flight triggers can be cancelled
-let stopGeneration = 0;
+// Incremented whenever *everything* is stopped (the panic button), so an
+// in-flight trigger for any pad is cancelled.
+let globalStopGeneration = 0;
+
+// Incremented per playback key when that key alone is stopped.
+//
+// This used to be one global counter, which meant stopping pad B cancelled
+// pad A's still-loading trigger — with `activePadBehavior` set to "stop" or
+// "restart", simply retriggering one pad silently swallowed another's. Keyed
+// so a stop only speaks for the pad it stopped. Bounded by the number of pads
+// stopped in a session, and entries must outlive their track: the whole point
+// is that a trigger which has not registered anything yet can still see that
+// its pad was stopped.
+const keyStopGenerations = new Map<string, number>();
 
 // Duration of the de-click ramp applied when hard stopping a track
 const HARD_STOP_FADE_SECONDS = 0.02;
@@ -136,15 +148,47 @@ export function clampTrimRange(
 }
 
 /**
- * Returns the current stop generation counter
+ * A snapshot of both stop counters that apply to one playback key.
  *
- * Callers that await asynchronous work before starting playback can capture this
- * value and compare it afterwards to detect that a stop was requested meanwhile.
- *
- * @returns The current stop generation
+ * Two are needed because a stop can be aimed at one pad (`stopTrack`) or at
+ * everything (`stopAllTracks`), and a pending trigger must notice the second
+ * without being cancelled by every instance of the first.
  */
-export function getStopGeneration(): number {
-  return stopGeneration;
+export interface StopGeneration {
+  readonly global: number;
+  readonly key: number;
+}
+
+/**
+ * Captures the stop counters for a playback key.
+ *
+ * Callers that await asynchronous work before starting playback capture this
+ * before the first await and pass it to {@link stopRequestedSince} afterwards.
+ *
+ * @param playbackKey - The key the caller intends to play on
+ * @returns The counters as they stand now
+ */
+export function getStopGeneration(playbackKey: string): StopGeneration {
+  return {
+    global: globalStopGeneration,
+    key: keyStopGenerations.get(playbackKey) ?? 0,
+  };
+}
+
+/**
+ * Whether a stop that this playback key should honour happened since the
+ * counters were captured — either its own pad was stopped, or everything was.
+ *
+ * @param playbackKey - The key the caller intends to play on
+ * @param captured - The value {@link getStopGeneration} returned earlier
+ * @returns True if the pending trigger should abandon itself
+ */
+export function stopRequestedSince(
+  playbackKey: string,
+  captured: StopGeneration,
+): boolean {
+  const now = getStopGeneration(playbackKey);
+  return now.global !== captured.global || now.key !== captured.key;
 }
 
 /**
@@ -248,6 +292,32 @@ function cleanupTrackIfCurrent(playbackKey: string, track: ActiveTrack): void {
 }
 
 /**
+ * Registers a track against its playback key, silencing whatever held the key.
+ *
+ * The occupancy check is the point. Two triggers for one pad can both get past
+ * `isTrackPlaying` while their audio is still loading, and the second used to
+ * overwrite the first in the map without stopping it — leaving it audible and,
+ * because `stopAllTracks` iterates the map, beyond the reach of the panic
+ * button. Displacement is not expected in normal use; it means two triggers
+ * raced, so it is worth a warning.
+ *
+ * @param playbackKey - The key being claimed
+ * @param track - The track claiming it
+ */
+function claimPlaybackKey(playbackKey: string, track: ActiveTrack): void {
+  const displaced = activeTracks.get(playbackKey);
+
+  if (displaced && displaced !== track) {
+    console.warn(
+      `[Audio Playback] A second trigger displaced a live track on key: ${playbackKey}. Silencing the one it replaced.`,
+    );
+    disposeTrackSource(displaced.source);
+  }
+
+  activeTracks.set(playbackKey, track);
+}
+
+/**
  * Plays an audio buffer with the specified parameters
  *
  * @param buffer - The audio buffer to play
@@ -311,7 +381,7 @@ export function playBuffer(
       cleanupTrackIfCurrent(playbackKey, track);
     };
 
-    activeTracks.set(playbackKey, track);
+    claimPlaybackKey(playbackKey, track);
 
     // Add to playback store (UI state)
     const initialState = {
@@ -492,7 +562,7 @@ export function playBlobStreaming(
       cleanupTrackIfCurrent(playbackKey, track);
     });
 
-    activeTracks.set(playbackKey, track);
+    claimPlaybackKey(playbackKey, track);
 
     // Add to playback store (UI state)
     playbackStoreActions.addTrack(playbackKey, {
@@ -738,8 +808,12 @@ export function stopTrack(playbackKey: string): boolean {
   const track = activeTracks.get(playbackKey);
   if (!track) return false;
 
-  // Invalidate any trigger that is still waiting on an async load
-  stopGeneration++;
+  // Invalidate any trigger for *this pad* that is still waiting on an async
+  // load. Deliberately not global: stopping one pad must not cancel another's.
+  keyStopGenerations.set(
+    playbackKey,
+    (keyStopGenerations.get(playbackKey) ?? 0) + 1,
+  );
 
   const source = track.source;
 
@@ -796,8 +870,10 @@ export function stopAllTracks(): number {
   // Get all keys from activeTracks
   const keys = Array.from(activeTracks.keys());
 
-  // Invalidate in-flight triggers even when nothing is currently playing
-  stopGeneration++;
+  // Invalidate in-flight triggers for every pad, even ones with nothing
+  // currently playing — a trigger that has not registered a track yet is
+  // exactly what the panic button has to be able to reach.
+  globalStopGeneration++;
 
   // Stop each track
   let stoppedCount = 0;
