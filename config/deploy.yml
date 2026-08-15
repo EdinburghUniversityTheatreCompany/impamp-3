@@ -5,6 +5,13 @@ service: impamp-3
 image: mickzijdel/impamp-3
 
 # Deploy to these servers.
+#
+# ONE HOST ONLY. The SSE change-notification bus (src/lib/server/events.ts) is
+# in-process, so a second host would serve viewers who never receive change
+# events raised on the other one. The failure is soft — the periodic sync still
+# runs — so it presents as "notifications are sometimes slow" rather than as an
+# outage, which is exactly why it is worth writing down here rather than only
+# in docs/server-sync.md. Kamal cannot assert this; this comment is the control.
 servers:
   web:
     - 87.106.35.121
@@ -99,6 +106,12 @@ ssh:
 #
 # Back it up with a consistent copy rather than `cp` (WAL is in play):
 #   kamal app exec --reuse 'sqlite3 /data/impamp.db ".backup /data/backup.db"'
+#
+# The container runs as uid 1000 (`node`) rather than root. A volume created
+# from this image onwards already lands owned by 1000, but a volume that
+# predates that change is still owned by root, and the app cannot write to it.
+# Chown it once, on the host, before the first deploy of that change:
+#   docker run --rm -v impamp_data:/data alpine chown -R 1000:1000 /data
 volumes:
   - "impamp_data:/data"
 
