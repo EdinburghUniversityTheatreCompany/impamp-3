@@ -712,6 +712,31 @@ describe("applyServerConflictResolution", () => {
     dataAccessMocks.updateLocalData.mockResolvedValue([]);
   });
 
+  it("writes on the share token when that is how we have access", async () => {
+    // A link-share editor has no session grant on this profile, only the
+    // token. Resolving without it came back "no longer available on the
+    // server", so the conflict never cleared and the profile stopped
+    // converging until somebody changed something by hand.
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ serverShareToken: "tok-1" }),
+    );
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+
+    await applyServerConflictResolution(
+      PROFILE_ID,
+      syncData("resolved pad", AFTER_SYNC),
+      origin,
+    );
+
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledWith(
+      SERVER_ID,
+      expect.anything(),
+      expect.anything(),
+      5,
+      "tok-1",
+    );
+  });
+
   it("pushes the chosen version and records the new one", async () => {
     apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
     const resolved = syncData("resolved pad", AFTER_SYNC);
@@ -730,6 +755,9 @@ describe("applyServerConflictResolution", () => {
       resolved.profile.name,
       resolved,
       5,
+      // A link-share editor writes on this token. Without it the resolution
+      // came back "no longer available", and the conflict never cleared.
+      null,
     );
     expect(dataAccessMocks.updateLocalData).toHaveBeenCalledWith(
       PROFILE_ID,

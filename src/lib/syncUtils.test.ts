@@ -191,6 +191,16 @@ describe("resolveSyncedPadAudio", () => {
     expect(result.unresolved).toEqual([999]);
   });
 
+  it("keeps the local sounds when only some of them resolve", () => {
+    // A three-sound pad missing one came back with two, and the truncated pad
+    // was then published, so every other device lost the third as well. The
+    // sound is here and wired up; only its description is untranslatable.
+    const result = resolveSyncedPadAudio([7, 999], map, [42, 43]);
+    expect(result.audioFileIds).toEqual([42, 43]);
+    expect(result.keptLocal).toBe(true);
+    expect(result.unresolved).toEqual([999]);
+  });
+
   it("prefers what the blob says when the blob makes sense", () => {
     // Keeping the local sound is a fallback, not a veto: a pad really can be
     // pointed at a different sound by someone else.

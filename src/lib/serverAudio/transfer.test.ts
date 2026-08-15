@@ -5,6 +5,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProfileSyncData } from "@/lib/syncUtils";
+import { NotSignedInError } from "@/lib/serverSync/types";
 
 const dbMocks = vi.hoisted(() => ({
   addAudioFile: vi.fn(),
@@ -308,6 +309,38 @@ describe("downloadProfileAudio", () => {
     expect(result.retryable).toHaveLength(1);
     expect(result.downloaded).toBe(0);
     expect(dbMocks.addAudioFile).not.toHaveBeenCalled();
+  });
+
+  it("retries a session that expired mid-sync instead of losing the pads", async () => {
+    // Only `TypeError` counted as retryable, so a 401 read as a refusal: the
+    // sync carried on, the audio never arrived, and `updateLocalData` cleared
+    // every pad that referenced it and published them empty.
+    apiMocks.requestProfileDownloadUrl.mockRejectedValue(
+      new NotSignedInError(),
+    );
+
+    const result = await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(result.retryable).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("gives up on an object the bucket no longer has", async () => {
+    // The one failure that must not be retried: retrying forever would stop
+    // the profile syncing at all, which costs more than the one sound.
+    const gone = Object.assign(new Error("Not found"), { status: 404 });
+    apiMocks.requestProfileDownloadUrl.mockRejectedValue(gone);
+
+    const result = await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(result.retryable).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
   });
 });
 

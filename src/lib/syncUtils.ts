@@ -731,7 +731,15 @@ export function resolveSyncedPadAudio(
     else audioFileIds.push(localId);
   }
 
-  if (audioFileIds.length === 0 && existingIds?.length) {
+  // Any reference we could not resolve means audio that has not arrived, not
+  // audio someone removed: a removal simply would not be in the blob. Writing
+  // what did resolve would publish a pad with the missing sounds edited out,
+  // and every other device would then drop them too. Holding the local set
+  // costs nothing, because the next sync resolves them once the audio lands.
+  //
+  // Only a partial failure used to be treated this way when *nothing*
+  // resolved, so a three-sound pad missing one came back with two.
+  if (unresolved.length > 0 && existingIds?.length) {
     return { audioFileIds: existingIds, keptLocal: true, unresolved };
   }
   return { audioFileIds, keptLocal: false, unresolved };

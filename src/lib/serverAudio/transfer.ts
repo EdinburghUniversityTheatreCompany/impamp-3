@@ -147,6 +147,28 @@ export async function uploadProfileAudio(
 }
 
 /**
+ * Whether a download failure will still be a failure next time.
+ *
+ * Everything else is worth retrying, because the caller postpones the whole
+ * pull while anything is retryable, and applying a pull whose audio never
+ * arrived is what strips the pads and publishes them empty. The bias is
+ * deliberate: a wrong "retryable" costs one more attempt, a wrong "permanent"
+ * costs the sounds.
+ */
+function isPermanentAudioFailure(error: unknown): boolean {
+  if (
+    error instanceof NotApprovedForAudioError ||
+    error instanceof AudioHostingUnavailableError
+  ) {
+    return true;
+  }
+  // The object is gone from the bucket for good. Retrying forever would stop
+  // the profile syncing at all, which is worse than losing the one sound —
+  // the same call the Drive downloader makes when a file has left the folder.
+  return (error as { status?: number })?.status === 404;
+}
+
+/**
  * Fetch any server-hosted audio the profile references but this browser does
  * not have, and store it locally.
  *
@@ -213,11 +235,15 @@ export async function downloadProfileAudio(
       downloaded++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // Anything network-shaped is retryable; a refusal is not.
-      if (error instanceof TypeError) {
-        retryable.push(`${ref.name}: ${message}`);
-      } else {
+      // Retryable unless the failure is permanent for this device. Only
+      // `TypeError` used to count, so an expired session or a 5xx read as a
+      // refusal: the sync carried on, `updateLocalData` could not resolve the
+      // audio, and the pads were cleared and published empty. The Drive
+      // downloader has always treated every throw as worth another go.
+      if (isPermanentAudioFailure(error)) {
         warnings.push(`${ref.name}: ${message}`);
+      } else {
+        retryable.push(`${ref.name}: ${message}`);
       }
     }
   }
