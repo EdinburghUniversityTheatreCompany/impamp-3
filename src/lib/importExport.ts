@@ -238,6 +238,20 @@ export async function getAllPadConfigurationsForProfile(
  * "Open with" page, the Drive picker, a server share link — pass one. A plain
  * file import passes nothing and gets a local, unlinked profile.
  */
+/**
+ * Fetches the bytes of a server-hosted sound.
+ *
+ * A callback rather than a direct call into `serverAudio/` so this module stays
+ * ignorant of share tokens and server profile ids — the same shape
+ * `downloadAudioBlob` already uses for Drive. The caller
+ * (`useConnectServerProfile`) is the one holding those.
+ */
+export type HostedAudioDownloader = (ref: {
+  hash: string;
+  name: string;
+  type: string;
+}) => Promise<Blob>;
+
 export interface ImportLink {
   syncType?: SyncType;
   audioLocation?: AudioLocation | null;
@@ -360,6 +374,16 @@ export interface ImportAudioSource {
   getBlob: (onBytes?: (bytesDone: number) => void) => Promise<Blob>;
   /** Carried analysis, if the exporting device had one. */
   loudness?: SerialisedLoudness;
+  /**
+   * The content hash, when the source already knows it.
+   *
+   * Worth carrying rather than recomputing: without it the record lands
+   * hashless, and the next sync that needs a hash reads and SHA-256s *every*
+   * audio file in the library one blob at a time to build a fallback index.
+   */
+  hash?: string;
+  /** Set when these bytes came from the app's own object store. */
+  serverHosted?: boolean;
 }
 
 /** Progress information reported while importing audio files. */
@@ -421,6 +445,8 @@ async function importAudioSources(
         type: source.type,
         createdAt: now,
         loudness: deserialiseLoudness(source.loudness) ?? undefined,
+        hash: source.hash,
+        serverHosted: source.serverHosted,
       });
       await audioTx.done;
       audioIdMap.set(source.originalId, newAudioId);
@@ -852,6 +878,7 @@ export async function importProfileFromSyncData(
   downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
   onProgress?: (progress: ImportAudioProgress) => void,
   link: ImportLink = {},
+  downloadHostedBlob?: HostedAudioDownloader,
 ): Promise<number> {
   // Strip fields the import must not carry over (a fresh id is assigned and
   // lastBackedUpAt is stamped by the import itself).
@@ -895,9 +922,27 @@ export async function importProfileFromSyncData(
         type: ref.type,
         getBlob: () => base64ToBlob(data, ref.type),
       });
+    } else if (ref.serverHosted && ref.hash && downloadHostedBlob) {
+      // Hosted by this app's own server: no Drive file, no embedded bytes,
+      // just a content hash to fetch by. Skipping these is what made joining
+      // a share link on an S3-configured deployment import empty pads.
+      const hash = ref.hash;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        hash,
+        serverHosted: true,
+        getBlob: () =>
+          downloadHostedBlob({ hash, name: ref.name, type: ref.type }),
+      });
     } else {
       console.warn(
-        `Audio file "${ref.name}" (ID ${ref.id}) has neither driveFileId nor embedded data — skipping.`,
+        `Audio file "${ref.name}" (ID ${ref.id}) has ${
+          ref.serverHosted && ref.hash
+            ? "hosted audio but no downloader was supplied"
+            : "neither driveFileId nor embedded data"
+        } — skipping.`,
       );
     }
   }

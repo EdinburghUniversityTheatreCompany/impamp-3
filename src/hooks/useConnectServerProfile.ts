@@ -19,6 +19,7 @@ import { useProfileStore, whenProfilesLoaded } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { fetchServerProfile } from "@/lib/serverSync/api";
 import type { ImportAudioProgress } from "@/lib/importExport";
+import { requestProfileDownloadUrl } from "@/lib/serverAudio/api";
 
 export type ConnectServerOutcome =
   | {
@@ -84,6 +85,24 @@ export function useConnectServerProfile() {
         // opened, leaving the share link pointing at an orphan and a retry
         // importing a duplicate.
         { syncType: "local" },
+        // How to fetch a sound the server hosts. Without this the import
+        // recognises only Drive files and embedded base64, so on a deployment
+        // with hosted audio configured every pad arrived empty — and then the
+        // first sync offered to publish the emptiness back.
+        async ({ hash }) => {
+          const ticket = await requestProfileDownloadUrl(
+            serverProfileId,
+            hash,
+            shareToken,
+          );
+          const response = await fetch(ticket.url);
+          if (!response.ok) {
+            throw new Error(
+              `Could not download hosted audio (${response.status}).`,
+            );
+          }
+          return response.blob();
+        },
       );
 
       const readOnly = payload.access === "viewer";

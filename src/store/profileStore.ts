@@ -22,6 +22,7 @@ import type {
   ZipImportResult,
   ImportAudioProgress,
   ImportLink,
+  HostedAudioDownloader,
 } from "../lib/importExport";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
@@ -109,6 +110,7 @@ interface ProfileState {
     downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
     onProgress?: (progress: ImportAudioProgress) => void,
     link?: ImportLink,
+    downloadHostedBlob?: HostedAudioDownloader,
   ) => Promise<number>; // For Drive and server connect flows
 
   // Profile manager UI state
@@ -783,6 +785,7 @@ export const useProfileStore = create<ProfileState>()(
           downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
           onProgress?: (progress: ImportAudioProgress) => void,
           link?: ImportLink,
+          downloadHostedBlob?: HostedAudioDownloader,
         ) => {
           try {
             const { importProfileFromSyncData } =
@@ -795,6 +798,7 @@ export const useProfileStore = create<ProfileState>()(
               downloadAudioBlob,
               onProgress,
               link,
+              downloadHostedBlob,
             );
 
             const newProfile = await getProfile(newProfileId);
