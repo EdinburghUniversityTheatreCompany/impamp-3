@@ -177,5 +177,27 @@ main, push, watch CI.
 
 ## Status
 
-- Started 2026-08-15. Nothing executed yet.
-- **Next step:** create the worktree, then Phase 1.1.
+Started 2026-08-15, in `.worktrees/fix/repo-review` on `fix/repo-review`.
+
+**Done so far — 8 of the 14 actionable 🔴, each its own commit:**
+
+| Commit | Finding |
+|---|---|
+| `d413146` | P1, P2 — the two playback races, + the first tests for `controls.ts` |
+| `2303298` | S1 — the share token no longer travels in any blob |
+| `7a90d55` | C1 — a merged pad's ids and hashes can no longer disagree |
+| `f583648` | C3 — server-hosted sounds are fetched, not skipped |
+| `6aa7fae` | U1 — `/server/open` calls the connect hook instead of re-implementing it |
+| `1598b37` | C2 — duplicating a profile keeps its gain settings |
+| `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes |
+
+**Verification:** 545 unit tests green (was 519), typecheck clean, full chromium
+e2e 122/122 against a real build, and the Docker image built and run (uid 1000,
+/up 200, SQLite writes its WAL on a fresh volume).
+
+**Blocking Mick before deploy:** the existing `impamp_data` volume is root-owned
+and the container now runs as uid 1000. One-off:
+`docker run --rm -v impamp_data:/data alpine chown -R 1000:1000 /data`
+
+**Next step:** phase 4 (C4, the pad-config invalidation), then phase 6's server
+🔴s (S2, R1, R5) and phase 7's `fetchWithTimeout` (R2).
