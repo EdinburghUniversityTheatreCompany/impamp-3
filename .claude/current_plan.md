@@ -44,15 +44,22 @@ Note the API change: `getStopGeneration()` now takes a playback key and returns
 
 ## Phase 2 — the wire shape and the share-token leak (🔴 S1, 🟡 D1)
 
-- [ ] 2.1 `src/lib/profileWire.ts` — one wire shape with an explicit field
-      allow-list, unit-tested
-- [ ] 2.2 Route `importExport.ts:1394`, `googleDrive/dataAccess.ts:121` and
-      `syncUtils.ts:319` through it; `serverShareToken` never serialised
-- [ ] 2.3 Collapse `ProfileExport` / `ProfileExportLean` / `ProfileSyncData`
-- [ ] 2.4 Regression test: an exported blob and a `GET /api/profiles/:id`
-      response contain no `serverShareToken`
+- [x] 2.1 `src/lib/profileWire.ts` — allow-list + compile-time exhaustiveness
+      assertion over `keyof Profile`, 6 unit tests
+- [x] 2.2 Both outbound sites routed through it (`dataAccess.ts:123` and
+      `importExport.ts:1399`); `ProfileSyncData.profile` typed `WireProfile`
+- [x] 2.4 `dataAccess.wire.test.ts` — verified it fails with the fix reverted
+- [ ] 2.3 **Deferred to phase 5.** Collapsing the three _type_ declarations
+      touches `importExport.ts`'s legacy paths, which have no tests (TH2). The
+      leak is closed without it; the type surgery waits for the tests.
 
-**Done when:** no serialiser can emit a share token, proven by a test per path.
+**Done** (except 2.3). Commit `2303298`. 533 tests green, typecheck clean.
+
+Two scope decisions worth not re-opening: the Drive ids still travel, and
+`lastBackedUpAt` still travels on the sync blob (only the export drops it, as
+it always did). Both were briefly withheld and reverted — withholding either
+is a behaviour change, not a security fix. The inbound side needed nothing:
+`updateLocalData` already pins the token to the local value.
 
 ## Phase 3 — sync correctness (🔴 C1, C3; 🟡 A5, A6, A7, D7, SV5)
 
