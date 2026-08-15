@@ -14,6 +14,7 @@ const dbMocks = vi.hoisted(() => ({
   getAudioFile: vi.fn(),
   getAudioFileByHash: vi.fn(),
   getDb: vi.fn(),
+  markAudioFilesHosted: vi.fn(),
 }));
 
 const apiMocks = vi.hoisted(() => ({
@@ -309,6 +310,28 @@ describe("downloadProfileAudio", () => {
     expect(result.retryable).toHaveLength(1);
     expect(result.downloaded).toBe(0);
     expect(dbMocks.addAudioFile).not.toHaveBeenCalled();
+  });
+
+  it("remembers locally that the bytes are hosted", async () => {
+    // The flag used to be worked out afresh each sync from whatever that run
+    // uploaded, so any abort published a blob claiming nothing was hosted, and
+    // readers had no route to the bytes.
+    apiMocks.requestProfileDownloadUrl.mockResolvedValue({
+      url: "https://bucket.test/get",
+      sizeBytes: 4,
+      contentType: "audio/wav",
+      expiresInSeconds: 3600,
+    });
+    vi.mocked(fetch).mockResolvedValue(new Response(new Blob(["abcd"])));
+
+    await downloadProfileAudio(
+      "srv",
+      refs([{ hash: HASH_A, serverHosted: true }]),
+    );
+
+    expect(dbMocks.addAudioFile).toHaveBeenCalledWith(
+      expect.objectContaining({ serverHosted: true }),
+    );
   });
 
   it("retries a session that expired mid-sync instead of losing the pads", async () => {

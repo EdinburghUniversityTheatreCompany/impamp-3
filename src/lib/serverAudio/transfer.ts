@@ -17,6 +17,7 @@ import {
   getAudioFile,
   getAudioFileByHash,
   getDb,
+  markAudioFilesHosted,
   type AudioFile,
 } from "@/lib/db";
 import {
@@ -120,6 +121,9 @@ export async function uploadProfileAudio(
         extension,
       });
       hosted.push(hash);
+      // Remembered locally so a later sync that cannot upload — unapproved,
+      // capped, or just unlucky — still tells readers where these bytes are.
+      await markAudioFilesHosted([hash]);
     } catch (error) {
       // These two mean every later file would fail the same way.
       if (
@@ -230,6 +234,8 @@ export async function downloadProfileAudio(
         type: ref.type || ticket.contentType,
         blob,
         hash: ref.hash,
+        // It came from the object store, so that is where it lives.
+        serverHosted: true,
       };
       await addAudioFile(stored);
       downloaded++;

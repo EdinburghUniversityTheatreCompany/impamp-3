@@ -76,6 +76,10 @@ export const getLocalProfileSyncData = async (
         type: audioFile.type,
         hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
         driveFileId: audioFile.driveFileIds?.[profileId],
+        // What we already know about where these bytes live. `markHostedAudio`
+        // adds whatever this run uploaded on top; without this, a run that
+        // could not upload published a blob claiming nothing was hosted.
+        serverHosted: audioFile.serverHosted || undefined,
       });
     } else {
       console.warn(
