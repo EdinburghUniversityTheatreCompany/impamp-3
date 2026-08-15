@@ -1,91 +1,174 @@
-# Plan: fix the whole-feature sync review
+# Plan: fix the whole-repo review
 
-Findings live in `plans/sync-review-2026-08-15.md` (43 of them, four seams).
-Work happens in `.worktrees/fix/sync-review` on branch `fix/sync-review`, cut
-from `main` at `fcf08fe` (which already contains the loudness merge).
+Findings live in `plans/repo-review-2026-08-15.md` — 15 🔴, ~60 🟡, ~12 🟢 across
+ten axes. Work happens in `.worktrees/fix/repo-review` on branch
+`fix/repo-review`, cut from `main` at `8ffc5e0`.
 
-Mick's decisions: **hash-key the blob** for group 1 rather than the targeted
-patch, and **one deploy at the end** rather than shipping the security group
-first. Both were made after I recommended the opposite on each, so they are
-deliberate.
+**Mick's decision:** fix everything **except S3** (`IMPAMP_ALLOWED_EMAILS` on the
+public host) — that one is his call on the allowed set and stays open.
 
-Verify each finding against the code before fixing it. Roughly one in eight on
-this branch has not survived contact, and twice this week a "cleaner" fix
-introduced something worse than the bug.
+## Standing rules for this plan
 
-## Phase 1 - hash-key the audio references (group 1)
+- **Verify each finding against the code before fixing it.** The review was
+  written by ten parallel agents; roughly one in eight findings on the last
+  branch of this size did not survive contact with the source.
+- **Test first where the finding is expressible as a test.** 🔴 P1, P2 and C2
+  explicitly are, and the modules they live in (`audio/controls.ts`, `db.ts`
+  duplication) have no unit tests at all. Write the failing test, watch it fail,
+  then fix.
+- **Green baseline at the start of every phase** (`npm test`) before touching
+  anything.
+- **One atomic commit per logical fix**, not one per phase.
+- **Do not refactor beyond the finding.** The review names several large splits
+  (`ProfileManager`, `profileStore`, `db.ts`, `importExport.ts`); those are
+  phases 10–11 and are deliberately last. Do not start them early because a
+  file is open.
+- The review's **"Verified clean"** section lists things that were checked and
+  hold. Do not "fix" those — notably `ProfileSyncPanel`/`useProfileSync`/
+  `syncStatusStore` (a good refactor; D4 is about two leaves it left behind, not
+  the trunk) and the audio buffer cache.
 
-The root cause behind three findings: `audioFiles[].id` is an IndexedDB
-autoincrement, so it means different audio on every device, and the merge
-translates _every_ pad through a map keyed by the sender's ids.
+## Phase 1 — playback races (🔴 P1, P2)
 
-Approach is **additive, not a replacement**, so no migration and no compat
-window:
+The worst failures in the app: ESC cannot stop a stranded track, and stopping
+one pad cancels another's pending trigger. Self-contained in `src/lib/audio/`.
 
-- the blob keeps `audioFiles[].id` and pads keep `audioFileIds`, so a client
-  running older code reads exactly what it reads today
-- pads gain `audioFileHashes`, and trim/gain gain hash-keyed twins
-- a reader that understands hashes uses them and skips id translation entirely,
-  which is what removes the class rather than narrowing it
-- a reader that does not falls back to today's path
+- [ ] 1.1 New `src/lib/audio/controls.test.ts` — failing tests for both races
+- [ ] 1.2 P1: claim the playback key before the first await; dispose any
+      displaced occupant (`playback.ts:314,495`, `controls.ts:317,510`)
+- [ ] 1.3 P2: per-key stop generations, one global reserved for `stopAllTracks`
+      (`playback.ts:32`, `controls.ts:465,492,558`)
 
-Done when: a merge between two devices whose numeric ids collide leaves every
-pad pointing at the sound it started with, proven by a test that fails without
-the change.
+**Done when:** both tests fail without the change and pass with it, and
+`stopAllTracks` provably reaches a track created during an in-flight trigger.
 
-- [ ] 1.1 Add the hash-keyed fields to `ProfileSyncData` and write them in
-      `getLocalProfileSyncData`
-- [ ] 1.2 Prefer hashes in `updateLocalData` / `resolveSyncedPadAudio`
-- [ ] 1.3 Stop `detectProfileConflicts` translating ids when hashes are present
-- [ ] 1.4 Give appended remote-only audio an id unused in the merged list
-      (finding 1b, still needed for the legacy path)
-- [ ] 1.5 Retire the "remap in three places" warning in CLAUDE.md if it no
-      longer holds
+## Phase 2 — the wire shape and the share-token leak (🔴 S1, 🟡 D1)
 
-## Phase 2 - stop sounds being dropped from pads (group 2)
+- [ ] 2.1 `src/lib/profileWire.ts` — one wire shape with an explicit field
+      allow-list, unit-tested
+- [ ] 2.2 Route `importExport.ts:1394`, `googleDrive/dataAccess.ts:121` and
+      `syncUtils.ts:319` through it; `serverShareToken` never serialised
+- [ ] 2.3 Collapse `ProfileExport` / `ProfileExportLean` / `ProfileSyncData`
+- [ ] 2.4 Regression test: an exported blob and a `GET /api/profiles/:id`
+      response contain no `serverShareToken`
 
-- [ ] 2.1 `resolveSyncedPadAudio` keeps local audio on _partial_ resolution
-      failure, not only when nothing resolved
-- [ ] 2.2 `serverAudio/transfer.ts` treats every throw as retryable, matching
-      the Drive downloader, instead of only `TypeError`
-- [ ] 2.3 Store `serverHosted` locally rather than re-deriving it each sync
-- [ ] 2.4 Download audio before the server conflict path returns, and stop
-      discarding `updateLocalData`'s warnings
+**Done when:** no serialiser can emit a share token, proven by a test per path.
 
-## Phase 3 - stop the merge deleting a new pad (group 3)
+## Phase 3 — sync correctness (🔴 C1, C3; 🟡 A5, A6, A7, D7, SV5)
 
-- [ ] 3.1 Decide "was this in the remote state I last saw" from the local
-      `_lastSyncTimestamp`, not the remote's last write by anyone
-- [ ] 3.2 Same for `pageMetadata`
+- [ ] 3.1 C1: exclude hash fields from `allFields`, re-derive after merge
+- [ ] 3.2 C3: hosted-audio branch in `importProfileFromSyncData`
+- [ ] 3.3 A6: unify the warning channel across both backends
+- [ ] 3.4 A5: server in-flight map keeps joiners' callbacks and replays SSE
+- [ ] 3.5 A7: key SSE subscriptions on profile+serverProfileId+shareToken
+- [ ] 3.6 D7: one `getHashlessIndex`; store hashes at import time
+- [ ] 3.7 SV5: `applyTransition` fails on paused, not only on error
 
-## Phase 4 - access control (group 4)
+## Phase 4 — pad-config invalidation and keyboard ownership (🔴 C4; 🟡 A8, A9, D6, UI5)
 
-- [ ] 4.1 Authorise an audio download against a grant, not against a blob the
-      caller wrote
-- [ ] 4.2 Re-check SSE authorisation, and give the stream a lifetime
-- [ ] 4.3 Run `cleanup` when `enqueue` fails, and when the signal is already
-      aborted
-- [ ] 4.4 Read the initial version after subscribing
+- [ ] 4.1 C4: `useKeyboardListener` consumes `usePadConfigurations`; delete
+      `padConfigsRef` and `reloadToken`
+- [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse
+- [ ] 4.3 A8: all three "overlay open" flags into `uiStore` behind
+      `isAnyOverlayOpen`
+- [ ] 4.4 A9: Delete-key handling moves into `useKeyboardListener`
+- [ ] 4.5 UI5: clear `emergencySoundsRef` at the top of `reloadEmergencySounds`
 
-## Phase 5 - stop the UI reporting success it did not observe (group 5)
+## Phase 5 — storage and import (🔴 C2; 🟡 ST1–ST6; TH2 first)
 
-- [ ] 5.1 `skipped` and `unchanged` stop being stamped as synced
-- [ ] 5.2 A joined sync gets its callbacks, so the card does not hang
-- [ ] 5.3 Background `activity`/`error` reach `syncStatusStore`
-- [ ] 5.4 `refreshSession` crosses hook instances
-- [ ] 5.5 The Drive mirror effect stops clobbering a recorded failure
-- [ ] 5.6 Server warnings reach the UI and stale ones clear
-- [ ] 5.7 A failed move out of local reports something
-- [ ] 5.8 Drive conflict resolution is awaited, checked, and clears the store
+- [ ] 5.1 TH2: tests for the ZIP path and `importImpamp2Profile` — 31 % of
+      `importExport.ts` with no coverage. **Before** any change to it.
+- [ ] 5.2 C2: `duplicateProfileLocally` uses `extractPadPlaybackSettings`
+- [ ] 5.3 ST2/ST3: import stamps sync bookkeeping; per-record failures surface
+- [ ] 5.4 ST4: ZIP import validates and caps
+- [ ] 5.5 ST1/ST5/ST6: orphan cleanup atomicity, wire-field filtering, page
+      read-modify-write races
 
-## Phase 6 - the rest (group 6)
+## Phase 6 — server security and hot paths (🔴 S2, R1, R5; 🟡 SV1–SV4, P2–P6, P10, P13, P14)
 
-Quota fast path, commit key extension, delete orphaning objects, the
-transaction/bucket ordering, `If-Match` rejecting its own ETag, recycled Google
-email, missing delete event, body size bound, and the `syncState` /
-`applyTransition` / `syncReconcile` gaps. Dead code last.
+- [ ] 6.1 S2: commit requires proof of possession, not just a known hash
+- [ ] 6.2 R1: relational `profile_audio(profile_id, hash)` — no whole-DB scan
+- [ ] 6.3 R5: `getProfileMeta` on the 304, DELETE and both SSE paths
+- [ ] 6.4 SV1–SV4: uncommitted-object sweep, admin flag on email match, Drive
+      proxy referer gate, presign TTL
+- [ ] 6.5 P2/P3: stringify once; splice the stored blob instead of parse+restringify
+- [ ] 6.6 P4/P5/P6/P10/P14: query and index fixes, statement cache
+
+## Phase 7 — network resilience and the N+1 sweep (🔴 R2, R4; 🟡 N1–N6, P11, P12)
+
+- [ ] 7.1 R2: one `fetchWithTimeout`; expiry on `inFlight` and `capability`;
+      service-worker timeout
+- [ ] 7.2 N1–N6: one `getAudioMetadataForProfile(profileId)` cursor helper
+      replaces all six `for (id of ids) await getAudioFile(id)` copies
+- [ ] 7.3 R4: `serverHosted` short-circuit, batched marking, bounded pool
+- [ ] 7.4 P11, P12
+
+## Phase 8 — loudness off the main thread (🔴 R3; 🟡 P9)
+
+- [ ] 8.1 Sliding-sum block loop (4× reduction, no accuracy change) — verify
+      against the existing `analyse.test.ts` expectations
+- [ ] 8.2 Worker for `analyseLoudness` + `computeHopTruePeak`
+- [ ] 8.3 Route every `analyseAndStore` through the coalescing queue
+- [ ] 8.4 P9: re-enable zip.js workers, or yield between entries
+
+## Phase 9 — connect flows and component 🔴s (🔴 U1, U2; 🟡 D2, D3, D4, D8, A3)
+
+- [ ] 9.1 U1: `/server/open` calls `useConnectServerProfile`
+- [ ] 9.2 D2: `useConnectDriveProfile()` — four copies collapse
+- [ ] 9.3 D3: `useGoogleSignIn()` — three copies collapse
+- [ ] 9.4 U2: `ProfileManagerHost` gate (kills the eager Drive Picker import)
+- [ ] 9.5 A3: `applyConflictResolutions` moves to `syncUtils.ts`, unit-tested
+- [ ] 9.6 D4, D8
+
+## Phase 10 — store and hook architecture (🟡 A1, A2, A4, A10–A14, UI1–UI4, UI6, UI7, D5)
+
+The big splits. Deliberately after all correctness work.
+
+- [ ] 10.1 A1: split `profileStore` (profile / auth / ui / settings / transfer)
+- [ ] 10.2 A2: `startSyncScheduler` out of `ClientSideInitializer`
+- [ ] 10.3 A4: `syncRequestQueue` drains
+- [ ] 10.4 A10: one `useAppLifecycle()`
+- [ ] 10.5 A11, A12, A13, A14
+- [ ] 10.6 UI1–UI4, UI6, UI7, D5
+
+## Phase 11 — audio subsystem and dead code (🟡 AU1–AU6; 🟢 L1–L7)
+
+- [ ] 11.1 AU1/AU2: delete the ~200 unreachable lines and the two fake
+      streaming decoders
+- [ ] 11.2 AU3, AU4, AU5, AU6
+- [ ] 11.3 L1: 18 dead exports · L2 barrels · L3 registry · L4 dead props ·
+      L5 unreachable UI · L6 stale comment · L7 the two TODOs
+
+## Phase 12 — test suite health (🔴 T1; 🟡 TH1, TH3–TH8)
+
+- [ ] 12.1 T1: `profiles.spec.ts:100` retargeted at `[data-testid="profile-card"]`
+- [ ] 12.2 TH6: the two missing `await`s
+- [ ] 12.3 TH4: drop the forbidden `{ timeout: 5000 }`
+- [ ] 12.4 TH5: `getArmedTrackNames` fails loudly
+- [ ] 12.5 TH3: replace the five load-bearing sleeps with positive signals
+- [ ] 12.6 TH8: adopt the existing helpers; extract the ten duplicated clusters
+- [ ] 12.7 TH7: rewrite the stale "known failures" table
+- [ ] 12.8 TH1: unit tests for the highest-risk untested modules
+
+## Phase 13 — infrastructure and docs (🔴 S4; 🟡 I1–I9; 🟢 L8–L12)
+
+- [ ] 13.1 S4: `.dockerignore` — `.worktrees/`, `certificates/`, `data/`, …
+- [ ] 13.2 I1 root user · I7 debug echo · I4 `Dockerfile.dev` Node 24 + widen
+      `check_version_sync.sh`
+- [ ] 13.3 I2/I3: re-pin actions, restore `check_action_refs.sh`
+- [ ] 13.4 I5: eslint + vitest in `hk.pkl` · I6: `npm audit` in CI + dependabot
+- [ ] 13.5 I8: single-instance note in `config/deploy.yml` · I9 patch bumps
+- [ ] 13.6 L8 doc drift (incl. the CLAUDE.md "Pinned Versions" contradiction and
+      the `Record<audioFileId,…>` five-sites correction) · L10 eslint config ·
+      L11, L12
+- [ ] 13.7 L9: **ask Mick** before deleting the ~850 KB of orphaned docs
 
 ## Then
 
-Full suites on the branch, merge to main, suites again on merged main, push
-(carries the loudness work too, which Mick has approved), watch CI, deploy.
+Full unit + chromium E2E on the branch, merge to main, suites again on merged
+main, push, watch CI.
+
+## Status
+
+- Started 2026-08-15. Nothing executed yet.
+- **Next step:** create the worktree, then Phase 1.1.
