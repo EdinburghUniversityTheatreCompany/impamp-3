@@ -152,6 +152,15 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 ### Testing Strategy
 
 - Vitest for unit/integration tests (`src/**/*.test.ts`), run with `npm test`
+- Vitest runs in the **node** environment, so there is no DOM and no
+  IndexedDB by default. A test that needs the database imports
+  `fake-indexeddb/auto`, assigns `globalThis.window` **before** importing
+  anything that reaches `db.ts` (it reads `window` as it evaluates, to decide
+  whether it is on a client), and therefore imports those modules dynamically.
+  `getDb` memoises its connection, so such a suite empties the object stores
+  between tests rather than swapping the database — which means autoIncrement
+  ids keep climbing, and assertions must key off an id the store handed back
+  rather than a literal. See `src/lib/googleDrive/dataAccess.gain.test.ts`
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
