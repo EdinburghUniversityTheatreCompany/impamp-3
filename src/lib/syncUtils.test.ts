@@ -199,3 +199,159 @@ describe("resolveSyncedPadAudio", () => {
     expect(result.keptLocal).toBe(false);
   });
 });
+
+/**
+ * Audio file ids are IndexedDB autoincrement keys, so id 3 means a different
+ * recording on every device. The merge used to translate ids on *every* pad
+ * through a map keyed by the sender's ids, which silently repointed pads the
+ * remote had never touched: local id 3 (a kick) came out as local id 7 (a
+ * snare), and the rewritten pad was then pushed to everyone else.
+ *
+ * Hashes mean the same thing everywhere, so a pad that says which hash it
+ * wants cannot be misread by whoever receives it.
+ */
+describe("detectProfileConflicts — audio references survive an id collision", () => {
+  const KICK = "hash-kick";
+  const SNARE = "hash-snare";
+
+  /** A pad naming its audio by both routes, as the blob now carries them. */
+  const pad = (
+    padIndex: number,
+    audioFileIds: number[],
+    audioFileHashes: (string | null)[],
+    modified = LAST_SYNC,
+  ) => ({
+    profileId: 1,
+    pageIndex: 0,
+    padIndex,
+    audioFileIds,
+    audioFileHashes,
+    playbackType: "sequential" as const,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    _modified: modified,
+    // Newer than the remote's last write, so the merge keeps it rather than
+    // raising a local-only conflict. That it has to be said at all is a
+    // separate bug, covered by its own test below.
+    _created: AFTER,
+  });
+
+  it("leaves a purely local pad pointing at the sound it started with", async () => {
+    // This device: 3 = kick, 7 = snare. The peer numbers *snare* 3, so the
+    // sender-keyed map is {3 -> 7} and the untouched local pad holding [3]
+    // used to come back holding [7].
+    const local: ProfileSyncData = {
+      ...syncData(profile()),
+      padConfigurations: [pad(0, [3], [KICK])],
+      audioFiles: [
+        { id: 3, name: "kick.wav", type: "audio/wav", hash: KICK },
+        { id: 7, name: "snare.wav", type: "audio/wav", hash: SNARE },
+      ],
+    };
+    const remote: ProfileSyncData = {
+      ...syncData(profile()),
+      padConfigurations: [pad(1, [3], [SNARE])],
+      audioFiles: [
+        { id: 3, name: "snare.wav", type: "audio/wav", hash: SNARE },
+      ],
+    };
+
+    const { mergedData } = await detectProfileConflicts(local, remote);
+
+    const localPad = mergedData.padConfigurations.find((p) => p.padIndex === 0);
+    expect(localPad?.audioFileHashes).toEqual([KICK]);
+  });
+
+  it("gives appended remote-only audio an id that is free in the merged list", async () => {
+    // Two entries sharing an id makes the blob ambiguous for every reader:
+    // updateLocalData builds its map in list order, so the second silently
+    // wins and pads resolve to the other recording.
+    const local: ProfileSyncData = {
+      ...syncData(profile()),
+      audioFiles: [{ id: 5, name: "kick.wav", type: "audio/wav", hash: KICK }],
+    };
+    const remote: ProfileSyncData = {
+      ...syncData(profile()),
+      audioFiles: [
+        { id: 5, name: "snare.wav", type: "audio/wav", hash: SNARE },
+      ],
+    };
+
+    const { mergedData } = await detectProfileConflicts(local, remote);
+
+    const ids = mergedData.audioFiles.map((f) => f.id);
+    expect(new Set(ids).size, "every audio entry needs its own id").toBe(
+      ids.length,
+    );
+  });
+});
+
+/**
+ * A pad you just made must survive its first sync.
+ *
+ * "Is this local item new?" was answered against the remote blob's last write
+ * *by anyone*, and every push stamps that, including a push that changed
+ * nothing. So a second device syncing first was enough to make your new pad
+ * look like something the remote had deleted: it became a manual conflict, the
+ * sync halted, the pad was left out of the merge, and the modal's "use remote"
+ * threw it away. Two devices and a periodic sync is all that takes.
+ */
+describe("detectProfileConflicts — a new local item survives", () => {
+  const newPad = (created: number) => ({
+    profileId: 1,
+    pageIndex: 0,
+    padIndex: 4,
+    name: "Just made",
+    audioFileIds: [],
+    playbackType: "sequential" as const,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    _created: created,
+    _modified: created,
+  });
+
+  it("keeps a pad created since this device last synced, even after a peer pushed", async () => {
+    const local: ProfileSyncData = {
+      ...syncData(profile()),
+      // This device last synced at LAST_SYNC, then made a pad.
+      _lastSyncTimestamp: LAST_SYNC,
+      padConfigurations: [newPad(AFTER)],
+    };
+    // The peer pushed later still, which is what used to condemn the pad.
+    const remote: ProfileSyncData = {
+      ...syncData(profile()),
+      _lastSyncTimestamp: LATER,
+      padConfigurations: [],
+    };
+
+    const { conflicts, mergedData } = await detectProfileConflicts(
+      local,
+      remote,
+    );
+
+    expect(
+      mergedData.padConfigurations.map((p) => p.padIndex),
+      "the new pad must reach the merge",
+    ).toEqual([4]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("still treats a pad the remote really deleted as a conflict", async () => {
+    // Created before this device's last sync, so the remote saw it and it is
+    // gone now: that is a deletion, and the user has to settle it.
+    const local: ProfileSyncData = {
+      ...syncData(profile()),
+      _lastSyncTimestamp: LATER,
+      padConfigurations: [newPad(LAST_SYNC)],
+    };
+    const remote: ProfileSyncData = {
+      ...syncData(profile()),
+      _lastSyncTimestamp: LATER,
+      padConfigurations: [],
+    };
+
+    const { conflicts } = await detectProfileConflicts(local, remote);
+
+    expect(conflicts.map((c) => c.type)).toEqual(["local_only"]);
+  });
+});

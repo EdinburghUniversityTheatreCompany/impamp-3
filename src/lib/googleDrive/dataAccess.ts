@@ -15,7 +15,11 @@ import {
   collectReferencedAudioFileIds,
   computeBlobHash,
 } from "@/lib/db";
-import { ProfileSyncData, resolveSyncedPadAudio } from "@/lib/syncUtils";
+import {
+  ProfileSyncData,
+  resolveSyncedPadAudio,
+  type SyncedPadConfiguration,
+} from "@/lib/syncUtils";
 import { base64ToBlob, remapPadSettingsOnImport } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
@@ -80,11 +84,39 @@ export const getLocalProfileSyncData = async (
     }
   }
 
+  // Say which sound each pad wants in terms that mean the same thing on every
+  // device. The id fields stay exactly as they were, so a client running older
+  // code reads what it always read; a client that understands hashes never has
+  // to work out whose ids these are, which is what the id path got wrong.
+  const hashById = new Map<number, string>();
+  for (const file of audioFiles) {
+    if (file.hash) hashById.set(file.id, file.hash);
+  }
+
+  const byHash = <T>(
+    settings: Record<number, T> | undefined,
+  ): Record<string, T> | undefined => {
+    if (!settings) return undefined;
+    const result: Record<string, T> = {};
+    for (const [id, value] of Object.entries(settings)) {
+      const hash = hashById.get(Number(id));
+      if (hash) result[hash] = value;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+
+  const syncedPads: SyncedPadConfiguration[] = padConfigurations.map((pad) => ({
+    ...pad,
+    audioFileHashes: pad.audioFileIds?.map((id) => hashById.get(id) ?? null),
+    audioTrimSettingsByHash: byHash(pad.audioTrimSettings),
+    audioGainSettingsByHash: byHash(pad.audioGainSettings),
+  }));
+
   return {
     _syncFormatVersion: 1,
     _lastSyncTimestamp: lastSyncTimestamp,
     profile: profile,
-    padConfigurations: padConfigurations,
+    padConfigurations: syncedPads,
     pageMetadata: pageMetadata,
     audioFiles: audioFiles,
   };
@@ -113,6 +145,25 @@ const findLocalAudioMatch = async (
   const nameMatches = await getByName(ref.name);
   if (nameMatches.length !== 1) return undefined;
   return nameMatches[0].hash ? undefined : nameMatches[0];
+};
+
+/**
+ * Re-key a hash-keyed settings map onto this device's audio ids.
+ *
+ * A hash with no local audio is dropped: keeping it would leave a setting
+ * attached to nothing, and there is no id to attach it to anyway.
+ */
+const keyByLocalId = <T>(
+  byHash: Record<string, T> | undefined,
+  localIdByHash: Map<string, number>,
+): Record<number, T> | undefined => {
+  if (!byHash) return undefined;
+  const result: Record<number, T> = {};
+  for (const [hash, value] of Object.entries(byHash)) {
+    const localId = localIdByHash.get(hash);
+    if (localId !== undefined) result[localId] = value;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 };
 
 /**
@@ -188,6 +239,10 @@ export const updateLocalData = async (
 
   // First, handle audio files import
   const audioIdMap = new Map<number, number>();
+  // The same answer keyed by content instead. A hash names one recording
+  // everywhere, so a pad that arrives naming hashes needs no translation and
+  // cannot be misread whoever wrote it.
+  const localIdByHash = new Map<string, number>();
   const hasAudioReferences = !!(data.audioFiles && data.audioFiles.length > 0);
 
   if (hasAudioReferences) {
@@ -259,6 +314,7 @@ export const updateLocalData = async (
 
       // Map original ID to new local ID
       audioIdMap.set(ref.id, newAudioId);
+      if (hash) localIdByHash.set(hash, newAudioId);
     }
 
     await audioTx.done;
@@ -340,6 +396,8 @@ export const updateLocalData = async (
           padWithProfileId.audioFileIds,
           audioIdMap,
           existing?.audioFileIds,
+          pad.audioFileHashes,
+          localIdByHash,
         );
 
         for (const syncedId of resolved.unresolved) {
@@ -362,6 +420,15 @@ export const updateLocalData = async (
           // different sound.
           padWithProfileId.audioTrimSettings = existing?.audioTrimSettings;
           padWithProfileId.audioGainSettings = existing?.audioGainSettings;
+        } else if (pad.audioTrimSettingsByHash || pad.audioGainSettingsByHash) {
+          padWithProfileId.audioTrimSettings = keyByLocalId(
+            pad.audioTrimSettingsByHash,
+            localIdByHash,
+          );
+          padWithProfileId.audioGainSettings = keyByLocalId(
+            pad.audioGainSettingsByHash,
+            localIdByHash,
+          );
         } else {
           padWithProfileId.audioTrimSettings = remapPadSettingsOnImport(
             padWithProfileId.audioTrimSettings,
