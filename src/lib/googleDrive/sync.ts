@@ -15,7 +15,7 @@ import {
   ensureAudioFileHash,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
-import { isReadOnlyForSync } from "@/lib/syncState";
+import { isReadOnlyForSync, mayAdoptDriveIds } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import {
   getLocalProfileSyncData,
@@ -286,6 +286,11 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
+  // Fetching the bytes is always fine — that is what the id is for. Recording
+  // the id as ours is not, when the folder belongs to whoever shared this.
+  const localProfile = await getProfile(profileId);
+  const adoptDriveIds = localProfile ? mayAdoptDriveIds(localProfile) : true;
+
   // Hashes for local files that predate hashing, built once and only if a
   // reference actually misses the hash index — the blobs are read one at a
   // time so the whole audio library never sits in memory at once.
@@ -322,6 +327,7 @@ export async function downloadMissingAudioFiles(
     if (existingFile) {
       // Backfill driveFileId for this profile if missing
       if (
+        adoptDriveIds &&
         !existingFile.driveFileIds?.[profileId] &&
         existingFile.id !== undefined
       ) {
@@ -349,7 +355,9 @@ export async function downloadMissingAudioFiles(
           name: ref.name,
           type: ref.type,
           hash: ref.hash,
-          driveFileIds: { [profileId]: ref.driveFileId },
+          driveFileIds: adoptDriveIds
+            ? { [profileId]: ref.driveFileId }
+            : undefined,
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       } else {

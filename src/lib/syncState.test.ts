@@ -5,6 +5,7 @@ import {
   getSyncState,
   isChoosablePair,
   isLegalPair,
+  mayAdoptDriveIds,
   syncChipText,
   syncTargetLabel,
   type SyncDefect,
@@ -573,5 +574,54 @@ describe("following", () => {
     });
     // Unfollowing would promise writes the server will refuse.
     expect(getSyncState(followedViewer, NOW).canUnfollow).toBe(false);
+  });
+});
+
+describe("mayAdoptDriveIds", () => {
+  // The blob names a Drive id for every sound that has one, so the bytes are
+  // fetchable by anyone with folder access. Writing those ids onto our own
+  // records claims something else — "already uploaded, by me" — and
+  // `uploadMissingAudioFiles` believes it.
+  it("lets a Drive-synced profile claim them: the folder is the one it syncs through", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({ syncType: "googleDrive", googleDriveFileId: "file-1" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("lets a server profile we own claim them", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "owner",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses them for a collaborator: the folder is the owner's", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "editor",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses them when the role is not yet known", () => {
+    // A profile written before `serverRole` existed. Not adopting costs
+    // nothing — downloads read the id straight from the blob — while adopting
+    // wrongly is what silently stops the next upload.
+    expect(
+      mayAdoptDriveIds(
+        profile({ syncType: "server", serverProfileId: "srv-1" }),
+      ),
+    ).toBe(false);
   });
 });

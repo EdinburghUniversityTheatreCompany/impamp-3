@@ -124,7 +124,7 @@ describe("POST /api/profiles", () => {
 });
 
 describe("GET /api/profiles/:id", () => {
-  it("returns the blob with the version as an ETag", async () => {
+  it("returns the blob with the version and access as an ETag", async () => {
     const owner = signIn(1);
     const profile = ownedProfile(owner);
 
@@ -135,12 +135,70 @@ describe("GET /api/profiles/:id", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("etag")).toBe('"1"');
+    expect(response.headers.get("etag")).toBe('"1.owner"');
     expect(body.data).toEqual(sampleData);
     expect(body.access).toBe("owner");
   });
 
-  it("answers 304 when the caller already has the current version", async () => {
+  it("answers 304 when the caller already has this exact representation", async () => {
+    const owner = signIn(1);
+    const profile = ownedProfile(owner);
+
+    const response = await getProfile(
+      makeRequest(`/api/profiles/${profile.id}`, {
+        sessionToken: owner.token,
+        headers: { "if-none-match": '"1.owner"' },
+      }),
+      routeParams({ id: profile.id }),
+    );
+
+    expect(response.status).toBe(304);
+  });
+
+  it("sends the body again when the caller's access has changed under it", async () => {
+    // The response states the caller's access, and a promotion changes it
+    // without touching the version. Keyed on the version alone, the promoted
+    // editor asked with the version it had, got 304 every time, and never
+    // learned it could write — while editing is gated on that same answer.
+    const owner = signIn(1);
+    const collaborator = signIn(2);
+    const profile = ownedProfile(owner);
+
+    upsertEmailShare(
+      profile.id,
+      collaborator.user.email,
+      "viewer",
+      owner.user.id,
+    );
+    const asViewer = await getProfile(
+      makeRequest(`/api/profiles/${profile.id}`, {
+        sessionToken: collaborator.token,
+      }),
+      routeParams({ id: profile.id }),
+    );
+    expect((await asViewer.json()).access).toBe("viewer");
+    const knownEtag = asViewer.headers.get("etag");
+    expect(knownEtag).toBe('"1.viewer"');
+
+    upsertEmailShare(
+      profile.id,
+      collaborator.user.email,
+      "editor",
+      owner.user.id,
+    );
+    const afterPromotion = await getProfile(
+      makeRequest(`/api/profiles/${profile.id}`, {
+        sessionToken: collaborator.token,
+        headers: { "if-none-match": knownEtag! },
+      }),
+      routeParams({ id: profile.id }),
+    );
+
+    expect(afterPromotion.status).toBe(200);
+    expect((await afterPromotion.json()).access).toBe("editor");
+  });
+
+  it("still answers with the body when an older client sends a bare version", async () => {
     const owner = signIn(1);
     const profile = ownedProfile(owner);
 
@@ -152,7 +210,9 @@ describe("GET /api/profiles/:id", () => {
       routeParams({ id: profile.id }),
     );
 
-    expect(response.status).toBe(304);
+    // A miss, not an error: it costs a body it might not have needed, which is
+    // the safe way for the two sides to disagree.
+    expect(response.status).toBe(200);
   });
 
   it("hides a profile the caller has no grant on, as 404 not 403", async () => {

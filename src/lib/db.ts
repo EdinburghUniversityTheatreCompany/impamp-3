@@ -1593,33 +1593,49 @@ export async function duplicateProfileLocally(
     activePadBehavior: source.activePadBehavior,
   });
 
-  const pads = await db
-    .transaction("padConfigurations")
-    .store.index("profileId")
-    .getAll(sourceProfileId);
-  for (const pad of pads) {
-    await upsertPadConfiguration({
-      profileId: newProfileId,
-      pageIndex: pad.pageIndex,
-      padIndex: pad.padIndex,
-      keyBinding: pad.keyBinding,
-      name: pad.name,
-      audioFileIds: [...(pad.audioFileIds ?? [])],
-      // The copy references the same audio, so the ids these are keyed by
-      // still mean the same sounds.
-      audioTrimSettings: pad.audioTrimSettings,
-      playbackType: pad.playbackType,
-      isDisabled: pad.isDisabled,
-    });
-  }
+  // The pads and pages go in one at a time, so a failure part-way — a pad row
+  // missing `playbackType`, a quota refusal — would otherwise leave a
+  // half-copied profile sitting in the list looking complete. There is no
+  // transaction spanning all of it, so undo it by hand instead.
+  try {
+    const pads = await db
+      .transaction("padConfigurations")
+      .store.index("profileId")
+      .getAll(sourceProfileId);
+    for (const pad of pads) {
+      await upsertPadConfiguration({
+        profileId: newProfileId,
+        pageIndex: pad.pageIndex,
+        padIndex: pad.padIndex,
+        keyBinding: pad.keyBinding,
+        name: pad.name,
+        audioFileIds: [...(pad.audioFileIds ?? [])],
+        // The copy references the same audio, so the ids these are keyed by
+        // still mean the same sounds.
+        audioTrimSettings: pad.audioTrimSettings,
+        playbackType: pad.playbackType,
+        isDisabled: pad.isDisabled,
+      });
+    }
 
-  for (const page of await getAllPageMetadataForProfile(sourceProfileId)) {
-    await upsertPageMetadata({
-      profileId: newProfileId,
-      pageIndex: page.pageIndex,
-      name: page.name,
-      isEmergency: page.isEmergency,
+    for (const page of await getAllPageMetadataForProfile(sourceProfileId)) {
+      await upsertPageMetadata({
+        profileId: newProfileId,
+        pageIndex: page.pageIndex,
+        name: page.name,
+        isEmergency: page.isEmergency,
+      });
+    }
+  } catch (error) {
+    // `deleteProfile` keeps audio that other profiles still reference, so
+    // this cannot take the original's sounds with it.
+    await deleteProfile(newProfileId).catch((cleanupError) => {
+      console.error(
+        `Could not remove the half-copied profile ${newProfileId}:`,
+        cleanupError,
+      );
     });
+    throw error;
   }
 
   return newProfileId;

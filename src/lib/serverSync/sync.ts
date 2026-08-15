@@ -245,6 +245,10 @@ async function pullMergePush(
   let remote = await fetchServerProfile(serverId, {
     shareToken,
     knownVersion: profile.serverVersion,
+    // What we currently believe our access to be. A profile that predates
+    // `serverRole` sends nothing and gets the full body, which is what fills
+    // it in.
+    knownAccess: profile.serverRole,
   });
 
   // 304: the server is where we left it. Local edits, if any, still need

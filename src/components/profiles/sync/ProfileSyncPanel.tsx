@@ -17,6 +17,7 @@ import type { AudioLocation, Profile, SyncType } from "@/lib/db";
 import { useModal } from "@/hooks/modal/useModal";
 import { useProfileStore } from "@/store/profileStore";
 import type { SyncDestination } from "@/lib/syncTransitions";
+import type { SyncDefect } from "@/lib/syncState";
 import SharingPanel from "@/components/profiles/SharingPanel";
 import ServerSharingPanel from "@/components/profiles/ServerSharingPanel";
 import SyncAxes from "./SyncAxes";
@@ -38,6 +39,7 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
   const updateProfile = useProfileStore((s) => s.updateProfile);
   const fetchProfiles = useProfileStore((s) => s.fetchProfiles);
   const setActiveProfileId = useProfileStore((s) => s.setActiveProfileId);
+  const activeProfileId = useProfileStore((s) => s.activeProfileId);
   const setEditMode = useProfileStore((s) => s.setEditMode);
   const setDeleteMoveMode = useProfileStore((s) => s.setDeleteMoveMode);
 
@@ -49,8 +51,10 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
     if (profile.id === undefined) return;
     await updateProfile(profile.id, { followOnly: following });
     // Editing is refused while following, and a mode left switched on would
-    // sit there doing nothing.
-    if (following) {
+    // sit there doing nothing. Both modes belong to the *active* profile, so
+    // only clear them when this card is that profile — otherwise following one
+    // profile kicks you out of editing an unrelated one.
+    if (following && profile.id === activeProfileId) {
       setEditMode(false);
       setDeleteMoveMode(false);
     }
@@ -176,8 +180,13 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
    * no fields is a no-op. The work is the effect, so run it directly, and say
    * so when there is nowhere to publish to at all.
    */
-  const publishTheSounds = async () => {
-    const home = bestAudioHome();
+  const publishTheSounds = async (defect?: SyncDefect) => {
+    // "This profile has no Drive folder" names the destination in the
+    // complaint. Answering it by moving the sounds to the server instead would
+    // overrule a choice the user made explicitly, on a button that promised
+    // only to carry it out.
+    const home =
+      defect === "audio-drive-without-folder" ? "googleDrive" : bestAudioHome();
     if (home === "local") {
       setRefusal(
         "There is nowhere to publish these sounds yet. Sign in with Google to use a Drive folder, or ask an admin to let this account store them on the server.",
@@ -242,7 +251,12 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
         editable either — the next sync would overwrite the changes — so the
         panel has to offer something better than a dead end.
       */}
-      {state.target !== "local" && (
+      {/*
+        `state.following` is part of the condition rather than implied by the
+        target: a follow that outlived its destination would otherwise render
+        no way out, and the profile refuses every edit until it is dropped.
+      */}
+      {(state.target !== "local" || state.following) && (
         <div className="space-y-2" data-testid="follow-controls">
           {state.canEdit ? (
             <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">

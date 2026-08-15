@@ -5,7 +5,9 @@ import { publishProfileChange } from "@/lib/server/events";
 import {
   loadAuthorizedProfile,
   parseProfileBody,
+  etagMatches,
   parseVersionHeader,
+  profileEtag,
   versionEtag,
 } from "@/lib/server/profileRequests";
 
@@ -30,11 +32,9 @@ export async function GET(
   if (loaded instanceof NextResponse) return loaded;
 
   const { profile, access } = loaded;
-  const etag = versionEtag(profile.version);
+  const etag = profileEtag(profile.version, access);
 
-  if (
-    parseVersionHeader(request.headers.get("if-none-match")) === profile.version
-  ) {
+  if (etagMatches(request.headers.get("if-none-match"), etag)) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag } });
   }
 

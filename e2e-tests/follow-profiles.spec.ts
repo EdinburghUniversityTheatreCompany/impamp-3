@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFile } from "fs/promises";
 import {
+  createTestAudioFilePath,
   gotoApp,
   openProfileManager,
   readActiveProfile,
@@ -133,6 +135,48 @@ test.describe("following a profile", () => {
     });
 
     await expect(page.getByText("EDIT MODE", { exact: true })).toHaveCount(0);
+  });
+
+  test("refuses a dropped sound, which needs no edit mode to land", async ({
+    page,
+  }) => {
+    // The Shift gates cover the edit modal, the delete/move mode and the
+    // banner. They do not cover this: dropping a file onto a pad writes a pad
+    // configuration in normal mode, with nothing switched on. On a followed
+    // profile the sound would be added and then destroyed by the next sync
+    // applying the remote state over it.
+    await gotoApp(page);
+    await seedActiveProfileSync(page, {
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    await page.reload();
+    await waitForAppReady(page);
+
+    const name = "RefusedDrop";
+    const wavPath = await createTestAudioFilePath(name, 1);
+    const wavBase64 = (await readFile(wavPath)).toString("base64");
+    const pad = page.locator('[id^="pad-"]').first();
+
+    const dataTransfer = await page.evaluateHandle(
+      ([fileName, b64]) => {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer();
+        dt.items.add(new File([bytes], fileName, { type: "audio/wav" }));
+        return dt;
+      },
+      [`${name}.wav`, wavBase64],
+    );
+
+    await pad.dispatchEvent("dragenter", { dataTransfer });
+    await pad.dispatchEvent("drop", { dataTransfer });
+
+    // The same drop on an editable profile lands within a second or two
+    // (see audio-playback.spec.ts), so an empty pad here is a refusal rather
+    // than a race.
+    await page.waitForTimeout(2_000);
+    await expect(pad).not.toContainText(name);
   });
 
   test("lets you edit again once you stop following", async ({ page }) => {

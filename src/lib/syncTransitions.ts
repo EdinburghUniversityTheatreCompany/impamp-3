@@ -170,7 +170,15 @@ export function planTransition(
   // flag inherited from a previous home no longer applies. Written explicitly
   // rather than left absent: an unset `readOnly` is exactly what lets a remote
   // blob decide the answer.
-  if (profile.syncType !== dest.target) fieldUpdates.readOnly = false;
+  //
+  // Following goes with it. It is a relationship with the copy that lived at
+  // the old destination, and carrying it to a new one leaves a profile that
+  // refuses every edit while following nothing — with no remote left whose
+  // permissions could ever release it.
+  if (profile.syncType !== dest.target) {
+    fieldUpdates.readOnly = false;
+    fieldUpdates.followOnly = false;
+  }
 
   // Nothing on the server path creates the folder, unlike a Drive sync.
   if (

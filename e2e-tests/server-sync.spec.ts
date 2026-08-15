@@ -8,6 +8,7 @@ import { E2E_SIGNIN_SECRET } from "../playwright.config";
 import {
   gotoApp,
   openProfileManager,
+  readActiveProfile,
   seedActiveProfileSync,
   waitForAppReady,
 } from "./test-helpers";
@@ -131,11 +132,13 @@ test.describe("server sync API", () => {
     const fetched = await request.get(`/api/profiles/${id}`, {
       headers: cookie,
     });
-    expect(fetched.headers()["etag"]).toBe('"1"');
+    // The GET tag carries the access as well as the version: the body states
+    // it, and a promotion changes it without moving the version.
+    expect(fetched.headers()["etag"]).toBe('"1.owner"');
 
     // Already current → 304 with no body, which is what keeps polling cheap.
     const unchanged = await request.get(`/api/profiles/${id}`, {
-      headers: { ...cookie, "if-none-match": '"1"' },
+      headers: { ...cookie, "if-none-match": '"1.owner"' },
     });
     expect(unchanged.status()).toBe(304);
 
@@ -651,7 +654,16 @@ test.describe("a follower does not write", () => {
 
     await page.reload();
     await waitForAppReady(page);
-    await page.waitForTimeout(3_000);
+
+    // Wait for evidence that a sync *completed* rather than for a fixed
+    // interval. `serverVersion` is unset until one does — it is written in the
+    // same step that decides not to push — so polling for it rules out the
+    // reading this test exists to avoid: passing because nothing ran.
+    await expect
+      .poll(async () => (await readActiveProfile(page)).serverVersion, {
+        timeout: 20_000,
+      })
+      .toBe(before);
 
     expect(
       await versionOf(request, cookie, id),

@@ -218,6 +218,27 @@ function detectDefects(
 export const isReadOnlyForSync = (profile: Profile): boolean =>
   Boolean(profile.readOnly) || Boolean(profile.followOnly);
 
+/**
+ * Whether Drive file ids arriving from a remote may be recorded as *ours*.
+ *
+ * The blob carries a Drive id for every sound that has one, so anyone with
+ * access to the folder can fetch it. Writing those ids onto our own audio
+ * records is a different claim: `uploadMissingAudioFiles` reads them as "this
+ * sound is already in my folder" and skips it. A server-synced collaborator
+ * who adopted the owner's ids and later moved their audio to Drive would
+ * upload nothing at all, and their blob would go on pointing into a folder
+ * they do not own — the borrowed-Drive-folder failure, one level down where
+ * `reconcileBorrowedDriveLinks` cannot see it.
+ *
+ * Drive-synced profiles are unaffected: the profile file lives in that same
+ * folder, so anyone syncing through it can reach and write to it.
+ */
+export function mayAdoptDriveIds(profile: Profile): boolean {
+  const { target, ownership } = getSyncState(profile);
+  if (target !== "server") return true;
+  return ownership === "owner";
+}
+
 export function getSyncState(profile: Profile, now = Date.now()): SyncState {
   const target = profile.syncType;
 
