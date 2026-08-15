@@ -1741,8 +1741,14 @@ export async function duplicateProfileLocally(
 
   const newProfileId = await addProfile({
     name,
+    // Deliberately local: a duplicate is a new thing, and inheriting where the
+    // original synced would have two profiles publishing to one destination.
     syncType: "local",
     activePadBehavior: source.activePadBehavior,
+    // Settings that change how the copy *sounds* or when it nags. A duplicate
+    // that normalises differently from its original is not a duplicate.
+    normalisation: source.normalisation,
+    backupReminderPeriod: source.backupReminderPeriod,
   });
 
   // The pads and pages go in one at a time, so a failure part-way — a pad row
@@ -1759,14 +1765,16 @@ export async function duplicateProfileLocally(
         profileId: newProfileId,
         pageIndex: pad.pageIndex,
         padIndex: pad.padIndex,
+        // The key binding belongs to the pad position, not to its contents,
+        // but a duplicate keeps the whole layout, so it comes along.
         keyBinding: pad.keyBinding,
-        name: pad.name,
-        audioFileIds: [...(pad.audioFileIds ?? [])],
-        // The copy references the same audio, so the ids these are keyed by
+        // Everything else comes through the helper rather than by hand. This
+        // used to list the fields it knew about and silently dropped
+        // `audioGainSettings` and `padGainDb`, so a duplicated profile played
+        // at a different level from the one it was copied from. The copy
+        // references the same audio rows, so the ids the settings are keyed by
         // still mean the same sounds.
-        audioTrimSettings: pad.audioTrimSettings,
-        playbackType: pad.playbackType,
-        isDisabled: pad.isDisabled,
+        ...extractPadPlaybackSettings(pad),
       });
     }
 
