@@ -137,6 +137,45 @@ export function userHoldsReference(userId: number, hash: string): boolean {
   );
 }
 
+/**
+ * Whether this sound could legitimately have been put on this profile.
+ *
+ * Access to the profile is necessary but not sufficient, because a caller
+ * writes their own profile's data: naming someone else's hash in a board you
+ * own used to be enough to be handed that sound. The blob is the caller's
+ * word; a reference row is the server's own record of who uploaded what.
+ *
+ * "Could have put it there" means the owner or one of the profile's editors
+ * holds it. Restricting it to the owner alone would refuse an owner the
+ * sounds their own collaborators added.
+ */
+export function profileMayServeHash(
+  profileId: string,
+  ownerId: number,
+  hash: string,
+): boolean {
+  return (
+    queryOne<{ one: number }>(
+      `SELECT 1 AS one
+         FROM audio_references r
+        WHERE r.hash = ?
+          AND (
+            r.user_id = ?
+            OR r.user_id IN (
+              SELECT u.id
+                FROM users u
+                JOIN profile_shares s ON s.email = lower(trim(u.email))
+               WHERE s.profile_id = ? AND s.role = 'editor'
+            )
+          )
+        LIMIT 1`,
+      hash,
+      ownerId,
+      profileId,
+    ) !== undefined
+  );
+}
+
 export type UploadDecision =
   | { allowed: true; alreadyStored: boolean }
   | {
@@ -175,8 +214,19 @@ export function canUpload({
   // Checked before the size ceiling on purpose: re-adding a sound the user
   // already holds changes nothing, and must not start failing because the
   // deployment lowered maxObjectBytes after they uploaded it.
+  //
+  // "Changes nothing" has to be verified, not assumed. A presigned PUT signs
+  // only `host`, so the holder can overwrite the object with something far
+  // larger and commit again; skipping the checks then let the new size be
+  // recorded straight past the ceiling and the quota, which is the very thing
+  // charging from the bucket at commit exists to prevent. A different size
+  // means different bytes, so it goes through the full decision.
   const existing = getAudioObject(hash);
-  if (existing && userHoldsReference(userId, hash)) {
+  if (
+    existing &&
+    existing.size_bytes === sizeBytes &&
+    userHoldsReference(userId, hash)
+  ) {
     return { allowed: true, alreadyStored: true };
   }
 

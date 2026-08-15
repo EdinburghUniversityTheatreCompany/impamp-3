@@ -12,7 +12,7 @@ import { closeDb, execute, getDb } from "@/lib/server/db";
 import { createSession } from "@/lib/server/session";
 import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createProfile } from "@/lib/server/profiles";
-import { createLinkShare } from "@/lib/server/shares";
+import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
 import { setObjectStoreForTests } from "@/lib/server/audioRequests";
 import {
   makeApiRequest as makeRequest,
@@ -511,6 +511,77 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("re-checks the quota when the bytes behind a held hash change", async () => {
+    // The presigned PUT signs only `host`, so a holder can replace the object
+    // with something far larger and commit again. Re-committing a hash you
+    // already hold skipped the size and quota checks entirely, while the
+    // recorded size was taken from the bucket — so the new size was billed
+    // straight past both limits.
+    const user = signIn(1, { approved: true });
+    const first = await storeAudio(user.token, "small", KB);
+    expect(first.status).toBe(200);
+
+    // Same key, far bigger bytes, then commit again.
+    const key = objectKeyForHash(first.hash!, "wav");
+    store.put(key, config.maxObjectBytes + KB, "audio/wav");
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: user.token,
+        body: {
+          hash: first.hash,
+          name: "small.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+    expect(response.status).not.toBe(200);
+  });
+
+  it("refuses a hash nobody who can publish here ever uploaded", async () => {
+    // The blob is the caller's own word. Anyone can create a profile and list
+    // any hash in it, so "the profile lists it" made this a fetch-by-hash
+    // service for the whole bucket — and meant revoking a share left the
+    // audio reachable, since the attacker kept the hashes they had seen.
+    const victim = signIn(1, { approved: true });
+    const attacker = signIn(2, { approved: true });
+    const { hash } = await storeAudio(victim.token, "secret", KB);
+
+    // The attacker's own profile, naming someone else's sound.
+    const theirs = profileWith(attacker.user.id, [hash!]);
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${theirs.id}/audio/${hash}`, {
+        sessionToken: attacker.token,
+      }),
+      routeParams({ id: theirs.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("still serves a sound an editor added to someone else's profile", async () => {
+    // The owner must not be refused audio their own collaborators uploaded,
+    // which is why the check is "anyone who can publish here", not "the owner".
+    const owner = signIn(1, { approved: true });
+    const editor = signIn(2, { approved: true });
+    const { hash } = await storeAudio(editor.token, "editors-sound", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+    upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+        sessionToken: owner.token,
+      }),
+      routeParams({ id: profile.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("refuses someone with no access to the profile at all", async () => {

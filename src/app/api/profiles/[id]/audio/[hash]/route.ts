@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAudioObject } from "@/lib/server/audio";
+import { getAudioObject, profileMayServeHash } from "@/lib/server/audio";
 import {
   audioHostingDisabled,
   notFound,
@@ -31,6 +31,21 @@ export async function GET(
   if (!hosting) return audioHostingDisabled();
 
   if (!profileReferencesHash(authorized.profile.data, hash)) return notFound();
+
+  // The blob is the caller's own word — anyone can create a profile and list
+  // any hash in it, which made this a fetch-by-hash service for the whole
+  // bucket, and meant revoking a share did not revoke the audio. This asks
+  // the server's own record instead: did someone who can publish to *this*
+  // profile actually upload this sound.
+  if (
+    !profileMayServeHash(
+      authorized.profile.id,
+      authorized.profile.owner_id,
+      hash,
+    )
+  ) {
+    return notFound();
+  }
 
   const object = getAudioObject(hash);
   if (!object) return notFound();
