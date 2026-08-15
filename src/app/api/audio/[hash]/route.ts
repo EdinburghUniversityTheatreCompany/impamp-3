@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getAudioObject,
+  hashIsUsedByAnyProfile,
   releaseReference,
+  storageKeyForHash,
   userHoldsReference,
 } from "@/lib/server/audio";
 import {
@@ -9,7 +11,6 @@ import {
   presignedDownloadResponse,
   requireAudioHosting,
 } from "@/lib/server/audioRequests";
-import { objectKeyForHash } from "@/lib/server/s3/client";
 import type { AudioObjectRow, UserRow } from "@/lib/server/db";
 
 /**
@@ -64,12 +65,37 @@ export async function DELETE(
   const object = loadHeldObject(hosting.user, hash);
   if (object instanceof NextResponse) return object;
 
+  // Letting go of the last reference deletes the bytes, and nothing used to
+  // ask whether a board still played them: an owner tidying their library
+  // could make their own live profile 404 on the sound it was still using.
+  if (hashIsUsedByAnyProfile(hash)) {
+    return NextResponse.json(
+      {
+        error:
+          "That sound is still used by a profile. Remove it from the profile first.",
+      },
+      { status: 409 },
+    );
+  }
+
   const { removed, orphaned } = releaseReference(hosting.user.id, hash);
   if (!removed) return notFound();
 
+  let objectDeleted = orphaned;
   if (orphaned) {
-    await hosting.store.remove(objectKeyForHash(hash, object.extension));
+    // The rows are already gone, so a throw here would 500 after the caller's
+    // allowance was freed and leave bytes nothing counts and no API can
+    // reach. Reported instead, so it is at least visible.
+    try {
+      await hosting.store.remove(storageKeyForHash(hash, object.extension));
+    } catch (error) {
+      objectDeleted = false;
+      console.error(
+        `Freed the reference to ${hash} but could not remove its bytes:`,
+        error,
+      );
+    }
   }
 
-  return NextResponse.json({ removed: true, objectDeleted: orphaned });
+  return NextResponse.json({ removed: true, objectDeleted });
 }

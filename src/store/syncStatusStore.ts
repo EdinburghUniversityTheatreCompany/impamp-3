@@ -33,8 +33,6 @@ export interface ProfileSyncStatus {
    */
   warnings: string[];
   lastSyncedAt: number | null;
-  /** A live change channel is connected. Only server sync has one. */
-  live: boolean;
   /**
    * A conflict waiting for a human, and the three versions it is between.
    *
@@ -58,7 +56,6 @@ export const IDLE_SYNC_STATUS: ProfileSyncStatus = Object.freeze({
   error: null,
   warnings: Object.freeze([]) as unknown as string[],
   lastSyncedAt: null,
-  live: false,
   conflicts: Object.freeze([]) as unknown as ItemConflict[],
   conflictData: null,
 });

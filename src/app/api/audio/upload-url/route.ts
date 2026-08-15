@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { canUpload, quotaForUser } from "@/lib/server/audio";
+import { canUpload, quotaForUser, storageKeyForHash } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
-import { objectKeyForHash } from "@/lib/server/s3/client";
 
 /**
  * POST /api/audio/upload-url — ask permission to upload one audio file.
@@ -43,7 +42,7 @@ export async function POST(request: NextRequest) {
 
   if (!decision.allowed) return uploadRefusal(decision);
 
-  const key = objectKeyForHash(fields.hash, fields.extension);
+  const key = storageKeyForHash(fields.hash, fields.extension);
 
   return NextResponse.json({
     key,

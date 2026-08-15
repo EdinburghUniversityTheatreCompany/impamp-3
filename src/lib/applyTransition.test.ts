@@ -148,8 +148,30 @@ describe("applyTransition", () => {
     expect(r.updateProfile).toHaveBeenCalledTimes(2);
     expect(r.updateProfile).toHaveBeenLastCalledWith(
       PROFILE_ID,
-      plan.rollbackTo,
+      expect.objectContaining(plan.rollbackTo),
     );
+  });
+
+  it("also takes back what the failed effect wrote", async () => {
+    // `adoptProfile` records `serverProfileId` itself, so it is in neither
+    // `fieldUpdates` nor `rollbackTo`. Rolling back only the planned fields
+    // left `syncType` at local while the profile still pointed at a live
+    // server copy — the split state this module exists to prevent, and one
+    // nothing detected afterwards.
+    const from = profile();
+    const plan = planTransition(from, { target: "server", audio: "local" });
+    const r = runner({
+      serverSyncNow: vi.fn().mockRejectedValue(new Error("server unreachable")),
+    });
+
+    await applyTransition(from, plan, r);
+
+    const [, restored] = (r.updateProfile as ReturnType<typeof vi.fn>).mock
+      .lastCall!;
+    expect(restored).toMatchObject({
+      serverProfileId: null,
+      serverVersion: null,
+    });
   });
 
   it("leaves the profile alone when the write itself fails", async () => {

@@ -119,6 +119,7 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
     syncProfile: syncServerProfile,
     isServerSignedIn,
     isCheckingSession,
+    serverUser,
   } = useServerSync();
 
   const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
@@ -144,7 +145,10 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
     });
   }, [profileId, state.target, driveStatus, driveError]);
 
-  const hostedAudio = useHostedAudioAvailability(isServerSignedIn);
+  const hostedAudio = useHostedAudioAvailability(
+    isServerSignedIn,
+    serverUser?.email ?? null,
+  );
 
   const availability = useMemo(
     () => ({
@@ -315,24 +319,41 @@ function onDriveTokenRefresh(token: TokenInfo): void {
  * flag, and the quota. `canHostAudio` caches for the session, so asking here
  * costs one request no matter how many profiles are on screen.
  */
-function useHostedAudioAvailability(isServerSignedIn: boolean): Availability {
+function useHostedAudioAvailability(
+  isServerSignedIn: boolean,
+  /** Whose answer this is. Two accounts get different answers. */
+  accountKey: string | null,
+): Availability {
   // Only the *answer* is state. The signed-out case is derived below, because
   // storing it would mean writing state synchronously inside an effect for a
   // value that is already a function of the props.
-  const [resolved, setResolved] = useState<Availability | null>(null);
+  const [resolved, setResolved] = useState<{
+    account: string | null;
+    value: Availability;
+  } | null>(null);
 
   useEffect(() => {
     if (!isServerSignedIn) return;
 
     let cancelled = false;
     void canHostAudio().then((ok) => {
-      if (!cancelled) setResolved(ok ? AVAILABLE : HOSTING_NOT_APPROVED);
+      if (!cancelled) {
+        setResolved({
+          account: accountKey,
+          value: ok ? AVAILABLE : HOSTING_NOT_APPROVED,
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [isServerSignedIn]);
+  }, [isServerSignedIn, accountKey]);
 
   if (!isServerSignedIn) return HOSTING_UNKNOWN;
-  return resolved ?? CHECKING;
+  // Whose answer it is, rather than merely whether we have one. An answer kept
+  // across an account switch offered hosted audio the new account is not
+  // approved for, and the move failed when it was taken.
+  return resolved && resolved.account === accountKey
+    ? resolved.value
+    : CHECKING;
 }

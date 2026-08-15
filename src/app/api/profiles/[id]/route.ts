@@ -131,6 +131,12 @@ export async function DELETE(
     );
   }
 
+  const { version } = loaded.profile;
   deleteProfile(id);
+  // Watchers were never told, so a collaborator's tab sat on a profile that no
+  // longer exists until something else made it look. The version is bumped
+  // past the last one they saw so the pull that follows is not a no-op; that
+  // pull 404s, which is how they find out.
+  publishProfileChange({ profileId: id, version: version + 1 });
   return NextResponse.json({ ok: true });
 }

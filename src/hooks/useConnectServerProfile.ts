@@ -75,11 +75,20 @@ export function useConnectServerProfile() {
         // owner's. Inheriting them used to make this device try to publish
         // audio into someone else's Drive folder. The sounds arrive by
         // download here.
-        { syncType: "server" },
+        //
+        // Imported as local, and made server-synced only once the id it
+        // belongs to is known. A crash between the two steps used to leave a
+        // profile typed "server" with no `serverProfileId`, and the next
+        // background sync reads exactly that as "adopt me": it created a
+        // *second* server profile rather than linking to the one that was
+        // opened, leaving the share link pointing at an orphan and a retry
+        // importing a duplicate.
+        { syncType: "local" },
       );
 
       const readOnly = payload.access === "viewer";
       await updateProfile(localProfileId, {
+        syncType: "server",
         serverProfileId,
         serverShareToken: shareToken,
         serverVersion: payload.version,

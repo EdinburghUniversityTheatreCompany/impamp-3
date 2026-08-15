@@ -178,7 +178,7 @@ function detectDefects(
   if (target === "googleDrive" && !profile.googleDriveFileId) {
     defects.push("drive-linked-but-no-file");
   }
-  if (target === "googleDrive" && profile.serverProfileId) {
+  if (target !== "server" && profile.serverProfileId) {
     defects.push("stale-server-link");
   }
   if (target === "local" && hasDriveIds) {
@@ -260,7 +260,11 @@ export function getSyncState(profile: Profile, now = Date.now()): SyncState {
 
   const ownership = resolveOwnership(profile, target);
   // What the remote permits, before any choice of ours.
-  const remoteReadOnly = Boolean(profile.readOnly);
+  // Only a remote can refuse writes, so a profile that syncs nowhere cannot
+  // be read-only. A leftover flag used to make one permanently uneditable,
+  // with `canUnfollow` false, no defect raised, and the UI explaining
+  // "view-only access" on a profile nobody else can even see.
+  const remoteReadOnly = target !== "local" && Boolean(profile.readOnly);
   const following = Boolean(profile.followOnly);
   const readOnly = remoteReadOnly || following;
 
@@ -346,9 +350,11 @@ export function syncChipText(
   relativeTime: string | null,
 ): string {
   const base = syncTargetLabel(state.target);
-  if (state.target === "local") return base;
 
+  // Before the local shortcut: `stale-drive-link` is defined precisely for a
+  // local profile, and was computed and then never shown on the card.
   if (state.defects.length > 0) return `${base} · needs attention`;
+  if (state.target === "local") return base;
   if (state.isViewerOfSomeoneElses) return `${base} · view only`;
   if (state.paused) return `${base} · paused`;
   // A steady state rather than an alert, but still the thing you most need to

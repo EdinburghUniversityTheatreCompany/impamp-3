@@ -513,6 +513,66 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(404);
   });
 
+  it("lets a second user host the same bytes under a different filename", async () => {
+    // Keys carry an extension, so identical audio named `kick.mp3` and `kick`
+    // produced two keys. The second uploader was told the bytes were already
+    // stored — the hash was known — handed no upload URL, and then 404'd at
+    // commit against a key nothing had written. They could never host it.
+    const first = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+    const stored = await storeAudio(first.token, "shared-bytes", KB);
+    expect(stored.status).toBe(200);
+
+    const askResponse = await uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: second.token,
+        body: {
+          hash: stored.hash,
+          sizeBytes: KB,
+          contentType: "audio/wav",
+          // Same bytes, no extension this time.
+          extension: "",
+        },
+      }),
+    );
+    expect(askResponse.status).toBe(200);
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: second.token,
+        body: {
+          hash: stored.hash,
+          name: "theirs.wav",
+          contentType: "audio/wav",
+          extension: "",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("refuses to delete a sound a profile is still using", async () => {
+    // Letting go of the last reference removed the bytes without asking
+    // whether a board still played them, so tidying your library could make
+    // your own live profile 404.
+    const owner = signIn(1, { approved: true });
+    const { hash } = await storeAudio(owner.token, "in-use", KB);
+    profileWith(owner.user.id, [hash!]);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: owner.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it("re-checks the quota when the bytes behind a held hash change", async () => {
     // The presigned PUT signs only `host`, so a holder can replace the object
     // with something far larger and commit again. Re-committing a hash you

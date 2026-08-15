@@ -23,6 +23,7 @@ import {
   transaction,
   type AudioObjectRow,
 } from "./db";
+import { objectKeyForHash } from "./s3/client";
 
 export interface AudioUsage {
   /** Bytes this user is charged for. */
@@ -174,6 +175,47 @@ export function profileMayServeHash(
       profileId,
     ) !== undefined
   );
+}
+
+/**
+ * The key an object lives under, honouring the extension it was *stored*
+ * with rather than the one this caller happens to be using.
+ *
+ * Keys are content-addressed but carry an extension, so the same bytes named
+ * `kick.mp3` and `kick` produced two different keys. The second uploader was
+ * told the bytes were already stored — true, the hash was known — handed no
+ * upload URL, and then 404'd at commit against a key nothing had ever written.
+ * They could never host that file.
+ */
+export function storageKeyForHash(
+  hash: string,
+  fallbackExtension: string,
+): string {
+  return objectKeyForHash(
+    hash,
+    getAudioObject(hash)?.extension ?? fallbackExtension,
+  );
+}
+
+/**
+ * Whether any stored profile still names this sound.
+ *
+ * Deleting from a library used to drop the bucket object the moment the last
+ * *reference* went, without asking whether a board still played it — so an
+ * owner tidying their library could make their own live profile 404.
+ */
+export function hashIsUsedByAnyProfile(hash: string): boolean {
+  for (const row of queryAll<{ data: string }>("SELECT data FROM profiles")) {
+    try {
+      const parsed = JSON.parse(row.data) as {
+        audioFiles?: { hash?: string }[];
+      };
+      if (parsed.audioFiles?.some((file) => file?.hash === hash)) return true;
+    } catch {
+      // A profile whose blob will not parse cannot be shown to reference it.
+    }
+  }
+  return false;
 }
 
 export type UploadDecision =

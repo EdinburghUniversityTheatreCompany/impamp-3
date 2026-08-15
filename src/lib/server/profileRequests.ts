@@ -41,15 +41,43 @@ export interface ProfileWriteBody {
   data: object;
 }
 
+/**
+ * The most a profile blob may be.
+ *
+ * Generous for a soundboard — the audio itself never travels this way, only
+ * names, hashes and pad layout — and small enough that one request cannot
+ * occupy the single instance this app runs as. There was no bound at all.
+ */
+const MAX_PROFILE_BODY_BYTES = 8 * 1024 * 1024;
+
 /** Validate the JSON body shared by profile create and update. */
 export async function parseProfileBody(
   request: NextRequest,
 ): Promise<ProfileWriteBody | NextResponse> {
+  const declaredLength = Number(request.headers.get("content-length") ?? "");
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_PROFILE_BODY_BYTES
+  ) {
+    return NextResponse.json(
+      { error: "That profile is too large to store" },
+      { status: 413 },
+    );
+  }
+
   let body: { name?: unknown; data?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Content-length can be absent or wrong, so the parsed size is what decides.
+  if (JSON.stringify(body.data ?? null).length > MAX_PROFILE_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "That profile is too large to store" },
+      { status: 413 },
+    );
   }
 
   if (typeof body.name !== "string" || !body.name.trim()) {
@@ -98,10 +126,17 @@ export function etagMatches(value: string | null, etag: string): boolean {
     .some((candidate) => candidate.trim().replace(/^W\//, "") === etag);
 }
 
-/** Parse `If-Match` / `If-None-Match`, tolerating weak and quoted forms. */
+/**
+ * Parse `If-Match` / `If-None-Match`, tolerating weak and quoted forms.
+ *
+ * A GET's ETag carries the access as well (`"5.owner"`), and feeding that
+ * straight back on a write answered 428 "an If-Match header is required" to a
+ * request that had sent one. The version is the part a write cares about, so
+ * take it and ignore the rest rather than making the two tags a trap.
+ */
 export function parseVersionHeader(value: string | null): number | null {
   if (!value) return null;
   const cleaned = value.trim().replace(/^W\//, "").replace(/^"|"$/g, "");
-  const version = Number(cleaned);
+  const version = Number(cleaned.split(".")[0]);
   return Number.isInteger(version) && version > 0 ? version : null;
 }

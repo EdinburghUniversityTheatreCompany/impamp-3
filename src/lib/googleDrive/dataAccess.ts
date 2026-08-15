@@ -394,7 +394,11 @@ export const updateLocalData = async (
       };
 
       // Translate the synced audio IDs into this device's IDs.
-      if (hasAudioReferences && padWithProfileId.audioFileIds?.length) {
+      // Per pad, not per blob. Gating on the blob having *any* audio entries
+      // meant a blob whose list came back empty skipped translation entirely
+      // and wrote the sender's raw ids into local pads, which is the "wrong
+      // sound" outcome this whole path exists to prevent.
+      if (padWithProfileId.audioFileIds?.length) {
         const existing = existingPadMap.get(key);
         const resolved = resolveSyncedPadAudio(
           padWithProfileId.audioFileIds,

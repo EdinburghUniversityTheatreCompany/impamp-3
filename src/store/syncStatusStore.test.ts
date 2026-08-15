@@ -46,9 +46,12 @@ describe("syncStatusStore", () => {
 
   it("keeps earlier fields when patching a later one", () => {
     syncStatusActions.noteSynced(1, 1_000);
-    syncStatusActions.patch(1, { live: true });
+    syncStatusActions.patch(1, { activity: "syncing" });
 
-    expect(read(1)).toMatchObject({ lastSyncedAt: 1_000, live: true });
+    expect(read(1)).toMatchObject({
+      lastSyncedAt: 1_000,
+      activity: "syncing",
+    });
   });
 
   it("clears the error when a sync completes", () => {

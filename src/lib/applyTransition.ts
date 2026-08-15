@@ -46,6 +46,27 @@ const message = (error: unknown): string =>
  * has to be read *before* the write nulls it, and a separate argument for it
  * is a thing a caller can forget.
  */
+/**
+ * Fields an effect may have written, so a rollback can take them back.
+ *
+ * Only ever nulls: this runs on the failure path, where the destination was
+ * not reached, so anything an effect recorded about it is now a lie.
+ */
+function effectFieldsToUndo(plan: TransitionPlan): Partial<Profile> {
+  const undo: Partial<Profile> = {};
+  if (plan.effects.includes("serverSyncNow")) {
+    undo.serverProfileId = null;
+    undo.serverVersion = null;
+  }
+  if (plan.effects.includes("ensureDriveFolder")) {
+    undo.googleDriveFolderId = null;
+  }
+  if (plan.effects.includes("driveSyncNow")) {
+    undo.googleDriveFileId = null;
+  }
+  return undo;
+}
+
 export async function applyTransition(
   profile: Profile,
   plan: TransitionPlan,
@@ -113,7 +134,17 @@ export async function applyTransition(
       }
 
       try {
-        await runner.updateProfile(profileId, plan.rollbackTo);
+        // Also clear what the *effects* wrote. `adoptProfile` sets
+        // `serverProfileId` and `serverVersion` itself, and `ensureDriveFolder`
+        // sets `googleDriveFolderId`, so none of them appear in `fieldUpdates`
+        // and none were in `rollbackTo`. A `local -> server` move failing after
+        // adoption rolled `syncType` back to local while the profile still
+        // pointed at a live server copy — the split state this module exists
+        // to prevent, and one nothing then reported.
+        await runner.updateProfile(profileId, {
+          ...effectFieldsToUndo(plan),
+          ...plan.rollbackTo,
+        });
       } catch (rollbackError) {
         warnings.push(
           `Could not undo the change either: ${message(rollbackError)}`,

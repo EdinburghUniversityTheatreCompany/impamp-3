@@ -66,6 +66,29 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
       return getUserById(existing.id)!;
     }
 
+    // The same address can come back under a new Google `sub` — a recycled
+    // Workspace account, or a person re-created after deletion. Inserting
+    // then threw UNIQUE on users.email, `establishSession` swallowed it, and
+    // that account silently never got server sync again, with only a server
+    // log to say why. The address is the identity people actually recognise,
+    // so the row moves to the new sub.
+    const byEmail = queryOne<UserRow>(
+      "SELECT * FROM users WHERE email = ?",
+      email,
+    );
+    if (byEmail) {
+      execute(
+        `UPDATE users SET google_sub = ?, name = ?, picture = ?, updated_at = ?
+          WHERE id = ?`,
+        identity.sub,
+        identity.name ?? null,
+        identity.picture ?? null,
+        now,
+        byEmail.id,
+      );
+      return getUserById(byEmail.id)!;
+    }
+
     const existingUsers = queryOne<{ count: number }>(
       "SELECT COUNT(*) AS count FROM users",
     )!;

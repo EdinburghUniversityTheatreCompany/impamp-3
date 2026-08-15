@@ -5,9 +5,9 @@ import {
   getUserUsage,
   quotaForUser,
   recordUpload,
+  storageKeyForHash,
 } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
-import { objectKeyForHash } from "@/lib/server/s3/client";
 
 /**
  * POST /api/audio/commit — confirm an upload landed, and start charging for it.
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "A name is required" }, { status: 400 });
   }
 
-  const key = objectKeyForHash(fields.hash, fields.extension);
+  const key = storageKeyForHash(fields.hash, fields.extension);
 
   const stored = await store.head(key);
   if (!stored) {
@@ -59,6 +59,15 @@ export async function POST(request: NextRequest) {
       await store.remove(key).catch(() => {
         // Best effort: the accounting refusal is what matters to the caller.
       });
+      // A commit of the same hash can land between that check and this line,
+      // in which case the bytes someone else just paid for have gone. Nothing
+      // here can undo it, so make it loud enough to notice and re-upload
+      // rather than a silent 404 for whoever committed.
+      if (getAudioObject(fields.hash)) {
+        console.error(
+          `Removed ${key} while refusing an upload, but another commit recorded that hash in the meantime — its bytes are gone.`,
+        );
+      }
     }
     return uploadRefusal(decision);
   }
