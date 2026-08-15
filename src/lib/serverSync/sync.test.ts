@@ -41,7 +41,8 @@ vi.mock("@/lib/googleDrive/sync", () => driveMocks);
 vi.mock("./api", () => apiMocks);
 vi.mock("@/lib/serverAudio/transfer", () => serverAudioMocks);
 
-const { syncServerProfile } = await import("./sync");
+const { syncServerProfile, applyServerConflictResolution } =
+  await import("./sync");
 const { VersionConflictError } = await import("./types");
 
 const PROFILE_ID = 1;
@@ -112,11 +113,33 @@ function syncData(padName: string, modifiedAt: number): ProfileSyncData {
   };
 }
 
+/**
+ * Both sides changed the same pad name since the other's last sync, which is
+ * the only thing the merge calls a real conflict.
+ */
+function stageConflict() {
+  const local = syncData("local pad", AFTER_SYNC);
+  const remote = syncData("remote pad", AFTER_SYNC + 1000);
+
+  dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(local);
+  apiMocks.fetchServerProfile.mockResolvedValue({
+    id: SERVER_ID,
+    name: "Panto",
+    version: 5,
+    updatedAt: 0,
+    access: "editor",
+    data: remote,
+  });
+
+  return { local, remote };
+}
+
 const callbacks = () => ({
   onStatusChange: vi.fn(),
   onError: vi.fn(),
   onWarnings: vi.fn(),
   onConflictsDetected: vi.fn(),
+  onConflictDataAvailable: vi.fn(),
 });
 
 beforeEach(() => {
@@ -217,9 +240,10 @@ describe("syncServerProfile", () => {
       5,
       null,
     );
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 6,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 6 }),
+    );
   });
 
   it("still pushes local edits when the server answers 304", async () => {
@@ -264,9 +288,10 @@ describe("syncServerProfile", () => {
     expect(apiMocks.pushServerProfile).toHaveBeenCalledTimes(2);
     // The retry is based on the version that beat us, not the one we pulled.
     expect(apiMocks.pushServerProfile.mock.calls[1][3]).toBe(6);
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 7,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 7 }),
+    );
   });
 
   it("gives up after repeated races rather than looping forever", async () => {
@@ -306,10 +331,15 @@ describe("syncServerProfile", () => {
     expect(result.status).toBe("success");
     expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
     expect(dataAccessMocks.updateLocalData).toHaveBeenCalledOnce();
-    expect(dbMocks.updateProfile).toHaveBeenCalledWith(PROFILE_ID, {
-      serverVersion: 5,
-      readOnly: true,
-    });
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({
+        serverVersion: 5,
+        readOnly: true,
+        // Written back every sync, so a promotion to editor actually lands.
+        serverRole: "viewer",
+      }),
+    );
   });
 
   it("postpones rather than dropping pads when audio can't be fetched", async () => {
@@ -359,19 +389,7 @@ describe("syncServerProfile", () => {
   });
 
   it("surfaces a genuine conflict instead of guessing", async () => {
-    // Both sides changed the same pad name since their last sync.
-    const local = syncData("local pad", AFTER_SYNC);
-    const remote = syncData("remote pad", AFTER_SYNC + 1000);
-
-    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(local);
-    apiMocks.fetchServerProfile.mockResolvedValue({
-      id: SERVER_ID,
-      name: "Panto",
-      version: 5,
-      updatedAt: 0,
-      access: "editor",
-      data: remote,
-    });
+    stageConflict();
 
     const cbs = callbacks();
     const result = await syncServerProfile(PROFILE_ID, cbs);
@@ -379,6 +397,28 @@ describe("syncServerProfile", () => {
     expect(result.status).toBe("conflict");
     expect(cbs.onConflictsDetected).toHaveBeenCalled();
     expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+  });
+
+  it("hands over the three versions a human needs to settle it", async () => {
+    // The list of conflicts alone had no consumer, and the error string it
+    // set was a red line with nothing to click — so a server conflict simply
+    // stopped the profile converging.
+    const { local, remote } = stageConflict();
+
+    const cbs = callbacks();
+    await syncServerProfile(PROFILE_ID, cbs);
+
+    expect(cbs.onConflictDataAvailable).toHaveBeenCalledOnce();
+    const handed = cbs.onConflictDataAvailable.mock.calls[0][0];
+    expect(handed.local).toEqual(local);
+    expect(handed.remote).toEqual(remote);
+    // The version the push must be checked against, so a third writer landing
+    // in between is refused rather than silently overwritten.
+    expect(handed.origin).toEqual({
+      kind: "server",
+      serverProfileId: SERVER_ID,
+      version: 5,
+    });
   });
 
   it("shares one in-flight run between concurrent callers", async () => {
@@ -502,5 +542,220 @@ describe("syncServerProfile — warnings are not errors", () => {
     });
 
     expect(cbs.onStatusChange).toHaveBeenLastCalledWith("success");
+  });
+});
+
+/**
+ * `audioLocation` is the user's instruction about where their sounds go, and
+ * until now nothing read it: Drive uploads happened whenever a folder existed,
+ * and hosted uploads whenever the account was approved. Both are now gated on
+ * the answer.
+ */
+/**
+ * Following is our decision, and the server knows nothing about it. Gating the
+ * push on the server's answer alone let a follower keep writing to a profile it
+ * was allowed to write to — the one thing following promises not to do.
+ */
+describe("syncServerProfile — following holds the push back", () => {
+  beforeEach(() => {
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+  });
+
+  it("does not push a followed profile, even as its editor", async () => {
+    dbMocks.getProfile.mockResolvedValue(localProfile({ followOnly: true }));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+    // Still receives: that is the half a follower is promised.
+    expect(dataAccessMocks.updateLocalData).toHaveBeenCalledOnce();
+    expect(result.status).toBe("success");
+  });
+
+  it("does not mistake following for the server refusing writes", async () => {
+    // `readOnly` is the server's answer. Writing our preference into it would
+    // survive unfollowing and lock the profile out of editing.
+    dbMocks.getProfile.mockResolvedValue(localProfile({ followOnly: true }));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ readOnly: false, serverRole: "editor" }),
+    );
+  });
+
+  it("still pushes a profile nobody has followed", async () => {
+    dbMocks.getProfile.mockResolvedValue(localProfile());
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("remote pad", BEFORE_SYNC),
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledOnce();
+  });
+});
+
+describe("syncServerProfile — where the sounds are published", () => {
+  const withDrive = {
+    tokenInfo: { accessToken: "t", refreshToken: null, expiresAt: 0 },
+    onTokenRefresh: () => {},
+  };
+
+  const owning = (audioLocation: string | undefined) =>
+    localProfile({
+      serverRole: "owner",
+      googleDriveFolderId: "folder-1",
+      ...(audioLocation === undefined ? {} : { audioLocation }),
+    } as Partial<Profile>);
+
+  beforeEach(() => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+  });
+
+  it("publishes to Drive when that is where the sounds live", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("googleDrive"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).toHaveBeenCalledOnce();
+    expect(serverAudioMocks.uploadProfileAudio).not.toHaveBeenCalled();
+  });
+
+  it("publishes to the server when that is where the sounds live", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("server"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+    expect(serverAudioMocks.uploadProfileAudio).toHaveBeenCalledOnce();
+  });
+
+  it("publishes nowhere when the sounds are meant to stay put", async () => {
+    dbMocks.getProfile.mockResolvedValue(owning("local"));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.uploadMissingAudioFiles).not.toHaveBeenCalled();
+    expect(serverAudioMocks.uploadProfileAudio).not.toHaveBeenCalled();
+  });
+
+  it("keeps hosting for a profile that predates the setting", async () => {
+    // Hosted audio leaves no local trace, so an unset value cannot be read as
+    // "not hosted" — doing so would silently stop uploads for every approved
+    // account already relying on them.
+    dbMocks.getProfile.mockResolvedValue(owning(undefined));
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(serverAudioMocks.uploadProfileAudio).toHaveBeenCalledOnce();
+  });
+
+  it("still downloads from both backends whatever the setting says", async () => {
+    // A collaborator must fetch whatever the owner published, regardless of
+    // where this device would put its own sounds.
+    dbMocks.getProfile.mockResolvedValue(owning("local"));
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: {
+        ...syncData("remote pad", BEFORE_SYNC),
+        audioFiles: [
+          { id: 1, name: "horn.mp3", type: "audio/mpeg", driveFileId: "d1" },
+        ],
+      },
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(driveMocks.downloadMissingAudioFiles).toHaveBeenCalled();
+    expect(serverAudioMocks.downloadProfileAudio).toHaveBeenCalled();
+  });
+});
+
+describe("applyServerConflictResolution", () => {
+  const origin = {
+    kind: "server" as const,
+    serverProfileId: SERVER_ID,
+    version: 5,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.updateProfile.mockResolvedValue(undefined);
+    dataAccessMocks.updateLocalData.mockResolvedValue([]);
+  });
+
+  it("pushes the chosen version and records the new one", async () => {
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+    const resolved = syncData("resolved pad", AFTER_SYNC);
+
+    const result = await applyServerConflictResolution(
+      PROFILE_ID,
+      resolved,
+      origin,
+    );
+
+    expect(result.status).toBe("success");
+    // Pushed *at the version the conflict was against*, so a third writer who
+    // landed while the user was choosing is refused, not overwritten.
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledWith(
+      SERVER_ID,
+      resolved.profile.name,
+      resolved,
+      5,
+    );
+    expect(dataAccessMocks.updateLocalData).toHaveBeenCalledWith(
+      PROFILE_ID,
+      resolved,
+    );
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 6 }),
+    );
+  });
+
+  it("explains a lost race instead of applying anything", async () => {
+    apiMocks.pushServerProfile.mockRejectedValue(
+      new VersionConflictError(7, "Panto", syncData("theirs", AFTER_SYNC)),
+    );
+
+    const result = await applyServerConflictResolution(
+      PROFILE_ID,
+      syncData("mine", AFTER_SYNC),
+      origin,
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.status === "error" && result.error).toMatch(
+      /Someone else saved/,
+    );
+    expect(dataAccessMocks.updateLocalData).not.toHaveBeenCalled();
   });
 });

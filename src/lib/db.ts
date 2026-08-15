@@ -48,7 +48,15 @@ export interface Profile {
   // The user's intent for this profile's audio. Absent on rows written before
   // this existed; `getSyncState` infers a value for those.
   audioLocation?: AudioLocation | null;
-  readOnly?: boolean; // If true, sync only downloads from Drive, never uploads
+  // What the *remote* allows: reconciled from Drive folder capabilities and
+  // from the server's reported access on every sync, so it is a fact about
+  // permission rather than a preference.
+  readOnly?: boolean; // If true, sync only downloads, never uploads
+  // Your own decision to follow this profile rather than contribute to it.
+  // Deliberately separate from `readOnly`, which the Drive reconciler
+  // overwrites in both directions — a preference stored there is cleared by
+  // the next sync of any folder you happen to have write access to.
+  followOnly?: boolean;
   activePadBehavior?: ActivePadBehavior;
   syncPausedUntil?: number; // Timestamp when sync should resume (null/undefined if not paused)
   lastBackedUpAt: number;
@@ -983,6 +991,7 @@ const BACKUP_ONLY_FIELDS = new Set([
   "serverShareToken",
   "serverRole",
   "readOnly",
+  "followOnly",
 ]);
 
 // Records restored from sync payloads can carry ISO strings rather than Dates,
@@ -1554,4 +1563,80 @@ export async function replaceMissingAudioFile(
 // Only initialize the database on the client side
 if (isClient) {
   getDb().catch(console.error);
+}
+
+/**
+ * Copy a profile into a fresh local one.
+ *
+ * The way out for someone looking at a board they cannot change: a viewer of
+ * a shared profile could otherwise only look at it, never build on it.
+ *
+ * Audio is *referenced*, not copied. Pads already point at audio files by id
+ * and those files are shared across profiles — that is how the orphan scan
+ * counts references — so a copy is instant and costs no storage, where
+ * re-importing would re-download every sound.
+ *
+ * The copy is deliberately local and unlinked: it is yours, and connecting it
+ * anywhere is a separate decision.
+ */
+export async function duplicateProfileLocally(
+  sourceProfileId: number,
+  name: string,
+): Promise<number> {
+  const db = await getDb();
+  const source = await db.get("profiles", sourceProfileId);
+  if (!source) throw new Error(`Profile ${sourceProfileId} not found.`);
+
+  const newProfileId = await addProfile({
+    name,
+    syncType: "local",
+    activePadBehavior: source.activePadBehavior,
+  });
+
+  // The pads and pages go in one at a time, so a failure part-way — a pad row
+  // missing `playbackType`, a quota refusal — would otherwise leave a
+  // half-copied profile sitting in the list looking complete. There is no
+  // transaction spanning all of it, so undo it by hand instead.
+  try {
+    const pads = await db
+      .transaction("padConfigurations")
+      .store.index("profileId")
+      .getAll(sourceProfileId);
+    for (const pad of pads) {
+      await upsertPadConfiguration({
+        profileId: newProfileId,
+        pageIndex: pad.pageIndex,
+        padIndex: pad.padIndex,
+        keyBinding: pad.keyBinding,
+        name: pad.name,
+        audioFileIds: [...(pad.audioFileIds ?? [])],
+        // The copy references the same audio, so the ids these are keyed by
+        // still mean the same sounds.
+        audioTrimSettings: pad.audioTrimSettings,
+        playbackType: pad.playbackType,
+        isDisabled: pad.isDisabled,
+      });
+    }
+
+    for (const page of await getAllPageMetadataForProfile(sourceProfileId)) {
+      await upsertPageMetadata({
+        profileId: newProfileId,
+        pageIndex: page.pageIndex,
+        name: page.name,
+        isEmergency: page.isEmergency,
+      });
+    }
+  } catch (error) {
+    // `deleteProfile` keeps audio that other profiles still reference, so
+    // this cannot take the original's sounds with it.
+    await deleteProfile(newProfileId).catch((cleanupError) => {
+      console.error(
+        `Could not remove the half-copied profile ${newProfileId}:`,
+        cleanupError,
+      );
+    });
+    throw error;
+  }
+
+  return newProfileId;
 }

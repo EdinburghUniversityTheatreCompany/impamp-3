@@ -189,6 +189,8 @@ export function buildImportedProfileFields(
     googleDriveFileId: link.googleDriveFileId ?? null,
     googleDriveFolderId: link.googleDriveFolderId ?? null,
     activePadBehavior: donor.activePadBehavior,
+    // Following is a decision about this device, never inherited.
+    followOnly: false,
     // Importing is not backing up, but it does mean a copy exists elsewhere,
     // so the clock starts now rather than at the donor's last backup.
     lastBackedUpAt: now.getTime(),

@@ -8,6 +8,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { applySyncedProfile } from "./applySyncedProfile";
+import { syncStatusActions } from "@/store/syncStatusStore";
 
 // Import from our modular structure
 import {
@@ -367,7 +368,19 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       const result = await syncProfile(
         profileId,
         getFreshTokenInfo(),
-        callbacks,
+        {
+          ...callbacks,
+          // Bound to this profile, so a conflict found by the scheduled sync
+          // reaches the card holding a different hook instance.
+          onConflictsDetected: (conflicts) => {
+            setConflicts(conflicts);
+            syncStatusActions.patch(profileId, { conflicts });
+          },
+          onConflictDataAvailable: (conflictData) => {
+            setConflictData(conflictData);
+            syncStatusActions.patch(profileId, { conflictData });
+          },
+        },
         handleTokenRefresh,
       );
       if (result.status === "success") {

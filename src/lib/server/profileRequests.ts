@@ -68,9 +68,34 @@ export async function parseProfileBody(
   return { name: body.name.trim(), data: body.data as object };
 }
 
-/** The version a profile is at, in ETag form. */
+/** The version a profile is at, in ETag form. Used by `If-Match` on writes. */
 export function versionEtag(version: number): string {
   return `"${version}"`;
+}
+
+/**
+ * The ETag for a GET, which covers the access as well as the version.
+ *
+ * The version alone was wrong twice over. As HTTP, it gave one ETag to two
+ * different bodies — the response carries `access`, and promoting a viewer to
+ * editor changes it without touching the version. As behaviour, it was worse:
+ * the promoted editor's device asked with the version it already had, got a
+ * 304 every time, and never learned it had been promoted. Editing is gated on
+ * that answer now, so it stayed locked out of a profile it was invited to
+ * work on until somebody else happened to make an edit.
+ *
+ * An older client sending a bare version simply misses and gets a full body.
+ */
+export function profileEtag(version: number, access: string): string {
+  return `"${version}.${access}"`;
+}
+
+/** Whether an `If-None-Match` header names this exact representation. */
+export function etagMatches(value: string | null, etag: string): boolean {
+  if (!value) return false;
+  return value
+    .split(",")
+    .some((candidate) => candidate.trim().replace(/^W\//, "") === etag);
 }
 
 /** Parse `If-Match` / `If-None-Match`, tolerating weak and quoted forms. */

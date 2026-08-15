@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   gotoApp,
   openProfileManager,
+  readActiveProfile,
   seedActiveProfileSync,
   waitForAppReady,
 } from "./test-helpers";
@@ -40,11 +41,12 @@ test.describe("the sync status chip", () => {
     );
   });
 
-  test("a server profile with no Drive folder admits its sounds go nowhere", async ({
+  test("calls out a synced profile whose sounds reach nobody", async ({
     page,
   }) => {
     // The state that was completely invisible before: server-synced, so it
-    // looks shared, but nothing publishes the audio.
+    // looks shared, but nothing publishes the audio. It is no longer offered
+    // as a choice, so the chip's job is to say something is wrong.
     await openPanelWith(page, {
       syncType: "server",
       serverProfileId: "srv-1",
@@ -53,8 +55,27 @@ test.describe("the sync status chip", () => {
     });
 
     await expect(page.getByTestId("sync-status-chip").first()).toHaveText(
-      /ImpAmp server.*sounds stay on this device/,
+      /needs attention/,
     );
+    await expect(
+      page
+        .getByTestId("sync-defect-banner")
+        .locator('[data-defect="audio-reaches-nobody"]'),
+    ).toContainText(/silent everywhere else/);
+    await expect(page.getByTestId("fix-audio-reaches-nobody")).toBeVisible();
+  });
+
+  test("does not offer to keep the sounds here on a profile that syncs", async ({
+    page,
+  }) => {
+    await openPanelWith(page, {
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "owner",
+      audioLocation: "server",
+    });
+
+    await expect(page.getByTestId("audio-location-local")).toHaveCount(0);
   });
 
   test("a profile needing attention says so rather than a sync time", async ({
@@ -126,7 +147,8 @@ test.describe("the two axes", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
     });
 
     const hosted = page.getByTestId("audio-location-server");
@@ -191,7 +213,8 @@ test.describe("controls", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
     });
 
     await expect(page.getByTestId("sync-now")).toBeVisible();
@@ -211,7 +234,7 @@ test.describe("controls", () => {
       syncType: "server",
       serverProfileId: "srv-1",
       serverRole: "owner",
-      audioLocation: "local",
+      audioLocation: "server",
     });
 
     await page.getByTestId("sync-pause").click();
@@ -221,5 +244,103 @@ test.describe("controls", () => {
     await expect(page.getByTestId("sync-status-chip").first()).toHaveText(
       /paused/,
     );
+  });
+});
+
+/**
+ * Moving a profile between sync states.
+ *
+ * The old UI could only move a profile one way. "Sync to Google Drive"
+ * rendered on server-synced profiles too and wrote `syncType` without clearing
+ * `serverProfileId`, so the profile stopped syncing to the server while still
+ * claiming to live there — and the route back required `syncType === "local"`,
+ * which it no longer was. There was no Drive → server path at all.
+ */
+test.describe("changing where a profile syncs", () => {
+  test("the axis is how you turn syncing on", async ({ page }) => {
+    await openPanelWith(page, { syncType: "local", audioLocation: "local" });
+
+    // Drive is unavailable while signed out, so its radio is disabled rather
+    // than missing — the user can see the option and why they can't take it.
+    const drive = page
+      .getByTestId("sync-target-googleDrive")
+      .getByRole("radio");
+    await expect(drive).toBeDisabled();
+    await expect(
+      page.getByTestId("sync-target-local").getByRole("radio"),
+    ).toBeChecked();
+  });
+
+  test("a viewer cannot move someone else's profile", async ({ page }) => {
+    await openPanelWith(page, {
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverShareToken: "tok",
+      serverRole: "viewer",
+      readOnly: true,
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
+    });
+
+    // Publishing someone else's profile under your own account would fork it
+    // silently, so every axis is locked rather than merely discouraged.
+    await expect(
+      page.getByTestId("sync-target-local").getByRole("radio"),
+    ).toBeDisabled();
+    // A viewer is told why, and offered the only thing that would help.
+    await expect(page.getByTestId("follow-explainer")).toContainText(
+      /view-only access/i,
+    );
+    await expect(page.getByTestId("make-own-copy")).toBeVisible();
+  });
+
+  test("switching a synced profile back to this device warns first", async ({
+    page,
+  }) => {
+    await openPanelWith(page, {
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
+    });
+
+    await page.getByTestId("sync-target-local").getByRole("radio").click();
+
+    const modal = page.getByTestId("custom-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText(/stops updating|left alone/i);
+
+    // Cancelling leaves the profile exactly where it was.
+    await page.getByTestId("modal-cancel-button").click();
+    await expect(
+      page.getByTestId("sync-target-googleDrive").getByRole("radio"),
+    ).toBeChecked();
+  });
+
+  test("confirming the move applies it and clears the other backend", async ({
+    page,
+  }) => {
+    // The regression test for the one-way trapdoor: after the move, no
+    // bookkeeping for the backend it left is still hanging around.
+    await openPanelWith(page, {
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      googleDriveFolderId: "folder-1",
+      audioLocation: "googleDrive",
+    });
+
+    await page.getByTestId("sync-target-local").getByRole("radio").click();
+    await page.getByTestId("modal-confirm-button").click();
+
+    await expect(page.getByTestId("sync-status-chip").first()).toHaveText(
+      /This device only/,
+      { timeout: 15_000 },
+    );
+
+    const profile = await readActiveProfile(page);
+    expect(profile.syncType).toBe("local");
+    expect(profile.googleDriveFileId ?? null).toBeNull();
+    expect(profile.googleDriveFolderId ?? null).toBeNull();
+    expect(profile.audioLocation).toBe("local");
   });
 });

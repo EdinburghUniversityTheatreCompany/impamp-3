@@ -28,6 +28,16 @@ import {
   type ProfileSyncStatus,
 } from "@/store/syncStatusStore";
 import { canHostAudio } from "@/lib/serverAudio/transfer";
+import { clearAudioFileDriveIds } from "@/lib/db";
+import { ensureProfileDriveFolder } from "@/lib/googleDrive/sync";
+import { deleteServerProfile } from "@/lib/serverSync/api";
+import {
+  planTransition,
+  type SyncDestination,
+  type TransitionPlan,
+} from "@/lib/syncTransitions";
+import { applyTransition, type TransitionOutcome } from "@/lib/applyTransition";
+import type { TokenInfo } from "@/lib/googleDrive/types";
 
 /**
  * Whether something is possible, and — the part that was missing — why not.
@@ -56,6 +66,18 @@ export interface ProfileSyncView {
   syncNow: () => Promise<void>;
   pause: (durationMs: number) => Promise<void>;
   resume: () => Promise<void>;
+  /**
+   * What moving this profile to `dest` would do — including whether it is
+   * allowed, and what the user should be told before it happens.
+   *
+   * Separate from `commit` so the confirmation lives in the component that
+   * owns the dialog, and the decision stays pure and testable.
+   */
+  planChange: (dest: SyncDestination) => TransitionPlan;
+  commit: (
+    plan: TransitionPlan,
+    confirmDeleteServerProfile: () => Promise<boolean>,
+  ) => Promise<TransitionOutcome>;
 }
 
 /**
@@ -100,6 +122,7 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
   } = useServerSync();
 
   const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
+  const updateProfile = useProfileStore((s) => s.updateProfile);
   const pauseSync = useProfileStore((s) => s.pauseSync);
   const resumeSync = useProfileStore((s) => s.resumeSync);
 
@@ -143,6 +166,11 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
             activity: "error",
             error: result.error,
           });
+        } else if (result.status === "conflict") {
+          // A sync that ended in a conflict has not synced. Recording it as a
+          // success would stamp a "synced just now" the profile has not
+          // earned, and hide the one state that needs the user.
+          syncStatusActions.patch(profileId, { activity: "conflict" });
         } else {
           syncStatusActions.noteSynced(profileId, Date.now());
         }
@@ -169,13 +197,94 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
     if (profileId !== undefined) await resumeSync(profileId);
   }, [profileId, resumeSync]);
 
+  const planChange = useCallback(
+    (dest: SyncDestination) => planTransition(profile, dest),
+    [profile],
+  );
+
+  const commit = useCallback(
+    async (
+      plan: TransitionPlan,
+      confirmDeleteServerProfile: () => Promise<boolean>,
+    ) => {
+      const outcome = await applyTransition(profile, plan, {
+        updateProfile: (id, updates) => updateProfile(id, updates),
+        clearAudioDriveIds: clearAudioFileDriveIds,
+        ensureDriveFolder: async (id) => {
+          const token = currentDriveToken();
+          if (!token) {
+            throw new Error(
+              "Sign in with Google to keep this profile's sounds in Drive.",
+            );
+          }
+          await ensureProfileDriveFolder(
+            id,
+            profile.name,
+            token,
+            onDriveTokenRefresh,
+          );
+        },
+        driveSyncNow: async (id) => {
+          const result = await syncDriveProfile(id);
+          if (result.status === "error") throw new Error(result.error);
+        },
+        serverSyncNow: async (id) => {
+          const result = await syncServerProfile(id);
+          if (result.status === "error") throw new Error(result.error);
+        },
+        deleteServerProfile,
+        confirmDeleteServerProfile,
+      });
+
+      if (profileId !== undefined) {
+        syncStatusActions.patch(profileId, {
+          error: outcome.ok ? null : (outcome.error ?? null),
+          warnings: outcome.warnings,
+        });
+      }
+      return outcome;
+    },
+    [profile, profileId, updateProfile, syncDriveProfile, syncServerProfile],
+  );
+
   // The store's timestamp wins when it has one; localStorage holds the record
   // the Drive path writes, and unlike the store it survives a reload.
   const lastSyncedAt =
     status.lastSyncedAt ??
     (profileId !== undefined ? getSyncTimestamp(profileId) || null : null);
 
-  return { state, status, lastSyncedAt, availability, syncNow, pause, resume };
+  return {
+    state,
+    status,
+    lastSyncedAt,
+    availability,
+    syncNow,
+    pause,
+    resume,
+    planChange,
+    commit,
+  };
+}
+
+/** The Drive token as it is *now*, not as it was when this hook last rendered. */
+function currentDriveToken(): TokenInfo | null {
+  const s = useProfileStore.getState();
+  if (!s.isGoogleSignedIn || !s.googleAccessToken) return null;
+  return {
+    accessToken: s.googleAccessToken,
+    refreshToken: s.googleRefreshToken,
+    expiresAt: s.tokenExpiresAt || 0,
+  };
+}
+
+function onDriveTokenRefresh(token: TokenInfo): void {
+  const store = useProfileStore.getState();
+  store.setGoogleAuthDetails(
+    store.googleUser ?? { name: "", email: "" },
+    token.accessToken,
+    token.refreshToken ?? null,
+    token.expiresAt,
+  );
 }
 
 /**

@@ -35,6 +35,11 @@ export function usePadDrop(
     (state) => state.incrementPadConfigsVersion,
   );
   const requestSync = useProfileStore((state) => state.requestSync);
+  // Dropping a file is a write, and it is the one write that needs no edit
+  // mode — so none of the Shift-key gates cover it. On a profile that cannot
+  // push, the sound would be added locally and then deleted by the next sync
+  // applying the remote state over it.
+  const canEdit = useProfileStore((state) => state.canEditActiveProfile());
 
   /**
    * Handler for dropping audio files onto a pad
@@ -46,6 +51,13 @@ export function usePadDrop(
     async (acceptedFiles: File[], padIndex: number) => {
       if (activeProfileId === null) {
         console.error("Cannot add audio, no active profile selected.");
+        return;
+      }
+
+      // Read fresh rather than trusting the render-time value: a sync can
+      // learn mid-drag that the remote has stopped accepting our writes.
+      if (!useProfileStore.getState().canEditActiveProfile()) {
+        console.warn("Cannot add audio: this profile does not accept changes.");
         return;
       }
 
@@ -136,11 +148,21 @@ export function usePadDrop(
         return false;
       }
 
+      // A followed or view-only profile takes no new sounds. Said here as well
+      // as in the handler so the drop overlay never invites a drop that is
+      // going to be refused.
+      // A followed or view-only profile takes no new sounds. Said here as well
+      // as in the handler so the drop overlay never invites a drop that is
+      // going to be refused.
+      if (!canEdit) {
+        return false;
+      }
+
       // Only allow drops on empty pads or pads with exactly one sound
       // (for pads with multiple sounds, use the edit modal instead)
       return audioFileCount <= 1;
     },
-    [],
+    [canEdit],
   );
 
   return {

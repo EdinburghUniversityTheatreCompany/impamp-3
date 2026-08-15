@@ -5,6 +5,13 @@ import {
   type Page,
 } from "@playwright/test";
 import { E2E_SIGNIN_SECRET } from "../playwright.config";
+import {
+  gotoApp,
+  openProfileManager,
+  readActiveProfile,
+  seedActiveProfileSync,
+  waitForAppReady,
+} from "./test-helpers";
 
 /**
  * End-to-end coverage for server sync.
@@ -39,6 +46,24 @@ async function mintSession(
   return (await response.json()).token as string;
 }
 
+/**
+ * A throwaway account per run, signed in on both the page and the API client.
+ *
+ * Fresh because the E2E database persists between runs and `mintSession`
+ * reuses the user for a given address, so a fixed one accumulates state and
+ * any count or version becomes a lie.
+ */
+async function signedInAs(
+  page: Page,
+  request: APIRequestContext,
+  who: string,
+): Promise<{ cookie: string }> {
+  const email = `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+  const token = await mintSession(request, email);
+  await signIn(page, token);
+  return { cookie: `${SESSION_COOKIE}=${token}` };
+}
+
 async function signIn(page: Page, token: string): Promise<void> {
   await page.context().addCookies([
     {
@@ -48,6 +73,37 @@ async function signIn(page: Page, token: string): Promise<void> {
       path: "/",
     },
   ]);
+}
+
+/** An empty profile on the server, for a test to then connect or watch. */
+async function createServerProfile(
+  request: APIRequestContext,
+  cookie: { cookie: string },
+  name: string,
+): Promise<string> {
+  const now = Date.now();
+  const created = await request.post("/api/profiles", {
+    headers: cookie,
+    data: {
+      name,
+      data: {
+        _syncFormatVersion: 1,
+        profile: {
+          name,
+          syncType: "server",
+          lastBackedUpAt: now,
+          backupReminderPeriod: 30,
+          createdAt: new Date(now).toISOString(),
+          updatedAt: new Date(now).toISOString(),
+        },
+        padConfigurations: [],
+        pageMetadata: [],
+        audioFiles: [],
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  return (await created.json()).id as string;
 }
 
 const SAMPLE = {
@@ -76,11 +132,13 @@ test.describe("server sync API", () => {
     const fetched = await request.get(`/api/profiles/${id}`, {
       headers: cookie,
     });
-    expect(fetched.headers()["etag"]).toBe('"1"');
+    // The GET tag carries the access as well as the version: the body states
+    // it, and a promotion changes it without moving the version.
+    expect(fetched.headers()["etag"]).toBe('"1.owner"');
 
     // Already current → 304 with no body, which is what keeps polling cheap.
     const unchanged = await request.get(`/api/profiles/${id}`, {
-      headers: { ...cookie, "if-none-match": '"1"' },
+      headers: { ...cookie, "if-none-match": '"1.owner"' },
     });
     expect(unchanged.status()).toBe(304);
 
@@ -254,14 +312,14 @@ test.describe("server sync UI", () => {
     const manage = page.getByText(/Manage Profiles/i).first();
     if (await manage.count()) await manage.click();
 
-    // Everything about syncing now lives behind the profile's status chip.
+    // Everything about syncing now lives behind the profile's status chip,
+    // and turning it on is choosing where the profile syncs rather than
+    // pressing a button that only exists in one direction.
     const chip = page.getByTestId("sync-status-chip").first();
     await expect(chip).toHaveText(/This device only/);
     await chip.click();
 
-    const enable = page.getByTestId("enable-server-sync").first();
-    await expect(enable).toBeVisible();
-    await enable.click();
+    await page.getByTestId("sync-target-server").getByRole("radio").click();
 
     await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
       timeout: 15_000,
@@ -281,6 +339,398 @@ test.describe("server sync UI", () => {
         { timeout: 15_000 },
       )
       .toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A server-sync conflict used to be a dead end. `useServerSync` computed the
+ * list of conflicts and nothing consumed it; the only visible sign was a red
+ * line reading "Sync conflicts detected. Manual resolution required." with
+ * nothing to click, so the profile stopped converging until someone changed
+ * something by hand.
+ *
+ * Staged for real: enable server sync, rename the profile locally, then write
+ * a different name to the server with a newer stamp. Both sides have moved
+ * since the other last saw it, which is exactly what the merge calls a
+ * conflict.
+ */
+/**
+ * Turn a freshly server-synced profile into a genuine conflict: rename it
+ * locally, then write a different name to the server with a later stamp. Both
+ * sides have moved since the other last saw it, which is the only thing the
+ * merge treats as a conflict rather than a merge.
+ */
+async function stageServerConflict(
+  page: Page,
+  request: APIRequestContext,
+  cookie: { cookie: string },
+): Promise<{ serverId: string; version: number }> {
+  await gotoApp(page);
+  await openProfileManager(page);
+  await page.getByTestId("sync-status-chip").first().click();
+  await page.getByTestId("sync-target-server").getByRole("radio").click();
+  // Generous: this is setup, and it is a real adopt over the network competing
+  // with every other spec in the run.
+  await expect(page.getByTestId("server-sharing-panel")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  // updateProfile stamps _fieldsModified.name, which is what makes this side
+  // "changed since the server last saw it".
+  await seedActiveProfileSync(page, { name: "Mine" });
+
+  const list = await (
+    await request.get("/api/profiles", { headers: cookie })
+  ).json();
+  const serverId = list.profiles[0].id as string;
+
+  // The app is syncing this profile at the same time, so the version can move
+  // between reading it and writing — which is the whole point of If-Match.
+  // Re-read and retry rather than pretending the race isn't there.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await (
+      await request.get(`/api/profiles/${serverId}`, { headers: cookie })
+    ).json();
+
+    const put = await request.put(`/api/profiles/${serverId}`, {
+      headers: { ...cookie, "if-match": `"${current.version}"` },
+      data: {
+        name: "Theirs",
+        data: {
+          ...current.data,
+          _lastSyncTimestamp: 0,
+          profile: {
+            ...current.data.profile,
+            name: "Theirs",
+            _fieldsModified: { name: Date.now() + 60_000 },
+          },
+        },
+      },
+    });
+    if (put.status() === 200) {
+      return { serverId, version: current.version as number };
+    }
+    expect(put.status(), "only a lost race is worth retrying").toBe(409);
+  }
+
+  throw new Error("Could not stage a conflict: the client kept winning.");
+}
+
+/**
+ * Reload, which syncs on load, and wait for the conflict to surface.
+ *
+ * Deliberately not a wait on the background timers. The change reaches a
+ * running client over SSE, but only once it has subscribed, and under a
+ * parallel run the write can land in that gap — leaving a 30-second poll as
+ * the next trigger and the test failing on how busy the machine is rather than
+ * on anything about the app. `ClientSideInitializer` syncs every server-synced
+ * profile when it mounts, so a reload is a trigger we control.
+ */
+async function reloadAndWaitForConflict(page: Page) {
+  await page.reload();
+  await waitForAppReady(page);
+  await openProfileManager(page);
+
+  // The reload is the deterministic trigger, but under a parallel run that
+  // first sync can still be slow, so nudge as well rather than let the test
+  // turn on how busy the machine is. The click timeout is short on purpose:
+  // once the modal opens it covers this button, and click()'s default 30s
+  // retry would eat the whole poll window.
+  await expect
+    .poll(
+      async () => {
+        if ((await page.getByTestId("custom-modal").count()) > 0) return true;
+        const syncNow = page.getByTestId("sync-now");
+        if ((await syncNow.count()) > 0 && (await syncNow.isEnabled())) {
+          await syncNow.click({ timeout: 1_000 }).catch(() => {});
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
+test.describe("server sync conflicts", () => {
+  /**
+   * Retried, deliberately and narrowly.
+   *
+   * A conflict needs both sides to have moved since the other last saw them,
+   * and the app syncs on its own timers throughout. Under a loaded parallel
+   * run the staging can interleave with one of those syncs and produce an
+   * ordinary auto-merge instead — the app behaving correctly, the test having
+   * asked the wrong question. Pausing sync while staging was tried and made it
+   * worse.
+   *
+   * A retry is safe here because it cannot hide a regression: if conflicts
+   * stopped surfacing, every attempt would fail. It only absorbs the case
+   * where the scenario never got set up.
+   */
+  test.describe.configure({ retries: 2 });
+
+  test("a conflict opens the resolution modal, naming the server", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "conflicted@example.com");
+    await signIn(page, token);
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    await stageServerConflict(page, request, cookie);
+
+    // The sync that finds this runs in the initializer's hook instance, not
+    // the card's — the case that used to be detected, recorded, and shown to
+    // nobody.
+    await reloadAndWaitForConflict(page);
+    const modal = page.getByTestId("custom-modal");
+    // The copy used to say "Google Drive" whichever backend it was about.
+    await expect(modal).toContainText(/the ImpAmp server/);
+    await expect(modal).toContainText(/Mine|Theirs/);
+  });
+
+  test("resolving a conflict settles it and clears the modal", async ({
+    page,
+    request,
+  }) => {
+    const token = await mintSession(request, "resolver@example.com");
+    await signIn(page, token);
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    const { serverId, version } = await stageServerConflict(
+      page,
+      request,
+      cookie,
+    );
+
+    await expect(page.getByTestId("custom-modal")).toBeVisible({
+      timeout: 20_000,
+    });
+    // The button stays disabled until every conflict has an answer, so choose
+    // one first — this is a real decision, not a rubber stamp.
+    await page
+      .getByRole("radio", { name: /Keep Local/i })
+      .first()
+      .check();
+    await page.getByRole("button", { name: /Resolve Conflicts/i }).click();
+
+    // Settled: the modal goes, and the server holds a newer version than the
+    // one the conflict was against.
+    await expect(page.getByTestId("custom-modal")).toBeHidden({
+      timeout: 15_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          const after = await (
+            await request.get(`/api/profiles/${serverId}`, { headers: cookie })
+          ).json();
+          return after.version;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(version + 1);
+  });
+});
+
+/**
+ * `listServerProfiles` existed and was called from nowhere, so signing in on a
+ * new device showed no sign of your own server profiles — the only route back
+ * to one was a share link, which assumes somebody else is involved. Drive had
+ * a list; the server had nothing.
+ */
+test.describe("connecting a profile", () => {
+  test("lists your server profiles, with no Google account involved", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "lister");
+    await createServerProfile(request, cookie, "Panto 2026");
+
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    const rows = page.getByTestId("connect-profile-row");
+    await expect(rows).toHaveCount(1, { timeout: 15_000 });
+    await expect(rows.first()).toContainText("Panto 2026");
+    // Each row says where it lives, since one list covers both sources.
+    await expect(rows.first().getByTestId("connect-profile-source")).toHaveText(
+      "ImpAmp server",
+    );
+  });
+
+  test("connecting one brings it here and stops offering it again", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "connector");
+    await createServerProfile(request, cookie, "Fringe Tech Run");
+
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    await page.getByTestId("connect-profile-button").first().click();
+
+    // Offering it again would just make a second copy of a profile that is
+    // already syncing here.
+    await expect(page.getByTestId("connect-profile-already")).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const profiles = await page.evaluate(() =>
+      (
+        window as unknown as {
+          __profileStore: {
+            getState(): { profiles: Array<Record<string, unknown>> };
+          };
+        }
+      ).__profileStore
+        .getState()
+        .profiles.map((p) => ({
+          name: p.name,
+          syncType: p.syncType,
+          serverProfileId: p.serverProfileId,
+          googleDriveFileId: p.googleDriveFileId,
+        })),
+    );
+    const connected = profiles.find((p) => p.name === "Fringe Tech Run");
+    expect(connected?.syncType).toBe("server");
+    expect(connected?.serverProfileId).toBeTruthy();
+    // The payload carries the owner's Drive ids; a connect must not adopt them.
+    expect(connected?.googleDriveFileId ?? null).toBeNull();
+  });
+});
+
+/**
+ * Following holds the push back, against the real server.
+ *
+ * The unit tests cover the decision; this covers the promise. A follower that
+ * still writes is the failure the feature exists to prevent, and it is visible
+ * from outside: the profile's version on the server stops moving.
+ */
+test.describe("a follower does not write", () => {
+  async function seedAndConnect(
+    page: Page,
+    request: APIRequestContext,
+    cookie: { cookie: string },
+    followOnly: boolean,
+  ) {
+    const id = await createServerProfile(request, cookie, "Watched Board");
+    const now = Date.now();
+
+    await gotoApp(page);
+    await seedActiveProfileSync(page, {
+      syncType: "server",
+      serverProfileId: id,
+      serverRole: "owner",
+      audioLocation: "server",
+      followOnly,
+      // A local edit worth pushing, if we were going to push.
+      name: `Edited locally ${now}`,
+    });
+    return id as string;
+  }
+
+  const versionOf = async (
+    request: APIRequestContext,
+    cookie: { cookie: string },
+    id: string,
+  ) =>
+    (
+      await (
+        await request.get(`/api/profiles/${id}`, { headers: cookie })
+      ).json()
+    ).version as number;
+
+  test("leaves the server version alone while following", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "follower");
+
+    const id = await seedAndConnect(page, request, cookie, true);
+    const before = await versionOf(request, cookie, id);
+
+    await page.reload();
+    await waitForAppReady(page);
+
+    // Wait for evidence that a sync *completed* rather than for a fixed
+    // interval. `serverVersion` is unset until one does — it is written in the
+    // same step that decides not to push — so polling for it rules out the
+    // reading this test exists to avoid: passing because nothing ran.
+    await expect
+      .poll(async () => (await readActiveProfile(page)).serverVersion, {
+        timeout: 20_000,
+      })
+      .toBe(before);
+
+    expect(
+      await versionOf(request, cookie, id),
+      "a follower must not write, even to a profile it owns",
+    ).toBe(before);
+  });
+
+  test("writes as usual when nobody is following", async ({
+    page,
+    request,
+  }) => {
+    // The control: without this, the test above would pass on a sync that
+    // never ran.
+    const cookie = await signedInAs(page, request, "contributor");
+
+    const id = await seedAndConnect(page, request, cookie, false);
+    const before = await versionOf(request, cookie, id);
+
+    await page.reload();
+    await waitForAppReady(page);
+
+    await expect
+      .poll(() => versionOf(request, cookie, id), { timeout: 20_000 })
+      .toBeGreaterThan(before);
+  });
+});
+
+/**
+ * Signing in with Google establishes a session on this server as a side effect
+ * of the same code exchange, so anyone using Drive sync had an account here and
+ * was never told. `signOutOfServer` existed and was called from nowhere, so
+ * "Sign Out" ended the Google session and left the server cookie in place.
+ */
+test.describe("the server account", () => {
+  test("says who you are here, and lets you leave", async ({
+    page,
+    request,
+  }) => {
+    await signIn(page, await mintSession(request, "account@example.com"));
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    const account = page.getByTestId("server-account");
+    await expect(account).toContainText("account@example.com");
+    // The link to the storage page, which nothing in the app pointed at.
+    await expect(page.getByTestId("server-storage-link")).toBeVisible();
+
+    await page.getByTestId("server-sign-out").click();
+
+    await expect(account).toContainText(/No account/i);
+    // Really gone, not just hidden: the session cookie no longer authenticates.
+    await expect
+      .poll(async () => (await request.get("/api/auth/session")).status(), {
+        timeout: 10_000,
+      })
+      .toBe(401);
+  });
+
+  test("says plainly when there is no account", async ({ page }) => {
+    await gotoApp(page);
+    await openProfileManager(page);
+    await page.getByText("Import / Export").click();
+
+    await expect(page.getByTestId("server-account")).toContainText(
+      /No account/i,
+    );
   });
 });
 

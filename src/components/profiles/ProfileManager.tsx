@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef, ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
+import ServerAccountPanel from "./ServerAccountPanel";
+import ConnectProfileList from "./ConnectProfileList";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
@@ -55,6 +58,27 @@ function TransferProgressBar({
   );
 }
 
+/**
+ * An ImpAmp share link, if that is what this is.
+ *
+ * Matched on the path and the two parameters rather than on the origin: a
+ * deployment can be reached by more than one hostname, and a link copied from
+ * one is still a link to the same profile on the same server.
+ */
+function parseServerShareUrl(
+  raw: string,
+): { id: string; token: string } | null {
+  try {
+    const url = new URL(raw.trim(), window.location.origin);
+    if (!url.pathname.endsWith("/server/open")) return null;
+    const id = url.searchParams.get("id");
+    const token = url.searchParams.get("token");
+    return id && token ? { id, token } : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ProfileManager() {
   const {
     profiles,
@@ -75,6 +99,8 @@ export default function ProfileManager() {
     setGoogleAuthDetails,
     clearGoogleAuthDetails,
   } = useProfileStore();
+
+  const router = useRouter();
 
   // State management
   const [newProfileName, setNewProfileName] = useState("");
@@ -160,36 +186,14 @@ export default function ProfileManager() {
   };
 
   const [googleApiError, setGoogleApiError] = useState<string | null>(null);
-  // Interface for drive files with additional metadata
-  interface DriveFile {
-    id: string;
-    name: string;
-    modifiedTime?: string;
-    size?: number;
-    iconLink?: string;
-    thumbnailLink?: string;
-  }
 
-  // State for Google Drive file handling
-  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
-  const [driveFilesLoaded, setDriveFilesLoaded] = useState(false);
-  const [driveActionStatus, setDriveActionStatus] = useState<
-    "idle" | "loading" | "error" | "success"
-  >("idle");
-  const [driveActionError, setDriveActionError] = useState<string | null>(null);
-  const [importingFileId, setImportingFileId] = useState<string | null>(null);
-  const [importedFileId, setImportedFileId] = useState<string | null>(null); // tracks last successfully connected file
-  const [driveConnectReadOnly, setDriveConnectReadOnly] = useState(false);
   const [shareConnectReadOnly, setShareConnectReadOnly] = useState(false);
 
   // Hooks
   const {
     downloadDriveFile,
     downloadAudioFile,
-    listAppFiles,
     listFilesInFolder,
-    syncStatus: driveHookStatus,
-    error: driveHookError,
     repairDriveAudio,
   } = useGoogleDriveSync();
 
@@ -292,21 +296,6 @@ export default function ProfileManager() {
   // Adjusted during render rather than in an effect — the pattern React
   // documents for "state that depends on a value seen last render". An effect
   // would render once with the stale status and then again with the error,
-  // and the local status is deliberately sticky: it holds the error until the
-  // user starts another action, rather than clearing itself the moment the
-  // hook moves on.
-  const [lastReportedHookError, setLastReportedHookError] = useState<
-    string | null
-  >(null);
-  if (
-    driveHookStatus === "error" &&
-    driveHookError &&
-    driveHookError !== lastReportedHookError
-  ) {
-    setLastReportedHookError(driveHookError);
-    setDriveActionStatus("error");
-    setDriveActionError(driveHookError);
-  }
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -329,76 +318,19 @@ export default function ProfileManager() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     googleLogout();
     clearGoogleAuthDetails();
-    console.log("Logged out from Google");
-  };
-
-  // Load Drive files inline (no modal)
-  const handleLoadDriveFiles = async () => {
-    setDriveActionStatus("loading");
-    setDriveActionError(null);
-    setImportedFileId(null);
-
+    // The Google sign-in established the server session too, so leaving one
+    // and not the other leaves an account behind that nothing here mentions.
     try {
-      const files = await listAppFiles();
-      setDriveFiles(files);
-      setDriveFilesLoaded(true);
-      setDriveActionStatus("success");
+      const { signOutOfServer } = await import("@/lib/serverSync/api");
+      const { forgetAudioCapability } =
+        await import("@/lib/serverAudio/transfer");
+      await signOutOfServer();
+      forgetAudioCapability();
     } catch (error) {
-      console.error("Failed to load Drive files:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to load files from Google Drive.";
-      setDriveActionError(message);
-      setDriveActionStatus("error");
-    }
-  };
-
-  const handleImportFromDrive = async (fileId: string, readOnly = false) => {
-    setImportingFileId(fileId);
-    setDriveActionStatus("loading");
-    setDriveActionError(null);
-
-    try {
-      const syncData = await downloadDriveFile(fileId);
-
-      if (syncData && syncData._syncFormatVersion === 1 && syncData.profile) {
-        // Where it syncs is decided here, not inherited from the file's
-        // contents: the donor's own ids describe *their* copy.
-        const newProfileId = await connectSyncedProfile(syncData, {
-          syncType: "googleDrive",
-          audioLocation: "googleDrive",
-          googleDriveFileId: fileId,
-        });
-
-        await updateProfile(newProfileId, {
-          readOnly: readOnly || undefined,
-        });
-
-        console.log(
-          `Successfully connected profile "${syncData.profile.name}" from Google Drive.`,
-        );
-        setImportedFileId(fileId);
-      } else {
-        console.warn("Downloaded file data:", syncData);
-        throw new Error(
-          "Downloaded file has unrecognized format or is not a valid profile sync file.",
-        );
-      }
-      setDriveActionStatus("success");
-    } catch (error) {
-      console.error("Failed to import from Drive:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to import profile from Google Drive.";
-      setDriveActionError(message);
-      setDriveActionStatus("error");
-    } finally {
-      setImportingFileId(null); // Clear the loading state
+      console.warn("Could not end the server session:", error);
     }
   };
 
@@ -482,6 +414,18 @@ export default function ProfileManager() {
     e.preventDefault();
     setConnectError(null);
 
+    // A server share link is a link to this app, and `/server/open` already
+    // knows how to honour one. Sending the user there beats telling them this
+    // box only understands the other kind of link — which is what it did, in
+    // a field whose placeholder said "share link" without qualification.
+    const serverShare = parseServerShareUrl(shareUrl);
+    if (serverShare) {
+      router.push(
+        `/server/open?id=${encodeURIComponent(serverShare.id)}&token=${encodeURIComponent(serverShare.token)}`,
+      );
+      return;
+    }
+
     const fileMatch = shareUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
     const folderMatch = shareUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
     const fileId = fileMatch
@@ -493,7 +437,7 @@ export default function ProfileManager() {
 
     if (!fileId && !folderId) {
       setConnectError(
-        "Please enter a valid Google Drive share URL or file ID.",
+        "That doesn't look like a Google Drive share link or an ImpAmp share link.",
       );
       return;
     }
@@ -1108,10 +1052,10 @@ export default function ProfileManager() {
                 </div>
               </section>
 
-              {/* Google Drive Integration section */}
+              {/* Accounts section */}
               <section>
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
-                  Google Drive Integration
+                  Accounts
                 </h3>
 
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4">
@@ -1164,122 +1108,45 @@ export default function ProfileManager() {
                     </p>
                   )}
 
+                  {/*
+                    One Google sign-in also establishes a session on this
+                    ImpAmp server, so the account exists whether or not anyone
+                    was told about it. Now they are told, and can leave it.
+                  */}
+                  <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <h4 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      ImpAmp server
+                    </h4>
+                    <ServerAccountPanel />
+                  </div>
+
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Where each profile syncs is set on its own card in the{" "}
+                    <button
+                      onClick={() => setActiveTab("profiles")}
+                      className="text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      Profiles tab
+                    </button>
+                    , behind its sync status.
+                  </p>
+
+                  {/*
+                    Outside the Google gate on purpose: the list covers both
+                    sources, and a server account with no Google sign-in is a
+                    perfectly ordinary state. Gating it on Drive is what hid
+                    server profiles from everyone in the first place.
+                  */}
+                  <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <ConnectProfileList
+                      onConnected={(name) =>
+                        setConnectSuccess(`"${name}" connected successfully.`)
+                      }
+                    />
+                  </div>
+
                   {isGoogleSignedIn && (
                     <>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Profile sync actions (Link, Sync Now, Unlink) are on
-                        individual profile cards in the{" "}
-                        <button
-                          onClick={() => setActiveTab("profiles")}
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          Profiles tab
-                        </button>
-                        .
-                      </p>
-
-                      {/* ── Connect from your Drive ── */}
-                      <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                            Connect from your Drive
-                          </h4>
-                          <button
-                            onClick={handleLoadDriveFiles}
-                            disabled={driveActionStatus === "loading"}
-                            className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50 transition-colors"
-                          >
-                            {driveActionStatus === "loading"
-                              ? "Loading..."
-                              : driveFilesLoaded
-                                ? "Refresh"
-                                : "Load my Drive profiles"}
-                          </button>
-                        </div>
-
-                        {driveActionStatus === "error" && driveActionError && (
-                          <p className="text-xs text-red-600 dark:text-red-400 mb-2">
-                            {driveActionError}
-                          </p>
-                        )}
-
-                        {driveFilesLoaded &&
-                          driveActionStatus === "success" && (
-                            <>
-                              {driveFiles.length === 0 ? (
-                                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-                                  No ImpAmp profile files found in your Drive.
-                                </p>
-                              ) : (
-                                <ul className="divide-y divide-gray-200 dark:divide-gray-700 border rounded dark:border-gray-600">
-                                  {driveFiles.map((file) => (
-                                    <li
-                                      key={file.id}
-                                      className={`flex items-center px-3 py-2 gap-3 ${
-                                        importedFileId === file.id
-                                          ? "bg-green-50 dark:bg-green-900/20"
-                                          : "hover:bg-gray-50 dark:hover:bg-gray-700"
-                                      }`}
-                                    >
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-                                          {file.name}
-                                        </p>
-                                        {file.modifiedTime && (
-                                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                                            {new Date(
-                                              file.modifiedTime,
-                                            ).toLocaleString()}
-                                          </p>
-                                        )}
-                                      </div>
-                                      {importedFileId === file.id ? (
-                                        <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
-                                          Connected!
-                                        </span>
-                                      ) : (
-                                        <div className="flex items-center gap-2 shrink-0">
-                                          <label className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-                                            <input
-                                              type="checkbox"
-                                              checked={driveConnectReadOnly}
-                                              onChange={(e) =>
-                                                setDriveConnectReadOnly(
-                                                  e.target.checked,
-                                                )
-                                              }
-                                              className="rounded"
-                                            />
-                                            Read-only
-                                          </label>
-                                          <button
-                                            onClick={() =>
-                                              handleImportFromDrive(
-                                                file.id,
-                                                driveConnectReadOnly,
-                                              )
-                                            }
-                                            disabled={
-                                              importingFileId === file.id
-                                            }
-                                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-800/40 disabled:opacity-50 transition-colors"
-                                          >
-                                            {importingFileId === file.id
-                                              ? audioDownloadProgress
-                                                ? `Downloading audio (${audioDownloadProgress.current}/${audioDownloadProgress.total})…`
-                                                : "Connecting…"
-                                              : "Connect"}
-                                          </button>
-                                        </div>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </>
-                          )}
-                      </div>
-
                       {/* ── Connect to shared profile ── */}
                       <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -1345,7 +1212,7 @@ export default function ProfileManager() {
                                 setConnectSuccess(null);
                                 setConnectError(null);
                               }}
-                              placeholder="Or paste a public share link…"
+                              placeholder="Or paste a share link (Drive or ImpAmp)…"
                               className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:text-gray-100 text-sm"
                             />
                             <button

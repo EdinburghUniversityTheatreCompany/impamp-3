@@ -15,6 +15,7 @@ import {
   ensureAudioFileHash,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
+import { isReadOnlyForSync, mayAdoptDriveIds } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import {
   getLocalProfileSyncData,
@@ -185,6 +186,33 @@ export async function uploadMissingAudioFiles(
 }
 
 /**
+ * Make sure a profile has a Drive folder to publish its sounds into, and
+ * return it.
+ *
+ * The Drive sync creates one as a side effect of its first run, but a profile
+ * that syncs to the *server* while keeping its audio in Drive never takes that
+ * path — so without this it would sit with `audioLocation: "googleDrive"` and
+ * nowhere to put anything, which is the `audio-drive-without-folder` defect.
+ */
+export async function ensureProfileDriveFolder(
+  profileId: number,
+  profileName: string,
+  tokenInfo: TokenInfo,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<string> {
+  const existing = (await getProfile(profileId))?.googleDriveFolderId;
+  if (existing) return existing;
+
+  const folderId = await getOrCreateProfileFolder(
+    profileName,
+    tokenInfo,
+    refreshCallback,
+  );
+  await updateProfile(profileId, { googleDriveFolderId: folderId });
+  return folderId;
+}
+
+/**
  * Migrate a profile from the flat ImpAmp_Data layout to a per-profile folder.
  * Moves the existing profile JSON and any Drive audio files into the new folder.
  * Returns the new folder ID.
@@ -258,6 +286,11 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
+  // Fetching the bytes is always fine — that is what the id is for. Recording
+  // the id as ours is not, when the folder belongs to whoever shared this.
+  const localProfile = await getProfile(profileId);
+  const adoptDriveIds = localProfile ? mayAdoptDriveIds(localProfile) : true;
+
   // Hashes for local files that predate hashing, built once and only if a
   // reference actually misses the hash index — the blobs are read one at a
   // time so the whole audio library never sits in memory at once.
@@ -294,6 +327,7 @@ export async function downloadMissingAudioFiles(
     if (existingFile) {
       // Backfill driveFileId for this profile if missing
       if (
+        adoptDriveIds &&
         !existingFile.driveFileIds?.[profileId] &&
         existingFile.id !== undefined
       ) {
@@ -321,7 +355,9 @@ export async function downloadMissingAudioFiles(
           name: ref.name,
           type: ref.type,
           hash: ref.hash,
-          driveFileIds: { [profileId]: ref.driveFileId },
+          driveFileIds: adoptDriveIds
+            ? { [profileId]: ref.driveFileId }
+            : undefined,
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       } else {
@@ -515,7 +551,7 @@ const performProfileSync = async (
     if (!tokenInfo?.accessToken) {
       // No sign-in needed for read-only profiles that are publicly shared:
       // pull them through the server-side proxy instead.
-      if (localProfile.readOnly && localProfile.googleDriveFileId) {
+      if (isReadOnlyForSync(localProfile) && localProfile.googleDriveFileId) {
         return await pullPublicReadOnlyProfile(
           profileId,
           localProfile.googleDriveFileId,
@@ -551,7 +587,11 @@ const performProfileSync = async (
     // it). Pull it through the public proxy — do NOT fall through to the
     // name-lookup/initial-upload path, which would wrongly create a folder in
     // this user's own Drive and flip the profile to read-write.
-    if (!fileId && localProfile.readOnly && localProfile.googleDriveFileId) {
+    if (
+      !fileId &&
+      isReadOnlyForSync(localProfile) &&
+      localProfile.googleDriveFileId
+    ) {
       return await pullPublicReadOnlyProfile(
         profileId,
         localProfile.googleDriveFileId,
@@ -650,7 +690,7 @@ const performProfileSync = async (
     }
 
     // 1b. Upload any audio files that still don't have a Drive file ID (genuinely new)
-    if (!localProfile.readOnly) {
+    if (!isReadOnlyForSync(localProfile)) {
       await uploadMissingAudioFiles(
         profileId,
         tokenInfo,
@@ -706,6 +746,7 @@ const performProfileSync = async (
           remote: remoteData,
           merged: mergedData,
           fileId: fileId,
+          origin: { kind: "drive", fileId },
         };
 
         onConflictDataAvailable(conflictData);
@@ -726,7 +767,7 @@ const performProfileSync = async (
 
       mergedData._lastSyncTimestamp = Date.now();
 
-      if (localProfile.readOnly) {
+      if (isReadOnlyForSync(localProfile)) {
         // Read-only: apply remote changes locally but never write back to Drive
         console.log(`Profile ${profileId} is read-only — skipping upload.`);
         warnings.push(...(await updateLocalData(profileId, mergedData)));

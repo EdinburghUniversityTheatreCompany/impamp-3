@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AudioLocation, Profile } from "@/lib/db";
-import { getSyncState, isLegalPair, type SyncTarget } from "@/lib/syncState";
+import {
+  getSyncState,
+  isChoosablePair,
+  isLegalPair,
+  type SyncTarget,
+} from "@/lib/syncState";
 import {
   planTransition,
   type SyncDestination,
@@ -53,6 +58,10 @@ const STARTS: Record<string, Profile> = {
   drive: DRIVE,
   "server + drive audio": SERVER_DRIVE_AUDIO,
   "server + hosted audio": SERVER_HOSTED_AUDIO,
+  // Followed but writable: the remote would accept our changes, we have chosen
+  // not to send any. Every invariant below has to hold from here too — it is
+  // the start that produced a profile no move could make editable again.
+  "followed drive": profile({ ...DRIVE, followOnly: true }),
 };
 
 const TARGETS: SyncTarget[] = ["local", "googleDrive", "server"];
@@ -160,7 +169,7 @@ describe("planTransition — the specific moves", () => {
     // The stale profile JSON must not be relinked by find-by-name on a later
     // Drive sync.
     expect(plan.fieldUpdates.googleDriveFileId).toBeNull();
-    expect(plan.warnings.join(" ")).toMatch(/Google Drive/i);
+    expect(plan.confirmations.join(" ")).toMatch(/Google Drive/i);
   });
 
   it("server → Drive leaves no server bookkeeping and offers to tidy up", () => {
@@ -209,7 +218,9 @@ describe("planTransition — the specific moves", () => {
       googleDriveFolderId: null,
     });
     expect(plan.effects).toContain("clearAudioDriveIds");
+    // Reversible, so it is stated rather than gated on.
     expect(plan.warnings.join(" ")).toMatch(/collaborator/i);
+    expect(plan.confirmations).toEqual([]);
   });
 
   it("does not offer to delete a server profile that was never adopted", () => {
@@ -309,6 +320,11 @@ describe("planTransition — invariants across every legal move", () => {
 
   it("never leaves a profile in a state it flags as defective", () => {
     for (const { name, from, dest, plan } of accepted) {
+      // Only over destinations the UI can ask for. A synced profile whose
+      // sounds stay on this device stays *representable* — profiles land in
+      // it — but it is a defect rather than a choice, so a transition into it
+      // is expected to be defective.
+      if (!isChoosablePair(dest.target, dest.audio)) continue;
       const after = { ...from, ...plan.fieldUpdates } as Profile;
       // The plan's effects supply what the write alone cannot: an id from the
       // backend, and a folder. Stand those in so the check is about the
@@ -333,6 +349,46 @@ describe("planTransition — invariants across every legal move", () => {
         `${name}: rollback covers the write`,
       ).toEqual(Object.keys(plan.fieldUpdates).sort());
     }
+  });
+
+  it("never leaves a profile stuck uneditable with no way out", () => {
+    // A profile that refuses edits is fine when the remote refuses writes, or
+    // while you are choosing to follow it — both say so, and both offer a way
+    // back. What must not happen is landing somewhere that refuses edits for a
+    // reason nothing can lift.
+    for (const { name, from, dest, plan } of accepted) {
+      const after = getSyncState(
+        { ...from, ...plan.fieldUpdates } as Profile,
+        NOW,
+      );
+      expect(
+        after.canEdit || after.canUnfollow || after.isViewerOfSomeoneElses,
+        `${name} → ${dest.target}/${dest.audio} is a dead end`,
+      ).toBe(true);
+    }
+  });
+
+  it("ends a follow when the profile moves somewhere else", () => {
+    // Following is a relationship with the copy at the old destination. Carried
+    // across, it left a local profile refusing every edit, with the follow
+    // controls hidden because the target was local — permanently stuck.
+    const followed = profile({
+      syncType: "googleDrive",
+      audioLocation: "googleDrive",
+      googleDriveFileId: "file-1",
+      googleDriveFolderId: "folder-1",
+      followOnly: true,
+    });
+
+    const plan = planTransition(followed, { target: "local", audio: "local" });
+    expect(plan.ok).toBe(true);
+    expect(plan.fieldUpdates.followOnly).toBe(false);
+
+    const after = getSyncState(
+      { ...followed, ...plan.fieldUpdates } as Profile,
+      NOW,
+    );
+    expect(after.canEdit).toBe(true);
   });
 
   it("lands exactly where it was asked to", () => {

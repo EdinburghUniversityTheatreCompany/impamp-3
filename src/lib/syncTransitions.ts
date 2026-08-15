@@ -50,7 +50,18 @@ export interface TransitionPlan {
   /** The same keys, with their current values, for a one-call undo. */
   rollbackTo: Partial<Profile>;
   effects: TransitionEffect[];
-  /** Consequences worth showing the user before they confirm. */
+  /**
+   * Consequences the user must accept before the move happens — each one is
+   * something they are giving up: a backend that stops updating, sounds that
+   * get re-uploaded, collaborators who stop receiving changes.
+   */
+  confirmations: string[];
+  /**
+   * Consequences worth stating but not worth blocking on. Entering a state is
+   * not the same as leaving one: "nothing publishes your sounds" is true and
+   * useful, and it is also entirely reversible, so making someone dismiss a
+   * dialog for it just teaches them to dismiss dialogs.
+   */
   warnings: string[];
 }
 
@@ -68,6 +79,7 @@ function refuse(reason: string): TransitionPlan {
     fieldUpdates: {},
     rollbackTo: {},
     effects: [],
+    confirmations: [],
     warnings: [],
   };
 }
@@ -108,6 +120,7 @@ export function planTransition(
       fieldUpdates: {},
       rollbackTo: {},
       effects: [],
+      confirmations: [],
       warnings: [],
     };
   }
@@ -120,6 +133,7 @@ export function planTransition(
 
   const fieldUpdates: Partial<Profile> = {};
   const effects: TransitionEffect[] = [];
+  const confirmations: string[] = [];
   const warnings: string[] = [];
 
   /** Only write a null over something that is actually set. */
@@ -156,7 +170,15 @@ export function planTransition(
   // flag inherited from a previous home no longer applies. Written explicitly
   // rather than left absent: an unset `readOnly` is exactly what lets a remote
   // blob decide the answer.
-  if (profile.syncType !== dest.target) fieldUpdates.readOnly = false;
+  //
+  // Following goes with it. It is a relationship with the copy that lived at
+  // the old destination, and carrying it to a new one leaves a profile that
+  // refuses every edit while following nothing — with no remote left whose
+  // permissions could ever release it.
+  if (profile.syncType !== dest.target) {
+    fieldUpdates.readOnly = false;
+    fieldUpdates.followOnly = false;
+  }
 
   // Nothing on the server path creates the folder, unlike a Drive sync.
   if (
@@ -181,17 +203,17 @@ export function planTransition(
   // --- consequences worth stating before the user commits ---
 
   if (profile.syncType === "googleDrive" && dest.target !== "googleDrive") {
-    warnings.push(
+    confirmations.push(
       "The profile file in Google Drive stops updating. Delete it there if you no longer want it.",
     );
   }
   if (profile.syncType === "server" && dest.target !== "server") {
-    warnings.push(
+    confirmations.push(
       "Your copy on the ImpAmp server is no longer updated, and collaborators stop receiving your changes.",
     );
   }
   if (state.audio === "server" && dest.audio === "googleDrive") {
-    warnings.push(
+    confirmations.push(
       "Sounds currently hosted on the server will be uploaded to Google Drive.",
     );
   }
@@ -201,7 +223,7 @@ export function planTransition(
     );
   }
   if (dest.target === "local" && profile.syncType !== "local") {
-    warnings.push(
+    confirmations.push(
       "This device keeps every sound. The copies in Drive and on the server are left alone.",
     );
   }
@@ -215,5 +237,12 @@ export function planTransition(
       previous ?? (key === "readOnly" ? false : null);
   }
 
-  return { ok: true, fieldUpdates, rollbackTo, effects, warnings };
+  return {
+    ok: true,
+    fieldUpdates,
+    rollbackTo,
+    effects,
+    confirmations,
+    warnings,
+  };
 }

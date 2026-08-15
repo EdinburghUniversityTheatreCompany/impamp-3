@@ -73,11 +73,23 @@ export async function listServerProfiles(): Promise<ServerProfileSummary[]> {
  */
 export async function fetchServerProfile(
   profileId: string,
-  options: { shareToken?: string | null; knownVersion?: number | null } = {},
+  options: {
+    shareToken?: string | null;
+    knownVersion?: number | null;
+    knownAccess?: string | null;
+  } = {},
 ): Promise<ServerProfilePayload | null> {
   const requestHeaders = headers(options.shareToken);
-  if (options.knownVersion) {
-    requestHeaders.set("If-None-Match", `"${options.knownVersion}"`);
+  // The access goes in the tag alongside the version, because the response
+  // states it and it changes without the version moving. Ask with only the
+  // version and a device promoted from viewer to editor gets 304 forever, and
+  // never finds out it may write. Omitting it asks for the body every time,
+  // which is the safe way to be wrong.
+  if (options.knownVersion && options.knownAccess) {
+    requestHeaders.set(
+      "If-None-Match",
+      `"${options.knownVersion}.${options.knownAccess}"`,
+    );
   }
 
   const response = await fetch(`/api/profiles/${profileId}`, {

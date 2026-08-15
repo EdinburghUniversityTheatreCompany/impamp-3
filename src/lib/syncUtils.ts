@@ -357,6 +357,10 @@ const PROFILE_LOCATION_FIELDS = new Set([
   // answers about this device's access and this device's choice.
   "serverRole",
   "readOnly",
+  // Following is this device's decision about this device. Letting it travel
+  // would mean one person choosing to follow silently stopped everyone else
+  // contributing.
+  "followOnly",
   "syncPausedUntil",
 ]);
 
@@ -390,6 +394,23 @@ export interface ProfileSyncData {
     data?: string; // Base64 encoded audio data (legacy fallback for backward compat)
   }[];
 }
+
+/**
+ * Which remote a conflict is against.
+ *
+ * The merge is backend-agnostic — `detectProfileConflicts` is the same code
+ * for both — but resolving one is not: a Drive conflict is settled by writing
+ * a file, a server one by a version-checked push. Carrying the origin with the
+ * conflict is what lets a single modal serve both, instead of one modal whose
+ * copy says "Google Drive" no matter which backend it is talking about.
+ */
+export type ConflictOrigin =
+  | { kind: "drive"; fileId: string }
+  | { kind: "server"; serverProfileId: string; version: number };
+
+/** How to name the other side of a conflict, in a sentence. */
+export const conflictOriginLabel = (origin: ConflictOrigin): string =>
+  origin.kind === "drive" ? "Google Drive" : "the ImpAmp server";
 
 /**
  * Detects conflicts between local and remote sync data for a single profile.
@@ -608,3 +629,36 @@ export const detectProfileConflicts = async (
   );
   return { conflicts, requiresManualResolution, mergedData };
 };
+
+/**
+ * Which local audio a synced pad should end up pointing at.
+ *
+ * Synced ids are the *sender's*, so each has to be translated. An id that
+ * cannot be translated is dropped rather than kept: kept, it would address a
+ * different recording on this device, and a silent pad beats the wrong sound.
+ *
+ * Dropping *every* reference is another matter. It is right for a pad new to
+ * this device, and destructive for one that already plays something: the sound
+ * is here and wired up, and only its description is untranslatable. Emptying
+ * it loses local work, and the emptied pad is pushed back on the next sync, so
+ * everyone loses it.
+ */
+export function resolveSyncedPadAudio(
+  syncedIds: number[],
+  audioIdMap: Map<number, number>,
+  existingIds: number[] | undefined,
+): { audioFileIds: number[]; keptLocal: boolean; unresolved: number[] } {
+  const audioFileIds: number[] = [];
+  const unresolved: number[] = [];
+
+  for (const syncedId of syncedIds) {
+    const localId = audioIdMap.get(syncedId);
+    if (localId === undefined) unresolved.push(syncedId);
+    else audioFileIds.push(localId);
+  }
+
+  if (audioFileIds.length === 0 && existingIds?.length) {
+    return { audioFileIds: existingIds, keptLocal: true, unresolved };
+  }
+  return { audioFileIds, keptLocal: false, unresolved };
+}

@@ -58,7 +58,9 @@ export type SyncDefect =
   /** A collaborator holding the owner's Drive ids — writes there fail silently. */
   | "borrowed-drive-folder"
   /** Publishes audio to Drive, but has no folder to publish it into. */
-  | "audio-drive-without-folder";
+  | "audio-drive-without-folder"
+  /** Syncs somewhere, but publishes its sounds nowhere. */
+  | "audio-reaches-nobody";
 
 export interface SyncState {
   target: SyncTarget;
@@ -66,7 +68,23 @@ export interface SyncState {
   /** False when `audio` was inferred because the profile predates the field. */
   audioIsExplicit: boolean;
   ownership: Ownership;
+  /**
+   * Nothing local will be pushed — because the remote refuses writes, or
+   * because you chose to follow rather than contribute.
+   */
   readOnly: boolean;
+  /** Your own choice to follow rather than contribute. */
+  following: boolean;
+  /**
+   * Whether this profile may be changed at all.
+   *
+   * A profile that cannot push is not merely private to edit: the next sync
+   * applies the merged remote state over your changes, so they are destroyed
+   * rather than kept to yourself. Blocking the edit is the honest behaviour.
+   */
+  canEdit: boolean;
+  /** Whether dropping the follow would leave a profile you can actually write. */
+  canUnfollow: boolean;
   /** True when this is someone else's profile that we can only read. */
   isViewerOfSomeoneElses: boolean;
   paused: boolean;
@@ -88,6 +106,23 @@ export function isLegalPair(target: SyncTarget, audio: AudioLocation): boolean {
   if (target === "local") return audio === "local";
   if (target === "googleDrive") return audio !== "server";
   return true;
+}
+
+/**
+ * Whether a pair is worth *offering*, as opposed to merely describing.
+ *
+ * A synced profile whose sounds stay on this device is a state profiles land
+ * in — a sync that ran before the sounds had anywhere to go leaves one — so it
+ * has to be representable. It is not something to offer as a choice: it syncs
+ * a soundboard whose pads are silent on every other device including your own.
+ * It appears as a defect with a way out instead.
+ */
+export function isChoosablePair(
+  target: SyncTarget,
+  audio: AudioLocation,
+): boolean {
+  if (!isLegalPair(target, audio)) return false;
+  return target === "local" || audio !== "local";
 }
 
 /**
@@ -155,6 +190,9 @@ function detectDefects(
   if (target === "server" && ownership === "collaborator" && hasDriveIds) {
     defects.push("borrowed-drive-folder");
   }
+  if (target !== "local" && audio === "local" && isLinked) {
+    defects.push("audio-reaches-nobody");
+  }
   if (
     target === "server" &&
     audio === "googleDrive" &&
@@ -170,6 +208,37 @@ function detectDefects(
   return defects;
 }
 
+/**
+ * Whether this device will push changes for a profile.
+ *
+ * The sync paths used to read `profile.readOnly` directly, which is only what
+ * the *remote* permits. Following is a separate decision and has to be
+ * honoured just as firmly, so both go through here.
+ */
+export const isReadOnlyForSync = (profile: Profile): boolean =>
+  Boolean(profile.readOnly) || Boolean(profile.followOnly);
+
+/**
+ * Whether Drive file ids arriving from a remote may be recorded as *ours*.
+ *
+ * The blob carries a Drive id for every sound that has one, so anyone with
+ * access to the folder can fetch it. Writing those ids onto our own audio
+ * records is a different claim: `uploadMissingAudioFiles` reads them as "this
+ * sound is already in my folder" and skips it. A server-synced collaborator
+ * who adopted the owner's ids and later moved their audio to Drive would
+ * upload nothing at all, and their blob would go on pointing into a folder
+ * they do not own — the borrowed-Drive-folder failure, one level down where
+ * `reconcileBorrowedDriveLinks` cannot see it.
+ *
+ * Drive-synced profiles are unaffected: the profile file lives in that same
+ * folder, so anyone syncing through it can reach and write to it.
+ */
+export function mayAdoptDriveIds(profile: Profile): boolean {
+  const { target, ownership } = getSyncState(profile);
+  if (target !== "server") return true;
+  return ownership === "owner";
+}
+
 export function getSyncState(profile: Profile, now = Date.now()): SyncState {
   const target = profile.syncType;
 
@@ -180,7 +249,10 @@ export function getSyncState(profile: Profile, now = Date.now()): SyncState {
     : inferAudioLocation(profile, target);
 
   const ownership = resolveOwnership(profile, target);
-  const readOnly = Boolean(profile.readOnly);
+  // What the remote permits, before any choice of ours.
+  const remoteReadOnly = Boolean(profile.readOnly);
+  const following = Boolean(profile.followOnly);
+  const readOnly = remoteReadOnly || following;
 
   const isLinked =
     target === "googleDrive"
@@ -200,7 +272,14 @@ export function getSyncState(profile: Profile, now = Date.now()): SyncState {
     audioIsExplicit,
     ownership,
     readOnly,
-    isViewerOfSomeoneElses: target !== "local" && readOnly,
+    following,
+    canEdit: !readOnly,
+    // Unfollowing a profile the remote will not accept writes to would promise
+    // something it cannot deliver.
+    canUnfollow: following && !remoteReadOnly,
+    // "Someone else's" is about permission, not preference: following your own
+    // board does not make it theirs.
+    isViewerOfSomeoneElses: target !== "local" && remoteReadOnly,
     paused: pausedUntil !== null,
     pausedUntil,
     isLinked,
@@ -262,6 +341,9 @@ export function syncChipText(
   if (state.defects.length > 0) return `${base} · needs attention`;
   if (state.isViewerOfSomeoneElses) return `${base} · view only`;
   if (state.paused) return `${base} · paused`;
+  // A steady state rather than an alert, but still the thing you most need to
+  // know about this profile — it explains why the pads will not edit.
+  if (state.following) return `${base} · following`;
 
   const parts = [base];
   // Under a Drive target, "sounds in Drive" only repeats the target.

@@ -12,7 +12,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import type { TokenInfo } from "@/lib/googleDrive/types";
 import { applySyncedProfile } from "./applySyncedProfile";
-import { syncServerProfile, type DriveAccess } from "@/lib/serverSync/sync";
+import { syncStatusActions } from "@/store/syncStatusStore";
+import {
+  applyServerConflictResolution,
+  syncServerProfile,
+  type DriveAccess,
+} from "@/lib/serverSync/sync";
+import type { SyncConflictData } from "@/lib/googleDrive/types";
+import type { ConflictOrigin, ProfileSyncData } from "@/lib/syncUtils";
 import {
   createServerShare,
   deleteServerShare,
@@ -81,7 +88,14 @@ export interface ServerSyncHook {
   /** Non-fatal problems from the last sync. A sync with warnings still succeeded. */
   warnings: string[];
   conflicts: ItemConflict[];
+  /** The three versions behind `conflicts`, for the resolution modal. */
+  conflictData: SyncConflictData | null;
   syncProfile: (profileId: number) => Promise<ServerSyncResult>;
+  resolveConflict: (
+    profileId: number,
+    resolvedData: ProfileSyncData,
+    origin: Extract<ConflictOrigin, { kind: "server" }>,
+  ) => Promise<ServerSyncResult>;
   refreshSession: () => Promise<void>;
   listShares: (serverProfileId: string) => Promise<ServerShare[]>;
   addShare: (
@@ -118,6 +132,9 @@ export function useServerSync(): ServerSyncHook {
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [conflicts, setConflicts] = useState<ItemConflict[]>([]);
+  const [conflictData, setConflictData] = useState<SyncConflictData | null>(
+    null,
+  );
 
   // Re-checked whenever Google auth changes: signing in to Drive also
   // establishes the server session, so that's exactly when one appears.
@@ -148,6 +165,7 @@ export function useServerSync(): ServerSyncHook {
       onError: setError,
       onWarnings: setWarnings,
       onConflictsDetected: setConflicts,
+      onConflictDataAvailable: setConflictData,
     }),
     [],
   );
@@ -171,7 +189,23 @@ export function useServerSync(): ServerSyncHook {
         },
       };
 
-      const result = await syncServerProfile(profileId, callbacks, driveAccess);
+      const result = await syncServerProfile(
+        profileId,
+        {
+          ...callbacks,
+          // Bound to *this* profile so a conflict found by the scheduled sync
+          // reaches the card, which holds a different hook instance.
+          onConflictsDetected: (conflicts) => {
+            setConflicts(conflicts);
+            syncStatusActions.patch(profileId, { conflicts });
+          },
+          onConflictDataAvailable: (conflictData) => {
+            setConflictData(conflictData);
+            syncStatusActions.patch(profileId, { conflictData });
+          },
+        },
+        driveAccess,
+      );
 
       if (result.status === "success") {
         await applySyncedProfile(profileId);
@@ -182,6 +216,35 @@ export function useServerSync(): ServerSyncHook {
     [callbacks],
   );
 
+  const resolveConflict = useCallback(
+    async (
+      profileId: number,
+      resolvedData: ProfileSyncData,
+      origin: Extract<ConflictOrigin, { kind: "server" }>,
+    ) => {
+      const result = await applyServerConflictResolution(
+        profileId,
+        resolvedData,
+        origin,
+      );
+      if (result.status === "success") {
+        setConflicts([]);
+        setConflictData(null);
+        syncStatusActions.patch(profileId, {
+          conflicts: [],
+          conflictData: null,
+        });
+        setSyncStatus("success");
+        setError(null);
+        await applySyncedProfile(profileId);
+      } else if (result.status === "error") {
+        setError(result.error);
+      }
+      return result;
+    },
+    [],
+  );
+
   return {
     serverUser,
     isServerSignedIn: serverUser !== null,
@@ -190,7 +253,9 @@ export function useServerSync(): ServerSyncHook {
     error,
     warnings,
     conflicts,
+    conflictData,
     syncProfile: sync,
+    resolveConflict,
     refreshSession,
     listShares: listServerShares,
     addShare: createServerShare,

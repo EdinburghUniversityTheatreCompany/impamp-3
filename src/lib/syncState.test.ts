@@ -3,7 +3,9 @@ import type { Profile } from "@/lib/db";
 import {
   audioLocationLabel,
   getSyncState,
+  isChoosablePair,
   isLegalPair,
+  mayAdoptDriveIds,
   syncChipText,
   syncTargetLabel,
   type SyncDefect,
@@ -38,11 +40,7 @@ const HEALTHY: Record<string, Profile> = {
     googleDriveFileId: "file-1",
     googleDriveFolderId: "folder-1",
   }),
-  "drive / device": profile({
-    syncType: "googleDrive",
-    audioLocation: "local",
-    googleDriveFileId: "file-1",
-  }),
+
   "server / drive": profile({
     syncType: "server",
     audioLocation: "googleDrive",
@@ -56,13 +54,25 @@ const HEALTHY: Record<string, Profile> = {
     serverProfileId: "srv-1",
     serverRole: "owner",
   }),
-  "server / device": profile({
-    syncType: "server",
-    audioLocation: "local",
-    serverProfileId: "srv-1",
-    serverRole: "owner",
-  }),
 };
+
+describe("isChoosablePair", () => {
+  it("does not offer to keep the sounds here on a profile that syncs", () => {
+    // Representable, because profiles land in it — but a soundboard whose
+    // pads are silent everywhere else is a trap, not a trade-off.
+    expect(isLegalPair("server", "local")).toBe(true);
+    expect(isChoosablePair("server", "local")).toBe(false);
+    expect(isChoosablePair("googleDrive", "local")).toBe(false);
+  });
+
+  it("still offers the only answer a local profile has", () => {
+    expect(isChoosablePair("local", "local")).toBe(true);
+  });
+
+  it("offers nothing that is not coherent in the first place", () => {
+    expect(isChoosablePair("googleDrive", "server")).toBe(false);
+  });
+});
 
 describe("isLegalPair", () => {
   it("allows only device-only audio when the profile does not sync", () => {
@@ -337,6 +347,25 @@ describe("detectDefects, via getSyncState", () => {
     ).toContain("audio-drive-without-folder");
   });
 
+  it("flags a synced profile whose sounds reach nobody", () => {
+    expect(
+      defectsOf(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "owner",
+          audioLocation: "local",
+        }),
+      ),
+    ).toContain("audio-reaches-nobody");
+  });
+
+  it("stays quiet about it until the profile has actually synced", () => {
+    expect(
+      defectsOf(profile({ syncType: "server", audioLocation: "local" })),
+    ).not.toContain("audio-reaches-nobody");
+  });
+
   it("stays quiet about the missing folder before the first sync", () => {
     // "You haven't synced yet" is the useful message; the folder is downstream
     // of that and repeating it is noise.
@@ -401,11 +430,21 @@ describe("syncChipText", () => {
     ).toBe("ImpAmp server · sounds in Drive · synced 2 minutes ago");
   });
 
-  it("says plainly when a synced profile keeps its sounds to itself", () => {
-    // The state that is completely invisible today.
-    expect(
-      syncChipText(getSyncState(HEALTHY["server / device"], NOW), null),
-    ).toBe("ImpAmp server · sounds stay on this device");
+  it("leads with the defect when the sounds reach nobody", () => {
+    // Silent pads on every other device is the thing worth interrupting for,
+    // so it outranks any description of where things live.
+    const stranded = getSyncState(
+      profile({
+        syncType: "server",
+        serverProfileId: "srv-1",
+        serverRole: "owner",
+        audioLocation: "local",
+      }),
+      NOW,
+    );
+    expect(syncChipText(stranded, "2 minutes ago")).toBe(
+      "ImpAmp server · needs attention",
+    );
   });
 
   it("leads with view-only rather than a sync time", () => {
@@ -421,6 +460,22 @@ describe("syncChipText", () => {
     );
     expect(syncChipText(viewer, "2 minutes ago")).toBe(
       "ImpAmp server · view only",
+    );
+  });
+
+  it("says when you are following, since it explains why editing is off", () => {
+    const followed = getSyncState(
+      profile({
+        syncType: "googleDrive",
+        audioLocation: "googleDrive",
+        googleDriveFileId: "file-1",
+        googleDriveFolderId: "folder-1",
+        followOnly: true,
+      }),
+      NOW,
+    );
+    expect(syncChipText(followed, "2 minutes ago")).toBe(
+      "Google Drive · following",
     );
   });
 
@@ -441,5 +496,132 @@ describe("syncChipText", () => {
   it("leads with a defect, since it needs a decision", () => {
     const broken = getSyncState(profile({ syncType: "googleDrive" }), NOW);
     expect(syncChipText(broken, null)).toBe("Google Drive · needs attention");
+  });
+});
+
+/**
+ * Following is a decision; read-only is a permission. Keeping them apart is
+ * the whole point: the Drive reconciler rewrites `readOnly` in both directions
+ * on every sync, so a preference stored there is cleared by the first sync of
+ * any folder you happen to have write access to — which is exactly what the
+ * old "Read-only" checkbox did.
+ */
+describe("following", () => {
+  it("is off unless chosen", () => {
+    expect(getSyncState(HEALTHY["drive / drive"], NOW).following).toBe(false);
+  });
+
+  it("makes a profile read-only even where the remote would allow writes", () => {
+    const followed = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      googleDriveFolderId: "folder-1",
+      followOnly: true,
+      readOnly: false,
+    });
+
+    const state = getSyncState(followed, NOW);
+    expect(state.following).toBe(true);
+    expect(state.readOnly).toBe(true);
+    expect(state.canEdit).toBe(false);
+  });
+
+  it("still reports read-only when the remote refuses writes", () => {
+    const viewer = profile({
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "viewer",
+      readOnly: true,
+    });
+
+    const state = getSyncState(viewer, NOW);
+    expect(state.following).toBe(false);
+    expect(state.readOnly).toBe(true);
+    expect(state.canEdit).toBe(false);
+  });
+
+  it("lets you edit a profile you can push to and have not followed", () => {
+    expect(getSyncState(HEALTHY["drive / drive"], NOW).canEdit).toBe(true);
+    expect(getSyncState(HEALTHY["local / device"], NOW).canEdit).toBe(true);
+  });
+
+  it("does not call a followed profile someone else's", () => {
+    // Following your own board is a choice about contributing, not a
+    // statement that it belongs to somebody else.
+    const followed = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    expect(getSyncState(followed, NOW).isViewerOfSomeoneElses).toBe(false);
+    expect(getSyncState(followed, NOW).ownership).toBe("owner");
+  });
+
+  it("can be unfollowed only where the remote would accept writes", () => {
+    const followedOwner = profile({
+      syncType: "googleDrive",
+      googleDriveFileId: "file-1",
+      followOnly: true,
+    });
+    expect(getSyncState(followedOwner, NOW).canUnfollow).toBe(true);
+
+    const followedViewer = profile({
+      syncType: "server",
+      serverProfileId: "srv-1",
+      serverRole: "viewer",
+      readOnly: true,
+      followOnly: true,
+    });
+    // Unfollowing would promise writes the server will refuse.
+    expect(getSyncState(followedViewer, NOW).canUnfollow).toBe(false);
+  });
+});
+
+describe("mayAdoptDriveIds", () => {
+  // The blob names a Drive id for every sound that has one, so the bytes are
+  // fetchable by anyone with folder access. Writing those ids onto our own
+  // records claims something else — "already uploaded, by me" — and
+  // `uploadMissingAudioFiles` believes it.
+  it("lets a Drive-synced profile claim them: the folder is the one it syncs through", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({ syncType: "googleDrive", googleDriveFileId: "file-1" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("lets a server profile we own claim them", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "owner",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses them for a collaborator: the folder is the owner's", () => {
+    expect(
+      mayAdoptDriveIds(
+        profile({
+          syncType: "server",
+          serverProfileId: "srv-1",
+          serverRole: "editor",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses them when the role is not yet known", () => {
+    // A profile written before `serverRole` existed. Not adopting costs
+    // nothing — downloads read the id straight from the blob — while adopting
+    // wrongly is what silently stops the next upload.
+    expect(
+      mayAdoptDriveIds(
+        profile({ syncType: "server", serverProfileId: "srv-1" }),
+      ),
+    ).toBe(false);
   });
 });

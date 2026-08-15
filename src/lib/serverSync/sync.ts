@@ -15,13 +15,19 @@
  * `src/lib/serverAudio/` and docs/wasabi-audio.md.
  */
 
-import { getAudioFileIdsForProfile, getProfile, updateProfile } from "@/lib/db";
-import { detectProfileConflicts } from "@/lib/syncUtils";
-import { getSyncState } from "@/lib/syncState";
+import {
+  getAudioFileIdsForProfile,
+  getProfile,
+  updateProfile,
+  type Profile,
+} from "@/lib/db";
+import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
+import { getSyncState, isReadOnlyForSync } from "@/lib/syncState";
 import {
   getLocalProfileSyncData,
   updateLocalData,
 } from "@/lib/googleDrive/dataAccess";
+import { updateSyncTimestamp } from "@/lib/googleDrive/utils";
 import {
   downloadMissingAudioFiles,
   uploadMissingAudioFiles,
@@ -31,7 +37,7 @@ import {
   markHostedAudio,
   uploadProfileAudio,
 } from "@/lib/serverAudio/transfer";
-import type { TokenInfo } from "@/lib/googleDrive/types";
+import type { SyncConflictData, TokenInfo } from "@/lib/googleDrive/types";
 import {
   createServerProfile,
   fetchServerProfile,
@@ -43,6 +49,7 @@ import {
   type ProfileSyncData,
   type ServerSyncResult,
   type ServerSyncStatus,
+  type ServerRole,
 } from "./types";
 
 export interface ServerSyncCallbacks {
@@ -56,6 +63,15 @@ export interface ServerSyncCallbacks {
    */
   onWarnings?: (warnings: string[]) => void;
   onConflictsDetected: (conflicts: ItemConflict[]) => void;
+  /**
+   * The three versions a conflict is between, so a human can settle it.
+   *
+   * Server sync used to report only the *list* of conflicts and an error
+   * string. The list had no consumer and the error was a red line under the
+   * profile with nothing to click, so a server conflict simply stopped the
+   * profile converging until someone changed something by hand.
+   */
+  onConflictDataAvailable?: (data: SyncConflictData | null) => void;
 }
 
 /**
@@ -134,8 +150,9 @@ async function performServerSync(
     // behaviour, because assuming they are collaborators would stop real
     // owners publishing at all.
     const warnings: string[] = [];
-    const ownership = getSyncState(profile).ownership;
+    const { ownership, audio, audioIsExplicit } = getSyncState(profile);
     if (
+      audio === "googleDrive" &&
       ownership !== "collaborator" &&
       drive.tokenInfo &&
       profile.googleDriveFolderId
@@ -151,8 +168,15 @@ async function performServerSync(
     // Optional, gated server-hosted audio. Silently does nothing when the
     // deployment hosts none or the account is not approved, which is the
     // default — see docs/wasabi-audio.md.
+    //
+    // A profile that predates `audioLocation` has no stored answer, and one
+    // cannot be inferred: hosted audio leaves no local trace. Those keep the
+    // old behaviour of uploading whenever the account is approved, because
+    // reading the inferred "not hosted" as an instruction would silently stop
+    // uploads for everyone already relying on them.
     const hostedHashes = new Set<string>();
-    if (!profile.readOnly) {
+    const mayHost = audioIsExplicit ? audio === "server" : true;
+    if (!isReadOnlyForSync(profile) && mayHost) {
       const upload = await uploadProfileAudio([
         ...(await getAudioFileIdsForProfile(profileId)),
       ]);
@@ -221,12 +245,19 @@ async function pullMergePush(
   let remote = await fetchServerProfile(serverId, {
     shareToken,
     knownVersion: profile.serverVersion,
+    // What we currently believe our access to be. A profile that predates
+    // `serverRole` sends nothing and gets the full body, which is what fills
+    // it in.
+    knownAccess: profile.serverRole,
   });
 
   // 304: the server is where we left it. Local edits, if any, still need
   // pushing, so carry on with the version we already know.
   let remoteVersion = remote?.version ?? profile.serverVersion ?? 1;
-  let readOnly = remote ? remote.access === "viewer" : !!profile.readOnly;
+  // What the server permits, which it restates on every pull.
+  let remoteReadOnly = remote ? remote.access === "viewer" : !!profile.readOnly;
+  // Our own choice not to contribute, which the server knows nothing about.
+  const following = Boolean(profile.followOnly);
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
     const raw = await getLocalProfileSyncData(profileId);
@@ -238,6 +269,22 @@ async function pullMergePush(
 
     if (requiresManualResolution) {
       onConflictsDetected(conflicts);
+      if (remote) {
+        callbacks.onConflictDataAvailable?.({
+          local: localData,
+          // mergedData carries every automatically resolved change; it is the
+          // base a resolution builds on, and resolving from local alone would
+          // silently drop all of it.
+          remote: remote.data,
+          merged: mergedData,
+          fileId: "",
+          origin: {
+            kind: "server",
+            serverProfileId: serverId,
+            version: remoteVersion,
+          },
+        });
+      }
       onStatusChange("conflict");
       onError("Sync conflicts detected. Manual resolution required.");
       return { status: "conflict", conflicts };
@@ -274,11 +321,15 @@ async function pullMergePush(
 
     mergedData._lastSyncTimestamp = Date.now();
 
-    if (readOnly) {
+    // Two separate reasons not to push, and both must hold it back: the
+    // server refusing writes, and us choosing not to make any. Gating on the
+    // first alone let a follower keep writing to a profile it could write to
+    // — which is the one thing following promises not to do.
+    if (remoteReadOnly || following) {
       warnings.push(...(await updateLocalData(profileId, mergedData)));
       await updateProfile(profileId, {
         serverVersion: remoteVersion,
-        readOnly: true,
+        ...accessFields(remote),
       });
       return finish(callbacks, remoteVersion, mergedData, warnings);
     }
@@ -293,7 +344,10 @@ async function pullMergePush(
       );
 
       warnings.push(...(await updateLocalData(profileId, mergedData)));
-      await updateProfile(profileId, { serverVersion: pushed.version });
+      await updateProfile(profileId, {
+        serverVersion: pushed.version,
+        ...accessFields(remote),
+      });
       return finish(callbacks, pushed.version, mergedData, warnings);
     } catch (error) {
       if (!(error instanceof VersionConflictError)) throw error;
@@ -312,7 +366,7 @@ async function pullMergePush(
         access: remote?.access ?? "editor",
         data: error.currentData,
       };
-      readOnly = remote.access === "viewer";
+      remoteReadOnly = remote.access === "viewer";
     }
   }
 
@@ -320,6 +374,18 @@ async function pullMergePush(
   onError(message);
   onStatusChange("error");
   return { status: "error", error: message };
+}
+
+/**
+ * The access the server just reported, written back every sync.
+ *
+ * Recorded rather than assumed, because nothing else refreshes it: a device
+ * that once had viewer access kept `readOnly: true` forever, and now that
+ * editing is gated on it, being promoted to editor would never take effect.
+ */
+function accessFields(remote: { access: ServerRole } | null): Partial<Profile> {
+  if (!remote) return {};
+  return { readOnly: remote.access === "viewer", serverRole: remote.access };
 }
 
 function finish(
@@ -339,4 +405,44 @@ function finish(
     data,
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/**
+ * Settle a server-sync conflict with the version the user chose.
+ *
+ * Pushed at the version the conflict was detected against, so a third writer
+ * landing in between is refused rather than silently overwritten — the same
+ * optimistic-concurrency rule every other write obeys. A refusal here is not
+ * an error to hide: the next sync re-merges against the newer state and asks
+ * again if it still cannot decide.
+ */
+export async function applyServerConflictResolution(
+  profileId: number,
+  resolvedData: ProfileSyncData,
+  origin: Extract<ConflictOrigin, { kind: "server" }>,
+): Promise<ServerSyncResult> {
+  try {
+    const pushed = await pushServerProfile(
+      origin.serverProfileId,
+      resolvedData.profile.name,
+      resolvedData,
+      origin.version,
+    );
+    await updateLocalData(profileId, resolvedData);
+    await updateProfile(profileId, { serverVersion: pushed.version });
+    updateSyncTimestamp(profileId);
+    return { status: "success", version: pushed.version, data: resolvedData };
+  } catch (error) {
+    if (error instanceof VersionConflictError) {
+      return {
+        status: "error",
+        error:
+          "Someone else saved while you were choosing. Your choices were not applied — sync again to see the newer version.",
+      };
+    }
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : "Could not resolve.",
+    };
+  }
 }

@@ -27,6 +27,14 @@ const canSyncNow = (profile: Profile, isGoogleSignedIn: boolean): boolean =>
   profile.id !== undefined &&
   profile.syncType === "googleDrive" &&
   !!profile.googleDriveFileId &&
+  // A viewer is promised it keeps receiving: the engine pulls a read-only
+  // profile anonymously through the public proxy, so gating this on the Google
+  // token alone quietly stopped that the moment the token lapsed.
+  //
+  // `readOnly` and not `isReadOnlyForSync`, because only the first is the
+  // remote's answer. Following is a preference, not a permission — a private
+  // profile you own and follow is not public, and sending it down the proxy
+  // path just fails with a misleading "ask the owner to share it" every poll.
   (isGoogleSignedIn || !!profile.readOnly);
 
 /**
