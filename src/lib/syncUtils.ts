@@ -5,6 +5,7 @@ import {
   ensureAudioFileHash,
 } from "./db"; // Import main data types
 import { remapPadSettingsOnMerge } from "./importExport";
+import type { WireProfile } from "./profileWire";
 
 // Type guard to check if an object has sync fields
 // Exporting Syncable type for use in other modules
@@ -319,7 +320,13 @@ export interface SyncedPadConfiguration extends PadConfiguration {
 export interface ProfileSyncData {
   _syncFormatVersion: number; // To handle future format changes
   _lastSyncTimestamp?: number; // Timestamp of the last successful sync with this file
-  profile: Profile; // The profile metadata itself
+  /**
+   * The profile metadata itself, reduced to the fields that may leave a
+   * device — see `lib/profileWire`. A blob written by an older client can
+   * still *contain* more than this; the type says what we rely on and what we
+   * are willing to write back out.
+   */
+  profile: WireProfile;
   padConfigurations: SyncedPadConfiguration[];
   pageMetadata: PageMetadata[];
   // Include audio files to ensure complete sync
@@ -393,7 +400,10 @@ export const detectProfileConflicts = async (
   ]);
 
   allProfileFields.forEach((field) => {
-    const key = field as keyof Profile;
+    // A blob written by an older client can carry fields the wire shape no
+    // longer includes (`serverShareToken`); `isComparableProfileField` has
+    // already filtered those out, so the cast only covers shared fields.
+    const key = field as keyof WireProfile;
     const localMod = localProfileFields[field] ?? 0;
     const remoteMod = remoteProfileFields[field] ?? 0;
     const localVal = localProfile[key];

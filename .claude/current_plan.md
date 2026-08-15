@@ -33,14 +33,14 @@ public host) — that one is his call on the allowed set and stays open.
 The worst failures in the app: ESC cannot stop a stranded track, and stopping
 one pad cancels another's pending trigger. Self-contained in `src/lib/audio/`.
 
-- [ ] 1.1 New `src/lib/audio/controls.test.ts` — failing tests for both races
-- [ ] 1.2 P1: claim the playback key before the first await; dispose any
-      displaced occupant (`playback.ts:314,495`, `controls.ts:317,510`)
-- [ ] 1.3 P2: per-key stop generations, one global reserved for `stopAllTracks`
-      (`playback.ts:32`, `controls.ts:465,492,558`)
+- [x] 1.1 `src/lib/audio/playback.race.test.ts` — 6 cases, all 6 failed first
+- [x] 1.2 P1: `claimPlaybackKey` silences whatever held the key
+- [x] 1.3 P2: per-key stop counters + one global for `stopAllTracks`;
+      `stopRequestedSince(key, captured)` replaces the bare comparison
 
-**Done when:** both tests fail without the change and pass with it, and
-`stopAllTracks` provably reaches a track created during an in-flight trigger.
+**Done.** Commit `d413146`. 525 tests green (was 519). Typecheck clean.
+Note the API change: `getStopGeneration()` now takes a playback key and returns
+`{global, key}` — only `controls.ts` consumed it.
 
 ## Phase 2 — the wire shape and the share-token leak (🔴 S1, 🟡 D1)
 

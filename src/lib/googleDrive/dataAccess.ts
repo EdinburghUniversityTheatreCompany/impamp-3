@@ -22,6 +22,7 @@ import {
 } from "@/lib/syncUtils";
 import { base64ToBlob, remapPadSettingsOnImport } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
+import { toWireProfile } from "@/lib/profileWire";
 
 /**
  * Gathers all data for a specific profile from IndexedDB
@@ -119,7 +120,7 @@ export const getLocalProfileSyncData = async (
   return {
     _syncFormatVersion: 1,
     _lastSyncTimestamp: lastSyncTimestamp,
-    profile: profile,
+    profile: toWireProfile(profile),
     padConfigurations: syncedPads,
     pageMetadata: pageMetadata,
     audioFiles: audioFiles,

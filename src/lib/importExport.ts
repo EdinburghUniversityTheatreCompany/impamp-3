@@ -18,6 +18,7 @@ import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
 import type { ProfileSyncData } from "./syncUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
+import { toWireProfile } from "./profileWire";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -1391,8 +1392,11 @@ async function collectProfileDataForZip(profileId: number): Promise<{
     }
   }
 
+  // Sync carries `lastBackedUpAt`; an export must not. Importing this file
+  // stamps its own, and inheriting the donor's would claim a backup the
+  // importing device never made.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { lastBackedUpAt, ...profileToExport } = profile;
+  const { lastBackedUpAt, ...profileToExport } = toWireProfile(profile);
 
   const lean: ProfileExportLean = {
     exportVersion: 2,
