@@ -723,6 +723,32 @@ test.describe("the server account", () => {
       .toBe(401);
   });
 
+  test("signing out reaches the profile cards, not just the account panel", async ({
+    page,
+    request,
+  }) => {
+    // `refreshSession` used to update only the instance that called it, and
+    // the account panel is the only caller. Every card went on believing it
+    // was signed in, so the server option stayed enabled and the scheduled
+    // syncs and SSE streams kept firing against a dead cookie until a reload.
+    await signIn(page, await mintSession(request, "cards@example.com"));
+    await gotoApp(page);
+    await openProfileManager(page);
+
+    await page.getByTestId("sync-status-chip").first().click();
+    const serverOption = page
+      .getByTestId("sync-target-server")
+      .getByRole("radio");
+    await expect(serverOption).toBeEnabled();
+
+    await page.getByText("Import / Export").click();
+    await page.getByTestId("server-sign-out").click();
+    await page.getByText("Profiles", { exact: true }).click();
+
+    await page.getByTestId("sync-status-chip").first().click();
+    await expect(serverOption).toBeDisabled();
+  });
+
   test("says plainly when there is no account", async ({ page }) => {
     await gotoApp(page);
     await openProfileManager(page);

@@ -450,6 +450,45 @@ interface SyncStatusCallbacks {
 const inFlightSyncs = new Map<number, Promise<SyncResult>>();
 
 /**
+ * Everyone waiting on each run, so a caller that joins one still hears how it
+ * went. Joining used to hand back the promise and nothing else: the joiner's
+ * own callbacks were never invoked, so a card that pressed Sync now during a
+ * background sync sat on "syncing" with its button disabled until the panel
+ * was closed and reopened.
+ */
+const inFlightListeners = new Map<number, Set<SyncStatusCallbacks>>();
+
+/**
+ * Say how a run ended to a caller that missed the live events.
+ *
+ * A joiner can arrive after the terminal callback has already fired, so the
+ * outcome is replayed from the result rather than only forwarded as it
+ * happens. Setting the same terminal state twice is harmless; never setting
+ * it is what leaves the UI claiming a sync is still going.
+ */
+const replayOutcome = (
+  result: SyncResult,
+  callbacks: SyncStatusCallbacks,
+): void => {
+  switch (result.status) {
+    case "success":
+      callbacks.onError(null);
+      callbacks.onStatusChange("success");
+      break;
+    case "error":
+      callbacks.onError(result.error);
+      callbacks.onStatusChange("error");
+      break;
+    case "conflict":
+      callbacks.onConflictsDetected(result.conflicts);
+      callbacks.onStatusChange("conflict");
+      break;
+    default:
+      callbacks.onStatusChange("idle");
+  }
+};
+
+/**
  * Synchronize a profile with Google Drive.
  * Concurrent calls for the same profile share the in-flight run.
  * @param profileId The profile ID to sync
@@ -469,16 +508,38 @@ export const syncProfile = (
     console.log(
       `Sync already running for profile ${profileId} — joining in-flight run`,
     );
-    return inFlight;
+    const listeners = inFlightListeners.get(profileId);
+    listeners?.add(callbacks);
+    return inFlight.then((result) => {
+      listeners?.delete(callbacks);
+      replayOutcome(result, callbacks);
+      return result;
+    });
   }
+
+  const listeners = new Set<SyncStatusCallbacks>([callbacks]);
+  inFlightListeners.set(profileId, listeners);
+
+  // The run reports to whoever is waiting at the time, not only to whoever
+  // started it.
+  const fanOut: SyncStatusCallbacks = {
+    onStatusChange: (status) =>
+      listeners.forEach((one) => one.onStatusChange(status)),
+    onError: (error) => listeners.forEach((one) => one.onError(error)),
+    onConflictsDetected: (conflicts) =>
+      listeners.forEach((one) => one.onConflictsDetected(conflicts)),
+    onConflictDataAvailable: (data) =>
+      listeners.forEach((one) => one.onConflictDataAvailable(data)),
+  };
 
   const run = performProfileSync(
     profileId,
     tokenInfo,
-    callbacks,
+    fanOut,
     refreshCallback,
   ).finally(() => {
     inFlightSyncs.delete(profileId);
+    inFlightListeners.delete(profileId);
   });
 
   inFlightSyncs.set(profileId, run);

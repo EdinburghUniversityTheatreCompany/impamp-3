@@ -134,6 +134,10 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
   // through one place, which is what lets a card show a sync it did not start.
   useEffect(() => {
     if (profileId === undefined || state.target !== "googleDrive") return;
+    // A mounting instance starts at idle/null, and writing that would erase a
+    // failure the user was reading, or one a background sync had just
+    // recorded. Only report something this instance actually saw.
+    if (driveStatus === "idle" && driveError === null) return;
     syncStatusActions.patch(profileId, {
       activity: driveStatus,
       error: driveError,
@@ -171,8 +175,24 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
           // success would stamp a "synced just now" the profile has not
           // earned, and hide the one state that needs the user.
           syncStatusActions.patch(profileId, { activity: "conflict" });
+        } else if (result.status === "skipped") {
+          // Nor has one that never ran. "Not a server-synced profile" and
+          // "paused until 4pm" were both landing as "Synced just now", with
+          // the reason thrown away — so pausing in one tab and pressing Sync
+          // now in another reported a sync that had not happened.
+          syncStatusActions.patch(profileId, {
+            activity: "idle",
+            error: result.reason,
+          });
         } else {
           syncStatusActions.noteSynced(profileId, Date.now());
+          // Attached to the run that produced them. They used to be collected
+          // in the server hook and read by nobody, so a sound that could not
+          // be uploaded was never mentioned, while warnings left by an earlier
+          // transition stayed pinned under every later clean sync.
+          syncStatusActions.patch(profileId, {
+            warnings: "warnings" in result ? (result.warnings ?? []) : [],
+          });
         }
       } else if (state.target === "googleDrive") {
         // The Drive hook reports through its own callbacks, mirrored above.
