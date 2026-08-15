@@ -151,9 +151,6 @@ export function usePadDrop(
       // A followed or view-only profile takes no new sounds. Said here as well
       // as in the handler so the drop overlay never invites a drop that is
       // going to be refused.
-      // A followed or view-only profile takes no new sounds. Said here as well
-      // as in the handler so the drop overlay never invites a drop that is
-      // going to be refused.
       if (!canEdit) {
         return false;
       }

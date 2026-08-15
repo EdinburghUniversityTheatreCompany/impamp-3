@@ -249,12 +249,9 @@ export default function ProfileSyncPanel({ profile }: { profile: Profile }) {
       {/*
         Following, and the ways out of it. A profile that cannot push is not
         editable either — the next sync would overwrite the changes — so the
-        panel has to offer something better than a dead end.
-      */}
-      {/*
-        `state.following` is part of the condition rather than implied by the
-        target: a follow that outlived its destination would otherwise render
-        no way out, and the profile refuses every edit until it is dropped.
+        panel has to offer something better than a dead end. `state.following`
+        is in the condition rather than implied by the target, because a follow
+        that outlived its destination would otherwise render no way out at all.
       */}
       {(state.target !== "local" || state.following) && (
         <div className="space-y-2" data-testid="follow-controls">

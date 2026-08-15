@@ -88,9 +88,10 @@ Optimistic concurrency over ETags. Every profile carries a monotonically
 increasing `version`.
 
 ```
-GET    /api/profiles/:id      → { name, version, access, data }, ETag: "<version>"
-                                If-None-Match: "<version>" → 304, empty body
-PUT    /api/profiles/:id      → requires If-Match: "<version>"
+GET    /api/profiles/:id      → { name, version, access, data }
+                                ETag: "<version>.<access>"
+                                If-None-Match: "<version>.<access>" → 304, empty body
+PUT    /api/profiles/:id      → requires If-Match: "<version>"   ← bare version
                                 200 on success, version incremented
                                 409 if stale, *carrying the current blob*
                                 428 if If-Match is missing
@@ -98,7 +99,14 @@ DELETE /api/profiles/:id      → owner only
 GET    /api/profiles/:id/events → SSE; `change` events with the new version
 ```
 
-Two properties are worth spelling out:
+**The two tags are not the same shape, and must not be swapped.** `If-Match`
+on a write is the bare version — feeding it a GET's ETag gets a 428. The GET
+tag carries the caller's access as well, because the response body states it
+and a promotion changes it without touching the version: keyed on the version
+alone, a viewer promoted to editor got 304 on every poll and never learned it
+could write. A client sending only the version simply misses and gets a body.
+
+Two further properties are worth spelling out:
 
 - **A 409 carries the winning data.** The client merges the server's state
   into its own using the same `detectProfileConflicts` the Drive sync uses,

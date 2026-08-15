@@ -5,7 +5,7 @@ import {
   getSyncState,
   isChoosablePair,
   isLegalPair,
-  mayAdoptDriveIds,
+  ownsDriveFolder,
   syncChipText,
   syncTargetLabel,
   type SyncDefect,
@@ -577,22 +577,22 @@ describe("following", () => {
   });
 });
 
-describe("mayAdoptDriveIds", () => {
-  // The blob names a Drive id for every sound that has one, so the bytes are
-  // fetchable by anyone with folder access. Writing those ids onto our own
-  // records claims something else — "already uploaded, by me" — and
-  // `uploadMissingAudioFiles` believes it.
-  it("lets a Drive-synced profile claim them: the folder is the one it syncs through", () => {
+describe("ownsDriveFolder", () => {
+  // Governs uploading only. Whether a Drive id from a remote gets *recorded*
+  // is deliberately not gated on this: the pushed blob is built from local
+  // records, so a collaborator that declined to record ids pushed a blob with
+  // no route to any sound, and the next device to sync found empty pads.
+  it("says yes for a Drive-synced profile: the folder is the one it syncs through", () => {
     expect(
-      mayAdoptDriveIds(
+      ownsDriveFolder(
         profile({ syncType: "googleDrive", googleDriveFileId: "file-1" }),
       ),
     ).toBe(true);
   });
 
-  it("lets a server profile we own claim them", () => {
+  it("says yes for a server profile we own", () => {
     expect(
-      mayAdoptDriveIds(
+      ownsDriveFolder(
         profile({
           syncType: "server",
           serverProfileId: "srv-1",
@@ -602,9 +602,11 @@ describe("mayAdoptDriveIds", () => {
     ).toBe(true);
   });
 
-  it("refuses them for a collaborator: the folder is the owner's", () => {
+  it("says no for a collaborator: the folder is the owner's", () => {
+    // Uploading here writes into someone else's folder, and
+    // `uploadMissingAudioFiles` swallows the failures, so it fails quietly.
     expect(
-      mayAdoptDriveIds(
+      ownsDriveFolder(
         profile({
           syncType: "server",
           serverProfileId: "srv-1",
@@ -614,14 +616,14 @@ describe("mayAdoptDriveIds", () => {
     ).toBe(false);
   });
 
-  it("refuses them when the role is not yet known", () => {
-    // A profile written before `serverRole` existed. Not adopting costs
-    // nothing — downloads read the id straight from the blob — while adopting
-    // wrongly is what silently stops the next upload.
+  it("says yes when the role is not yet known", () => {
+    // Every server profile written before `serverRole` existed. Guessing
+    // collaborator would stop a real owner publishing at all, which is worse
+    // than the failure it would avoid.
     expect(
-      mayAdoptDriveIds(
+      ownsDriveFolder(
         profile({ syncType: "server", serverProfileId: "srv-1" }),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

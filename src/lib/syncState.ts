@@ -219,24 +219,34 @@ export const isReadOnlyForSync = (profile: Profile): boolean =>
   Boolean(profile.readOnly) || Boolean(profile.followOnly);
 
 /**
- * Whether Drive file ids arriving from a remote may be recorded as *ours*.
+ * Whether this device is the one that publishes into the profile's Drive
+ * folder.
  *
- * The blob carries a Drive id for every sound that has one, so anyone with
- * access to the folder can fetch it. Writing those ids onto our own audio
- * records is a different claim: `uploadMissingAudioFiles` reads them as "this
- * sound is already in my folder" and skips it. A server-synced collaborator
- * who adopted the owner's ids and later moved their audio to Drive would
- * upload nothing at all, and their blob would go on pointing into a folder
- * they do not own — the borrowed-Drive-folder failure, one level down where
- * `reconcileBorrowedDriveLinks` cannot see it.
+ * A collaborator's `googleDriveFolderId` was copied out of the owner's blob,
+ * so uploading against it means writing into a folder they do not own —
+ * silently, because `uploadMissingAudioFiles` swallows per-file failures.
+ *
+ * This governs *uploading* only. It deliberately does not govern whether a
+ * Drive id arriving from a remote gets recorded locally: withholding that made
+ * a collaborator push a blob with no `driveFileId` on any sound, since the
+ * blob is built from local records and the merge keeps the local entry over
+ * the remote one. The next device to sync then found pads pointing at nothing.
+ * Recording an id we cannot write to costs nothing; not recording it loses the
+ * only route anyone else had to the bytes.
  *
  * Drive-synced profiles are unaffected: the profile file lives in that same
  * folder, so anyone syncing through it can reach and write to it.
+ *
+ * False only for a *known* collaborator. "Unknown" is every server profile
+ * written before `serverRole` existed, and it keeps the old behaviour, because
+ * guessing wrong is costly in both directions: guess collaborator and a real
+ * owner stops publishing, guess owner and an editor writes into someone
+ * else's folder.
  */
-export function mayAdoptDriveIds(profile: Profile): boolean {
+export function ownsDriveFolder(profile: Profile): boolean {
   const { target, ownership } = getSyncState(profile);
   if (target !== "server") return true;
-  return ownership === "owner";
+  return ownership !== "collaborator";
 }
 
 export function getSyncState(profile: Profile, now = Date.now()): SyncState {

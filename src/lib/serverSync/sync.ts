@@ -22,7 +22,11 @@ import {
   type Profile,
 } from "@/lib/db";
 import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
-import { getSyncState, isReadOnlyForSync } from "@/lib/syncState";
+import {
+  getSyncState,
+  isReadOnlyForSync,
+  ownsDriveFolder,
+} from "@/lib/syncState";
 import {
   getLocalProfileSyncData,
   updateLocalData,
@@ -150,10 +154,10 @@ async function performServerSync(
     // behaviour, because assuming they are collaborators would stop real
     // owners publishing at all.
     const warnings: string[] = [];
-    const { ownership, audio, audioIsExplicit } = getSyncState(profile);
+    const { audio, audioIsExplicit } = getSyncState(profile);
     if (
       audio === "googleDrive" &&
-      ownership !== "collaborator" &&
+      ownsDriveFolder(profile) &&
       drive.tokenInfo &&
       profile.googleDriveFolderId
     ) {

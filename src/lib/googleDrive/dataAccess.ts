@@ -16,7 +16,6 @@ import {
   computeBlobHash,
 } from "@/lib/db";
 import { ProfileSyncData, resolveSyncedPadAudio } from "@/lib/syncUtils";
-import { mayAdoptDriveIds } from "@/lib/syncState";
 import { base64ToBlob } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
 
@@ -142,9 +141,6 @@ export const backfillDriveFileIdsFromRemote = async (
 ): Promise<void> => {
   if (!audioRefs || audioRefs.length === 0) return;
 
-  const owner = await getProfile(profileId);
-  if (owner && !mayAdoptDriveIds(owner)) return;
-
   const db = await getDb();
 
   // Resolve every reference in a single read-only pass. The writes must wait
@@ -190,11 +186,6 @@ export const updateLocalData = async (
   const db = await getDb();
   const warnings: string[] = [];
 
-  // Whether the Drive ids in this blob are ours to claim, or the sending
-  // device's. Read before the import loop, which has no room to await.
-  const localProfile = await getProfile(profileId);
-  const adoptDriveIds = localProfile ? mayAdoptDriveIds(localProfile) : true;
-
   // First, handle audio files import
   const audioIdMap = new Map<number, number>();
   const hasAudioReferences = !!(data.audioFiles && data.audioFiles.length > 0);
@@ -235,11 +226,7 @@ export const updateLocalData = async (
       if (existing?.id !== undefined) {
         newAudioId = existing.id;
         // Persist the driveFileId for this profile if we now know it and it's missing
-        if (
-          adoptDriveIds &&
-          ref.driveFileId &&
-          !existing.driveFileIds?.[profileId]
-        ) {
+        if (ref.driveFileId && !existing.driveFileIds?.[profileId]) {
           const currentMap = existing.driveFileIds ?? {};
           await audioStore.put({
             ...existing,
@@ -254,10 +241,9 @@ export const updateLocalData = async (
           name: ref.name,
           type: ref.type,
           hash,
-          driveFileIds:
-            adoptDriveIds && ref.driveFileId
-              ? { [profileId]: ref.driveFileId }
-              : undefined,
+          driveFileIds: ref.driveFileId
+            ? { [profileId]: ref.driveFileId }
+            : undefined,
           createdAt: new Date(),
         });
         console.log(`Added audio file from base64 "${ref.name}"`);

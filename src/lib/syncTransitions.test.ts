@@ -368,6 +368,35 @@ describe("planTransition — invariants across every legal move", () => {
     }
   });
 
+  it("sends a collaborator to a copy rather than letting them move the original", () => {
+    // This is what makes the borrowed Drive folder harmless: the one move a
+    // collaborator may make is to disconnect, and that path clears the folder
+    // and the per-file ids with it. Weaken this guard and the borrowed ids
+    // become reachable again.
+    const editor = profile({
+      syncType: "server",
+      audioLocation: "googleDrive",
+      serverProfileId: "srv-1",
+      serverRole: "editor",
+      googleDriveFolderId: "someone-elses-folder",
+    });
+
+    const moved = planTransition(editor, {
+      target: "googleDrive",
+      audio: "googleDrive",
+    });
+    expect(moved.ok).toBe(false);
+    expect(moved.reason).toMatch(/own copy/i);
+
+    const disconnected = planTransition(editor, {
+      target: "local",
+      audio: "local",
+    });
+    expect(disconnected.ok).toBe(true);
+    expect(disconnected.fieldUpdates.googleDriveFolderId).toBeNull();
+    expect(disconnected.effects).toContain("clearAudioDriveIds");
+  });
+
   it("ends a follow when the profile moves somewhere else", () => {
     // Following is a relationship with the copy at the old destination. Carried
     // across, it left a local profile refusing every edit, with the follow
