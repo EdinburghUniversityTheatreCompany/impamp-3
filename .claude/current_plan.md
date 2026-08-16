@@ -73,9 +73,12 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 
 ## Phase 4 — pad-config invalidation and keyboard ownership (🔴 C4; 🟡 A8, A9, D6, UI5)
 
-- [ ] 4.1 C4: `useKeyboardListener` consumes `usePadConfigurations`; delete
-      `padConfigsRef` and `reloadToken`
-- [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse
+- [x] 4.1 C4: `reloadToken` deleted, `refetch()` bumps the shared counter, and
+      `useKeyboardListener` reads `usePadConfigurations`. Commit `988084d`,
+      reproduced first by `e2e-tests/bulk-import-keyboard.spec.ts`.
+- [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse.
+      **Partly done by 4.1**: the pad-config invalidation half no longer needs
+      remembering. What is left is `requestSync` + the emergency check.
 - [ ] 4.3 A8: all three "overlay open" flags into `uiStore` behind
       `isAnyOverlayOpen`
 - [ ] 4.4 A9: Delete-key handling moves into `useKeyboardListener`
@@ -190,6 +193,7 @@ Started 2026-08-15, in `.worktrees/fix/repo-review` on `fix/repo-review`.
 | `6aa7fae` | U1 — `/server/open` calls the connect hook instead of re-implementing it |
 | `1598b37` | C2 — duplicating a profile keeps its gain settings |
 | `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes |
+| `988084d` | C4 — one source of pad configs; the keyboard can't go stale |
 
 **Verification:** 545 unit tests green (was 519), typecheck clean, full chromium
 e2e 122/122 against a real build, and the Docker image built and run (uid 1000,
@@ -199,5 +203,12 @@ e2e 122/122 against a real build, and the Docker image built and run (uid 1000,
 and the container now runs as uid 1000. One-off:
 `docker run --rm -v impamp_data:/data alpine chown -R 1000:1000 /data`
 
-**Next step:** phase 4 (C4, the pad-config invalidation), then phase 6's server
-🔴s (S2, R1, R5) and phase 7's `fetchWithTimeout` (R2).
+**Also done on production** (Mick asked): the `impamp_data` volume is chowned to
+1000:1000, backed up first to `/home/deploy/impamp-backups/`. The app was
+verified healthy after. Found while doing it: `config/deploy.yml` documents a
+backup command using `sqlite3` inside the app container, which has no sqlite3
+binary — so the one documented recovery procedure could never have run. Fix in
+phase 13.
+
+**Next step:** phase 6's server 🔴s (S2, R1, R5), then phase 7's
+`fetchWithTimeout` (R2).
