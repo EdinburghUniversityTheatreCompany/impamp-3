@@ -846,6 +846,28 @@ export async function getAudioFileIdsForProfile(
 }
 
 // Find orphaned audio files that are not referenced by any pad configuration
+/**
+ * Splits audio file ids into those some pad still names and those none does.
+ *
+ * Shared by the read-only scan and the delete, so the two cannot disagree
+ * about what "orphaned" means.
+ */
+function separateOrphans(
+  allAudioKeys: IDBValidKey[],
+  allPadConfigs: PadConfiguration[],
+): { orphanedIds: Set<number>; referencedIds: Set<number> } {
+  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
+  const orphanedIds = new Set<number>();
+
+  for (const audioId of allAudioKeys) {
+    if (typeof audioId === "number" && !referencedIds.has(audioId)) {
+      orphanedIds.add(audioId);
+    }
+  }
+
+  return { orphanedIds, referencedIds };
+}
+
 export async function findOrphanedAudioFiles(): Promise<{
   orphanedIds: Set<number>;
   referencedIds: Set<number>;
@@ -853,27 +875,18 @@ export async function findOrphanedAudioFiles(): Promise<{
 }> {
   const db = await getDb();
 
-  // Get all audio file IDs
-  const audioTx = db.transaction("audioFiles", "readonly");
-  const audioStore = audioTx.objectStore("audioFiles");
-  const allAudioFiles = await audioStore.getAllKeys();
-  await audioTx.done;
+  // One transaction over both stores, so the two halves describe the same
+  // instant. Read separately, an import that had committed its audio but not
+  // yet its pads looked like a pile of unreferenced files.
+  const tx = db.transaction(["audioFiles", "padConfigurations"], "readonly");
+  const allAudioFiles = await tx.objectStore("audioFiles").getAllKeys();
+  const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+  await tx.done;
 
-  // Get all referenced audio file IDs from pad configurations
-  const padTx = db.transaction("padConfigurations", "readonly");
-  const padStore = padTx.objectStore("padConfigurations");
-  const allPadConfigs = await padStore.getAll();
-  await padTx.done;
-
-  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
-
-  // Find orphaned IDs (exist in audioFiles but not referenced by any pad)
-  const orphanedIds = new Set<number>();
-  allAudioFiles.forEach((audioId) => {
-    if (typeof audioId === "number" && !referencedIds.has(audioId)) {
-      orphanedIds.add(audioId);
-    }
-  });
+  const { orphanedIds, referencedIds } = separateOrphans(
+    allAudioFiles,
+    allPadConfigs,
+  );
 
   console.log(
     `[Orphan Detection] Found ${orphanedIds.size} orphaned audio files out of ${allAudioFiles.length} total`,
@@ -900,11 +913,26 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
   let deletedCount = 0;
   let cacheEntriesCleared = 0;
 
+  let orphanedIds = new Set<number>();
+
   try {
-    // Find orphaned files
-    const { orphanedIds } = await findOrphanedAudioFiles();
+    // Deciding *and* deleting inside one transaction, so nothing can start
+    // referencing a file between the two. The scan and the delete used to be
+    // three separate transactions, and an import writes its audio records
+    // before the pads that name them — so a cleanup running in that window
+    // deleted sounds an import was midway through attaching.
+    //
+    // Every await below is an IndexedDB request, which is what keeps the
+    // transaction alive; anything else here would let it auto-close.
+    const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
+    const audioStore = tx.objectStore("audioFiles");
+    const allAudioKeys = await audioStore.getAllKeys();
+    const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+
+    orphanedIds = separateOrphans(allAudioKeys, allPadConfigs).orphanedIds;
 
     if (orphanedIds.size === 0) {
+      await tx.done;
       console.log("[Orphan Cleanup] No orphaned audio files found");
       return { deletedCount: 0, cacheEntriesCleared: 0, errors: [] };
     }
@@ -912,10 +940,6 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
     console.log(
       `[Orphan Cleanup] Starting cleanup of ${orphanedIds.size} orphaned audio files...`,
     );
-
-    // Delete orphaned audio files in a single transaction
-    const audioTx = db.transaction("audioFiles", "readwrite");
-    const audioStore = audioTx.objectStore("audioFiles");
 
     const deletePromises = Array.from(orphanedIds).map(async (audioId) => {
       try {
@@ -930,7 +954,7 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
     });
 
     await Promise.all(deletePromises);
-    await audioTx.done;
+    await tx.done;
 
     // Clear cache entries for deleted audio files
     if (typeof window !== "undefined") {

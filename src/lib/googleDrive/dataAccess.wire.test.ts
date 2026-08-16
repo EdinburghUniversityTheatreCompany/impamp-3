@@ -48,6 +48,51 @@ beforeEach(async () => {
   profileId = (await db.add("profiles", collaboratorProfile)) as number;
 });
 
+describe("what a remote blob is allowed to leave behind", () => {
+  it("does not persist the wire-only hash fields into IndexedDB", async () => {
+    // `audioFileHashes` and the `*ByHash` twins are a wire representation:
+    // synthesised at export, read once to resolve a pad's audio, and
+    // re-derived every time the blob is written. Stored, they are a copy
+    // nothing reads that can disagree with the ids beside it after a later
+    // edit — which is the exact failure the hash fields exist to prevent.
+    const { updateLocalData } = await import("./dataAccess");
+    const db = await getDb();
+
+    await updateLocalData(profileId, {
+      _syncFormatVersion: 1,
+      profile: { ...collaboratorProfile, id: profileId },
+      padConfigurations: [
+        {
+          profileId,
+          pageIndex: 0,
+          padIndex: 0,
+          name: "Horn",
+          playbackType: "round-robin",
+          audioFileIds: [],
+          audioFileHashes: ["hash-a"],
+          audioTrimSettingsByHash: { "hash-a": { trimStart: 0, trimEnd: 1 } },
+          audioGainSettingsByHash: { "hash-a": -3 },
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+      ],
+      pageMetadata: [],
+      audioFiles: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    expect(pads).toHaveLength(1);
+    expect(pads[0]).not.toHaveProperty("audioFileHashes");
+    expect(pads[0]).not.toHaveProperty("audioTrimSettingsByHash");
+    expect(pads[0]).not.toHaveProperty("audioGainSettingsByHash");
+  });
+});
+
 describe("the published sync blob", () => {
   it("does not contain the share token anywhere", async () => {
     const blob = await getLocalProfileSyncData(profileId);

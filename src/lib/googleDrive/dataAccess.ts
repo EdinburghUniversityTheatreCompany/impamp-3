@@ -334,8 +334,6 @@ export const updateLocalData = async (
   const profileStore = tx.objectStore("profiles");
   const padStore = tx.objectStore("padConfigurations");
   const pageStore = tx.objectStore("pageMetadata");
-  const padCompoundIndex = padStore.index("profilePagePad");
-  const pageCompoundIndex = pageStore.index("profilePage");
 
   try {
     // 1. Update Profile — preserve local-only fields that must not be overwritten by remote
@@ -451,17 +449,26 @@ export const updateLocalData = async (
         padWithProfileId.audioFileIds = resolved.audioFileIds;
       }
 
-      // Check if pad exists locally
-      const existingLocalPad = (await padCompoundIndex.get([
-        profileId,
-        pad.pageIndex,
-        pad.padIndex,
-      ])) as PadConfiguration | undefined;
+      // The hash-keyed fields are a *wire* representation: synthesised at
+      // export, read above to resolve this pad's audio, and re-derived every
+      // time the blob is written. Storing them would leave a copy that nothing
+      // reads and that can disagree with the ids beside it after a later edit.
+      const {
+        audioFileHashes: _wireHashes,
+        audioTrimSettingsByHash: _wireTrim,
+        audioGainSettingsByHash: _wireGain,
+        ...padToStore
+      } = padWithProfileId;
+
+      // From the map built before the loop, not a fresh index lookup. The get
+      // ran once per pad — 960 of them on a full board — inside the write
+      // transaction, so it also held the store's locks for longer.
+      const existingLocalPad = existingPadMap.get(key);
 
       if (existingLocalPad?.id) {
-        await padStore.put({ ...padWithProfileId, id: existingLocalPad.id });
+        await padStore.put({ ...padToStore, id: existingLocalPad.id });
       } else {
-        const { id: _remoteId, ...padToAdd } = padWithProfileId;
+        const { id: _remoteId, ...padToAdd } = padToStore;
         await padStore.add(padToAdd);
       }
     }
@@ -488,10 +495,8 @@ export const updateLocalData = async (
         createdAt: toDate(page.createdAt),
         updatedAt: toDate(page.updatedAt),
       };
-      const existingLocalPage = (await pageCompoundIndex.get([
-        profileId,
-        page.pageIndex,
-      ])) as PageMetadata | undefined;
+      // From the map built above, for the same reason as the pads.
+      const existingLocalPage = existingPageMap.get(page.pageIndex);
 
       if (existingLocalPage?.id) {
         await pageStore.put({ ...pageWithProfileId, id: existingLocalPage.id });
