@@ -796,7 +796,11 @@ export const uploadDriveFile = async (
     };
 
     const response = await fetchWithTimeout(url, {
-      // Moving the whole audio blob — the largest request this app makes.
+      // The profile blob, which embeds base64 audio on the paths that have no
+      // separate Drive file — so it is a transfer, not a control call. The
+      // comment here used to claim this was "the whole audio blob", which is
+      // how the long tier ended up on the JSON while `uploadAudioFile` and
+      // both audio downloads were left on the ten-second one.
       timeoutKind: "transfer",
       method,
       headers,
@@ -820,6 +824,7 @@ export const uploadDriveFile = async (
         };
 
         const retryResponse = await fetchWithTimeout(url, {
+          timeoutKind: "transfer",
           method,
           headers: retryHeaders,
           body: form, // Re-use the same form
@@ -925,6 +930,10 @@ export const uploadAudioFile = async (
 
     const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
     const response = await fetchWithTimeout(url, {
+      // The audio blob itself. This is the request that actually needs the
+      // long tier — a few minutes of audio over a domestic uplink is well
+      // past ten seconds, and the control tier aborted it mid-upload.
+      timeoutKind: "transfer",
       method,
       headers,
       body: form,
@@ -936,6 +945,7 @@ export const uploadAudioFile = async (
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
         const retryResponse = await fetchWithTimeout(url, {
+          timeoutKind: "transfer",
           method,
           headers: {
             Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
@@ -986,6 +996,7 @@ const downloadAudioFileViaPublicProxy = async (
   try {
     const response = await fetchWithTimeout(
       `/api/drive/public-audio?id=${encodeURIComponent(fileId)}`,
+      { timeoutKind: "transfer" },
     );
     if (!response.ok) return null;
     return await response.blob();
@@ -1017,7 +1028,10 @@ export const downloadAudioFileAsBlob = async (
   try {
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
     const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
-    const response = await fetchWithTimeout(url, { headers });
+    const response = await fetchWithTimeout(url, {
+      timeoutKind: "transfer",
+      headers,
+    });
 
     if (response.status === 401) {
       const { isValid, refreshedTokenInfo } =
@@ -1025,6 +1039,7 @@ export const downloadAudioFileAsBlob = async (
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
         const retryResponse = await fetchWithTimeout(url, {
+          timeoutKind: "transfer",
           headers: {
             Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
           },
@@ -1139,6 +1154,8 @@ export const downloadPublicProfileData = async (
   try {
     const response = await fetchWithTimeout(
       `/api/drive/public-file?id=${encodeURIComponent(fileId)}`,
+      // Same blob `uploadDriveFile` sends, coming back: base64 audio and all.
+      { timeoutKind: "transfer" },
     );
     if (!response.ok) return null;
     const data = (await response.json()) as ProfileSyncData;
