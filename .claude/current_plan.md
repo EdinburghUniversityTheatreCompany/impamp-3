@@ -67,7 +67,7 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 - [ ] 3.2 C3: hosted-audio branch in `importProfileFromSyncData`
 - [x] 3.3 A6 · [x] 3.4 A5 · [x] 3.5 A7 · [x] 3.7 SV5 — commit `662214c`.
       jscpd refused the first attempt (two copies of the outcome replay), so
-      `lib/syncReplay.ts` now owns the replay *and* the listener fan-out.
+      `lib/syncReplay.ts` now owns the replay _and_ the listener fan-out.
 - [x] 3.6 D7 (hashes): both import paths store them now (`f583648`, `7500c72`).
       The duplicated `getHashlessIndex` itself is still two copies.
 
@@ -105,7 +105,7 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 
 - [ ] 7.1 R2: one `fetchWithTimeout`; expiry on `inFlight` and `capability`;
       service-worker timeout
-- [x] 7.2 N1–N6 (`ad8dce3`) — `getAudioFileMetadata` replaced *seven* copies;
+- [x] 7.2 N1–N6 (`ad8dce3`) — `getAudioFileMetadata` replaced _seven_ copies;
       the Drive repair scan was an unlisted eighth.
 - [ ] 7.3 R4: `serverHosted` short-circuit, batched marking, bounded pool
 - [ ] 7.4 P11, P12
@@ -177,7 +177,7 @@ structure-only, and each was weighed rather than forgotten:
 
 - **A1 — split `profileStore` (1161 lines).** The single riskiest change on the
   list: five modules, every consumer touched, no bug driving it. The review
-  itself places it after all correctness work. Its *symptoms* are already
+  itself places it after all correctness work. Its _symptoms_ are already
   fixed — the whole-store subscriptions (A13), the queue leak (A4), the double
   load sweep (UI7).
 - **A2 — `startSyncScheduler` out of `ClientSideInitializer`.** Same shape:
@@ -210,23 +210,23 @@ Started 2026-08-15, in `.worktrees/fix/repo-review` on `fix/repo-review`.
 
 **Done so far — 8 of the 14 actionable 🔴, each its own commit:**
 
-| Commit | Finding |
-|---|---|
-| `d413146` | P1, P2 — the two playback races, + the first tests for `controls.ts` |
-| `2303298` | S1 — the share token no longer travels in any blob |
-| `7a90d55` | C1 — a merged pad's ids and hashes can no longer disagree |
-| `f583648` | C3 — server-hosted sounds are fetched, not skipped |
+| Commit    | Finding                                                                  |
+| --------- | ------------------------------------------------------------------------ |
+| `d413146` | P1, P2 — the two playback races, + the first tests for `controls.ts`     |
+| `2303298` | S1 — the share token no longer travels in any blob                       |
+| `7a90d55` | C1 — a merged pad's ids and hashes can no longer disagree                |
+| `f583648` | C3 — server-hosted sounds are fetched, not skipped                       |
 | `6aa7fae` | U1 — `/server/open` calls the connect hook instead of re-implementing it |
-| `1598b37` | C2 — duplicating a profile keeps its gain settings |
-| `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes |
-| `988084d` | C4 — one source of pad configs; the keyboard can't go stale |
-| `2c718dd` | R1, R5, P2, P5 — server stops reading the DB to answer small questions |
-| `be96265` | T1, TH4, TH6 — the delete-protection test can now fail |
-| `15e17a0` | R2, L10 — every outbound request has a deadline; lint clean |
-| `6cca9e6` | R4 — no re-uploading a library the server already has |
-| `886832f` | S2 — proof of the bytes, not just knowledge of the hash |
-| `a0b0004` | U2 — profile manager mounted only while open (427→378 KB) |
-| `3fb5e0a` | R3 — loudness off the main thread, and 5x cheaper |
+| `1598b37` | C2 — duplicating a profile keeps its gain settings                       |
+| `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes           |
+| `988084d` | C4 — one source of pad configs; the keyboard can't go stale              |
+| `2c718dd` | R1, R5, P2, P5 — server stops reading the DB to answer small questions   |
+| `be96265` | T1, TH4, TH6 — the delete-protection test can now fail                   |
+| `15e17a0` | R2, L10 — every outbound request has a deadline; lint clean              |
+| `6cca9e6` | R4 — no re-uploading a library the server already has                    |
+| `886832f` | S2 — proof of the bytes, not just knowledge of the hash                  |
+| `a0b0004` | U2 — profile manager mounted only while open (427→378 KB)                |
+| `3fb5e0a` | R3 — loudness off the main thread, and 5x cheaper                        |
 
 **Verification:** 545 unit tests green (was 519), typecheck clean, full chromium
 e2e 122/122 against a real build, and the Docker image built and run (uid 1000,

@@ -4,8 +4,12 @@ amends "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Config.
 import "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Builtins.pkl"
 
 local linters = new Mapping<String, Step> {
+    // CI runs `npx prettier --check .` over everything, so this glob has to
+    // cover everything prettier claims too. It used to stop at code formats,
+    // which let an unformatted .md and .yml through the commit gate and turn
+    // the lint job red on a push that had passed locally.
     ["prettier"] {
-        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.astro", "**/*.css", "**/*.scss", "**/*.mdx", "**/*.json")
+        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.astro", "**/*.css", "**/*.scss", "**/*.md", "**/*.mdx", "**/*.json", "**/*.yml", "**/*.yaml")
         check = "npx prettier --check {{ files }}"
         fix = "npx prettier --write {{ files }}"
     }
