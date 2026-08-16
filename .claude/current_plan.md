@@ -65,11 +65,11 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 
 - [ ] 3.1 C1: exclude hash fields from `allFields`, re-derive after merge
 - [ ] 3.2 C3: hosted-audio branch in `importProfileFromSyncData`
-- [ ] 3.3 A6: unify the warning channel across both backends
-- [ ] 3.4 A5: server in-flight map keeps joiners' callbacks and replays SSE
-- [ ] 3.5 A7: key SSE subscriptions on profile+serverProfileId+shareToken
-- [ ] 3.6 D7: one `getHashlessIndex`; store hashes at import time
-- [ ] 3.7 SV5: `applyTransition` fails on paused, not only on error
+- [x] 3.3 A6 · [x] 3.4 A5 · [x] 3.5 A7 · [x] 3.7 SV5 — commit `662214c`.
+      jscpd refused the first attempt (two copies of the outcome replay), so
+      `lib/syncReplay.ts` now owns the replay *and* the listener fan-out.
+- [ ] 3.6 D7: one `getHashlessIndex`; hashes at import time (half done — the
+      sync-data import path stores them; the ZIP path still does not)
 
 ## Phase 4 — pad-config invalidation and keyboard ownership (🔴 C4; 🟡 A8, A9, D6, UI5)
 
@@ -79,10 +79,10 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 - [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse.
       **Partly done by 4.1**: the pad-config invalidation half no longer needs
       remembering. What is left is `requestSync` + the emergency check.
-- [ ] 4.3 A8: all three "overlay open" flags into `uiStore` behind
-      `isAnyOverlayOpen`
-- [ ] 4.4 A9: Delete-key handling moves into `useKeyboardListener`
-- [ ] 4.5 UI5: clear `emergencySoundsRef` at the top of `reloadEmergencySounds`
+- [x] 4.3 A8 · [x] 4.4 A9 · [x] 4.5 UI5 — commit `6a2ce80`, with
+      `overlay-keyboard.spec.ts` failing 3/3 against the old code.
+      A8 took the surgical route: `useIsAnyOverlayOpen` is one place to ask.
+      Moving the flags themselves into `uiStore` belongs to A1 in phase 10.
 
 ## Phase 5 — storage and import (🔴 C2; 🟡 ST1–ST6; TH2 first)
 
