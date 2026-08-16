@@ -11,9 +11,10 @@ import ConnectProfileList from "./ConnectProfileList";
 import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import type { ImportLink, TransferProgress } from "@/lib/importExport";
+import type { TransferProgress } from "@/lib/importExport";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
+import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -88,13 +89,11 @@ export default function ProfileManager() {
     isProfileManagerOpen,
     closeProfileManager,
     createProfile,
-    updateProfile,
     importProfileFromJSON,
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
     importProfilesFromZip,
-    importProfileFromSyncData,
     isGoogleSignedIn,
     googleUser,
     googleAccessToken,
@@ -191,12 +190,8 @@ export default function ProfileManager() {
   const [shareConnectReadOnly, setShareConnectReadOnly] = useState(false);
 
   // Hooks
-  const {
-    downloadDriveFile,
-    downloadAudioFile,
-    listFilesInFolder,
-    repairDriveAudio,
-  } = useGoogleDriveSync();
+  const { downloadDriveFile, repairDriveAudio } = useGoogleDriveSync();
+  const { connectByFolderId, connectWithSyncData } = useConnectDriveProfile();
 
   /**
    * Imports Drive sync data as a new local profile, streaming each audio
@@ -205,25 +200,6 @@ export default function ProfileManager() {
    * Shows download progress while audio is fetched. Returns the new
    * profile's ID so the caller can link it to Drive.
    */
-  const connectSyncedProfile = async (
-    syncData: ProfileSyncData,
-    link: ImportLink,
-  ): Promise<number> => {
-    try {
-      return await importProfileFromSyncData(
-        syncData,
-        downloadAudioFile,
-        (p) =>
-          setAudioDownloadProgress({
-            current: p.processedFiles,
-            total: p.totalFiles,
-          }),
-        link,
-      );
-    } finally {
-      setAudioDownloadProgress(null);
-    }
-  };
 
   const googleLogin = useGoogleSignIn({
     onError: setGoogleApiError,
@@ -276,34 +252,20 @@ export default function ProfileManager() {
     setConnectError(null);
     setIsConnecting(true);
     try {
-      // Find the profile JSON file inside the shared folder
-      const files = await listFilesInFolder(folderId);
-      const profileFile = files.find((f) => f.name.endsWith(".json"));
-      if (!profileFile) {
-        throw new Error(
-          "No profile file found in the selected folder. Make sure you're selecting an ImpAmp profile folder.",
-        );
-      }
-      const fileId = profileFile.id;
-
-      const syncData: ProfileSyncData | null = await downloadDriveFile(fileId);
-
-      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
-        throw new Error("Not a valid ImpAmp profile file.");
-      }
-
-      // Import as a new profile linked to the shared Drive folder
-      const newProfileId = await connectSyncedProfile(syncData, {
-        syncType: "googleDrive",
-        audioLocation: "googleDrive",
-        googleDriveFileId: fileId,
-        googleDriveFolderId: folderId,
-      });
-      await updateProfile(newProfileId, {
-        readOnly: shareConnectReadOnly || undefined,
+      const outcome = await connectByFolderId(folderId, {
+        readOnly: shareConnectReadOnly,
+        onProgress: (p) =>
+          setAudioDownloadProgress({
+            current: p.processedFiles,
+            total: p.totalFiles,
+          }),
       });
 
-      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
+      setConnectSuccess(
+        outcome.kind === "already-connected"
+          ? `"${outcome.name}" is already connected.`
+          : `"${outcome.name}" connected successfully.`,
+      );
       setShareConnectReadOnly(false);
     } catch (error) {
       console.error("Failed to connect to shared profile:", error);
@@ -420,20 +382,27 @@ export default function ProfileManager() {
         }
       }
 
-      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
-        throw new Error("Not a valid ImpAmp profile file.");
-      }
+      // Already downloaded, by whichever of the two routes worked, so this
+      // enters the shared path at the point after the download — the
+      // validation and the already-connected check still apply.
+      const outcome = await connectWithSyncData(
+        syncData,
+        { googleDriveFileId: fileId! },
+        {
+          readOnly: forceReadOnly || shareConnectReadOnly,
+          onProgress: (p) =>
+            setAudioDownloadProgress({
+              current: p.processedFiles,
+              total: p.totalFiles,
+            }),
+        },
+      );
 
-      const newProfileId = await connectSyncedProfile(syncData, {
-        syncType: "googleDrive",
-        audioLocation: "googleDrive",
-        googleDriveFileId: fileId,
-      });
-      await updateProfile(newProfileId, {
-        readOnly: forceReadOnly || shareConnectReadOnly || undefined,
-      });
-
-      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
+      setConnectSuccess(
+        outcome.kind === "already-connected"
+          ? `"${outcome.name}" is already connected.`
+          : `"${outcome.name}" connected successfully.`,
+      );
       setShareUrl("");
       setShareConnectReadOnly(false);
     } catch (error) {

@@ -2,10 +2,9 @@
 
 import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useProfileStore, whenProfilesLoaded } from "@/store/profileStore";
-import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
-import { ProfileSyncData } from "@/lib/syncUtils";
+import { useProfileStore } from "@/store/profileStore";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
+import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 
@@ -21,10 +20,8 @@ function DriveOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { isGoogleSignedIn, importProfileFromSyncData } = useProfileStore();
-
-  const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
-    useGoogleDriveSync();
+  const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
+  const { connectByFolderId } = useConnectDriveProfile();
 
   // The folder ID out of the Google Drive "Open with" state param.
   const initialFolderId = useMemo((): string | null => {
@@ -57,65 +54,24 @@ function DriveOpenContent() {
   const connectToFolder = useCallback(
     async (folderId: string) => {
       try {
-        // Wait for the initial profile load before deciding: this page can
-        // mount before it finishes, and an empty list then reads as "not
-        // connected yet" and imports a second copy of the profile.
-        const loaded = await whenProfilesLoaded();
-        const existing = loaded.find((p) => p.googleDriveFolderId === folderId);
-        if (existing) {
-          setPageState({
-            kind: "already-connected",
-            profileName: existing.name,
-          });
-          return;
-        }
-
-        // Find the profile JSON file inside the shared folder
-        const files = await listFilesInFolder(folderId);
-        const profileFile = files.find((f) => f.name.endsWith(".json"));
-        if (!profileFile) {
-          throw new Error(
-            "No profile file found in the selected folder. Make sure you're selecting an ImpAmp profile folder.",
-          );
-        }
-
-        const syncData: ProfileSyncData | null = await downloadDriveFile(
-          profileFile.id,
-        );
-        if (
-          !syncData ||
-          syncData._syncFormatVersion !== 1 ||
-          !syncData.profile
-        ) {
-          throw new Error("Not a valid ImpAmp profile file.");
-        }
-
-        // Import as a new profile linked to the shared Drive folder,
-        // streaming each audio file straight into IndexedDB.
-        await importProfileFromSyncData(
-          syncData,
-          downloadAudioFile,
-          (p) =>
+        const outcome = await connectByFolderId(folderId, {
+          onProgress: (p) =>
             setPageState({
               kind: "connecting",
               progress: { current: p.processedFiles, total: p.totalFiles },
             }),
-          // The shared folder is what we are connecting to, so it is ours to
-          // sync against — unlike a server share link, where the Drive ids in
-          // the payload belong to the owner alone.
-          {
-            syncType: "googleDrive",
-            audioLocation: "googleDrive",
-            googleDriveFileId: profileFile.id,
-            googleDriveFolderId: folderId,
-          },
-        );
+        });
+
+        if (outcome.kind === "already-connected") {
+          setPageState({
+            kind: "already-connected",
+            profileName: outcome.name,
+          });
+          return;
+        }
 
         sessionStorage.removeItem(PENDING_FOLDER_KEY);
-        setPageState({
-          kind: "success",
-          profileName: syncData.profile.name,
-        });
+        setPageState({ kind: "success", profileName: outcome.name });
       } catch (error) {
         console.error("Failed to connect shared Drive profile:", error);
         setPageState({
@@ -123,16 +79,11 @@ function DriveOpenContent() {
           message:
             error instanceof Error
               ? error.message
-              : "Failed to connect profile.",
+              : "Could not connect that shared profile.",
         });
       }
     },
-    [
-      listFilesInFolder,
-      downloadDriveFile,
-      downloadAudioFile,
-      importProfileFromSyncData,
-    ],
+    [connectByFolderId],
   );
 
   // On mount: start connecting, or park the folder id until sign-in completes.
