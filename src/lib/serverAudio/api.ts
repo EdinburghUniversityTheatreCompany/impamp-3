@@ -60,6 +60,15 @@ export interface UploadTicket {
   key: string;
   uploadUrl: string | null;
   alreadyStored: boolean;
+  /**
+   * The slice of the file to hash, when someone else already stored these
+   * bytes and there is therefore nothing to upload.
+   *
+   * Present exactly when `alreadyStored` is true. Commit will not hand out a
+   * reference on that path without it: the hash alone is not evidence of
+   * holding the file, and it travels in every profile blob a viewer can read.
+   */
+  proofRange: { offset: number; length: number } | null;
   expiresInSeconds: number;
 }
 
@@ -150,6 +159,8 @@ export async function commitUpload(file: {
   name: string;
   contentType: string;
   extension: string;
+  /** Required when the ticket said `alreadyStored`; see `UploadTicket`. */
+  proof?: string;
 }): Promise<{ hash: string; sizeBytes: number; usage: AudioUsage }> {
   const response = await fetchWithTimeout("/api/audio/commit", {
     method: "POST",

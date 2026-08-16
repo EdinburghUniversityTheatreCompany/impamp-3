@@ -6,8 +6,10 @@ import {
   quotaForUser,
   recordUpload,
   storageKeyForHash,
+  userHoldsReference,
 } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
+import { proofMatches, proofRangeFor } from "@/lib/server/proofOfPossession";
 
 /**
  * POST /api/audio/commit — confirm an upload landed, and start charging for it.
@@ -19,7 +21,9 @@ import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
  * the line is deleted again rather than kept and billed for.
  */
 export async function POST(request: NextRequest) {
-  const begun = await beginAudioRequest<{ name?: unknown }>(request);
+  const begun = await beginAudioRequest<{ name?: unknown; proof?: unknown }>(
+    request,
+  );
   if (begun instanceof NextResponse) return begun;
   const { ctx, body, fields } = begun;
   const { user, store, config } = ctx;
@@ -36,6 +40,36 @@ export async function POST(request: NextRequest) {
       { error: "No uploaded object found for that hash" },
       { status: 404 },
     );
+  }
+
+  // Someone else already stored these exact bytes, so this caller uploaded
+  // nothing — and `stored` above only says the key exists. Knowing the hash is
+  // not knowing the file: hashes travel in every profile blob a viewer can
+  // read, and a reference row is what `profileMayServeHash` counts when
+  // deciding who may fetch the bytes. So prove possession before granting one.
+  //
+  // Skipped when the caller already holds a reference: they have been through
+  // this once, and a re-commit must stay idempotent.
+  // Gated on the same condition upload-url used to decide `alreadyStored`, so
+  // the two agree about when a proof is expected: an object row already exists
+  // and this caller is not already attached to it. A first uploader has no row
+  // yet, uploaded the bytes itself, and is asked for nothing.
+  if (
+    getAudioObject(fields.hash) &&
+    !userHoldsReference(user.id, fields.hash)
+  ) {
+    const range = proofRangeFor(fields.hash, stored.sizeBytes);
+    const actual = await store.getRange(key, range.offset, range.length);
+
+    if (!proofMatches(body.proof, actual)) {
+      return NextResponse.json(
+        {
+          error:
+            "That sound is already stored. Send the proof from the upload-url response to claim it.",
+        },
+        { status: 403 },
+      );
+    }
   }
 
   // Re-decide with the size the bucket reports, not the one the client

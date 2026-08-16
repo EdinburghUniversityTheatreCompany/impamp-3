@@ -32,6 +32,7 @@ import {
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getAudioFileMetadata } from "@/lib/db";
+import { proofOfPossession } from "./proofOfPossession";
 
 /** Filename extension, lowercased and without the dot. */
 export function extensionOf(name: string, contentType: string): string {
@@ -163,6 +164,13 @@ export async function uploadProfileAudio(
         name: file.name,
         contentType: file.type,
         extension,
+        // Nothing was uploaded because someone else already stored these exact
+        // bytes, so the server asks this device to show it has them rather
+        // than taking the hash as evidence. We do have them — that is where
+        // the hash came from.
+        proof: ticket.proofRange
+          ? await proofOfPossession(file.blob, ticket.proofRange)
+          : undefined,
       });
       hosted.push(hash);
       // Remembered locally so a later sync that cannot upload — unapproved,

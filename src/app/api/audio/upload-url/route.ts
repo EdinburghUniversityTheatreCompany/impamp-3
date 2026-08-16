@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canUpload, quotaForUser, storageKeyForHash } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
+import { proofRangeFor } from "@/lib/server/proofOfPossession";
 
 /**
  * POST /api/audio/upload-url — ask permission to upload one audio file.
@@ -44,11 +45,18 @@ export async function POST(request: NextRequest) {
 
   const key = storageKeyForHash(fields.hash, fields.extension);
 
+  // When the bytes are already there the caller uploads nothing — so it has to
+  // show it actually holds them before commit will hand it a reference.
+  // `head` proves the key exists, never that this caller has its contents, and
+  // the hash is public: it travels in every profile blob a viewer can read.
+  const stored = decision.alreadyStored ? await store.head(key) : null;
+
   return NextResponse.json({
     key,
     alreadyStored: decision.alreadyStored,
     // Nothing to upload when the bytes are already there — commit directly.
     uploadUrl: decision.alreadyStored ? null : store.presignUpload(key),
+    proofRange: stored ? proofRangeFor(fields.hash, stored.sizeBytes) : null,
     expiresInSeconds: config.uploadUrlTtlSeconds,
   });
 }

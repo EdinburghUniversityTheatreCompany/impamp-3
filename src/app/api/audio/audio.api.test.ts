@@ -14,6 +14,7 @@ import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createProfile } from "@/lib/server/profiles";
 import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
 import { setObjectStoreForTests } from "@/lib/server/audioRequests";
+import { proofRangeFor } from "@/lib/server/proofOfPossession";
 import {
   makeApiRequest as makeRequest,
   routeParams,
@@ -79,6 +80,29 @@ const hashOf = (label: string) =>
   createHash("sha256").update(label).digest("hex");
 
 /** The whole happy path: ask, upload, commit. */
+/**
+ * The bytes a label stands for. Deterministic, so two users "holding the same
+ * file" really do hold the same bytes — which is what proof of possession is
+ * about.
+ */
+function bytesFor(label: string, sizeBytes: number): Uint8Array {
+  const seed = createHash("sha256").update(label).digest();
+  const out = new Uint8Array(sizeBytes);
+  for (let i = 0; i < sizeBytes; i++) out[i] = seed[i % seed.length];
+  return out;
+}
+
+/** What a client that genuinely holds the file sends to claim a stored one. */
+function proofFor(
+  bytes: Uint8Array,
+  range: { offset: number; length: number } | null,
+): string | undefined {
+  if (!range) return undefined;
+  return createHash("sha256")
+    .update(bytes.slice(range.offset, range.offset + range.length))
+    .digest("hex");
+}
+
 async function storeAudio(
   token: string,
   label: string,
@@ -86,6 +110,7 @@ async function storeAudio(
   name = `${label}.wav`,
 ) {
   const hash = hashOf(label);
+  const bytes = bytesFor(label, sizeBytes);
   const askResponse = await uploadUrl(
     makeRequest("/api/audio/upload-url", {
       method: "POST",
@@ -98,14 +123,20 @@ async function storeAudio(
 
   // Stand in for the browser's PUT straight to the bucket.
   if (!ask.alreadyStored) {
-    store.put(ask.key, sizeBytes, "audio/wav");
+    store.putBytes(ask.key, bytes, "audio/wav");
   }
 
   const commitResponse = await commit(
     makeRequest("/api/audio/commit", {
       method: "POST",
       sessionToken: token,
-      body: { hash, name, contentType: "audio/wav", extension: "wav" },
+      body: {
+        hash,
+        name,
+        contentType: "audio/wav",
+        extension: "wav",
+        proof: proofFor(bytes, ask.proofRange ?? null),
+      },
     }),
   );
 
@@ -313,6 +344,12 @@ describe("POST /api/audio/commit", () => {
           name: "shared.wav",
           contentType: "audio/wav",
           extension: "wav",
+          // This user really does hold the same file, so it can prove it —
+          // the refusal under test is the quota one, not the proof one.
+          proof: proofFor(
+            bytesFor("shared", 6 * KB),
+            proofRangeFor(hashOf("shared"), 6 * KB),
+          ),
         },
       }),
     );
@@ -320,6 +357,95 @@ describe("POST /api/audio/commit", () => {
     expect(response.status).toBe(413);
     // The first user's audio survives the second user's refusal.
     expect(store.keys()).toContain(objectKeyForHash(hashOf("shared"), "wav"));
+  });
+
+  it("refuses someone who knows the hash but not the bytes", async () => {
+    // The escalation this closes: hashes are not secret. Every profile blob
+    // names the hashes of its sounds, and GET /api/profiles/:id hands that blob
+    // to anyone allowed to *read* the profile, viewers included. Commit used to
+    // confirm only that the key existed — which `head` answers without knowing
+    // anything about the caller — and then record a reference. A reference is
+    // what profileMayServeHash counts when deciding who may fetch the bytes, so
+    // seeing a hash was enough to be granted the audio behind it.
+    const owner = signIn(1, { approved: true });
+    const attacker = signIn(2, { approved: true });
+    await storeAudio(owner.token, "someone-elses-sound", KB);
+
+    const askResponse = await uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: hashOf("someone-elses-sound"),
+          sizeBytes: KB,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+    const ask = await askResponse.json();
+    // No upload URL is offered, so nothing can be overwritten either.
+    expect(ask.alreadyStored).toBe(true);
+    expect(ask.uploadUrl).toBeNull();
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: hashOf("someone-elses-sound"),
+          name: "mine-now.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+          // Knowing the hash is all they have.
+          proof: hashOf("a guess"),
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses a claim with no proof at all", async () => {
+    const owner = signIn(1, { approved: true });
+    const attacker = signIn(2, { approved: true });
+    await storeAudio(owner.token, "another-sound", KB);
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: hashOf("another-sound"),
+          name: "mine-now.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("lets the same user re-commit what they already hold", async () => {
+    // A retry must stay idempotent: they have been through the challenge once.
+    const { token } = signIn(1, { approved: true });
+    await storeAudio(token, "mine", KB);
+
+    const again = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: token,
+        body: {
+          hash: hashOf("mine"),
+          name: "mine.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+    expect(again.status).toBe(200);
   });
 
   it("404s when no object was actually uploaded", async () => {
@@ -537,6 +663,7 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
       }),
     );
     expect(askResponse.status).toBe(200);
+    const ask = await askResponse.json();
 
     const response = await commit(
       makeRequest("/api/audio/commit", {
@@ -547,6 +674,9 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
           name: "theirs.wav",
           contentType: "audio/wav",
           extension: "",
+          // The second user holds the same file, so it can answer the
+          // possession challenge the dedup path now asks for.
+          proof: proofFor(bytesFor("shared-bytes", KB), ask.proofRange),
         },
       }),
     );
