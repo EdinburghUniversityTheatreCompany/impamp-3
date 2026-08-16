@@ -15,16 +15,8 @@ import {
   isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
-import {
-  triggerAudioForPadInstant,
-  ensureAudioContextActive,
-  LoadingState,
-} from "@/lib/audio";
+import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import {
-  loadingStoreActions,
-  generatePadLoadingKey,
-} from "@/store/loadingStore";
 import EditPadModalContent, {
   createPadEditSession,
 } from "@/components/modals/EditPadModalContent";
@@ -34,6 +26,7 @@ import type { PadFormValues } from "@/types/forms";
 import { DEFAULT_PAD_NAME } from "@/lib/constants";
 import ConfirmModalContent from "@/components/modals/ConfirmModalContent";
 import React from "react";
+import { extractPadPlaybackSettings } from "@/lib/db";
 
 interface PadInteractionsParams {
   currentPageIndex: number;
@@ -258,7 +251,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
    * Handles starting/stopping playback with instant response
    */
   const handlePlaybackInteraction = useCallback(
-    (padConfig: PadConfiguration) => {
+    async (padConfig: PadConfiguration) => {
       if (activeProfileId === null) return;
 
       if (padConfig.isDisabled) {
@@ -273,66 +266,14 @@ export function usePadInteractions(params: PadInteractionsParams) {
         hasInteractedRef.current = true;
       }
 
-      // Use instant trigger with loading state callbacks
-      triggerAudioForPadInstant({
-        padIndex: padConfig.padIndex,
-        audioFileIds: padConfig.audioFileIds,
-        playbackType: padConfig.playbackType,
-        activeProfileId: activeProfileId,
-        currentPageIndex: currentPageIndex,
-        name: padConfig.name,
-        audioTrimSettings: padConfig.audioTrimSettings,
-        audioGainSettings: padConfig.audioGainSettings,
-        padGainDb: padConfig.padGainDb,
-        isDisabled: padConfig.isDisabled,
-        onInstantFeedback: () => {
-          console.log(
-            `[Pad Interactions] Instant feedback for pad ${padConfig.padIndex}`,
-          );
-          // Pad clicked feedback is immediate
+      await triggerPad(
+        {
+          ...extractPadPlaybackSettings(padConfig),
+          padIndex: padConfig.padIndex,
         },
-        onLoadingStateChange: (state: LoadingState) => {
-          console.log(
-            `[Pad Interactions] Loading state for pad ${padConfig.padIndex}:`,
-            state.status,
-            `${Math.round((state.progress || 0) * 100)}%`,
-          );
-          if (activeProfileId === null) return;
-          const loadingKey = generatePadLoadingKey(
-            activeProfileId,
-            currentPageIndex,
-            padConfig.padIndex,
-          );
-          loadingStoreActions.setPadLoadingState(loadingKey, state);
-        },
-        onAudioReady: () => {
-          console.log(
-            `[Pad Interactions] Audio ready for pad ${padConfig.padIndex}`,
-          );
-          // Clear loading state when audio starts playing
-          if (activeProfileId === null) return;
-          const loadingKey = generatePadLoadingKey(
-            activeProfileId,
-            currentPageIndex,
-            padConfig.padIndex,
-          );
-          loadingStoreActions.clearPadLoadingState(loadingKey);
-        },
-        onError: (error: string) => {
-          console.error(
-            `[Pad Interactions] Error for pad ${padConfig.padIndex}:`,
-            error,
-          );
-          // Clear loading state on error
-          if (activeProfileId === null) return;
-          const loadingKey = generatePadLoadingKey(
-            activeProfileId,
-            currentPageIndex,
-            padConfig.padIndex,
-          );
-          loadingStoreActions.clearPadLoadingState(loadingKey);
-        },
-      });
+        { activeProfileId, currentPageIndex },
+        { logPrefix: "[Pad Interactions]" },
+      );
     },
     [activeProfileId, currentPageIndex, hasInteractedRef],
   );
