@@ -176,18 +176,35 @@ export function listProfilesForUser(
   userId: number,
   email: string,
 ): ProfileSummary[] {
-  return queryAll<ProfileSummary>(
+  // Two indexed lookups rather than one scan.
+  //
+  // The single query constrained the LEFT JOIN'd table in its WHERE
+  // (`p.owner_id = ? OR s.id IS NOT NULL`), which stops SQLite using
+  // `profiles_owner_idx` for either branch: `profiles` had to be the outer
+  // loop and was read in full, every row's overflow chain walked because
+  // `version` and `updated_at` sit *after* the 8 MB `data` column. On every
+  // client mount.
+  const owned = queryAll<ProfileSummary>(
     `SELECT p.id, p.name, p.version, p.updated_at AS updatedAt,
-            CASE WHEN p.owner_id = ? THEN 'owner' ELSE s.role END AS access,
-            owner.email AS ownerEmail
+            'owner' AS access, owner.email AS ownerEmail
        FROM profiles p
        JOIN users owner ON owner.id = p.owner_id
-       LEFT JOIN profile_shares s
-         ON s.profile_id = p.id AND s.email = ?
-      WHERE p.owner_id = ? OR s.id IS NOT NULL
-      ORDER BY p.updated_at DESC`,
+      WHERE p.owner_id = ?`,
     userId,
+  );
+
+  const shared = queryAll<ProfileSummary>(
+    `SELECT p.id, p.name, p.version, p.updated_at AS updatedAt,
+            s.role AS access, owner.email AS ownerEmail
+       FROM profile_shares s
+       JOIN profiles p ON p.id = s.profile_id
+       JOIN users owner ON owner.id = p.owner_id
+      WHERE s.email = ? AND p.owner_id <> ?`,
     email,
     userId,
   );
+
+  // Sorted here rather than by SQLite: `updated_at` is unindexed, so ORDER BY
+  // meant a temp B-tree over the whole result anyway.
+  return [...owned, ...shared].sort((a, b) => b.updatedAt - a.updatedAt);
 }

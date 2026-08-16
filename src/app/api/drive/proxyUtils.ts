@@ -36,13 +36,30 @@ export function getProxyRequestParams(
 }
 
 /**
- * Rejects cross-site callers. Requests without an Origin or Referer (direct
- * navigation, same-origin fetches in some browsers) are allowed through.
+ * Rejects callers that cannot show they came from this app.
+ *
+ * This used to allow a request carrying *neither* Origin nor Referer, on the
+ * reasoning that some same-origin fetches omit both. Omitting both is also the
+ * easiest thing in the world to do deliberately — one curl — and these proxies
+ * are unauthenticated, unrate-limited, serve up to 100 MB, and spend the
+ * deployment's own `GOOGLE_API_KEY` doing it.
+ *
+ * `Sec-Fetch-Site` is the header that actually answers the question, and every
+ * browser that can run this app sends it: `same-origin` for the app's own
+ * fetches, `none` for a URL typed into the bar, and the cross-site values for
+ * everything else. It cannot be set by page script, so a caller that wants to
+ * claim same-origin has to actually be same-origin.
+ *
+ * Origin/Referer stay as a fallback for anything that does not send it, and a
+ * request with no signal at all is now refused rather than trusted.
  */
 export function isSameHostRequest(request: NextRequest): boolean {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite) return fetchSite === "same-origin";
+
   const source =
     request.headers.get("origin") ?? request.headers.get("referer");
-  if (!source) return true;
+  if (!source) return false;
 
   try {
     return new URL(source).host === request.nextUrl.host;

@@ -100,7 +100,9 @@ describe("migrating a populated database to user_version 3", () => {
     const version = queryOne<{ user_version: number }>("PRAGMA user_version");
     closeDb();
 
-    expect(version?.user_version).toBe(3);
+    // At least 3, not exactly: later migrations append, and the point here is
+    // that the backfill completed rather than throwing partway.
+    expect(version?.user_version).toBeGreaterThanOrEqual(3);
   });
 
   it("leaves the blobs themselves untouched", () => {

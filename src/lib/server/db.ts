@@ -10,7 +10,11 @@
  * `node:sqlite` for the browser.
  */
 
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import {
+  DatabaseSync,
+  type SQLInputValue,
+  type StatementSync,
+} from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -183,6 +187,19 @@ const MIGRATIONS: string[] = [
      AND json_type(p.data, '$.audioFiles') = 'array'
      AND json_extract(f.value, '$.hash') IS NOT NULL;
   `,
+
+  // 4 — drop an index no query can use
+  `
+  -- Nothing filters or joins sessions on user_id: the only reads are by
+  -- token_hash (session lookup) and by expires_at (the sweep). It cost a write
+  -- on every sign-in and bought no read.
+  --
+  -- Migration 1 still creates it, deliberately: that entry has already run on
+  -- the deployed database, and editing an applied migration would leave old
+  -- and new databases with different schemas. Appending is the only way both
+  -- end up in the same place.
+  DROP INDEX IF EXISTS sessions_user_idx;
+  `,
 ];
 
 let db: DatabaseSync | null = null;
@@ -246,8 +263,34 @@ export function getDb(): DatabaseSync {
  * database; production never calls it.
  */
 export function closeDb(): void {
+  // node:sqlite finalizes a connection's statements when it closes, so the
+  // cache only has to forget them — holding them across a `closeDb` would hand
+  // the next database statements belonging to the old one.
+  statementCache.clear();
   db?.close();
   db = null;
+}
+
+/**
+ * Prepared statements, keyed by their SQL.
+ *
+ * `prepare()` re-parses and re-plans the query every time, and the statement
+ * objects were left to the garbage collector rather than finalized. Every SQL
+ * string in this codebase is a static literal, so the cache can be keyed on the
+ * text itself and can never grow beyond the number of distinct queries.
+ * Planning is not free — the profile listing joins three tables — and this runs
+ * on the request-serving thread.
+ */
+const statementCache = new Map<string, StatementSync>();
+
+function prepared(sql: string): StatementSync {
+  const database = getDb();
+  let statement = statementCache.get(sql);
+  if (!statement) {
+    statement = database.prepare(sql);
+    statementCache.set(sql, statement);
+  }
+  return statement;
 }
 
 /**
@@ -260,21 +303,15 @@ export function queryOne<T>(
   sql: string,
   ...params: SQLInputValue[]
 ): T | undefined {
-  return getDb()
-    .prepare(sql)
-    .get(...params) as T | undefined;
+  return prepared(sql).get(...params) as T | undefined;
 }
 
 export function queryAll<T>(sql: string, ...params: SQLInputValue[]): T[] {
-  return getDb()
-    .prepare(sql)
-    .all(...params) as T[];
+  return prepared(sql).all(...params) as T[];
 }
 
 export function execute(sql: string, ...params: SQLInputValue[]) {
-  return getDb()
-    .prepare(sql)
-    .run(...params);
+  return prepared(sql).run(...params);
 }
 
 /** Run `fn` inside a transaction, rolling back if it throws. */

@@ -47,17 +47,19 @@ export async function GET(
   if (loaded instanceof NextResponse) return loaded;
   const { profile } = loaded;
 
-  return NextResponse.json(
-    {
-      id: profile.id,
-      name: profile.name,
-      version: profile.version,
-      updatedAt: profile.updated_at,
-      access,
-      data: JSON.parse(profile.data),
-    },
-    { headers: { ETag: etag } },
-  );
+  // The stored blob is already JSON, so it is spliced into the response rather
+  // than parsed into an object graph for `NextResponse.json` to serialise
+  // straight back — three full traversals of up to 8 MB, synchronously, on the
+  // thread serving every other request.
+  const body = `{"id":${JSON.stringify(profile.id)},"name":${JSON.stringify(
+    profile.name,
+  )},"version":${profile.version},"updatedAt":${profile.updated_at},"access":${JSON.stringify(
+    access,
+  )},"data":${profile.data}}`;
+
+  return new NextResponse(body, {
+    headers: { "content-type": "application/json", ETag: etag },
+  });
 }
 
 export async function PUT(
@@ -96,16 +98,22 @@ export async function PUT(
 
   if (result.status === "conflict") {
     // Hand back the current state so the caller can merge locally and retry.
-    return NextResponse.json(
-      {
-        error: "Profile changed since you last pulled it",
-        version: result.profile.version,
-        updatedAt: result.profile.updated_at,
-        name: result.profile.name,
-        data: JSON.parse(result.profile.data),
+    // Spliced rather than parsed, as in GET — and it matters more here: the
+    // most expensive response is the one that accomplished nothing, and the
+    // client retries it up to MAX_PUSH_ATTEMPTS times.
+    const body = `{"error":"Profile changed since you last pulled it","version":${
+      result.profile.version
+    },"updatedAt":${result.profile.updated_at},"name":${JSON.stringify(
+      result.profile.name,
+    )},"data":${result.profile.data}}`;
+
+    return new NextResponse(body, {
+      status: 409,
+      headers: {
+        "content-type": "application/json",
+        ETag: versionEtag(result.profile.version),
       },
-      { status: 409, headers: { ETag: versionEtag(result.profile.version) } },
-    );
+    });
   }
 
   publishProfileChange({

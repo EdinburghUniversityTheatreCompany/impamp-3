@@ -77,8 +77,18 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
       email,
     );
     if (byEmail) {
+      // The row moves to the new sub — but `is_admin` does not come with it.
+      //
+      // Taking over by address is the right call for a recycled Workspace
+      // account, and it is also the whole of what an attacker needs: whoever
+      // ends up holding an address inherits the account. Inheriting *ownership
+      // of the deployment* on top of that is a different order of thing, and
+      // the first-user-is-admin rule means the address most likely to be
+      // recycled is the one that has it. Re-granting it is one UPDATE by an
+      // existing admin.
       execute(
-        `UPDATE users SET google_sub = ?, name = ?, picture = ?, updated_at = ?
+        `UPDATE users SET google_sub = ?, name = ?, picture = ?,
+                          is_admin = 0, updated_at = ?
           WHERE id = ?`,
         identity.sub,
         identity.name ?? null,
@@ -89,10 +99,13 @@ export function upsertUserFromGoogle(identity: GoogleIdentity): UserRow {
       return getUserById(byEmail.id)!;
     }
 
-    const existingUsers = queryOne<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM users",
-    )!;
-    const isAdmin = existingUsers.count === 0 ? 1 : 0;
+    // "Is this the first user?", not "how many are there?". COUNT(*) walks
+    // the whole table to answer a question `LIMIT 1` answers in one row, and
+    // it runs inside the sign-in write transaction.
+    const anyUser = queryOne<{ one: number }>(
+      "SELECT 1 AS one FROM users LIMIT 1",
+    );
+    const isAdmin = anyUser === undefined ? 1 : 0;
 
     const result = execute(
       `INSERT INTO users
