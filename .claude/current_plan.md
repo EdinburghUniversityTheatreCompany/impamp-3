@@ -68,8 +68,8 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 - [x] 3.3 A6 · [x] 3.4 A5 · [x] 3.5 A7 · [x] 3.7 SV5 — commit `662214c`.
       jscpd refused the first attempt (two copies of the outcome replay), so
       `lib/syncReplay.ts` now owns the replay *and* the listener fan-out.
-- [ ] 3.6 D7: one `getHashlessIndex`; hashes at import time (half done — the
-      sync-data import path stores them; the ZIP path still does not)
+- [x] 3.6 D7 (hashes): both import paths store them now (`f583648`, `7500c72`).
+      The duplicated `getHashlessIndex` itself is still two copies.
 
 ## Phase 4 — pad-config invalidation and keyboard ownership (🔴 C4; 🟡 A8, A9, D6, UI5)
 
@@ -86,13 +86,10 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 
 ## Phase 5 — storage and import (🔴 C2; 🟡 ST1–ST6; TH2 first)
 
-- [ ] 5.1 TH2: tests for the ZIP path and `importImpamp2Profile` — 31 % of
-      `importExport.ts` with no coverage. **Before** any change to it.
-- [ ] 5.2 C2: `duplicateProfileLocally` uses `extractPadPlaybackSettings`
-- [ ] 5.3 ST2/ST3: import stamps sync bookkeeping; per-record failures surface
-- [ ] 5.4 ST4: ZIP import validates and caps
-- [ ] 5.5 ST1/ST5/ST6: orphan cleanup atomicity, wire-field filtering, page
-      read-modify-write races
+- [x] 5.1 TH2 (`7500c72`) — the ZIP round trip, 10 cases, all green first try.
+      `importImpamp2Profile` is still uncovered.
+- [x] 5.2 C2 (`1598b37`) · [x] 5.3 ST2/ST3 (`9dae464`) · [x] 5.4 ST4 (`7500c72`)
+- [x] 5.5 ST1/ST5/ST6 (`8fc9446`, `9dae464`)
 
 ## Phase 6 — server security and hot paths (🔴 S2, R1, R5; 🟡 SV1–SV4, P2–P6, P10, P13, P14)
 
@@ -108,8 +105,8 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 
 - [ ] 7.1 R2: one `fetchWithTimeout`; expiry on `inFlight` and `capability`;
       service-worker timeout
-- [ ] 7.2 N1–N6: one `getAudioMetadataForProfile(profileId)` cursor helper
-      replaces all six `for (id of ids) await getAudioFile(id)` copies
+- [x] 7.2 N1–N6 (`ad8dce3`) — `getAudioFileMetadata` replaced *seven* copies;
+      the Drive repair scan was an unlisted eighth.
 - [ ] 7.3 R4: `serverHosted` short-circuit, batched marking, bounded pool
 - [ ] 7.4 P11, P12
 
