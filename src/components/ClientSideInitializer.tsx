@@ -56,19 +56,22 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   const { syncProfile, getRemoteVersionToken } = useGoogleDriveSync();
   const { syncProfile: syncServerProfile } = useServerSync();
 
-  // Use local state to store auth values from the Zustand store
-  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
+  // Read synchronously rather than initialising to `false` and correcting in
+  // an effect. The store is hydrated from localStorage before this renders, so
+  // for a signed-in user the old shape ran the whole load sweep once with
+  // `false`, then again when the subscription fired — and each sweep costs a
+  // Drive metadata request per profile. The subscription then keeps it current.
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(
+    () => useProfileStore.getState().isGoogleSignedIn,
+  );
 
-  // Subscribe to store changes for Google sign-in state. Every subscription in
-  // this component is selector-based (see subscribeWithSelector in
-  // profileStore), so it is woken only when its own slice changes rather than
-  // on every store mutation.
+  // Selector-based (see subscribeWithSelector in profileStore), so it is woken
+  // only when its own slice changes rather than on every store mutation.
   useEffect(
     () =>
       useProfileStore.subscribe(
         (state) => state.isGoogleSignedIn,
         setIsGoogleSignedIn,
-        { fireImmediately: true },
       ),
     [],
   );
@@ -116,14 +119,19 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // still resolve after `cancelled` flips. The actual guarantee that a
   // superseded load can never clobber a newer one lives in pipeline.ts's
   // `loadGeneration` token, which gates the write itself.
-  const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
+  // Read synchronously for the same reason as `isGoogleSignedIn` above: the
+  // store is hydrated before this renders, so starting at null and correcting
+  // in an effect ran the loudness refresh below once for "no profile" and then
+  // again for the real one.
+  const [activeProfileId, setActiveProfileId] = useState<number | null>(
+    () => useProfileStore.getState().activeProfileId,
+  );
 
   useEffect(
     () =>
       useProfileStore.subscribe(
         (state) => state.activeProfileId,
         setActiveProfileId,
-        { fireImmediately: true },
       ),
     [],
   );

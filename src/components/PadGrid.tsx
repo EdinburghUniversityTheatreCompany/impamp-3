@@ -197,15 +197,11 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     refreshPadConfigs,
   );
 
-  // Log loading and error states
   useEffect(() => {
-    if (isLoadingConfigs) {
-      console.log("[PadGrid] Loading pad configurations...");
-    }
     if (configError) {
       console.error("[PadGrid] Error loading pad configurations:", configError);
     }
-  }, [isLoadingConfigs, configError]);
+  }, [configError]);
 
   // Preload decoded buffers for the current page only. Pads on other pages
   // play instantly too — they stream directly from the stored blob until a
@@ -268,6 +264,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   // Main click handler - delegates to appropriate handlers
   const handlePadClick = useCallback(
     (padIndex: number) => {
+      // `usePadConfigurations` keeps the last successful result while the next
+      // request is in flight, so between pressing a bank key and the read
+      // resolving these are still the *previous* bank's pads — shown under the
+      // new bank's number. Acting on them played the old bank's sound at the
+      // new bank's position, and in edit mode edited or deleted it.
+      if (isLoadingConfigs) return;
+
       const config = padConfigs.get(padIndex);
 
       // Different behavior based on mode
@@ -299,6 +302,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     },
     [
       padConfigs,
+      isLoadingConfigs,
       isDeleteMoveMode,
       isEditMode,
       isDeleteKeyDown,
