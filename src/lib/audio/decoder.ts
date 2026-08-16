@@ -224,25 +224,32 @@ export async function loadAndDecodeAudioPipelined(
           return;
         }
 
-        const audioFileData = await getAudioFile(id);
-        loadedCount++;
+        // Registered before the first await, not after.
+        //
+        // This used to read the record and then wait for a decode slot before
+        // publishing anything, so between the check above and the entry
+        // appearing there were two awaits in which a concurrent trigger for
+        // the same pad found nothing in flight and started its own read and
+        // decode of the same blob. Decoding is the expensive part, and the
+        // preloader and a keypress race for exactly the same file by design.
+        const work = trackInFlightLoad(id, async () => {
+          const audioFileData = await getAudioFile(id);
+          loadedCount++;
 
-        if (!audioFileData?.blob) {
-          console.warn(
-            `[Audio Decoder] Audio file with ID ${id} not found or has no blob.`,
-          );
-          results.set(id, null);
-          return;
-        }
+          if (!audioFileData?.blob) {
+            console.warn(
+              `[Audio Decoder] Audio file with ID ${id} not found or has no blob.`,
+            );
+            results.set(id, null);
+            return null;
+          }
 
-        // Wait for decode slot to become available
-        while (activeDecodes.size >= maxConcurrentDecodes) {
-          await Promise.race(activeDecodes);
-        }
+          // Wait for a decode slot. Holding the in-flight entry across this is
+          // the point: a joiner waits for our decode instead of starting one.
+          while (activeDecodes.size >= maxConcurrentDecodes) {
+            await Promise.race(activeDecodes);
+          }
 
-        // Start decode immediately after load (pipelined), sharing it with any
-        // concurrent trigger for the same file
-        const decodePromise = trackInFlightLoad(id, async () => {
           try {
             console.log(
               `[Audio Decoder] Decoding audio for file ID: ${id}, name: ${audioFileData.name}`,
@@ -262,12 +269,22 @@ export async function loadAndDecodeAudioPipelined(
           }
         });
 
-        activeDecodes.add(decodePromise);
+        activeDecodes.add(work);
+        // `.catch` as well as `.finally`: this branch is not awaited, so a
+        // rejection here would surface as an unhandled rejection even though
+        // the `await` below handles it.
+        void work
+          .catch(() => undefined)
+          .finally(() => {
+            activeDecodes.delete(work);
+          });
 
-        // Clean up after completion
-        decodePromise.finally(() => {
-          activeDecodes.delete(decodePromise);
-        });
+        // Awaited, so a batch completes before the next one starts. Slightly
+        // less overlap than letting the next batch's reads run against this
+        // batch's decodes, which is what the old shape bought — and what it
+        // paid for that with was the window above. Concurrency is still capped
+        // by `maxConcurrentDecodes` either way.
+        await work;
       } catch (error) {
         console.error(
           `[Audio Decoder] Error loading audio file ID ${id}:`,
