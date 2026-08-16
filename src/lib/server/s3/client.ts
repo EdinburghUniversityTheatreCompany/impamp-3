@@ -33,6 +33,19 @@ export interface ObjectStore {
   ): string;
   /** The object's real size, or `null` if it isn't there. */
   head(key: string): Promise<StoredObject | null>;
+  /**
+   * A byte range of the object, or `null` if it isn't there.
+   *
+   * Used to check that a caller claiming an already-stored object actually has
+   * its bytes — see `proofOfPossession.ts`. Deliberately a range rather than
+   * the whole object: the check has to be cheap enough to run on every
+   * deduplicated commit.
+   */
+  getRange(
+    key: string,
+    offset: number,
+    length: number,
+  ): Promise<Uint8Array | null>;
   remove(key: string): Promise<void>;
 }
 
@@ -117,6 +130,33 @@ export function createObjectStore(
         sizeBytes: length ? Number(length) : 0,
         contentType: response.headers.get("content-type"),
       };
+    },
+
+    async getRange(key, offset, length) {
+      if (length <= 0) return new Uint8Array(0);
+
+      const url = urlFor(key);
+      const last = offset + length - 1;
+      const range = `bytes=${offset}-${last}`;
+      const response = await fetchImpl(url, {
+        method: "GET",
+        headers: {
+          ...signRequestHeaders({ ...signing, method: "GET", url }),
+          range,
+        },
+      });
+
+      if (response.status === 404) return null;
+      // 206 for an honoured range; 200 means the store ignored it and sent the
+      // whole object, which is still usable — the caller slices what it needs.
+      if (!response.ok) {
+        throw new Error(`GET ${key} (${range}) failed with ${response.status}`);
+      }
+
+      const body = new Uint8Array(await response.arrayBuffer());
+      return response.status === 200
+        ? body.slice(offset, offset + length)
+        : body;
     },
 
     async remove(key) {

@@ -47,15 +47,23 @@ async function isPadArmed(page: Page, padIndex: number): Promise<boolean> {
  * Helper to get the names of all armed tracks from the panel
  */
 async function getArmedTrackNames(page: Page): Promise<string[]> {
-  // First check if panel is even visible (it disappears when empty)
+  // The panel disappears when nothing is armed, so "no panel" and "no tracks"
+  // are the same answer — but `isVisible()` is a single non-retrying sample, so
+  // it also returned [] when the panel simply had not rendered yet. Every
+  // negative assertion built on this therefore passed for two different
+  // reasons, one of them "the app had not caught up". `toHaveCount` retries, so
+  // the answer means what it says.
   const panel = page.locator('[data-testid="armed-tracks-panel"]');
-  const isVisible = await panel.isVisible();
-  if (!isVisible) {
+  const trackItems = panel.locator(".font-medium.text-gray-800");
+
+  try {
+    await expect(panel).toBeVisible({ timeout: 2_000 });
+  } catch {
+    // Genuinely absent after waiting: nothing is armed.
+    await expect(panel).toHaveCount(0);
     return [];
   }
 
-  // Get all tracks from the panel
-  const trackItems = panel.locator(".font-medium.text-gray-800");
   const count = await trackItems.count();
   const names: string[] = [];
 
@@ -526,9 +534,11 @@ test.describe("Armed tracks keep their sounds in the audio cache", () => {
     await page
       .locator('[data-testid="pad-drop-input-0"]')
       .setInputFiles(audioFilePath);
-    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
-      timeout: 5000,
-    });
+    // No per-assertion timeout: playwright.config.ts sets expect.timeout to
+    // 15s precisely because 5000 — Playwright's old default written longhand —
+    // left no headroom for decode + Blob into IndexedDB + re-render under
+    // parallel load, and that is what made this suite flaky before.
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName);
   }
 
   test("Arming a pad pins its sound and preloads it into the cache", async ({

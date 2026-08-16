@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { subscribeToProfile } from "@/lib/server/events";
-import { loadAuthorizedProfile } from "@/lib/server/profileRequests";
+import { loadAuthorizedProfileMeta } from "@/lib/server/profileRequests";
 
 /**
  * Server-sent events for one profile: "it changed, pull again".
@@ -33,7 +33,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
+  const loaded = loadAuthorizedProfileMeta(request, id);
   if (loaded instanceof NextResponse) return loaded;
 
   const encoder = new TextEncoder();
@@ -92,7 +92,7 @@ export async function GET(
         send(`event: change\ndata: ${JSON.stringify(change)}\n\n`);
       });
 
-      const current = loadAuthorizedProfile(request, id);
+      const current = loadAuthorizedProfileMeta(request, id);
       send(
         `event: change\ndata: ${JSON.stringify({
           profileId: id,
@@ -108,7 +108,7 @@ export async function GET(
         // and nothing else here would ever notice: access was checked once,
         // at connect, so a revoked collaborator kept receiving version bumps
         // until they closed the tab.
-        if (loadAuthorizedProfile(request, id) instanceof NextResponse) {
+        if (loadAuthorizedProfileMeta(request, id) instanceof NextResponse) {
           cleanup();
           return;
         }

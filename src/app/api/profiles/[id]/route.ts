@@ -4,6 +4,7 @@ import { deleteProfile, updateProfile } from "@/lib/server/profiles";
 import { publishProfileChange } from "@/lib/server/events";
 import {
   loadAuthorizedProfile,
+  loadAuthorizedProfileMeta,
   parseProfileBody,
   etagMatches,
   parseVersionHeader,
@@ -28,27 +29,37 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
-  if (loaded instanceof NextResponse) return loaded;
+  // Meta first: the change poll is a conditional GET that almost always ends
+  // in 304, and answering it does not need the blob. This used to read up to
+  // MAX_PROFILE_BODY_BYTES off disk before even computing the ETag, which is
+  // what made the comment above ("costs almost nothing") untrue.
+  const meta = loadAuthorizedProfileMeta(request, id);
+  if (meta instanceof NextResponse) return meta;
 
-  const { profile, access } = loaded;
-  const etag = profileEtag(profile.version, access);
+  const { access } = meta;
+  const etag = profileEtag(meta.profile.version, access);
 
   if (etagMatches(request.headers.get("if-none-match"), etag)) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag } });
   }
 
-  return NextResponse.json(
-    {
-      id: profile.id,
-      name: profile.name,
-      version: profile.version,
-      updatedAt: profile.updated_at,
-      access,
-      data: JSON.parse(profile.data),
-    },
-    { headers: { ETag: etag } },
-  );
+  const loaded = loadAuthorizedProfile(request, id);
+  if (loaded instanceof NextResponse) return loaded;
+  const { profile } = loaded;
+
+  // The stored blob is already JSON, so it is spliced into the response rather
+  // than parsed into an object graph for `NextResponse.json` to serialise
+  // straight back — three full traversals of up to 8 MB, synchronously, on the
+  // thread serving every other request.
+  const body = `{"id":${JSON.stringify(profile.id)},"name":${JSON.stringify(
+    profile.name,
+  )},"version":${profile.version},"updatedAt":${profile.updated_at},"access":${JSON.stringify(
+    access,
+  )},"data":${profile.data}}`;
+
+  return new NextResponse(body, {
+    headers: { "content-type": "application/json", ETag: etag },
+  });
 }
 
 export async function PUT(
@@ -87,16 +98,22 @@ export async function PUT(
 
   if (result.status === "conflict") {
     // Hand back the current state so the caller can merge locally and retry.
-    return NextResponse.json(
-      {
-        error: "Profile changed since you last pulled it",
-        version: result.profile.version,
-        updatedAt: result.profile.updated_at,
-        name: result.profile.name,
-        data: JSON.parse(result.profile.data),
+    // Spliced rather than parsed, as in GET — and it matters more here: the
+    // most expensive response is the one that accomplished nothing, and the
+    // client retries it up to MAX_PUSH_ATTEMPTS times.
+    const body = `{"error":"Profile changed since you last pulled it","version":${
+      result.profile.version
+    },"updatedAt":${result.profile.updated_at},"name":${JSON.stringify(
+      result.profile.name,
+    )},"data":${result.profile.data}}`;
+
+    return new NextResponse(body, {
+      status: 409,
+      headers: {
+        "content-type": "application/json",
+        ETag: versionEtag(result.profile.version),
       },
-      { status: 409, headers: { ETag: versionEtag(result.profile.version) } },
-    );
+    });
   }
 
   publishProfileChange({
@@ -121,7 +138,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
+  // Only `version` is read below, so the blob stays on disk.
+  const loaded = loadAuthorizedProfileMeta(request, id);
   if (loaded instanceof NextResponse) return loaded;
 
   if (loaded.access !== "owner") {

@@ -23,6 +23,7 @@ import { useConnectServerProfile } from "@/hooks/useConnectServerProfile";
 import { listServerProfiles } from "@/lib/serverSync/api";
 import { syncTargetLabel } from "@/lib/syncState";
 import type { SyncType } from "@/lib/db";
+import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 
 interface ConnectableProfile {
   key: string;
@@ -47,13 +48,9 @@ export default function ConnectProfileList({
 }) {
   const profiles = useProfileStore((s) => s.profiles);
   const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
-  const updateProfile = useProfileStore((s) => s.updateProfile);
 
-  const { listAppFiles, downloadDriveFile, downloadAudioFile } =
-    useGoogleDriveSync();
-  const importProfileFromSyncData = useProfileStore(
-    (s) => s.importProfileFromSyncData,
-  );
+  const { listAppFiles } = useGoogleDriveSync();
+  const { connectByFileId } = useConnectDriveProfile();
   const { isServerSignedIn } = useServerSync();
   const connectServerProfile = useConnectServerProfile();
 
@@ -163,31 +160,14 @@ export default function ConnectProfileList({
         });
         onConnected?.(outcome.name);
       } else {
-        const syncData = await downloadDriveFile(item.id);
-        if (
-          !syncData ||
-          syncData._syncFormatVersion !== 1 ||
-          !syncData.profile
-        ) {
-          throw new Error("That file is not an ImpAmp profile.");
-        }
-        const localProfileId = await importProfileFromSyncData(
-          syncData,
-          downloadAudioFile,
-          (p) =>
+        const outcome = await connectByFileId(item.id, {
+          followOnly: followKeys.has(item.key),
+          onProgress: (p) =>
             setProgress(
               `Downloading sounds (${p.processedFiles} of ${p.totalFiles})…`,
             ),
-          {
-            syncType: "googleDrive",
-            audioLocation: "googleDrive",
-            googleDriveFileId: item.id,
-          },
-        );
-        if (followKeys.has(item.key)) {
-          await updateProfile(localProfileId, { followOnly: true });
-        }
-        onConnected?.(item.name);
+        });
+        onConnected?.(outcome.name);
       }
     } catch (e) {
       setError(

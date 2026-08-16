@@ -3,15 +3,19 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
+import { useProfileStore } from "@/store/profileStore";
 import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
-import { useGoogleLogin, googleLogout } from "@react-oauth/google";
+import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import type { ImportLink, TransferProgress } from "@/lib/importExport";
+import type { TransferProgress } from "@/lib/importExport";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
+import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
+import { useShallow } from "zustand/react/shallow";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -80,25 +84,45 @@ function parseServerShareUrl(
 }
 
 export default function ProfileManager() {
+  // `useShallow`, not a bare `useProfileStore()`. Under Zustand v5 the bare
+  // form compares the whole state object, so every sync tick,
+  // `padConfigsVersion` bump, bank switch and token refresh re-rendered all of
+  // this — 29 useState calls and a 615-line hook — even while the manager was
+  // closed. It is only mounted while open now (ProfileManagerHost), but a
+  // fifteen-field read still has no business waking on an unrelated field.
   const {
     profiles,
     activeProfileId,
     isProfileManagerOpen,
     closeProfileManager,
     createProfile,
-    updateProfile,
     importProfileFromJSON,
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
     importProfilesFromZip,
-    importProfileFromSyncData,
     isGoogleSignedIn,
     googleUser,
     googleAccessToken,
-    setGoogleAuthDetails,
     clearGoogleAuthDetails,
-  } = useProfileStore();
+  } = useProfileStore(
+    useShallow((s) => ({
+      profiles: s.profiles,
+      activeProfileId: s.activeProfileId,
+      isProfileManagerOpen: s.isProfileManagerOpen,
+      closeProfileManager: s.closeProfileManager,
+      createProfile: s.createProfile,
+      importProfileFromJSON: s.importProfileFromJSON,
+      importProfileFromImpamp2JSON: s.importProfileFromImpamp2JSON,
+      importMultipleProfilesFromJSON: s.importMultipleProfilesFromJSON,
+      exportMultipleProfilesToZip: s.exportMultipleProfilesToZip,
+      importProfilesFromZip: s.importProfilesFromZip,
+      isGoogleSignedIn: s.isGoogleSignedIn,
+      googleUser: s.googleUser,
+      googleAccessToken: s.googleAccessToken,
+      clearGoogleAuthDetails: s.clearGoogleAuthDetails,
+    })),
+  );
 
   const router = useRouter();
 
@@ -190,12 +214,8 @@ export default function ProfileManager() {
   const [shareConnectReadOnly, setShareConnectReadOnly] = useState(false);
 
   // Hooks
-  const {
-    downloadDriveFile,
-    downloadAudioFile,
-    listFilesInFolder,
-    repairDriveAudio,
-  } = useGoogleDriveSync();
+  const { downloadDriveFile, repairDriveAudio } = useGoogleDriveSync();
+  const { connectByFolderId, connectWithSyncData } = useConnectDriveProfile();
 
   /**
    * Imports Drive sync data as a new local profile, streaming each audio
@@ -204,98 +224,10 @@ export default function ProfileManager() {
    * Shows download progress while audio is fetched. Returns the new
    * profile's ID so the caller can link it to Drive.
    */
-  const connectSyncedProfile = async (
-    syncData: ProfileSyncData,
-    link: ImportLink,
-  ): Promise<number> => {
-    try {
-      return await importProfileFromSyncData(
-        syncData,
-        downloadAudioFile,
-        (p) =>
-          setAudioDownloadProgress({
-            current: p.processedFiles,
-            total: p.totalFiles,
-          }),
-        link,
-      );
-    } finally {
-      setAudioDownloadProgress(null);
-    }
-  };
 
-  const googleLogin = useGoogleLogin({
-    flow: "auth-code",
-    onSuccess: async ({ code }) => {
-      console.log("Google Login Success (auth-code flow)");
-      setGoogleApiError(null);
-      try {
-        // Exchange the authorization code for tokens server-side so the
-        // client secret is never exposed in the browser.
-        const exchangeResponse = await fetch("/api/auth/google/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
-        });
-
-        if (!exchangeResponse.ok) {
-          const err = await exchangeResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to exchange authorization code");
-        }
-
-        const {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          expires_in: expiresIn,
-        } = await exchangeResponse.json();
-
-        const expiresAt = Date.now() + expiresIn * 1000;
-
-        const userInfoResponse = await fetch(
-          "https://www.googleapis.com/oauth2/v3/userinfo",
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!userInfoResponse.ok) {
-          throw new Error(
-            `Failed to fetch user info: ${userInfoResponse.statusText}`,
-          );
-        }
-        const userInfo: GoogleUserInfo = await userInfoResponse.json();
-        console.log("Fetched Google User Info:", userInfo);
-
-        setGoogleAuthDetails(
-          userInfo,
-          accessToken,
-          refreshToken ?? null,
-          expiresAt,
-        );
-        console.log(
-          "Google authentication successful and stored in profile store",
-        );
-      } catch (error) {
-        console.error("Error completing Google login:", error);
-        setGoogleApiError(
-          error instanceof Error
-            ? error.message
-            : "Failed to complete Google sign-in.",
-        );
-      }
-    },
-    onError: (errorResponse) => {
-      console.error("Google Login Failed (hook):", errorResponse);
-      setGoogleApiError(
-        `Login failed: ${errorResponse.error_description || errorResponse.error || "Unknown error"}`,
-      );
-      clearGoogleAuthDetails();
-    },
-    scope: "https://www.googleapis.com/auth/drive.file",
+  const googleLogin = useGoogleSignIn({
+    onError: setGoogleApiError,
   });
-
-  // Surface an error raised by the Drive hook in this panel's own status.
-  //
-  // Adjusted during render rather than in an effect — the pattern React
-  // documents for "state that depends on a value seen last render". An effect
-  // would render once with the stale status and then again with the error,
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -338,34 +270,20 @@ export default function ProfileManager() {
     setConnectError(null);
     setIsConnecting(true);
     try {
-      // Find the profile JSON file inside the shared folder
-      const files = await listFilesInFolder(folderId);
-      const profileFile = files.find((f) => f.name.endsWith(".json"));
-      if (!profileFile) {
-        throw new Error(
-          "No profile file found in the selected folder. Make sure you're selecting an ImpAmp profile folder.",
-        );
-      }
-      const fileId = profileFile.id;
-
-      const syncData: ProfileSyncData | null = await downloadDriveFile(fileId);
-
-      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
-        throw new Error("Not a valid ImpAmp profile file.");
-      }
-
-      // Import as a new profile linked to the shared Drive folder
-      const newProfileId = await connectSyncedProfile(syncData, {
-        syncType: "googleDrive",
-        audioLocation: "googleDrive",
-        googleDriveFileId: fileId,
-        googleDriveFolderId: folderId,
-      });
-      await updateProfile(newProfileId, {
-        readOnly: shareConnectReadOnly || undefined,
+      const outcome = await connectByFolderId(folderId, {
+        readOnly: shareConnectReadOnly,
+        onProgress: (p) =>
+          setAudioDownloadProgress({
+            current: p.processedFiles,
+            total: p.totalFiles,
+          }),
       });
 
-      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
+      setConnectSuccess(
+        outcome.kind === "already-connected"
+          ? `"${outcome.name}" is already connected.`
+          : `"${outcome.name}" connected successfully.`,
+      );
       setShareConnectReadOnly(false);
     } catch (error) {
       console.error("Failed to connect to shared profile:", error);
@@ -465,7 +383,7 @@ export default function ProfileManager() {
 
       // If no data (404/scope-invisible file or DRIVE_403), try public proxy
       if (!syncData) {
-        const proxyResponse = await fetch(
+        const proxyResponse = await fetchWithTimeout(
           `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
         );
         if (proxyResponse.ok) {
@@ -482,20 +400,27 @@ export default function ProfileManager() {
         }
       }
 
-      if (!syncData || syncData._syncFormatVersion !== 1 || !syncData.profile) {
-        throw new Error("Not a valid ImpAmp profile file.");
-      }
+      // Already downloaded, by whichever of the two routes worked, so this
+      // enters the shared path at the point after the download — the
+      // validation and the already-connected check still apply.
+      const outcome = await connectWithSyncData(
+        syncData,
+        { googleDriveFileId: fileId! },
+        {
+          readOnly: forceReadOnly || shareConnectReadOnly,
+          onProgress: (p) =>
+            setAudioDownloadProgress({
+              current: p.processedFiles,
+              total: p.totalFiles,
+            }),
+        },
+      );
 
-      const newProfileId = await connectSyncedProfile(syncData, {
-        syncType: "googleDrive",
-        audioLocation: "googleDrive",
-        googleDriveFileId: fileId,
-      });
-      await updateProfile(newProfileId, {
-        readOnly: forceReadOnly || shareConnectReadOnly || undefined,
-      });
-
-      setConnectSuccess(`"${syncData.profile.name}" connected successfully.`);
+      setConnectSuccess(
+        outcome.kind === "already-connected"
+          ? `"${outcome.name}" is already connected.`
+          : `"${outcome.name}" connected successfully.`,
+      );
       setShareUrl("");
       setShareConnectReadOnly(false);
     } catch (error) {

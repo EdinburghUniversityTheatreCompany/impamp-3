@@ -71,7 +71,14 @@ export function getAudioHostingConfig(): AudioHostingConfig | null {
     globalCapBytes: readNumber("IMPAMP_AUDIO_GLOBAL_CAP_BYTES", 100 * GIB),
     defaultUserQuotaBytes: readNumber("IMPAMP_AUDIO_USER_QUOTA_BYTES", 2 * GIB),
     uploadUrlTtlSeconds: readNumber("IMPAMP_AUDIO_UPLOAD_URL_TTL", 15 * 60),
-    downloadUrlTtlSeconds: readNumber("IMPAMP_AUDIO_DOWNLOAD_URL_TTL", 60 * 60),
+    downloadUrlTtlSeconds: readNumber(
+      "IMPAMP_AUDIO_DOWNLOAD_URL_TTL",
+      // Five minutes, not an hour. A presigned URL is a bearer credential that
+      // can be forwarded, and revoking a share cannot recall one already
+      // issued — so the TTL *is* the revocation lag. Long enough to start and
+      // finish a download, short enough that access ends when access ends.
+      5 * 60,
+    ),
     maxObjectBytes: readNumber(
       "IMPAMP_AUDIO_MAX_OBJECT_BYTES",
       100 * 1024 * 1024,

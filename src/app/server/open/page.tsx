@@ -2,9 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProfileStore, whenProfilesLoaded } from "@/store/profileStore";
-import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
-import { fetchServerProfile } from "@/lib/serverSync/api";
+import { useConnectServerProfile } from "@/hooks/useConnectServerProfile";
 
 /**
  * Opens a profile from a server share link.
@@ -30,8 +28,7 @@ function ServerOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { updateProfile, importProfileFromSyncData } = useProfileStore();
-  const { downloadAudioFile } = useGoogleDriveSync();
+  const connectServerProfile = useConnectServerProfile();
 
   const [pageState, setPageState] = useState<PageState>({
     kind: "connecting",
@@ -41,22 +38,15 @@ function ServerOpenContent() {
   const serverProfileId = searchParams.get("id");
   const shareToken = searchParams.get("token");
 
-  // Everything the page does, in the effect that does it. It used to be a
-  // useCallback called from the effect, which needed an eslint-disable to stop
-  // the effect re-running every time the profile list changed — the one thing
-  // that must never happen here, since it would import the profile twice.
-  // Inline, the dependencies are just the two halves of the link.
-  //
-  // The hook functions are read through refs so that a change in their
-  // identity (useGoogleDriveSync rebuilds downloadAudioFile whenever the
-  // Google token moves) cannot restart the import either.
-  const importRef = useRef(importProfileFromSyncData);
-  const updateProfileRef = useRef(updateProfile);
-  const downloadAudioFileRef = useRef(downloadAudioFile);
+  // The connect callback is read through a ref so a change in its identity
+  // cannot restart the import — `useConnectServerProfile` depends on
+  // `downloadAudioFile`, which `useGoogleDriveSync` rebuilds whenever the
+  // Google token moves, and importing the profile twice is the one thing that
+  // must never happen here. The effect's real dependencies are the two halves
+  // of the link.
+  const connectRef = useRef(connectServerProfile);
   useEffect(() => {
-    importRef.current = importProfileFromSyncData;
-    updateProfileRef.current = updateProfile;
-    downloadAudioFileRef.current = downloadAudioFile;
+    connectRef.current = connectServerProfile;
   });
 
   useEffect(() => {
@@ -69,30 +59,17 @@ function ServerOpenContent() {
 
     void (async () => {
       try {
-        // Wait for the initial profile load before deciding: this page can
-        // mount before it finishes, and an empty list then reads as "not
-        // connected yet" and imports a second copy of the profile.
-        const loaded = await whenProfilesLoaded();
-        const existing = loaded.find(
-          (p) => p.serverProfileId === serverProfileId,
-        );
-        if (existing) {
-          show({ kind: "already-connected", profileName: existing.name });
-          return;
-        }
-
-        const payload = await fetchServerProfile(serverProfileId, {
+        // This page used to run the whole five-step sequence itself, and had
+        // drifted from the hook on the one line that matters: it imported with
+        // `{ syncType: "server" }` up front, which is exactly what the hook's
+        // comment describes as broken — a crash before `serverProfileId` was
+        // written left a profile typed "server" with no id, which the next
+        // background sync reads as "adopt me" and answers by creating a second
+        // server profile. It also never learned how to fetch server-hosted
+        // audio, so on a deployment with hosted audio every pad arrived empty.
+        const outcome = await connectRef.current(serverProfileId, {
           shareToken,
-        });
-        if (!payload) {
-          // Only a conditional request can 304, and we didn't make one.
-          throw new Error("The server returned no profile data.");
-        }
-
-        const localProfileId = await importRef.current(
-          payload.data,
-          downloadAudioFileRef.current,
-          (progress) =>
+          onProgress: (progress) =>
             show({
               kind: "connecting",
               progress: {
@@ -100,22 +77,18 @@ function ServerOpenContent() {
                 total: progress.totalFiles,
               },
             }),
-          // Explicitly *not* the owner's Drive ids, which the payload carries.
-          // Inheriting them used to make this device try to publish audio into
-          // someone else's Drive folder. The sounds arrive by download here.
-          { syncType: "server" },
-        );
-
-        const readOnly = payload.access === "viewer";
-        await updateProfileRef.current(localProfileId, {
-          serverProfileId,
-          serverShareToken: shareToken,
-          serverVersion: payload.version,
-          serverRole: payload.access,
-          readOnly,
         });
 
-        show({ kind: "success", profileName: payload.name, readOnly });
+        if (outcome.kind === "already-connected") {
+          show({ kind: "already-connected", profileName: outcome.name });
+          return;
+        }
+
+        show({
+          kind: "success",
+          profileName: outcome.name,
+          readOnly: outcome.readOnly,
+        });
       } catch (error) {
         show({
           kind: "error",

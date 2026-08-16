@@ -114,6 +114,39 @@ interface GoogleDriveSyncHookReturn {
 }
 
 /**
+ * Token validation is shared across every instance of this hook.
+ *
+ * `useGoogleDriveSync` is mounted by ClientSideInitializer, ProfileManager,
+ * every ProfileCard, ProfileSyncPanel, SharingPanel, ConnectProfileList,
+ * useConnectServerProfile and both share-link pages — so with the profile
+ * manager open on ten profiles there are a dozen live instances. The throttle
+ * and the refresh were per instance, so an expired token produced up to a
+ * dozen simultaneous `POST /api/auth/google/refresh` calls, each finishing by
+ * writing its result to the store, last writer winning.
+ *
+ * `useServerSync` already solves exactly this with a module-level in-flight
+ * promise and a listener set; this is the same shape.
+ */
+let lastRefreshAttempt = 0;
+let refreshInFlight: ReturnType<typeof checkAndRefreshAuth> | null = null;
+
+/** Refreshes at most once at a time, whichever instance asks. */
+function sharedCheckAndRefresh(
+  tokenInfo: Parameters<typeof checkAndRefreshAuth>[0],
+): ReturnType<typeof checkAndRefreshAuth> {
+  refreshInFlight ??= checkAndRefreshAuth(tokenInfo).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+/** Test seam: forget the shared throttle between cases. */
+export function resetGoogleTokenRefreshState(): void {
+  lastRefreshAttempt = 0;
+  refreshInFlight = null;
+}
+
+/**
  * React hook for Google Drive synchronization
  * @returns API for interacting with Google Drive sync functionality
  */
@@ -133,7 +166,6 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     conflicts,
     conflictData,
     needsReauthSet: false, // Track if we've already set needsReauth
-    lastRefreshAttempt: 0, // Throttle for automatic token refreshes
   });
 
   // Update ref when state changes
@@ -314,12 +346,14 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
 
       // Each refresh updates the store, which re-runs this effect — don't let
       // a short-lived token turn that into a refresh loop
+      // Module-level, so a dozen mounted instances share one throttle rather
+      // than each keeping its own and all firing at once.
       const now = Date.now();
-      if (now - stateRef.current.lastRefreshAttempt < 60 * 1000) return;
-      stateRef.current.lastRefreshAttempt = now;
+      if (now - lastRefreshAttempt < 60 * 1000) return;
+      lastRefreshAttempt = now;
 
       const { isValid, refreshedTokenInfo } =
-        await checkAndRefreshAuth(tokenInfo);
+        await sharedCheckAndRefresh(tokenInfo);
       if (cancelled) return;
 
       if (isValid) {

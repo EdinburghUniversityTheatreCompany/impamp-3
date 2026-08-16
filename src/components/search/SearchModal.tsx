@@ -9,16 +9,8 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
-import {
-  triggerAudioForPadInstant,
-  ensureAudioContextActive,
-  LoadingState,
-} from "@/lib/audio";
+import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import {
-  loadingStoreActions,
-  generatePadLoadingKey,
-} from "@/store/loadingStore";
 import { useSearch, type SearchResult } from "@/hooks/useSearch";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 
@@ -85,55 +77,22 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       // Resume audio context first
       ensureAudioContextActive();
 
-      // Call the instant trigger function for search results
-      await triggerAudioForPadInstant({
-        padIndex: result.padIndex,
-        audioFileIds: result.audioFileIds,
-        playbackType: result.playbackType,
-        activeProfileId: result.profileId,
-        currentPageIndex: result.pageIndex,
-        name: result.name,
-        audioTrimSettings: result.audioTrimSettings,
-        audioGainSettings: result.audioGainSettings,
-        padGainDb: result.padGainDb,
-        onInstantFeedback: () => {
-          console.log(
-            `[SearchModal] Search result triggered for "${result.name}"`,
-          );
+      await triggerPad(
+        {
+          padIndex: result.padIndex,
+          audioFileIds: result.audioFileIds,
+          playbackType: result.playbackType,
+          name: result.name,
+          audioTrimSettings: result.audioTrimSettings,
+          audioGainSettings: result.audioGainSettings,
+          padGainDb: result.padGainDb,
         },
-        onLoadingStateChange: (state: LoadingState) => {
-          console.log(
-            `[SearchModal] Search result loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
-          );
-          const loadingKey = generatePadLoadingKey(
-            result.profileId,
-            result.pageIndex,
-            result.padIndex,
-          );
-          loadingStoreActions.setPadLoadingState(loadingKey, state);
+        {
+          activeProfileId: result.profileId,
+          currentPageIndex: result.pageIndex,
         },
-        onAudioReady: () => {
-          console.log(`[SearchModal] Search result ready for "${result.name}"`);
-          const loadingKey = generatePadLoadingKey(
-            result.profileId,
-            result.pageIndex,
-            result.padIndex,
-          );
-          loadingStoreActions.clearPadLoadingState(loadingKey);
-        },
-        onError: (error) => {
-          console.error(
-            `[SearchModal] Search result error for "${result.name}":`,
-            error,
-          );
-          const loadingKey = generatePadLoadingKey(
-            result.profileId,
-            result.pageIndex,
-            result.padIndex,
-          );
-          loadingStoreActions.clearPadLoadingState(loadingKey);
-        },
-      });
+        { logPrefix: "[SearchModal] search result" },
+      );
 
       // Close the modal after initiating playback
       onClose();

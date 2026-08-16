@@ -55,6 +55,7 @@ import {
   type ServerSyncStatus,
   type ServerRole,
 } from "./types";
+import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
 
 export interface ServerSyncCallbacks {
   onStatusChange: (status: ServerSyncStatus) => void;
@@ -99,16 +100,43 @@ const NO_DRIVE: DriveAccess = { tokenInfo: null, onTokenRefresh: () => {} };
  */
 const inFlight = new Map<number, Promise<ServerSyncResult>>();
 
+/**
+ * Everyone waiting on each run, so a caller that joins one still hears how it
+ * went.
+ *
+ * Joining used to hand back the promise and nothing else, discarding the
+ * joiner's callbacks entirely: a card that pressed "Sync now" during a
+ * background sync sat on "syncing" with its button disabled until the panel
+ * was closed and reopened. The Drive backend got this fix; this one did not.
+ */
+const inFlightListeners = new Map<number, Set<ServerSyncCallbacks>>();
+
 export function syncServerProfile(
   profileId: number,
   callbacks: ServerSyncCallbacks,
   drive: DriveAccess = NO_DRIVE,
 ): Promise<ServerSyncResult> {
   const running = inFlight.get(profileId);
-  if (running) return running;
+  if (running) {
+    const listeners = inFlightListeners.get(profileId);
+    listeners?.add(callbacks);
+    return running.then((result) => {
+      listeners?.delete(callbacks);
+      replaySyncOutcome(result, callbacks);
+      return result;
+    });
+  }
 
-  const run = performServerSync(profileId, callbacks, drive).finally(() => {
+  const listeners = new Set<ServerSyncCallbacks>([callbacks]);
+  inFlightListeners.set(profileId, listeners);
+
+  // The run reports to whoever is waiting at the time, not only to whoever
+  // started it.
+  const fanOut = fanOutSyncCallbacks(listeners);
+
+  const run = performServerSync(profileId, fanOut, drive).finally(() => {
     inFlight.delete(profileId);
+    inFlightListeners.delete(profileId);
   });
   inFlight.set(profileId, run);
   return run;

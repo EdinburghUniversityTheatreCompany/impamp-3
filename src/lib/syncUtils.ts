@@ -5,6 +5,7 @@ import {
   ensureAudioFileHash,
 } from "./db"; // Import main data types
 import { remapPadSettingsOnMerge } from "./importExport";
+import type { WireProfile } from "./profileWire";
 
 // Type guard to check if an object has sync fields
 // Exporting Syncable type for use in other modules
@@ -65,6 +66,29 @@ interface CompareItemResult {
   mergedItem: Syncable | null;
 }
 
+/**
+ * Pad fields that are a second view of another field, keyed by content hash.
+ *
+ * They are synthesised at export (`getLocalProfileSyncData`) and never written
+ * through `upsertPadConfiguration`, so nothing stamps them into
+ * `_fieldsModified`. Merged on their own they therefore fell through to the
+ * whole-item `_modified` comparison while their originals were decided
+ * per-field — and the two answers could come from different sides, leaving a
+ * pad whose ids and hashes named different recordings. Because
+ * `updateLocalData` prefers the hashes, the pad then played the wrong sound and
+ * published it.
+ *
+ * So they do not get a say of their own: each travels with whichever side won
+ * the field it derives from.
+ */
+const DERIVED_HASH_TWINS: Readonly<Record<string, string>> = {
+  audioFileIds: "audioFileHashes",
+  audioTrimSettings: "audioTrimSettingsByHash",
+  audioGainSettings: "audioGainSettingsByHash",
+};
+
+const DERIVED_HASH_FIELDS = new Set(Object.values(DERIVED_HASH_TWINS));
+
 const compareSyncableItems = (
   localItem: Syncable,
   remoteItem: Syncable,
@@ -77,24 +101,43 @@ const compareSyncableItems = (
   const mergedFieldsModified = { ...(localItem._fieldsModified ?? {}) };
   const localFields = localItem._fieldsModified ?? {};
   const remoteFields = remoteItem._fieldsModified ?? {};
+  const isVotingField = (k: string) =>
+    !k.startsWith("_") &&
+    k !== "id" &&
+    k !== "createdAt" &&
+    k !== "updatedAt" &&
+    // Derived views do not vote; they follow the field they derive from.
+    !DERIVED_HASH_FIELDS.has(k);
   const allFields = new Set([
-    ...Object.keys(localItem).filter(
-      (k) =>
-        !k.startsWith("_") &&
-        k !== "id" &&
-        k !== "createdAt" &&
-        k !== "updatedAt",
-    ),
-    ...Object.keys(remoteItem).filter(
-      (k) =>
-        !k.startsWith("_") &&
-        k !== "id" &&
-        k !== "createdAt" &&
-        k !== "updatedAt",
-    ),
+    ...Object.keys(localItem).filter(isVotingField),
+    ...Object.keys(remoteItem).filter(isVotingField),
   ]);
   let localWinsOverall = false;
   let remoteWinsOverall = false;
+
+  /**
+   * Adopts remote's value for a field, and with it remote's hash-keyed view of
+   * the same fact. When remote has no such view — an older client that predates
+   * hashing — the local one is dropped rather than kept, since keeping it would
+   * describe remote's sounds with local's hashes, which is the corruption this
+   * is here to prevent.
+   */
+  const adoptRemoteValue = (field: string, key: keyof Syncable) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mergedItem as any)[key] = remoteItem[key];
+
+    const twin = DERIVED_HASH_TWINS[field];
+    if (!twin) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const merged = mergedItem as any;
+    if (twin in remoteItem) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      merged[twin] = (remoteItem as any)[twin];
+    } else {
+      delete merged[twin];
+    }
+  };
 
   allFields.forEach((field) => {
     const key = field as keyof Syncable;
@@ -120,8 +163,7 @@ const compareSyncableItems = (
         remoteModTime: remoteMod,
       });
     } else if (remoteChangedSinceLocalSync && valuesDiffer) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mergedItem as any)[key] = remoteVal; // Cast to any for dynamic assignment
+      adoptRemoteValue(field, key);
       mergedFieldsModified[field] = remoteMod;
       remoteWinsOverall = true;
     } else if (localChangedSinceRemoteSync && valuesDiffer) {
@@ -133,8 +175,7 @@ const compareSyncableItems = (
         valuesDiffer &&
         (remoteItem._modified ?? 0) > (localItem._modified ?? 0)
       ) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (mergedItem as any)[key] = remoteVal; // Cast to any for dynamic assignment
+        adoptRemoteValue(field, key);
         remoteWinsOverall = true;
       } else if (valuesDiffer) {
         localWinsOverall = true;
@@ -319,7 +360,13 @@ export interface SyncedPadConfiguration extends PadConfiguration {
 export interface ProfileSyncData {
   _syncFormatVersion: number; // To handle future format changes
   _lastSyncTimestamp?: number; // Timestamp of the last successful sync with this file
-  profile: Profile; // The profile metadata itself
+  /**
+   * The profile metadata itself, reduced to the fields that may leave a
+   * device — see `lib/profileWire`. A blob written by an older client can
+   * still *contain* more than this; the type says what we rely on and what we
+   * are willing to write back out.
+   */
+  profile: WireProfile;
   padConfigurations: SyncedPadConfiguration[];
   pageMetadata: PageMetadata[];
   // Include audio files to ensure complete sync
@@ -393,7 +440,10 @@ export const detectProfileConflicts = async (
   ]);
 
   allProfileFields.forEach((field) => {
-    const key = field as keyof Profile;
+    // A blob written by an older client can carry fields the wire shape no
+    // longer includes (`serverShareToken`); `isComparableProfileField` has
+    // already filtered those out, so the cast only covers shared fields.
+    const key = field as keyof WireProfile;
     const localMod = localProfileFields[field] ?? 0;
     const remoteMod = remoteProfileFields[field] ?? 0;
     const localVal = localProfile[key];

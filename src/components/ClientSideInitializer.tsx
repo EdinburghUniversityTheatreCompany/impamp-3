@@ -56,19 +56,22 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   const { syncProfile, getRemoteVersionToken } = useGoogleDriveSync();
   const { syncProfile: syncServerProfile } = useServerSync();
 
-  // Use local state to store auth values from the Zustand store
-  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
+  // Read synchronously rather than initialising to `false` and correcting in
+  // an effect. The store is hydrated from localStorage before this renders, so
+  // for a signed-in user the old shape ran the whole load sweep once with
+  // `false`, then again when the subscription fired — and each sweep costs a
+  // Drive metadata request per profile. The subscription then keeps it current.
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(
+    () => useProfileStore.getState().isGoogleSignedIn,
+  );
 
-  // Subscribe to store changes for Google sign-in state. Every subscription in
-  // this component is selector-based (see subscribeWithSelector in
-  // profileStore), so it is woken only when its own slice changes rather than
-  // on every store mutation.
+  // Selector-based (see subscribeWithSelector in profileStore), so it is woken
+  // only when its own slice changes rather than on every store mutation.
   useEffect(
     () =>
       useProfileStore.subscribe(
         (state) => state.isGoogleSignedIn,
         setIsGoogleSignedIn,
-        { fireImmediately: true },
       ),
     [],
   );
@@ -116,14 +119,19 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // still resolve after `cancelled` flips. The actual guarantee that a
   // superseded load can never clobber a newer one lives in pipeline.ts's
   // `loadGeneration` token, which gates the write itself.
-  const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
+  // Read synchronously for the same reason as `isGoogleSignedIn` above: the
+  // store is hydrated before this renders, so starting at null and correcting
+  // in an effect ran the loudness refresh below once for "no profile" and then
+  // again for the real one.
+  const [activeProfileId, setActiveProfileId] = useState<number | null>(
+    () => useProfileStore.getState().activeProfileId,
+  );
 
   useEffect(
     () =>
       useProfileStore.subscribe(
         (state) => state.activeProfileId,
         setActiveProfileId,
-        { fireImmediately: true },
       ),
     [],
   );
@@ -319,14 +327,29 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 
     const unsubscribe = useProfileStore.subscribe(
       (state) => state.syncRequestQueue,
-      (syncRequestQueue) => {
+      (syncRequestQueue, previousQueue) => {
+        // Only the profiles whose request actually changed.
+        //
+        // This iterated *every* key, and nothing ever removes one, so the set
+        // grew monotonically for the life of the tab: edit profile 1, then 2,
+        // then 3, then 1 again, and all three got a fresh timer and all three
+        // synced. The engines' in-flight maps stop them stacking concurrently
+        // but not from being issued — a real round trip per profile per edit,
+        // including for profiles whose sync is paused.
         Object.keys(syncRequestQueue).forEach((key) => {
           const profileId = parseInt(key);
+          if (previousQueue?.[profileId] === syncRequestQueue[profileId]) {
+            return;
+          }
+
           if (debounceTimersRef.current[profileId]) {
             clearTimeout(debounceTimersRef.current[profileId]);
           }
           debounceTimersRef.current[profileId] = setTimeout(async () => {
             delete debounceTimersRef.current[profileId];
+            // The store entry is the one that leaked: the timer already
+            // cleaned up after itself, the queue never did.
+            useProfileStore.getState().clearSyncRequest(profileId);
             const { profiles, isGoogleSignedIn } = useProfileStore.getState();
             const profile = profiles.find((p) => p.id === profileId);
             if (profile?.syncType === "server") {
@@ -361,27 +384,39 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // pushes "profile N moved to version V" and we pull immediately. The
   // periodic full sync below stays as a backstop for a dropped stream.
   useEffect(() => {
-    const subscriptions = new Map<number, () => void>();
+    // Keyed on everything the stream is *for*, not just which profile it
+    // belongs to. Keyed by profile id alone, a profile that was re-linked to a
+    // different server profile, or whose share token was rotated or revoked
+    // and re-issued, kept its old EventSource: the `continue` below saw a
+    // subscription already existed and left it pointed at the old id. It then
+    // either 401s forever — `onerror` only logs — or delivers changes for a
+    // profile this device is no longer looking at.
+    const subscriptions = new Map<string, () => void>();
+
+    const streamKeyFor = (profile: Profile) =>
+      `${profile.id}:${profile.serverProfileId}:${profile.serverShareToken ?? ""}`;
 
     const reconcileSubscriptions = (profiles: Profile[]) => {
       const wanted = new Map(
         profiles
           .filter((p) => isServerSynced(p) && p.serverProfileId)
-          .map((p) => [p.id!, p]),
+          .map((p) => [streamKeyFor(p), p]),
       );
 
-      // Drop streams for profiles that are gone or no longer server-synced.
-      for (const [profileId, unsubscribe] of subscriptions) {
-        if (!wanted.has(profileId)) {
+      // Drop streams for profiles that are gone, no longer server-synced, or
+      // whose identity or credential has changed.
+      for (const [streamKey, unsubscribe] of subscriptions) {
+        if (!wanted.has(streamKey)) {
           unsubscribe();
-          subscriptions.delete(profileId);
+          subscriptions.delete(streamKey);
         }
       }
 
-      for (const [profileId, profile] of wanted) {
-        if (subscriptions.has(profileId)) continue;
+      for (const [streamKey, profile] of wanted) {
+        if (subscriptions.has(streamKey)) continue;
+        const profileId = profile.id!;
         subscriptions.set(
-          profileId,
+          streamKey,
           subscribeToProfileChanges(
             profile.serverProfileId!,
             profile.serverShareToken ?? null,

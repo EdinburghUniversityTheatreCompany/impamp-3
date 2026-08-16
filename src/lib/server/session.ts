@@ -7,7 +7,6 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { cookies } from "next/headers";
 import { execute, queryOne, type UserRow } from "./db";
 import { getUserById } from "./users";
 
@@ -71,10 +70,4 @@ export function sessionCookieOptions() {
     path: "/",
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
   };
-}
-
-/** The signed-in user for the current request, or null. */
-export async function getCurrentUser(): Promise<UserRow | null> {
-  const store = await cookies();
-  return getSessionUser(store.get(SESSION_COOKIE)?.value);
 }

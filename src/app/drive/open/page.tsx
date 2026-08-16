@@ -2,19 +2,13 @@
 
 import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useGoogleLogin } from "@react-oauth/google";
-import {
-  useProfileStore,
-  whenProfilesLoaded,
-  GoogleUserInfo,
-} from "@/store/profileStore";
-import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
-import { ProfileSyncData } from "@/lib/syncUtils";
+import { useProfileStore } from "@/store/profileStore";
+import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
+import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 
 type PageState =
-  | { kind: "loading" }
   | { kind: "needs-signin" }
   | { kind: "connecting"; progress: { current: number; total: number } | null }
   | { kind: "success"; profileName: string }
@@ -25,11 +19,8 @@ function DriveOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { isGoogleSignedIn, setGoogleAuthDetails, importProfileFromSyncData } =
-    useProfileStore();
-
-  const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
-    useGoogleDriveSync();
+  const isGoogleSignedIn = useProfileStore((s) => s.isGoogleSignedIn);
+  const { connectByFolderId } = useConnectDriveProfile();
 
   // The folder ID out of the Google Drive "Open with" state param.
   const initialFolderId = useMemo((): string | null => {
@@ -62,65 +53,24 @@ function DriveOpenContent() {
   const connectToFolder = useCallback(
     async (folderId: string) => {
       try {
-        // Wait for the initial profile load before deciding: this page can
-        // mount before it finishes, and an empty list then reads as "not
-        // connected yet" and imports a second copy of the profile.
-        const loaded = await whenProfilesLoaded();
-        const existing = loaded.find((p) => p.googleDriveFolderId === folderId);
-        if (existing) {
-          setPageState({
-            kind: "already-connected",
-            profileName: existing.name,
-          });
-          return;
-        }
-
-        // Find the profile JSON file inside the shared folder
-        const files = await listFilesInFolder(folderId);
-        const profileFile = files.find((f) => f.name.endsWith(".json"));
-        if (!profileFile) {
-          throw new Error(
-            "No profile file found in the selected folder. Make sure you're selecting an ImpAmp profile folder.",
-          );
-        }
-
-        const syncData: ProfileSyncData | null = await downloadDriveFile(
-          profileFile.id,
-        );
-        if (
-          !syncData ||
-          syncData._syncFormatVersion !== 1 ||
-          !syncData.profile
-        ) {
-          throw new Error("Not a valid ImpAmp profile file.");
-        }
-
-        // Import as a new profile linked to the shared Drive folder,
-        // streaming each audio file straight into IndexedDB.
-        await importProfileFromSyncData(
-          syncData,
-          downloadAudioFile,
-          (p) =>
+        const outcome = await connectByFolderId(folderId, {
+          onProgress: (p) =>
             setPageState({
               kind: "connecting",
               progress: { current: p.processedFiles, total: p.totalFiles },
             }),
-          // The shared folder is what we are connecting to, so it is ours to
-          // sync against — unlike a server share link, where the Drive ids in
-          // the payload belong to the owner alone.
-          {
-            syncType: "googleDrive",
-            audioLocation: "googleDrive",
-            googleDriveFileId: profileFile.id,
-            googleDriveFolderId: folderId,
-          },
-        );
+        });
+
+        if (outcome.kind === "already-connected") {
+          setPageState({
+            kind: "already-connected",
+            profileName: outcome.name,
+          });
+          return;
+        }
 
         sessionStorage.removeItem(PENDING_FOLDER_KEY);
-        setPageState({
-          kind: "success",
-          profileName: syncData.profile.name,
-        });
+        setPageState({ kind: "success", profileName: outcome.name });
       } catch (error) {
         console.error("Failed to connect shared Drive profile:", error);
         setPageState({
@@ -128,16 +78,11 @@ function DriveOpenContent() {
           message:
             error instanceof Error
               ? error.message
-              : "Failed to connect profile.",
+              : "Could not connect that shared profile.",
         });
       }
     },
-    [
-      listFilesInFolder,
-      downloadDriveFile,
-      downloadAudioFile,
-      importProfileFromSyncData,
-    ],
+    [connectByFolderId],
   );
 
   // On mount: start connecting, or park the folder id until sign-in completes.
@@ -159,59 +104,21 @@ function DriveOpenContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const googleLogin = useGoogleLogin({
-    flow: "auth-code",
-    scope: "https://www.googleapis.com/auth/drive.file",
-    onSuccess: async ({ code }) => {
-      setSignInError(null);
-      try {
-        const exchangeResponse = await fetch("/api/auth/google/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
+  const googleLogin = useGoogleSignIn({
+    onError: setSignInError,
+    onSignedIn: async () => {
+      // Connect using the folder ID saved before the popup opened.
+      const pendingFolderId = sessionStorage.getItem(PENDING_FOLDER_KEY);
+      if (!pendingFolderId) {
+        setPageState({
+          kind: "error",
+          message: "Lost track of the folder to connect. Please try again.",
         });
+        return;
+      }
 
-        if (!exchangeResponse.ok) {
-          const err = await exchangeResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to exchange authorization code");
-        }
-
-        const {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          expires_in: expiresIn,
-        } = await exchangeResponse.json();
-
-        const expiresAt = Date.now() + expiresIn * 1000;
-
-        const userInfoResponse = await fetch(
-          "https://www.googleapis.com/oauth2/v3/userinfo",
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!userInfoResponse.ok) {
-          throw new Error(
-            `Failed to fetch user info: ${userInfoResponse.statusText}`,
-          );
-        }
-        const userInfo: GoogleUserInfo = await userInfoResponse.json();
-
-        setGoogleAuthDetails(
-          userInfo,
-          accessToken,
-          refreshToken ?? null,
-          expiresAt,
-        );
-
-        // Now connect using the folder ID we saved before sign-in
-        const pendingFolderId = sessionStorage.getItem(PENDING_FOLDER_KEY);
-        if (pendingFolderId) {
-          await connectToFolder(pendingFolderId);
-        } else {
-          setPageState({
-            kind: "error",
-            message: "Lost track of the folder to connect. Please try again.",
-          });
-        }
+      try {
+        await connectToFolder(pendingFolderId);
       } catch (error) {
         console.error("Sign-in failed:", error);
         setSignInError(
@@ -220,11 +127,6 @@ function DriveOpenContent() {
             : "Sign-in failed. Please try again.",
         );
       }
-    },
-    onError: (errorResponse) => {
-      setSignInError(
-        `Sign-in failed: ${errorResponse.error_description || errorResponse.error || "Unknown error"}`,
-      );
     },
   });
 
@@ -241,31 +143,6 @@ function DriveOpenContent() {
             Connect shared profile
           </p>
         </div>
-
-        {pageState.kind === "loading" && (
-          <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
-            <svg
-              className="animate-spin h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8v8H4z"
-              />
-            </svg>
-            <span>Loading…</span>
-          </div>
-        )}
 
         {pageState.kind === "needs-signin" && (
           <div className="space-y-4">

@@ -197,15 +197,11 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     refreshPadConfigs,
   );
 
-  // Log loading and error states
   useEffect(() => {
-    if (isLoadingConfigs) {
-      console.log("[PadGrid] Loading pad configurations...");
-    }
     if (configError) {
       console.error("[PadGrid] Error loading pad configurations:", configError);
     }
-  }, [isLoadingConfigs, configError]);
+  }, [configError]);
 
   // Preload decoded buffers for the current page only. Pads on other pages
   // play instantly too — they stream directly from the stored blob until a
@@ -226,7 +222,16 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     }
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
-  // Delete key state tracking
+  // Delete key state tracking.
+  //
+  // `keyup` is not guaranteed to arrive: alt-tab away with Delete held and the
+  // browser gives the release to whatever has focus next, leaving this stuck
+  // on. It is only consulted in edit mode, where a stuck `true` turns an
+  // ordinary click on a pad into *removing its sound* — so returning to the
+  // tab and clicking a pad deleted it.
+  //
+  // `useKeyboardListener` learned this for the Shift key and added exactly
+  // these two guards; this listener predates that and never got them.
   const [isDeleteKeyDown, setIsDeleteKeyDown] = React.useState(false);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -235,11 +240,20 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Delete") setIsDeleteKeyDown(false);
     };
+    const release = () => setIsDeleteKeyDown(false);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") release();
+    };
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", release);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", release);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -250,6 +264,13 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   // Main click handler - delegates to appropriate handlers
   const handlePadClick = useCallback(
     (padIndex: number) => {
+      // `usePadConfigurations` keeps the last successful result while the next
+      // request is in flight, so between pressing a bank key and the read
+      // resolving these are still the *previous* bank's pads — shown under the
+      // new bank's number. Acting on them played the old bank's sound at the
+      // new bank's position, and in edit mode edited or deleted it.
+      if (isLoadingConfigs) return;
+
       const config = padConfigs.get(padIndex);
 
       // Different behavior based on mode
@@ -281,6 +302,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     },
     [
       padConfigs,
+      isLoadingConfigs,
       isDeleteMoveMode,
       isEditMode,
       isDeleteKeyDown,

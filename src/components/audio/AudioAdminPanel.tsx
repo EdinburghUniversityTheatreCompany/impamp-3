@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatBytes, usedFraction } from "@/lib/serverAudio/format";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 interface UserRow {
   userId: number;
@@ -65,7 +66,7 @@ export default function AudioAdminPanel() {
     setSaving(userId);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/users/${userId}`, {
+      const response = await fetchWithTimeout(`/api/admin/users/${userId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),

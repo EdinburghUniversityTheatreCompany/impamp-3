@@ -73,21 +73,47 @@ export function analyseLoudness(
   const weighted = channels.map((c) => kWeight(c, sampleRate));
   const blockMeanSquare = new Float32Array(blockCount);
 
-  for (let j = 0; j < blockCount; j++) {
-    const start = j * hopSamples;
-    const end = start + blockSamples;
-    let w = 0;
+  // A sliding sum rather than re-summing each block.
+  //
+  // BS.1770 blocks are 400 ms with a 100 ms hop, so they overlap four deep and
+  // re-summing touched every sample four times: for a 5-minute stereo file
+  // that is ~1.15e8 multiply-adds where ~2.9e7 will do, all of it blocking the
+  // main thread. Each block now adds the samples entering the window and
+  // subtracts the ones leaving it.
+  //
+  // Numerically this is safe to do in a JS number: the operands are Float32,
+  // so each square is exactly representable as a double (a 24-bit mantissa
+  // squared needs 48 bits, and a double has 53), and the running total is
+  // rebuilt from scratch periodically so add/subtract rounding cannot
+  // accumulate across a long file.
+  const RESYNC_EVERY_BLOCKS = 512;
 
-    for (let ch = 0; ch < weighted.length; ch++) {
-      const data = weighted[ch];
-      let sumSquares = 0;
-      for (let i = start; i < end; i++) {
-        sumSquares += data[i] * data[i];
+  for (let ch = 0; ch < weighted.length; ch++) {
+    const data = weighted[ch];
+    const weight = channelWeight(ch, weighted.length);
+    let sumSquares = 0;
+
+    for (let j = 0; j < blockCount; j++) {
+      const start = j * hopSamples;
+      const end = start + blockSamples;
+
+      if (j === 0 || j % RESYNC_EVERY_BLOCKS === 0) {
+        sumSquares = 0;
+        for (let i = start; i < end; i++) {
+          sumSquares += data[i] * data[i];
+        }
+      } else {
+        // Entering: [end - hopSamples, end). Leaving: [start - hopSamples, start).
+        for (let i = end - hopSamples; i < end; i++) {
+          sumSquares += data[i] * data[i];
+        }
+        for (let i = start - hopSamples; i < start; i++) {
+          sumSquares -= data[i] * data[i];
+        }
       }
-      w += channelWeight(ch, weighted.length) * (sumSquares / blockSamples);
-    }
 
-    blockMeanSquare[j] = w;
+      blockMeanSquare[j] += weight * (sumSquares / blockSamples);
+    }
   }
 
   return {

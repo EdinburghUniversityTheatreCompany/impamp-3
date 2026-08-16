@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 /**
  * Utility functions for handling authentication, specifically for Google OAuth
  */
@@ -90,13 +91,16 @@ async function refreshGoogleToken(refreshToken: string) {
     });
 
     // Call Google's OAuth token endpoint
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+    const response = await fetchWithTimeout(
+      "https://oauth2.googleapis.com/token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formData,
       },
-      body: formData,
-    });
+    );
 
     const data = await response.json();
 

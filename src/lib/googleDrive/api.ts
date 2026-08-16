@@ -12,6 +12,7 @@ import {
 } from "./types";
 import { checkAndRefreshAuth } from "./auth";
 import { getProfileFolderName } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Escapes a value for safe interpolation into a Drive API query string.
@@ -62,7 +63,7 @@ async function authenticatedRequest<T>(
       ...extraHeaders,
     };
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method,
       headers,
       ...restOptions,
@@ -85,7 +86,7 @@ async function authenticatedRequest<T>(
           ...extraHeaders,
         };
 
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetchWithTimeout(url, {
           method,
           headers: retryHeaders,
           ...restOptions,
@@ -794,7 +795,9 @@ export const uploadDriveFile = async (
       Authorization: `Bearer ${tokenInfo.accessToken}`,
     };
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
+      // Moving the whole audio blob — the largest request this app makes.
+      timeoutKind: "transfer",
       method,
       headers,
       body: form,
@@ -816,7 +819,7 @@ export const uploadDriveFile = async (
           Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
         };
 
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetchWithTimeout(url, {
           method,
           headers: retryHeaders,
           body: form, // Re-use the same form
@@ -921,14 +924,18 @@ export const uploadAudioFile = async (
     }
 
     const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
-    const response = await fetch(url, { method, headers, body: form });
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers,
+      body: form,
+    });
 
     if (response.status === 401) {
       const { isValid, refreshedTokenInfo } =
         await checkAndRefreshAuth(tokenInfo);
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetchWithTimeout(url, {
           method,
           headers: {
             Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
@@ -977,7 +984,7 @@ const downloadAudioFileViaPublicProxy = async (
   fileId: string,
 ): Promise<Blob | null> => {
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `/api/drive/public-audio?id=${encodeURIComponent(fileId)}`,
     );
     if (!response.ok) return null;
@@ -1010,14 +1017,14 @@ export const downloadAudioFileAsBlob = async (
   try {
     const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
     const headers = { Authorization: `Bearer ${tokenInfo.accessToken}` };
-    const response = await fetch(url, { headers });
+    const response = await fetchWithTimeout(url, { headers });
 
     if (response.status === 401) {
       const { isValid, refreshedTokenInfo } =
         await checkAndRefreshAuth(tokenInfo);
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetchWithTimeout(url, {
           headers: {
             Authorization: `Bearer ${refreshedTokenInfo.accessToken}`,
           },
@@ -1109,7 +1116,7 @@ export const getDriveFileVersionToken = async (
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `/api/drive/public-file?id=${encodeURIComponent(fileId)}&meta=1`,
     );
     if (!response.ok) return null;
@@ -1130,7 +1137,7 @@ export const downloadPublicProfileData = async (
   fileId: string,
 ): Promise<ProfileSyncData | null> => {
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `/api/drive/public-file?id=${encodeURIComponent(fileId)}`,
     );
     if (!response.ok) return null;

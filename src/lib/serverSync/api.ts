@@ -15,6 +15,7 @@ import {
   type ServerShare,
   type ServerUser,
 } from "./types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const SHARE_TOKEN_HEADER = "x-impamp-share-token";
 
@@ -43,7 +44,7 @@ async function errorMessage(response: Response, fallback: string) {
 
 /** The signed-in server user, or null when there is no session. */
 export async function fetchCurrentUser(): Promise<ServerUser | null> {
-  const response = await fetch("/api/auth/session");
+  const response = await fetchWithTimeout("/api/auth/session");
   if (response.status === 401) return null;
   if (!response.ok) {
     throw new Error(await errorMessage(response, "Could not read session"));
@@ -52,11 +53,11 @@ export async function fetchCurrentUser(): Promise<ServerUser | null> {
 }
 
 export async function signOutOfServer(): Promise<void> {
-  await fetch("/api/auth/session", { method: "DELETE" });
+  await fetchWithTimeout("/api/auth/session", { method: "DELETE" });
 }
 
 export async function listServerProfiles(): Promise<ServerProfileSummary[]> {
-  const response = await fetch("/api/profiles");
+  const response = await fetchWithTimeout("/api/profiles");
   if (response.status === 401) throw new NotSignedInError();
   if (!response.ok) {
     throw new Error(await errorMessage(response, "Could not list profiles"));
@@ -92,7 +93,7 @@ export async function fetchServerProfile(
     );
   }
 
-  const response = await fetch(`/api/profiles/${profileId}`, {
+  const response = await fetchWithTimeout(`/api/profiles/${profileId}`, {
     headers: requestHeaders,
   });
 
@@ -113,7 +114,7 @@ export async function createServerProfile(
   name: string,
   data: ProfileSyncData,
 ): Promise<{ id: string; version: number }> {
-  const response = await fetch("/api/profiles", {
+  const response = await fetchWithTimeout("/api/profiles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, data }),
@@ -141,7 +142,7 @@ export async function pushServerProfile(
   expectedVersion: number,
   shareToken?: string | null,
 ): Promise<{ version: number }> {
-  const response = await fetch(`/api/profiles/${profileId}`, {
+  const response = await fetchWithTimeout(`/api/profiles/${profileId}`, {
     method: "PUT",
     headers: headers(shareToken, {
       "Content-Type": "application/json",
@@ -166,7 +167,7 @@ export async function pushServerProfile(
 }
 
 export async function deleteServerProfile(profileId: string): Promise<void> {
-  const response = await fetch(`/api/profiles/${profileId}`, {
+  const response = await fetchWithTimeout(`/api/profiles/${profileId}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -177,7 +178,7 @@ export async function deleteServerProfile(profileId: string): Promise<void> {
 export async function listServerShares(
   profileId: string,
 ): Promise<ServerShare[]> {
-  const response = await fetch(`/api/profiles/${profileId}/shares`);
+  const response = await fetchWithTimeout(`/api/profiles/${profileId}/shares`);
   if (!response.ok) {
     throw new Error(await errorMessage(response, "Could not list sharing"));
   }
@@ -189,7 +190,7 @@ export async function createServerShare(
   role: "viewer" | "editor",
   email?: string,
 ): Promise<ServerShare> {
-  const response = await fetch(`/api/profiles/${profileId}/shares`, {
+  const response = await fetchWithTimeout(`/api/profiles/${profileId}/shares`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(email ? { role, email } : { role }),
@@ -204,9 +205,12 @@ export async function deleteServerShare(
   profileId: string,
   shareId: number,
 ): Promise<void> {
-  const response = await fetch(`/api/profiles/${profileId}/shares/${shareId}`, {
-    method: "DELETE",
-  });
+  const response = await fetchWithTimeout(
+    `/api/profiles/${profileId}/shares/${shareId}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
     throw new Error(await errorMessage(response, "Could not revoke sharing"));
   }

@@ -4,6 +4,7 @@ import {
   driveErrorResponse,
   isSameHostRequest,
 } from "../proxyUtils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Streams a publicly shared Google Drive audio file using a server-side API key.
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
   try {
     // Check metadata first so we can enforce type and size before streaming
     const metaUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=mimeType,size&key=${apiKey}`;
-    const metaResponse = await fetch(metaUrl);
+    const metaResponse = await fetchWithTimeout(metaUrl);
 
     if (!metaResponse.ok) {
       return driveErrorResponse(metaResponse);
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
     }
 
     const mediaUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
-    const mediaResponse = await fetch(mediaUrl);
+    const mediaResponse = await fetchWithTimeout(mediaUrl);
 
     if (!mediaResponse.ok || !mediaResponse.body) {
       return NextResponse.json(

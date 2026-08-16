@@ -89,18 +89,34 @@ export function computeHopTruePeak(
 
       for (let i = start; i < end; i++) {
         // The raw sample is itself a candidate — phase 0 of the interpolator.
-        const raw = Math.abs(channel[i]);
+        const raw = channel[i] < 0 ? -channel[i] : channel[i];
         if (raw > peak) peak = raw;
+
+        const base = i - half + 1;
+        // Whether the whole tap window lies inside the signal. Splitting on
+        // this is worth the duplication: the bounds test used to run once per
+        // tap — 36 branches per sample per channel, and this loop is 93% of
+        // the cost of analysing a file. Only the first and last few samples of
+        // a file need it.
+        const interior = base >= 0 && base + TRUE_PEAK_TAPS_PER_PHASE <= length;
 
         for (let p = 1; p < TRUE_PEAK_OVERSAMPLE; p++) {
           const taps = POLYPHASE[p];
           let acc = 0;
-          for (let t = 0; t < TRUE_PEAK_TAPS_PER_PHASE; t++) {
-            const idx = i - half + 1 + t;
-            // Treat out-of-range as silence rather than wrapping.
-            if (idx >= 0 && idx < length) acc += taps[t] * channel[idx];
+
+          if (interior) {
+            for (let t = 0; t < TRUE_PEAK_TAPS_PER_PHASE; t++) {
+              acc += taps[t] * channel[base + t];
+            }
+          } else {
+            for (let t = 0; t < TRUE_PEAK_TAPS_PER_PHASE; t++) {
+              const idx = base + t;
+              // Treat out-of-range as silence rather than wrapping.
+              if (idx >= 0 && idx < length) acc += taps[t] * channel[idx];
+            }
           }
-          const mag = Math.abs(acc);
+
+          const mag = acc < 0 ? -acc : acc;
           if (mag > peak) peak = mag;
         }
       }

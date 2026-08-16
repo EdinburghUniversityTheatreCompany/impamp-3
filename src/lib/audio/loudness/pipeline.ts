@@ -13,12 +13,13 @@ import {
   findUnanalysedAudioFileIds,
   getAudioFile,
   getAudioFileIdsForProfile,
+  getAudioFileMetadata,
   updateAudioFileLoudness,
 } from "@/lib/db";
 import type { LoudnessAnalysis } from "./types";
 import { getCachedAudioBuffer } from "@/lib/audio/cache";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
-import { analyseAudioBuffer } from "./analyse";
+import { analyseAudioBufferOffThread } from "./analyseOffThread";
 import { setCachedLoudness, warmLoudnessCache } from "./cache";
 import { LOUDNESS_ALGO_VERSION } from "./constants";
 
@@ -116,7 +117,9 @@ export async function analyseAndStore(
       buffer = await decodeAudioBlob(file.blob);
     }
 
-    const analysis = analyseAudioBuffer(buffer);
+    // Off the main thread: this is ~2.2 seconds of arithmetic per minute of
+    // stereo audio, and it used to run here, unqueued, once per file added.
+    const analysis = await analyseAudioBufferOffThread(buffer);
     await updateAudioFileLoudness(audioFileId, analysis);
     setCachedLoudness(audioFileId, analysis);
     return analysis;
@@ -145,7 +148,7 @@ export async function analyseAndStore(
  * resolve gain from them.
  *
  * Guarded by a generation token rather than by the caller cancelling: the
- * gathering loop below awaits one `getAudioFile` per audio file, so a slow
+ * gathering below reads the profile's audio metadata in one pass, so a slow
  * load for profile A can still be in flight when the user switches to B and
  * B's own (faster) load has already warmed the cache. Without the token, A
  * would resolve afterwards and call `warmLoudnessCache` again, clobbering
@@ -159,11 +162,18 @@ export async function loadProfileLoudness(profileId: number): Promise<void> {
 
   const generation = ++loadGeneration;
   const ids = await getAudioFileIdsForProfile(profileId);
+
+  // One cursor pass reading only what it needs. This used to be
+  // `for (const id of ids) await getAudioFile(id)`, which reads the *whole*
+  // record — Blob included — to look at `.loudness`. On a 500-sound board that
+  // is 500 sequential round trips materialising 500 audio files in memory, and
+  // `refreshProfileLoudness` calls this twice, on every profile activation and
+  // after every sync of the active profile.
+  const metadata = await getAudioFileMetadata(ids);
   const entries: [number, LoudnessAnalysis][] = [];
 
-  for (const id of ids) {
-    const file = await getAudioFile(id);
-    if (file?.loudness && !shouldAnalyse(file.loudness)) {
+  for (const [id, file] of metadata) {
+    if (file.loudness && !shouldAnalyse(file.loudness)) {
       entries.push([id, file.loudness]);
     }
   }

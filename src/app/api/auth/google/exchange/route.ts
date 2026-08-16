@@ -3,6 +3,7 @@ import {
   attachSessionCookie,
   establishSession,
 } from "@/lib/server/establishSession";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Exchanges a Google OAuth authorization code for access and refresh tokens.
@@ -48,11 +49,14 @@ export async function POST(request: NextRequest) {
       grant_type: "authorization_code",
     });
 
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params,
-    });
+    const response = await fetchWithTimeout(
+      "https://oauth2.googleapis.com/token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params,
+      },
+    );
 
     const data = await response.json();
 

@@ -50,9 +50,36 @@ Thumbs.db
 
 # Environment files
 .env*
-!.env.example
+!.env.dist
+
+# Gitignored local artifacts. Docker does not read .gitignore, so every one of
+# these would otherwise be tarred up and shipped to the daemon by `COPY . .`,
+# and would land in a builder-stage layer and the build cache.
+#
+# This list mirrors `.gitleaks.toml`'s allowlist on purpose: both files are
+# answering the same question — which gitignored local artifacts are here and
+# what is in them — and they had drifted. `certificates/` holds a dev TLS
+# *private key*, which is why gitleaks allowlists it; `.worktrees/` is other
+# checkouts of this repo and had grown to several gigabytes, so the build
+# context was that big before the first instruction ran.
+.worktrees
+.claude/worktrees
+certificates
+data
+playwright-report
+
+# Development-only trees the runtime image has no use for.
+# `playwright.config.ts` goes with e2e-tests, not merely alongside it: it sits
+# at the root, tsconfig includes `**/*.ts`, and it imports ./e2e-tests/env — so
+# dropping the tests without it fails `next build` at the type-check step.
+.claude
+.github
+.kamal
+e2e-tests
+playwright.config.ts
+plans
 
 # Documentation
 README.md
-LICENSE
+LICENCE
 docs

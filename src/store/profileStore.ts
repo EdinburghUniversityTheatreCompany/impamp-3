@@ -22,6 +22,7 @@ import type {
   ZipImportResult,
   ImportAudioProgress,
   ImportLink,
+  HostedAudioDownloader,
 } from "../lib/importExport";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
@@ -72,6 +73,8 @@ interface ProfileState {
   // Auto-sync after edits
   syncRequestQueue: Record<number, number>; // profileId → last request timestamp
   requestSync: (profileId: number) => void;
+  /** Forget a request once it has been acted on, so the queue cannot grow. */
+  clearSyncRequest: (profileId: number) => void;
 
   // Sync pausing methods
   pauseSync: (profileId: number, durationMs: number) => Promise<void>; // Pause sync for a profile
@@ -109,6 +112,7 @@ interface ProfileState {
     downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
     onProgress?: (progress: ImportAudioProgress) => void,
     link?: ImportLink,
+    downloadHostedBlob?: HostedAudioDownloader,
   ) => Promise<number>; // For Drive and server connect flows
 
   // Profile manager UI state
@@ -294,7 +298,8 @@ export const useProfileStore = create<ProfileState>()(
               isEditMode: false,
               isDeleteMoveMode: false,
             });
-            // TODO: Trigger loading of pad configurations for the new active profile
+            // Pad configurations are not loaded here: `usePadConfigurations`
+            // is keyed on the active profile, so switching it is the trigger.
 
             // Cues belong to the profile they were armed in. Profiles are
             // isolated, and the Armed Tracks panel shows nothing but a name, so
@@ -441,6 +446,15 @@ export const useProfileStore = create<ProfileState>()(
           set((state) => ({
             emergencySoundsVersion: state.emergencySoundsVersion + 1,
           }));
+        },
+
+        clearSyncRequest: (profileId: number) => {
+          set((state) => {
+            if (!(profileId in state.syncRequestQueue)) return state;
+            const next = { ...state.syncRequestQueue };
+            delete next[profileId];
+            return { syncRequestQueue: next };
+          });
         },
 
         requestSync: (profileId: number) => {
@@ -783,6 +797,7 @@ export const useProfileStore = create<ProfileState>()(
           downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
           onProgress?: (progress: ImportAudioProgress) => void,
           link?: ImportLink,
+          downloadHostedBlob?: HostedAudioDownloader,
         ) => {
           try {
             const { importProfileFromSyncData } =
@@ -795,6 +810,7 @@ export const useProfileStore = create<ProfileState>()(
               downloadAudioBlob,
               onProgress,
               link,
+              downloadHostedBlob,
             );
 
             const newProfile = await getProfile(newProfileId);

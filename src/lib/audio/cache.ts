@@ -466,16 +466,6 @@ export function getAudioCacheStats(): {
   };
 }
 
-/**
- * Force a manual cleanup of the cache
- * Useful for debugging or when memory pressure is detected externally
- *
- * @returns Number of entries removed
- */
-export function forceCleanup(): number {
-  return performCleanup("manual");
-}
-
 // Which sounds are decoded and which are pinned against eviction is invisible
 // in the UI, so the armed-track tests read it through this hook. See
 // lib/testHooks.
@@ -490,36 +480,4 @@ exposeE2EHook("__impampAudioCache", () => ({
  */
 export function resetCacheConfiguration(): void {
   cacheConfig = null;
-}
-
-/**
- * Get current cache configuration including dynamic adjustments
- */
-export function getCacheConfig(): {
-  maxEntries: number;
-  maxMemoryMB: number;
-  cleanupIntervalMs: number;
-  memoryThreshold: number;
-  baseMaxEntries: number;
-  baseMaxMemoryMB: number;
-  systemMemoryGB: number | null;
-  isDynamicallyAdjusted: boolean;
-} {
-  const config = getCacheConfiguration();
-  const systemMemory =
-    typeof navigator !== "undefined" && "deviceMemory" in navigator
-      ? (navigator as NavigatorWithMemory).deviceMemory || null
-      : null;
-  const isDynamic = systemMemory !== null;
-
-  return {
-    maxEntries: config.maxEntries,
-    maxMemoryMB: config.maxMemoryMB,
-    cleanupIntervalMs: CLEANUP_INTERVAL_MS,
-    memoryThreshold: MEMORY_CHECK_THRESHOLD,
-    baseMaxEntries: BASE_MAX_CACHE_ENTRIES,
-    baseMaxMemoryMB: BASE_MAX_MEMORY_MB,
-    systemMemoryGB: systemMemory,
-    isDynamicallyAdjusted: isDynamic,
-  };
 }

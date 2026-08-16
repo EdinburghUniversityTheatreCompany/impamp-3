@@ -63,3 +63,29 @@ content (in which case the pin should go). Right now it is both.
 Noticed while excluding the _location_ fields from the merge; the name is a
 separate question, and changing it alters convergence for every existing synced
 profile, so it wanted its own change and its own test.
+
+## `check_version_sync.sh` only ever looks at one Dockerfile
+
+`scripts/check_version_sync.sh` picks the first of `Dockerfile` / `Containerfile`
+and `break`s, so a repo with more than one Dockerfile has all but one unchecked.
+That is how `Dockerfile.dev` sat on `node:22-alpine` while `.node-version`,
+`mise.toml` and the production Dockerfile were all on 24.19.0, with the gate
+green throughout — and CLAUDE.md claiming Node 24 "everywhere".
+
+The local half is fixed: `Dockerfile.dev` now takes the same
+`ARG NODE_VERSION=24.19.0`. The gate still cannot see it.
+
+This belongs upstream rather than here — the script's own header says "Part of
+the dev-env standard (dev-hooks:dev-env-setup, v23) … Don't hand-edit the
+logic; the next policy change should be a plain re-copy of the template", so a
+local edit would be reverted by the next template sync. The change wanted is to
+iterate every matching Dockerfile rather than break on the first:
+
+```sh
+for f in Dockerfile Containerfile Dockerfile.*; do
+  [ -f "$f" ] || continue
+  # ...check this one too, rather than DOCKERFILE=$f; break
+done
+```
+
+Noticed while fixing the Node pin during the whole-repo review.

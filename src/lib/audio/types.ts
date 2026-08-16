@@ -32,6 +32,18 @@ export interface PlaybackStrategy {
    * @param audioFileIds - Array of all available audio file IDs
    */
   updateState(playedIndex: number, audioFileIds: number[]): void;
+
+  /**
+   * Which sounds this strategy has not played yet in the current cycle, if
+   * that is a thing it tracks.
+   *
+   * Optional because only round-robin has a cycle. It lives on the interface
+   * so `controls.ts` can ask any strategy and get `undefined` from the ones
+   * with nothing to say — it used to branch on `playbackType === "round-robin"`
+   * and cast the result to the concrete class, which is the one place the
+   * strategy abstraction was not carrying its weight.
+   */
+  getAvailableIndices?(): number[];
 }
 
 /**

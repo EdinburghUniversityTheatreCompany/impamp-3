@@ -46,14 +46,21 @@ export function usePadConfigurations(
   pageIndex: number,
 ): UsePadConfigurationsResult {
   const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
-  // Bumped by refetch(). A counter rather than a callback so that a manual
-  // refresh is just another request, handled by the same effect.
-  const [reloadToken, setReloadToken] = useState(0);
+  const incrementPadConfigsVersion = useProfileStore(
+    (state) => state.incrementPadConfigsVersion,
+  );
   const [result, setResult] = useState<FetchResult | null>(null);
 
-  // Everything that means "a different set of configurations". padConfigsVersion
-  // is in here because the store bumps it whenever pads change elsewhere.
-  const requestKey = `${profileId}|${pageIndex}|${padConfigsVersion}|${reloadToken}`;
+  // Everything that means "a different set of configurations".
+  //
+  // `padConfigsVersion` is the *only* invalidator on purpose. There used to be
+  // a hook-local `reloadToken` bumped by refetch() as well, which meant a
+  // refresh reached this hook instance and nothing else — and
+  // `useKeyboardListener` kept its own copy of the same data, keyed on the
+  // store counter alone. A write path that called refetch() without also
+  // bumping the counter therefore updated what you could see and not what you
+  // could play. Two write paths did exactly that.
+  const requestKey = `${profileId}|${pageIndex}|${padConfigsVersion}`;
 
   useEffect(() => {
     if (!profileId) return;
@@ -98,7 +105,12 @@ export function usePadConfigurations(
     };
   }, [profileId, pageIndex, requestKey]);
 
-  const refetch = useCallback(() => setReloadToken((n) => n + 1), []);
+  // Deliberately the store action rather than local state: every consumer of
+  // pad configurations has to hear about a refresh, not just this one.
+  const refetch = useCallback(
+    () => incrementPadConfigsVersion(),
+    [incrementPadConfigsVersion],
+  );
 
   // isLoading is derived rather than stored: we are loading exactly while the
   // newest result on hand is not the one for the request now in flight. Storing

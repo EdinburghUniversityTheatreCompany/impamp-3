@@ -79,7 +79,9 @@ describe("detectProfileConflicts — location fields never travel", () => {
 
       const result = await detectProfileConflicts(local, remote);
 
-      expect(result.mergedData.profile[field]).toEqual(mine);
+      expect((result.mergedData.profile as Partial<Profile>)[field]).toEqual(
+        mine,
+      );
       expect(result.requiresManualResolution).toBe(false);
     },
   );
@@ -101,7 +103,9 @@ describe("detectProfileConflicts — location fields never travel", () => {
 
       expect(result.conflicts).toEqual([]);
       expect(result.requiresManualResolution).toBe(false);
-      expect(result.mergedData.profile[field]).toEqual(mine);
+      expect((result.mergedData.profile as Partial<Profile>)[field]).toEqual(
+        mine,
+      );
     },
   );
 });

@@ -4,6 +4,7 @@ import {
   driveErrorResponse,
   isSameHostRequest,
 } from "../proxyUtils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Downloads a publicly shared Google Drive file using a server-side API key.
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     const url = wantMeta
       ? `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,size,modifiedTime,version&key=${apiKey}`
       : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
       return driveErrorResponse(response);

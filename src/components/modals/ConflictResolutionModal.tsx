@@ -68,6 +68,7 @@ export const ConflictResolutionModal: React.FC<
 > = ({ conflicts, conflictData, onResolve, onCancel }) => {
   const [resolutions, setResolutions] = useState<ConflictResolutionState>({});
   const [isResolving, setIsResolving] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   // Group conflicts by item key for easier rendering
   const groupedConflicts = useMemo(() => {
@@ -308,13 +309,22 @@ export const ConflictResolutionModal: React.FC<
   const handleResolveClick = useCallback(() => {
     if (!allConflictsResolved || isResolving) return;
     setIsResolving(true);
+    setResolveError(null);
     try {
       const resolvedData = buildResolvedData();
       console.log("Resolved Data:", resolvedData); // Log for debugging
       onResolve(resolvedData);
     } catch (error) {
       console.error("Error building resolved data:", error);
-      // TODO: Show error to user in the modal?
+      // Said out loud rather than logged and swallowed. This is the last step
+      // of resolving a conflict by hand, and failing it silently left the
+      // button re-enabled with no explanation — so the natural response is to
+      // press it again and get the same nothing.
+      setResolveError(
+        error instanceof Error
+          ? error.message
+          : "Could not apply those choices. Nothing has been changed.",
+      );
       setIsResolving(false);
     }
   }, [allConflictsResolved, isResolving, buildResolvedData, onResolve]);
@@ -322,6 +332,15 @@ export const ConflictResolutionModal: React.FC<
   return (
     <>
       <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto text-sm">
+        {resolveError && (
+          <p
+            role="alert"
+            data-testid="conflict-resolve-error"
+            className="text-sm text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/40 p-3 rounded border border-red-200 dark:border-red-700"
+          >
+            {resolveError}
+          </p>
+        )}
         <div className="text-sm text-yellow-800 dark:text-yellow-200 bg-yellow-100 dark:bg-yellow-900/40 p-3 rounded border border-yellow-200 dark:border-yellow-700 space-y-2">
           <p>
             Both your local copy and {conflictOriginLabel(conflictData.origin)}{" "}

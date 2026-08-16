@@ -18,12 +18,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm test` - Run the Vitest unit/integration suite (server sync, storage, API routes)
 - `npm run test:watch` - Vitest in watch mode
-- `npm test:e2e` - Run all Playwright end-to-end tests
-- `npm test:e2e:audio` - Run audio playback tests specifically
-- `npm test:e2e:profiles` - Run profile management tests
-- `npm test:e2e:edit` - Run edit mode tests
-- `npm test:e2e:keyboard` - Run keyboard shortcut tests
-- `npm test:e2e:debug` - Run tests in debug mode
+- `npm run test:e2e` - Run all Playwright end-to-end tests
+- `npm run test:e2e:audio` - Run audio playback tests specifically
+- `npm run test:e2e:profiles` - Run profile management tests
+- `npm run test:e2e:edit` - Run edit mode tests
+- `npm run test:e2e:keyboard` - Run keyboard shortcut tests
+- `npm run test:e2e:loudness` - Run loudness and gain tests
+- `npm run test:e2e:debug` - Run tests in debug mode
+
+(`npm test` works without `run` because `test` is a built-in npm alias. Nothing
+else here is, and these were all written without it.)
 
 ### Utilities
 
@@ -207,17 +211,26 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
 - All level arithmetic lives in `src/lib/audio/loudness/gain.ts`. The overview
   table and the playback path both call `resolveGain`; a second implementation
   would let the table disagree with what is heard
-- `audioGainSettings` is keyed by audio file ID, and those IDs are remapped on
-  import and sync in three places — `importExport.ts`, `googleDrive/dataAccess.ts`
-  and `syncUtils.ts`. Any new `Record<audioFileId, …>` field must be remapped in
-  all three or it silently attaches to the wrong sounds
+- `audioGainSettings` is keyed by audio file ID, and those IDs are remapped or
+  copied in **five** places, not the three this used to name: `importExport.ts`,
+  `googleDrive/dataAccess.ts`, `syncUtils.ts`, `db.ts`'s
+  `duplicateProfileLocally` (which was missing them, so duplicating a profile
+  silently dropped every gain setting) and `extractPadPlaybackSettings`, which
+  is the helper the copying sites should all go through. Treat the list as a
+  floor rather than a census: any new `Record<audioFileId, …>` field needs
+  hunting for, or it silently attaches to the wrong sounds
 - Gain resolution at trigger time is synchronous on purpose. The analysis cache
   is warmed on profile activation so the playback path never awaits a DB read
 
 ## Pinned Versions
 
-- Next.js 16 · React 19 · Tailwind CSS 4 · TypeScript 5
-- Vitest 4 (unit) · Playwright 1.4x (E2E) · Prettier 3.8.1
+Package versions live in **one** place: "Key package versions" above. There
+used to be a second list here as well, and it had drifted — TypeScript 5 when
+the repo is on 6, Playwright 1.4x when it is on 1.62, Prettier 3.8.1 when it is
+on 3.9 — with the more authoritative-sounding heading carrying the wrong
+answers. Two hand-maintained lists of the same facts will always drift, so this
+one now covers only what is machine-checked.
+
 - Node 24.19.0 (LTS) everywhere — `.node-version`, `mise.toml` and the
   Dockerfile's `NODE_VERSION` ARG, cross-checked by
   `scripts/check_version_sync.sh`. `node:sqlite` requires Node >= 22.13, so

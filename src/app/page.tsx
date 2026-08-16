@@ -59,6 +59,9 @@ export default function Home() {
     (state) => state.incrementEmergencySoundsVersion,
   ); // Get the action
   const requestSync = useProfileStore((state) => state.requestSync);
+  // Bumped by sync after it applies a remote change; see the bank-metadata
+  // effect below.
+  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
   // Get modal actions (selected individually to avoid re-rendering on modal state changes)
   const openModal = useUIStore((state) => state.openModal);
   const closeModal = useUIStore((state) => state.closeModal);
@@ -117,7 +120,16 @@ export default function Home() {
     };
 
     loadBankMetadata();
-  }, [activeProfileId, currentPageIndex]);
+    // `currentPageIndex` is deliberately absent: this reads *all* the profile's
+    // metadata in one go and never looked at the current bank, so having it
+    // here re-read the whole pageMetadata store on every 1-9/0 press for no
+    // change in result.
+    //
+    // `padConfigsVersion` is deliberately present: it is the counter sync
+    // bumps after applying a remote change, and without it a bank renamed by a
+    // collaborator never appeared until the profile was switched. The local
+    // edit paths patch this state by hand, which is why nobody noticed.
+  }, [activeProfileId, padConfigsVersion]);
 
   // Get form modal hook
   const { openFormModal } = useFormModal();

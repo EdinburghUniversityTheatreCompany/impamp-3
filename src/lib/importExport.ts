@@ -13,11 +13,14 @@ import {
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
   collectReferencedAudioFileIds,
+  initialSyncFields,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
 import type { ProfileSyncData } from "./syncUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
+import { toWireProfile } from "./profileWire";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -180,7 +183,7 @@ export async function base64ToBlob(
   // fetch() decodes data URLs natively and streams the result, which is far
   // faster and lighter on memory than a manual atob() loop for large files.
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `data:${type || "application/octet-stream"};base64,${base64}`,
     );
     return await response.blob();
@@ -237,6 +240,20 @@ export async function getAllPadConfigurationsForProfile(
  * "Open with" page, the Drive picker, a server share link — pass one. A plain
  * file import passes nothing and gets a local, unlinked profile.
  */
+/**
+ * Fetches the bytes of a server-hosted sound.
+ *
+ * A callback rather than a direct call into `serverAudio/` so this module stays
+ * ignorant of share tokens and server profile ids — the same shape
+ * `downloadAudioBlob` already uses for Drive. The caller
+ * (`useConnectServerProfile`) is the one holding those.
+ */
+export type HostedAudioDownloader = (ref: {
+  hash: string;
+  name: string;
+  type: string;
+}) => Promise<Blob>;
+
 export interface ImportLink {
   syncType?: SyncType;
   audioLocation?: AudioLocation | null;
@@ -359,6 +376,16 @@ export interface ImportAudioSource {
   getBlob: (onBytes?: (bytesDone: number) => void) => Promise<Blob>;
   /** Carried analysis, if the exporting device had one. */
   loudness?: SerialisedLoudness;
+  /**
+   * The content hash, when the source already knows it.
+   *
+   * Worth carrying rather than recomputing: without it the record lands
+   * hashless, and the next sync that needs a hash reads and SHA-256s *every*
+   * audio file in the library one blob at a time to build a fallback index.
+   */
+  hash?: string;
+  /** Set when these bytes came from the app's own object store. */
+  serverHosted?: boolean;
 }
 
 /** Progress information reported while importing audio files. */
@@ -420,6 +447,8 @@ async function importAudioSources(
         type: source.type,
         createdAt: now,
         loudness: deserialiseLoudness(source.loudness) ?? undefined,
+        hash: source.hash,
+        serverHosted: source.serverHosted,
       });
       await audioTx.done;
       audioIdMap.set(source.originalId, newAudioId);
@@ -477,29 +506,39 @@ async function importPageMetadata(
 
   const pageTx = db.transaction("pageMetadata", "readwrite");
   const pageStore = pageTx.objectStore("pageMetadata");
+  const failures: number[] = [];
 
   const pagePromises = pageMetadata.map((page) => {
-    const newMetadata = {
+    const content = {
       profileId,
       pageIndex: page.pageIndex,
       name: page.name,
       isEmergency: page.isEmergency,
+    };
+    const newMetadata = {
+      ...content,
       createdAt: now,
+      // As for pads: without these the merge has nothing to compare on.
+      ...initialSyncFields(content, now.getTime()),
       updatedAt: now,
     };
-    return pageStore.add(newMetadata).catch((err) => {
+    return pageStore.add(newMetadata).catch((err: unknown) => {
       console.error(
         `Failed to add page metadata for pageIndex ${page.pageIndex}:`,
         err,
       );
-      // Decide if one failure should abort the whole transaction (by throwing)
-      // or just log and continue (current behavior)
+      failures.push(page.pageIndex);
     });
   });
 
   try {
     await Promise.all(pagePromises);
     await pageTx.done;
+    if (failures.length > 0) {
+      throw new Error(
+        `${failures.length} bank${failures.length === 1 ? "" : "s"} could not be imported (${failures.map((i) => i + 1).join(", ")}).`,
+      );
+    }
     console.log(`Imported ${pageMetadata.length} page metadata entries.`);
   } catch (txError) {
     console.error("Error during page metadata import transaction:", txError);
@@ -582,6 +621,7 @@ async function importPadConfigurations(
 
   const padTx = db.transaction("padConfigurations", "readwrite");
   const padStore = padTx.objectStore("padConfigurations");
+  const failures: string[] = [];
 
   const padPromises = padConfigurations.map((pad) => {
     // Map the array of audioFileIds
@@ -625,22 +665,41 @@ async function importPadConfigurations(
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
       createdAt: now,
+      // Sync bookkeeping, which these records used to be written without. It
+      // is the entire basis `compareSyncableItems` decides a merge on, so an
+      // imported pad looked to the merge like it had never been touched — and
+      // the first sync after an import could prefer a remote copy over sounds
+      // the user had just imported.
+      ...initialSyncFields(
+        { ...pad, profileId, audioFileIds: mappedAudioFileIds },
+        now.getTime(),
+      ),
       updatedAt: now,
     };
 
-    return padStore.add(newPadData).catch((err) => {
+    return padStore.add(newPadData).catch((err: unknown) => {
+      // Collected rather than swallowed. This used to log and carry on, and
+      // the import then reported success — so a board came back missing pads
+      // and said nothing, which is discovered mid-show.
       console.error(
         `Failed to add pad configuration for pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}:`,
         err,
       );
-      // Decide if one failure should abort the whole transaction (by throwing)
-      // or just log and continue (current behavior)
+      failures.push(`bank ${pad.pageIndex + 1}, pad ${pad.padIndex + 1}`);
     });
   });
 
   try {
     await Promise.all(padPromises);
     await padTx.done;
+    if (failures.length > 0) {
+      // `importProfileCore` deletes the partial profile when this throws, so
+      // the user gets a clear failure and an intact library rather than a
+      // board with holes in it.
+      throw new Error(
+        `${failures.length} of ${padConfigurations.length} pads could not be imported (${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "; …" : ""}).`,
+      );
+    }
     console.log(`Imported ${padConfigurations.length} pad configurations.`);
   } catch (txError) {
     console.error(
@@ -851,6 +910,7 @@ export async function importProfileFromSyncData(
   downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
   onProgress?: (progress: ImportAudioProgress) => void,
   link: ImportLink = {},
+  downloadHostedBlob?: HostedAudioDownloader,
 ): Promise<number> {
   // Strip fields the import must not carry over (a fresh id is assigned and
   // lastBackedUpAt is stamped by the import itself).
@@ -894,9 +954,27 @@ export async function importProfileFromSyncData(
         type: ref.type,
         getBlob: () => base64ToBlob(data, ref.type),
       });
+    } else if (ref.serverHosted && ref.hash && downloadHostedBlob) {
+      // Hosted by this app's own server: no Drive file, no embedded bytes,
+      // just a content hash to fetch by. Skipping these is what made joining
+      // a share link on an S3-configured deployment import empty pads.
+      const hash = ref.hash;
+      audioSources.push({
+        originalId: ref.id,
+        name: ref.name,
+        type: ref.type,
+        hash,
+        serverHosted: true,
+        getBlob: () =>
+          downloadHostedBlob({ hash, name: ref.name, type: ref.type }),
+      });
     } else {
       console.warn(
-        `Audio file "${ref.name}" (ID ${ref.id}) has neither driveFileId nor embedded data — skipping.`,
+        `Audio file "${ref.name}" (ID ${ref.id}) has ${
+          ref.serverHosted && ref.hash
+            ? "hosted audio but no downloader was supplied"
+            : "neither driveFileId nor embedded data"
+        } — skipping.`,
       );
     }
   }
@@ -1327,6 +1405,16 @@ export interface AudioFileRef {
   type: string;
   /** Absent when the file has not been analysed yet. */
   loudness?: SerialisedLoudness;
+  /**
+   * The content hash, when the exporting device had computed one.
+   *
+   * Additive, so archives written before this simply carry none and import
+   * exactly as they did. Worth carrying: a record that lands hashless makes
+   * the next sync that needs a hash read and SHA-256 *every* audio file in the
+   * library, one blob at a time, to build a fallback index — so restoring a
+   * large library used to guarantee that sweep.
+   */
+  hash?: string;
 }
 
 export interface ProfileExportLean {
@@ -1378,6 +1466,7 @@ async function collectProfileDataForZip(profileId: number): Promise<{
         loudness: audioFile.loudness
           ? serialiseLoudness(audioFile.loudness)
           : undefined,
+        hash: audioFile.hash,
       });
       audioBlobs.set(audioFileId, {
         blob: audioFile.blob,
@@ -1391,8 +1480,11 @@ async function collectProfileDataForZip(profileId: number): Promise<{
     }
   }
 
+  // Sync carries `lastBackedUpAt`; an export must not. Importing this file
+  // stamps its own, and inheriting the donor's would claim a backup the
+  // importing device never made.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { lastBackedUpAt, ...profileToExport } = profile;
+  const { lastBackedUpAt, ...profileToExport } = toWireProfile(profile);
 
   const lean: ProfileExportLean = {
     exportVersion: 2,
@@ -1591,10 +1683,35 @@ export async function importProfilesFromZip(
     const entries = await zipReader.getEntries();
     const entryByName = new Map(entries.map((e) => [e.filename, e]));
 
+    // A metadata entry is read into a single string, so its *uncompressed*
+    // size is what matters, not the archive's. Without this an archive of a
+    // few hundred kilobytes could name a manifest that expands to gigabytes
+    // and take the tab out before anything was validated — the JSON import
+    // path has had a cap all along, the ZIP path had none.
     const readEntryText = async (name: string): Promise<string | null> => {
       const entry = entryByName.get(name);
       if (!entry || entry.directory) return null;
+
+      const size = entry.uncompressedSize ?? 0;
+      if (size > MAX_ZIP_METADATA_BYTES) {
+        throw new Error(
+          `The entry ${name} in this archive is implausibly large (${Math.round(size / 1024 / 1024)} MB) and was not read.`,
+        );
+      }
+
       return entry.getData(new zipjs.TextWriter());
+    };
+
+    /**
+     * Parses a metadata entry, saying which entry failed rather than throwing
+     * a bare SyntaxError from somewhere inside the archive.
+     */
+    const parseEntryJson = (name: string, text: string): unknown => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`${name} in this archive is not valid JSON.`);
+      }
     };
 
     // Determine the archive layout and gather the lean profile descriptors
@@ -1603,7 +1720,10 @@ export async function importProfilesFromZip(
 
     const manifestText = await readEntryText("manifest.json");
     if (manifestText) {
-      const manifest = JSON.parse(manifestText) as ZipManifest;
+      const manifest = parseEntryJson(
+        "manifest.json",
+        manifestText,
+      ) as ZipManifest;
       if (manifest.exportVersion !== 3 || !Array.isArray(manifest.profiles)) {
         throw new Error("Invalid or unsupported multi-profile ZIP format.");
       }
@@ -1618,7 +1738,12 @@ export async function importProfilesFromZip(
           });
           continue;
         }
-        leanProfiles.push(JSON.parse(text) as ProfileExportLean);
+        leanProfiles.push(
+          asLeanProfile(
+            parseEntryJson(`profiles/${entry.folder}/profile.json`, text),
+            `profiles/${entry.folder}/profile.json`,
+          ),
+        );
       }
     } else {
       const singleText = await readEntryText("profile.json");
@@ -1627,7 +1752,12 @@ export async function importProfilesFromZip(
           "Invalid .iaz file: missing manifest.json or profile.json",
         );
       }
-      leanProfiles.push(JSON.parse(singleText) as ProfileExportLean);
+      leanProfiles.push(
+        asLeanProfile(
+          parseEntryJson("profile.json", singleText),
+          "profile.json",
+        ),
+      );
     }
 
     // Aggregate totals across all profiles for one smooth progress bar
@@ -1663,6 +1793,7 @@ export async function importProfilesFromZip(
             type: ref.type,
             size: entry.uncompressedSize,
             loudness: ref.loudness,
+            hash: ref.hash,
             getBlob: (onBytes) =>
               getData(new zipjs.BlobWriter(ref.type), {
                 onprogress: onBytes
@@ -1716,6 +1847,51 @@ export async function importProfilesFromZip(
 // ~512 MB — larger legacy exports simply cannot be parsed in the browser.
 // (.iaz archives have no such limit since they are streamed.)
 export const MAX_JSON_IMPORT_BYTES = 480 * 1024 * 1024;
+
+/**
+ * The most an *uncompressed* metadata entry inside a `.iaz` may be.
+ *
+ * The audio entries are streamed and unbounded by design; these are read into
+ * strings and parsed, so they need a limit of their own. Generous for a
+ * document that holds names, hashes and pad layout for one profile.
+ */
+export const MAX_ZIP_METADATA_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Checks that a parsed archive entry is shaped like a profile before the
+ * import starts writing records from it.
+ *
+ * Deliberately shallow: the fields it does not check are re-derived or
+ * allow-listed downstream (`buildImportedProfileFields`), and this exists to
+ * turn "TypeError: cannot read properties of undefined" halfway through a
+ * partly-written import into a refusal that names the file.
+ */
+function asLeanProfile(parsed: unknown, entryName: string): ProfileExportLean {
+  const value = parsed as Partial<ProfileExportLean> | null;
+
+  if (!value || typeof value !== "object") {
+    throw new Error(`${entryName} does not contain a profile.`);
+  }
+  if (!value.profile || typeof value.profile !== "object") {
+    throw new Error(`${entryName} has no profile in it.`);
+  }
+  for (const field of [
+    "padConfigurations",
+    "pageMetadata",
+    "audioFiles",
+  ] as const) {
+    if (value[field] !== undefined && !Array.isArray(value[field])) {
+      throw new Error(`${entryName} has a malformed ${field} list.`);
+    }
+  }
+
+  return {
+    ...value,
+    padConfigurations: value.padConfigurations ?? [],
+    pageMetadata: value.pageMetadata ?? [],
+    audioFiles: value.audioFiles ?? [],
+  } as ProfileExportLean;
+}
 
 /**
  * Detects the format of an import file.

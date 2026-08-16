@@ -9,7 +9,7 @@ import {
   PageMetadata,
   getProfile,
   getDb,
-  getAudioFile,
+  getAudioFileMetadata,
   ensureAudioFileHash,
   updateAudioFileDriveId,
   collectReferencedAudioFileIds,
@@ -22,6 +22,7 @@ import {
 } from "@/lib/syncUtils";
 import { base64ToBlob, remapPadSettingsOnImport } from "@/lib/importExport";
 import { updateSyncTimestamp } from "./utils";
+import { toWireProfile } from "@/lib/profileWire";
 
 /**
  * Gathers all data for a specific profile from IndexedDB
@@ -66,15 +67,27 @@ export const getLocalProfileSyncData = async (
   // can fetch. `markHostedAudio` marks what is genuinely hosted, and the
   // downloaders dedupe by hash, so carrying both routes costs nothing and
   // leaves Drive as the fallback.
+  // One cursor pass rather than a full-record read per file. This was two to
+  // three sequential IndexedDB reads *each* — `getAudioFile`, then
+  // `ensureAudioFileHash` reading the record again — and the server push calls
+  // this inside its retry loop, so a 960-sound board did ~1920 round trips per
+  // attempt and up to three times that on a contended push.
+  const metadata = await getAudioFileMetadata(audioFileIds);
   const audioFiles = [];
+
   for (const audioFileId of audioFileIds) {
-    const audioFile = await getAudioFile(audioFileId);
+    const audioFile = metadata.get(audioFileId);
     if (audioFile) {
       audioFiles.push({
         id: audioFileId,
         name: audioFile.name,
         type: audioFile.type,
-        hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
+        // Only files that arrived without one need reading again, and
+        // `ensureAudioFileHash` is what computes and stores it.
+        hash:
+          audioFile.hash ??
+          (await ensureAudioFileHash(audioFileId)) ??
+          undefined,
         driveFileId: audioFile.driveFileIds?.[profileId],
         // What we already know about where these bytes live. `markHostedAudio`
         // adds whatever this run uploaded on top; without this, a run that
@@ -119,7 +132,7 @@ export const getLocalProfileSyncData = async (
   return {
     _syncFormatVersion: 1,
     _lastSyncTimestamp: lastSyncTimestamp,
-    profile: profile,
+    profile: toWireProfile(profile),
     padConfigurations: syncedPads,
     pageMetadata: pageMetadata,
     audioFiles: audioFiles,
@@ -333,8 +346,6 @@ export const updateLocalData = async (
   const profileStore = tx.objectStore("profiles");
   const padStore = tx.objectStore("padConfigurations");
   const pageStore = tx.objectStore("pageMetadata");
-  const padCompoundIndex = padStore.index("profilePagePad");
-  const pageCompoundIndex = pageStore.index("profilePage");
 
   try {
     // 1. Update Profile — preserve local-only fields that must not be overwritten by remote
@@ -450,18 +461,26 @@ export const updateLocalData = async (
         padWithProfileId.audioFileIds = resolved.audioFileIds;
       }
 
-      // Check if pad exists locally
-      const existingLocalPad = (await padCompoundIndex.get([
-        profileId,
-        pad.pageIndex,
-        pad.padIndex,
-      ])) as PadConfiguration | undefined;
+      // The hash-keyed fields are a *wire* representation: synthesised at
+      // export, read above to resolve this pad's audio, and re-derived every
+      // time the blob is written. Storing them would leave a copy that nothing
+      // reads and that can disagree with the ids beside it after a later edit.
+      const {
+        audioFileHashes: _wireHashes,
+        audioTrimSettingsByHash: _wireTrim,
+        audioGainSettingsByHash: _wireGain,
+        ...padToStore
+      } = padWithProfileId;
+
+      // From the map built before the loop, not a fresh index lookup. The get
+      // ran once per pad — 960 of them on a full board — inside the write
+      // transaction, so it also held the store's locks for longer.
+      const existingLocalPad = existingPadMap.get(key);
 
       if (existingLocalPad?.id) {
-        await padStore.put({ ...padWithProfileId, id: existingLocalPad.id });
+        await padStore.put({ ...padToStore, id: existingLocalPad.id });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _remoteId, ...padToAdd } = padWithProfileId;
+        const { id: _remoteId, ...padToAdd } = padToStore;
         await padStore.add(padToAdd);
       }
     }
@@ -488,15 +507,12 @@ export const updateLocalData = async (
         createdAt: toDate(page.createdAt),
         updatedAt: toDate(page.updatedAt),
       };
-      const existingLocalPage = (await pageCompoundIndex.get([
-        profileId,
-        page.pageIndex,
-      ])) as PageMetadata | undefined;
+      // From the map built above, for the same reason as the pads.
+      const existingLocalPage = existingPageMap.get(page.pageIndex);
 
       if (existingLocalPage?.id) {
         await pageStore.put({ ...pageWithProfileId, id: existingLocalPage.id });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id: _remoteId, ...pageToAdd } = pageWithProfileId;
         await pageStore.add(pageToAdd);
       }

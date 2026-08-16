@@ -1,7 +1,10 @@
 # End-to-end tests
 
 Playwright specs covering audio playback, profiles, edit mode, keyboard
-shortcuts, search, arming and sync refresh.
+shortcuts, search, arming and sync refresh — plus server sync, the sync panel,
+following, borrowed Drive links, loudness and gain, pad disabling, bulk import,
+upload rollback and import defaults. (The first list was the whole of this
+paragraph for a long time, while more than half the suite went undescribed.)
 
 ## Running
 
@@ -49,16 +52,17 @@ in doubt, stop the stale server rather than trusting a green run.
 
 ## Known failures
 
-CI gates on chromium only. These specs still fail and are **not** regressions
-from any recent change — they were already failing before the current round of
-merges:
+None. The chromium suite is 126/126.
 
-| Spec                                                                                                                         | Why                                                                                                                                                                                                                           |
-| ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `audio-playback.spec.ts` — multi-sound modes (sequential / random / round-robin), "prevents dropping onto pad with >1 sound" | Pads never end up with 2+ sounds; needs investigation of the add-sounds-then-save path.                                                                                                                                       |
-| `backup-reminders.spec.ts` — "Never" setting, setting change, disappears after export                                        | Drive an export via `select#exportProfile`, which no longer exists: the export UI was rewritten in #71 (streaming ZIP + progress). Specs need rewriting against the new flow.                                                 |
-| `edit-mode.spec.ts` — "X button / Delete+click opens modal for multi-sound pad"                                              | Asserts `button[aria-label="Remove sound"]` on a pad. That affordance is gone; removal now lives behind the "delete and move mode" toggle. Needs a product decision on the intended interaction before the spec is rewritten. |
-| `profiles.spec.ts` — "Can create a new profile and switch to it"                                                             | Waits on `[data-testid="prompt-input"]`; the create-profile flow appears to have changed.                                                                                                                                     |
-| `sync-refresh.spec.ts` — pad grid updates when sync writes new data                                                          | Times out.                                                                                                                                                                                                                    |
+This section used to list five, and by the time anyone checked, four of them
+described causes that no longer existed in the specs at all — `select#exportProfile`,
+`button[aria-label="Remove sound"]` and `[data-testid="prompt-input"]` return no
+matches in the files named, because those tests had been rewritten and the table
+had not. A "known failures" list nobody re-checks is worse than none: it teaches
+you to read a red run as expected.
+
+If something here starts failing, fix it or delete it. If it genuinely has to
+stay red for a while, put the reason next to the test with `test.fixme`, where
+it cannot rot out of sight of the thing it describes.
 
 Firefox and WebKit have not been run green and are therefore not gated in CI.

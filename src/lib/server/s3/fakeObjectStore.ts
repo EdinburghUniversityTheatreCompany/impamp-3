@@ -11,6 +11,8 @@ import type { ObjectStore, StoredObject } from "./client";
 export interface FakeObjectStore extends ObjectStore {
   /** Pretend the browser completed a PUT of `sizeBytes` to `key`. */
   put(key: string, sizeBytes: number, contentType?: string): void;
+  /** Store real bytes, so proof-of-possession checks can be exercised. */
+  putBytes(key: string, bytes: Uint8Array, contentType?: string): void;
   /** Every key currently stored. */
   keys(): string[];
   /** Uploads minted but never committed, in call order. */
@@ -19,6 +21,7 @@ export interface FakeObjectStore extends ObjectStore {
 
 export function createFakeObjectStore(): FakeObjectStore {
   const objects = new Map<string, StoredObject>();
+  const bytes = new Map<string, Uint8Array>();
   const uploadUrls: string[] = [];
 
   return {
@@ -26,6 +29,17 @@ export function createFakeObjectStore(): FakeObjectStore {
 
     put(key, sizeBytes, contentType = "audio/wav") {
       objects.set(key, { sizeBytes, contentType });
+    },
+
+    putBytes(key, content, contentType = "audio/wav") {
+      objects.set(key, { sizeBytes: content.byteLength, contentType });
+      bytes.set(key, content);
+    },
+
+    async getRange(key, offset, length) {
+      const content = bytes.get(key);
+      if (!content) return objects.has(key) ? new Uint8Array(0) : null;
+      return content.slice(offset, offset + length);
     },
 
     keys() {

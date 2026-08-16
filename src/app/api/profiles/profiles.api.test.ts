@@ -313,6 +313,67 @@ describe("PUT /api/profiles/:id", () => {
     expect(body.data).toEqual({ first: true });
   });
 
+  it("returns the stored blob byte-for-byte, however awkward it is", async () => {
+    // GET splices the stored JSON into the response rather than parsing it and
+    // re-serialising — three full traversals of up to 8 MB otherwise. Splicing
+    // is only safe if the stored text really is JSON and everything around it
+    // is escaped, so this pushes the characters that break string assembly
+    // through the whole round trip.
+    const owner = signIn(1);
+    const profile = ownedProfile(owner);
+    const awkward = {
+      quote: 'he said "hello"',
+      backslash: "C:\\path\\to",
+      newline: "line one\nline two",
+      unicode: "emoji 🎛 and ümlaut",
+      closingBrace: '}{"data":"injected"',
+      nested: { deep: [1, { deeper: null }] },
+    };
+
+    await putProfile(
+      makeRequest(`/api/profiles/${profile.id}`, {
+        method: "PUT",
+        sessionToken: owner.token,
+        headers: { "if-match": '"1"' },
+        body: { name: "Awkward", data: awkward },
+      }),
+      routeParams({ id: profile.id }),
+    );
+
+    const response = await getProfile(
+      makeRequest(`/api/profiles/${profile.id}`, { sessionToken: owner.token }),
+      routeParams({ id: profile.id }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual(awkward);
+  });
+
+  it("keeps a profile name with a quote in it from breaking the response", async () => {
+    const owner = signIn(1);
+    const profile = ownedProfile(owner);
+
+    await putProfile(
+      makeRequest(`/api/profiles/${profile.id}`, {
+        method: "PUT",
+        sessionToken: owner.token,
+        headers: { "if-match": '"1"' },
+        body: { name: 'The "Big" Show', data: { ok: true } },
+      }),
+      routeParams({ id: profile.id }),
+    );
+
+    const response = await getProfile(
+      makeRequest(`/api/profiles/${profile.id}`, { sessionToken: owner.token }),
+      routeParams({ id: profile.id }),
+    );
+    const body = await response.json();
+
+    expect(body.name).toBe('The "Big" Show');
+    expect(body.data).toEqual({ ok: true });
+  });
+
   it("refuses a viewer and allows an editor", async () => {
     const owner = signIn(1);
     const viewer = signIn(2);

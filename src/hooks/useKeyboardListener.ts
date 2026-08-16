@@ -22,6 +22,8 @@ import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
+import { usePadConfigurations } from "@/hooks/usePadConfigurations";
+import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 
 // Interface for emergency sound configuration
 interface EmergencySound {
@@ -189,25 +191,37 @@ export function useKeyboardListener() {
   const emergencySoundsVersion = useProfileStore(
     (state) => state.emergencySoundsVersion,
   );
-  // Get pad configs version to pick up edits, drops and sync results
-  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
+  // Everything that should own the keyboard while it is up — including the
+  // profile manager, which is rendered outside the modal system and so was
+  // missed by the `isModalOpen` guard below.
+  const isAnyOverlayOpen = useIsAnyOverlayOpen();
   const modalConfig = useUIStore((state) => state.modalConfig);
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
-  // We need access to the current pad configurations for the active page
-  // Fetching them here might be inefficient if PadGrid already has them.
-  // Consider passing configs down or using a shared state/context.
-  // For now, fetch directly within the hook.
-  // This map will store ALL configurations for the current page, keyed by padIndex.
-  const padConfigsRef = useRef<Map<number, PadConfiguration>>(new Map());
-  // Sequence number for pad configuration loads, so stale loads can be discarded
-  const configLoadRequestRef = useRef(0);
+  // The pad configurations for the active page, from the same hook the grid
+  // uses. This used to be a second, private fetch into a ref — the old comment
+  // here said "might be inefficient if PadGrid already has them, consider
+  // passing configs down", and the cost turned out to be worse than
+  // inefficiency: the two copies had different invalidation rules, so a write
+  // path could refresh the grid's and not this one, leaving pads you could see
+  // but not play until you switched bank.
+  //
+  // Held in a ref as well as read from the hook so `handleKeyDown` does not
+  // have to be rebuilt (and the window listeners re-attached) on every change.
+  const { padConfigs } = usePadConfigurations(
+    activeProfileId === null ? null : String(activeProfileId),
+    currentPageIndex,
+  );
+  const padConfigsRef = useRef<Map<number, PadConfiguration>>(padConfigs);
+  useEffect(() => {
+    padConfigsRef.current = padConfigs;
+  }, [padConfigs]);
 
   // Reference to track if we've loaded emergency sounds
   const hasLoadedEmergencySounds = useRef(false);
@@ -220,14 +234,22 @@ export function useKeyboardListener() {
     console.log("Reloading emergency sounds...");
     if (activeProfileId === null) {
       console.log("No active profile, skipping emergency sounds load");
+      emergencySoundsRef.current = [];
+      currentEmergencyIndexRef.current = 0;
       return;
     }
 
+    // Dropped before the await, not after it. These refs are module-global, so
+    // they survive a profile switch, and between the switch and this load
+    // resolving Enter played the *previous* profile's emergency sound. The
+    // pad-config effect already clears its map for the same reason. The old
+    // set is kept only to decide whether the round-robin cursor should reset.
+    const previousSounds = emergencySoundsRef.current;
+    emergencySoundsRef.current = [];
+
     // Load emergency sounds
     const sounds = await loadEmergencySounds(activeProfileId);
-    const previousIdentity = describeEmergencySounds(
-      emergencySoundsRef.current,
-    );
+    const previousIdentity = describeEmergencySounds(previousSounds);
     emergencySoundsRef.current = sounds;
 
     // Only restart the round-robin when the set of sounds actually changed,
@@ -252,43 +274,6 @@ export function useKeyboardListener() {
     );
     reloadEmergencySounds();
   }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
-
-  // Effect to load pad configurations
-  useEffect(() => {
-    // Token to discard resolutions of superseded loads (e.g. rapid bank switching)
-    const requestId = ++configLoadRequestRef.current;
-    // Drop the previous bank's configs immediately so keys don't trigger stale pads
-    padConfigsRef.current = new Map();
-
-    const loadConfigs = async () => {
-      if (activeProfileId === null) {
-        return;
-      }
-      try {
-        const configs = await getPadConfigurationsForProfilePage(
-          activeProfileId,
-          currentPageIndex,
-        );
-        if (requestId !== configLoadRequestRef.current) {
-          return; // A newer load has started, ignore this result
-        }
-        // Store ALL configurations for the page, mapping padIndex to config
-        const configMap = new Map<number, PadConfiguration>(
-          configs.map((config) => [config.padIndex, config]),
-        );
-        padConfigsRef.current = configMap;
-        console.log(
-          `[KeyboardListener] Loaded ${configMap.size} pad configurations for profile ${activeProfileId}, page ${currentPageIndex}`,
-        );
-      } catch (error) {
-        console.error(
-          `[KeyboardListener] Failed to load pad configurations for profile ${activeProfileId}, page ${currentPageIndex}:`,
-          error,
-        );
-      }
-    };
-    loadConfigs();
-  }, [activeProfileId, currentPageIndex, padConfigsVersion]);
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
@@ -318,8 +303,11 @@ export function useKeyboardListener() {
         return; // Stop further processing
       }
 
-      // While a modal is open it owns the keyboard (Escape, Tab, typing, etc.)
-      if (isModalOpen) {
+      // While anything is open on top it owns the keyboard (Escape, Tab,
+      // typing, etc.). This used to ask only about the modal system, so the
+      // profile manager — rendered outside it — left every pad key, bank key,
+      // Enter and Escape live behind the overlay.
+      if (isAnyOverlayOpen) {
         return;
       }
 
@@ -688,6 +676,7 @@ export function useKeyboardListener() {
       openSearchModal,
       isSearchModalOpen,
       isModalOpen,
+      isAnyOverlayOpen,
       modalConfig,
     ],
   );

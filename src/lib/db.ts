@@ -3,6 +3,7 @@ import type {
   LoudnessAnalysis,
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
+import { convertIndexToBankNumber } from "./bankUtils";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
@@ -472,6 +473,42 @@ const generateSyncFields = (existingRecord?: {
   return { _created: existingRecord?._created ?? now, _modified: now };
 };
 
+/**
+ * The sync bookkeeping a brand-new record needs.
+ *
+ * Every field counts as modified now, because from this device's point of view
+ * it was: the record did not exist a moment ago. Records written without this
+ * carry no `_modified` and no `_fieldsModified` at all, which is the entire
+ * basis `compareSyncableItems` decides a merge on — an imported profile's pads
+ * looked to the merge like they had never been touched, so the first sync
+ * could quietly prefer a remote copy over sounds the user had just imported.
+ *
+ * @param data - The record about to be written
+ * @param atMs - The timestamp to stamp, so a batch can share one
+ * @returns `_created`, `_modified` and a fully-populated `_fieldsModified`
+ */
+export function initialSyncFields<T extends object>(
+  data: T,
+  atMs: number = Date.now(),
+): {
+  _created: number;
+  _modified: number;
+  _fieldsModified: Record<string, number>;
+} {
+  const fieldsModified: Record<string, number> = {};
+  for (const key of Object.keys(data)) {
+    if (
+      !key.startsWith("_") &&
+      key !== "id" &&
+      key !== "createdAt" &&
+      key !== "updatedAt"
+    ) {
+      fieldsModified[key] = atMs;
+    }
+  }
+  return { _created: atMs, _modified: atMs, _fieldsModified: fieldsModified };
+}
+
 // Helper to update _fieldsModified based on changes
 // Use generic type parameter with no constraints
 const updateFieldsModified = <T>(
@@ -580,6 +617,64 @@ export async function findUnanalysedAudioFileIds(
   return ids;
 }
 
+/** An audio file's metadata, without the bytes. */
+export interface AudioFileMetadata {
+  id: number;
+  name: string;
+  type: string;
+  hash?: string;
+  serverHosted?: boolean;
+  driveFileIds?: Record<number, string>;
+  loudness?: AudioFile["loudness"];
+}
+
+/**
+ * Metadata for the given audio files, read in one cursor pass.
+ *
+ * The alternative — and what half a dozen call sites were doing — is
+ * `for (const id of ids) await getAudioFile(id)`, which reads the *whole*
+ * record each time, Blob included, just to look at a string. On a 960-sound
+ * board that is 960 sequential round trips, each materialising an audio file
+ * in memory, to answer a question about names and hashes. Some of those sites
+ * ran twice per sync, and sync runs on load, every 15 minutes, on reconnect,
+ * on every SSE event and 10 seconds after every edit.
+ *
+ * `cursor.value.blob` is never read or retained, so the bytes stay on disk.
+ *
+ * @param audioFileIds - Which files to describe; order is not preserved
+ * @returns A map from audio file id to its metadata, omitting ids not found
+ */
+export async function getAudioFileMetadata(
+  audioFileIds: Iterable<number>,
+): Promise<Map<number, AudioFileMetadata>> {
+  const wanted = new Set(audioFileIds);
+  const found = new Map<number, AudioFileMetadata>();
+  if (wanted.size === 0) return found;
+
+  const db = await getDb();
+  let cursor = await db.transaction("audioFiles").store.openCursor();
+
+  while (cursor) {
+    const record = cursor.value;
+    if (record.id !== undefined && wanted.has(record.id)) {
+      found.set(record.id, {
+        id: record.id,
+        name: record.name,
+        type: record.type,
+        hash: record.hash,
+        serverHosted: record.serverHosted,
+        driveFileIds: record.driveFileIds,
+        loudness: record.loudness,
+      });
+      // Stop as soon as everything asked for has been seen.
+      if (found.size === wanted.size) break;
+    }
+    cursor = await cursor.continue();
+  }
+
+  return found;
+}
+
 /**
  * Clears the stored loudness analysis for exactly the given audio files.
  *
@@ -614,15 +709,6 @@ export async function deleteAudioFile(id: number): Promise<void> {
 }
 
 // Get an audio file by name (returns first match)
-export async function getAudioFileByName(
-  name: string,
-): Promise<AudioFile | undefined> {
-  const db = await getDb();
-  const tx = db.transaction("audioFiles", "readonly");
-  const results = await tx.store.index("name").getAll(name);
-  await tx.done;
-  return results[0];
-}
 
 // Get an audio file by content hash (returns first match)
 export async function getAudioFileByHash(
@@ -751,6 +837,28 @@ export async function getAudioFileIdsForProfile(
 }
 
 // Find orphaned audio files that are not referenced by any pad configuration
+/**
+ * Splits audio file ids into those some pad still names and those none does.
+ *
+ * Shared by the read-only scan and the delete, so the two cannot disagree
+ * about what "orphaned" means.
+ */
+function separateOrphans(
+  allAudioKeys: IDBValidKey[],
+  allPadConfigs: PadConfiguration[],
+): { orphanedIds: Set<number>; referencedIds: Set<number> } {
+  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
+  const orphanedIds = new Set<number>();
+
+  for (const audioId of allAudioKeys) {
+    if (typeof audioId === "number" && !referencedIds.has(audioId)) {
+      orphanedIds.add(audioId);
+    }
+  }
+
+  return { orphanedIds, referencedIds };
+}
+
 export async function findOrphanedAudioFiles(): Promise<{
   orphanedIds: Set<number>;
   referencedIds: Set<number>;
@@ -758,27 +866,18 @@ export async function findOrphanedAudioFiles(): Promise<{
 }> {
   const db = await getDb();
 
-  // Get all audio file IDs
-  const audioTx = db.transaction("audioFiles", "readonly");
-  const audioStore = audioTx.objectStore("audioFiles");
-  const allAudioFiles = await audioStore.getAllKeys();
-  await audioTx.done;
+  // One transaction over both stores, so the two halves describe the same
+  // instant. Read separately, an import that had committed its audio but not
+  // yet its pads looked like a pile of unreferenced files.
+  const tx = db.transaction(["audioFiles", "padConfigurations"], "readonly");
+  const allAudioFiles = await tx.objectStore("audioFiles").getAllKeys();
+  const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+  await tx.done;
 
-  // Get all referenced audio file IDs from pad configurations
-  const padTx = db.transaction("padConfigurations", "readonly");
-  const padStore = padTx.objectStore("padConfigurations");
-  const allPadConfigs = await padStore.getAll();
-  await padTx.done;
-
-  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
-
-  // Find orphaned IDs (exist in audioFiles but not referenced by any pad)
-  const orphanedIds = new Set<number>();
-  allAudioFiles.forEach((audioId) => {
-    if (typeof audioId === "number" && !referencedIds.has(audioId)) {
-      orphanedIds.add(audioId);
-    }
-  });
+  const { orphanedIds, referencedIds } = separateOrphans(
+    allAudioFiles,
+    allPadConfigs,
+  );
 
   console.log(
     `[Orphan Detection] Found ${orphanedIds.size} orphaned audio files out of ${allAudioFiles.length} total`,
@@ -805,11 +904,26 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
   let deletedCount = 0;
   let cacheEntriesCleared = 0;
 
+  let orphanedIds = new Set<number>();
+
   try {
-    // Find orphaned files
-    const { orphanedIds } = await findOrphanedAudioFiles();
+    // Deciding *and* deleting inside one transaction, so nothing can start
+    // referencing a file between the two. The scan and the delete used to be
+    // three separate transactions, and an import writes its audio records
+    // before the pads that name them — so a cleanup running in that window
+    // deleted sounds an import was midway through attaching.
+    //
+    // Every await below is an IndexedDB request, which is what keeps the
+    // transaction alive; anything else here would let it auto-close.
+    const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
+    const audioStore = tx.objectStore("audioFiles");
+    const allAudioKeys = await audioStore.getAllKeys();
+    const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+
+    orphanedIds = separateOrphans(allAudioKeys, allPadConfigs).orphanedIds;
 
     if (orphanedIds.size === 0) {
+      await tx.done;
       console.log("[Orphan Cleanup] No orphaned audio files found");
       return { deletedCount: 0, cacheEntriesCleared: 0, errors: [] };
     }
@@ -817,10 +931,6 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
     console.log(
       `[Orphan Cleanup] Starting cleanup of ${orphanedIds.size} orphaned audio files...`,
     );
-
-    // Delete orphaned audio files in a single transaction
-    const audioTx = db.transaction("audioFiles", "readwrite");
-    const audioStore = audioTx.objectStore("audioFiles");
 
     const deletePromises = Array.from(orphanedIds).map(async (audioId) => {
       try {
@@ -835,7 +945,7 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
     });
 
     await Promise.all(deletePromises);
-    await audioTx.done;
+    await tx.done;
 
     // Clear cache entries for deleted audio files
     if (typeof window !== "undefined") {
@@ -889,18 +999,7 @@ export async function addProfile(
   const tx = db.transaction("profiles", "readwrite");
   const now = new Date();
   const nowMs = now.getTime();
-  const syncFields = generateSyncFields();
-  const initialFieldsModified: Record<string, number> = {};
-  Object.keys(profileData).forEach((key) => {
-    if (
-      !key.startsWith("_") &&
-      key !== "id" &&
-      key !== "createdAt" &&
-      key !== "updatedAt"
-    ) {
-      initialFieldsModified[key as keyof typeof profileData] = nowMs;
-    }
-  });
+  const syncFields = initialSyncFields(profileData, nowMs);
 
   const profileToAdd: Omit<Profile, "id"> = {
     ...profileData,
@@ -912,7 +1011,7 @@ export async function addProfile(
     updatedAt: now,
     _created: syncFields._created,
     _modified: syncFields._modified,
-    _fieldsModified: initialFieldsModified,
+    _fieldsModified: syncFields._fieldsModified,
   };
 
   try {
@@ -1231,25 +1330,14 @@ export async function upsertPadConfiguration(
       console.log(`Updated pad configuration with id: ${id}`);
     } else {
       // Add new
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {};
-      Object.keys(padConfig).forEach((key) => {
-        if (
-          !key.startsWith("_") &&
-          key !== "id" &&
-          key !== "createdAt" &&
-          key !== "updatedAt"
-        ) {
-          initialFieldsModified[key as keyof typeof padConfig] = nowMs;
-        }
-      });
+      const syncFields = initialSyncFields(padConfig, nowMs);
       const addData: Omit<PadConfiguration, "id"> = {
         ...padConfig,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       };
       id = await store.add(addData);
       console.log(`Added pad configuration with id: ${id}`);
@@ -1359,25 +1447,15 @@ export async function swapPadConfigurations(
         });
         return;
       }
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {
-        profileId: nowMs,
-        pageIndex: nowMs,
-        padIndex: nowMs,
-      };
-      Object.keys(content).forEach((key) => {
-        initialFieldsModified[key] = nowMs;
-      });
+      const record = { profileId, pageIndex, padIndex, ...content };
+      const syncFields = initialSyncFields(record, nowMs);
       await store.add({
-        profileId,
-        pageIndex,
-        padIndex,
-        ...content,
+        ...record,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       });
     };
 
@@ -1455,16 +1533,29 @@ export async function getAllPageMetadataForProfile(
 }
 
 // Function to add or update page metadata (Updated)
+/**
+ * Writes bank metadata, touching only the fields it is given.
+ *
+ * `name` and `isEmergency` are optional so a caller changing one does not have
+ * to read and re-send the other. They used to be required, which meant
+ * `renamePage` and `setPageEmergencyState` each read the record *outside* this
+ * transaction and wrote both fields back — so renaming a bank while toggling
+ * its emergency flag reverted whichever landed first. The merge inside the
+ * transaction below already does the right thing; the callers just were not
+ * allowed to use it.
+ */
 export async function upsertPageMetadata(
   pageMetadata: Omit<
     PageMetadata,
     | "id"
+    | "name"
+    | "isEmergency"
     | "createdAt"
     | "updatedAt"
     | "_created"
     | "_modified"
     | "_fieldsModified"
-  >,
+  > & { name?: string; isEmergency?: boolean },
 ): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("pageMetadata", "readwrite");
@@ -1500,26 +1591,22 @@ export async function upsertPageMetadata(
       await store.put(finalData);
       console.log(`Updated page metadata with id: ${id}`);
     } else {
-      // Add new
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {};
-      Object.keys(pageMetadata).forEach((key) => {
-        if (
-          !key.startsWith("_") &&
-          key !== "id" &&
-          key !== "createdAt" &&
-          key !== "updatedAt"
-        ) {
-          initialFieldsModified[key as keyof typeof pageMetadata] = nowMs;
-        }
-      });
-      const addData: Omit<PageMetadata, "id"> = {
+      // Add new. Defaults only matter here — an update keeps what is there.
+      const content = {
         ...pageMetadata,
+        name:
+          pageMetadata.name ??
+          `Bank ${convertIndexToBankNumber(pageMetadata.pageIndex)}`,
+        isEmergency: pageMetadata.isEmergency ?? false,
+      };
+      const syncFields = initialSyncFields(content, nowMs);
+      const addData: Omit<PageMetadata, "id"> = {
+        ...content,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       };
       id = await store.add(addData);
       console.log(`Added page metadata with id: ${id}`);
@@ -1561,14 +1648,9 @@ export async function renamePage(
   newName: string,
 ): Promise<void> {
   try {
-    const metadata = await getPageMetadata(profileId, pageIndex);
-    await upsertPageMetadata({
-      // upsert handles sync fields
-      profileId,
-      pageIndex,
-      name: newName,
-      isEmergency: metadata?.isEmergency || false,
-    });
+    // Only the name. Reading `isEmergency` here and writing it back is what
+    // let a rename revert a concurrent emergency toggle.
+    await upsertPageMetadata({ profileId, pageIndex, name: newName });
     console.log(`Renamed page ${pageIndex} to "${newName}"`);
   } catch (error) {
     console.error(`Error renaming page ${pageIndex}:`, error);
@@ -1583,14 +1665,8 @@ export async function setPageEmergencyState(
   isEmergency: boolean,
 ): Promise<void> {
   try {
-    const metadata = await getPageMetadata(profileId, pageIndex);
-    await upsertPageMetadata({
-      // upsert handles sync fields
-      profileId,
-      pageIndex,
-      name: metadata?.name || `Bank ${pageIndex}`,
-      isEmergency,
-    });
+    // Only the flag — see renamePage.
+    await upsertPageMetadata({ profileId, pageIndex, isEmergency });
     console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
   } catch (error) {
     console.error(
@@ -1741,8 +1817,14 @@ export async function duplicateProfileLocally(
 
   const newProfileId = await addProfile({
     name,
+    // Deliberately local: a duplicate is a new thing, and inheriting where the
+    // original synced would have two profiles publishing to one destination.
     syncType: "local",
     activePadBehavior: source.activePadBehavior,
+    // Settings that change how the copy *sounds* or when it nags. A duplicate
+    // that normalises differently from its original is not a duplicate.
+    normalisation: source.normalisation,
+    backupReminderPeriod: source.backupReminderPeriod,
   });
 
   // The pads and pages go in one at a time, so a failure part-way — a pad row
@@ -1759,14 +1841,16 @@ export async function duplicateProfileLocally(
         profileId: newProfileId,
         pageIndex: pad.pageIndex,
         padIndex: pad.padIndex,
+        // The key binding belongs to the pad position, not to its contents,
+        // but a duplicate keeps the whole layout, so it comes along.
         keyBinding: pad.keyBinding,
-        name: pad.name,
-        audioFileIds: [...(pad.audioFileIds ?? [])],
-        // The copy references the same audio, so the ids these are keyed by
+        // Everything else comes through the helper rather than by hand. This
+        // used to list the fields it knew about and silently dropped
+        // `audioGainSettings` and `padGainDb`, so a duplicated profile played
+        // at a different level from the one it was copied from. The copy
+        // references the same audio rows, so the ids the settings are keyed by
         // still mean the same sounds.
-        audioTrimSettings: pad.audioTrimSettings,
-        playbackType: pad.playbackType,
-        isDisabled: pad.isDisabled,
+        ...extractPadPlaybackSettings(pad),
       });
     }
 

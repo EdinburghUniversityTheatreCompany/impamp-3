@@ -35,7 +35,6 @@ export function createPadEditSession(): PadEditSession {
 }
 
 interface EditPadModalContentProps extends FormModalRenderProps<PadFormValues> {
-  profileId: number;
   session: PadEditSession;
 }
 

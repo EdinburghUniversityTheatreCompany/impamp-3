@@ -7,6 +7,11 @@
  * @module lib/audio
  */
 
+// The shared trigger: owns the loading-state wiring the three call sites used
+// to build by hand.
+export { triggerPad } from "./triggerPad";
+export type { TriggerablePad, TriggerContext } from "./triggerPad";
+
 // Re-export public functions from controls.ts
 export {
   triggerAudioForPadInstant,

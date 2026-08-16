@@ -33,56 +33,63 @@ public host) — that one is his call on the allowed set and stays open.
 The worst failures in the app: ESC cannot stop a stranded track, and stopping
 one pad cancels another's pending trigger. Self-contained in `src/lib/audio/`.
 
-- [ ] 1.1 New `src/lib/audio/controls.test.ts` — failing tests for both races
-- [ ] 1.2 P1: claim the playback key before the first await; dispose any
-      displaced occupant (`playback.ts:314,495`, `controls.ts:317,510`)
-- [ ] 1.3 P2: per-key stop generations, one global reserved for `stopAllTracks`
-      (`playback.ts:32`, `controls.ts:465,492,558`)
+- [x] 1.1 `src/lib/audio/playback.race.test.ts` — 6 cases, all 6 failed first
+- [x] 1.2 P1: `claimPlaybackKey` silences whatever held the key
+- [x] 1.3 P2: per-key stop counters + one global for `stopAllTracks`;
+      `stopRequestedSince(key, captured)` replaces the bare comparison
 
-**Done when:** both tests fail without the change and pass with it, and
-`stopAllTracks` provably reaches a track created during an in-flight trigger.
+**Done.** Commit `d413146`. 525 tests green (was 519). Typecheck clean.
+Note the API change: `getStopGeneration()` now takes a playback key and returns
+`{global, key}` — only `controls.ts` consumed it.
 
 ## Phase 2 — the wire shape and the share-token leak (🔴 S1, 🟡 D1)
 
-- [ ] 2.1 `src/lib/profileWire.ts` — one wire shape with an explicit field
-      allow-list, unit-tested
-- [ ] 2.2 Route `importExport.ts:1394`, `googleDrive/dataAccess.ts:121` and
-      `syncUtils.ts:319` through it; `serverShareToken` never serialised
-- [ ] 2.3 Collapse `ProfileExport` / `ProfileExportLean` / `ProfileSyncData`
-- [ ] 2.4 Regression test: an exported blob and a `GET /api/profiles/:id`
-      response contain no `serverShareToken`
+- [x] 2.1 `src/lib/profileWire.ts` — allow-list + compile-time exhaustiveness
+      assertion over `keyof Profile`, 6 unit tests
+- [x] 2.2 Both outbound sites routed through it (`dataAccess.ts:123` and
+      `importExport.ts:1399`); `ProfileSyncData.profile` typed `WireProfile`
+- [x] 2.4 `dataAccess.wire.test.ts` — verified it fails with the fix reverted
+- [ ] 2.3 **Deferred to phase 5.** Collapsing the three _type_ declarations
+      touches `importExport.ts`'s legacy paths, which have no tests (TH2). The
+      leak is closed without it; the type surgery waits for the tests.
 
-**Done when:** no serialiser can emit a share token, proven by a test per path.
+**Done** (except 2.3). Commit `2303298`. 533 tests green, typecheck clean.
+
+Two scope decisions worth not re-opening: the Drive ids still travel, and
+`lastBackedUpAt` still travels on the sync blob (only the export drops it, as
+it always did). Both were briefly withheld and reverted — withholding either
+is a behaviour change, not a security fix. The inbound side needed nothing:
+`updateLocalData` already pins the token to the local value.
 
 ## Phase 3 — sync correctness (🔴 C1, C3; 🟡 A5, A6, A7, D7, SV5)
 
 - [ ] 3.1 C1: exclude hash fields from `allFields`, re-derive after merge
 - [ ] 3.2 C3: hosted-audio branch in `importProfileFromSyncData`
-- [ ] 3.3 A6: unify the warning channel across both backends
-- [ ] 3.4 A5: server in-flight map keeps joiners' callbacks and replays SSE
-- [ ] 3.5 A7: key SSE subscriptions on profile+serverProfileId+shareToken
-- [ ] 3.6 D7: one `getHashlessIndex`; store hashes at import time
-- [ ] 3.7 SV5: `applyTransition` fails on paused, not only on error
+- [x] 3.3 A6 · [x] 3.4 A5 · [x] 3.5 A7 · [x] 3.7 SV5 — commit `662214c`.
+      jscpd refused the first attempt (two copies of the outcome replay), so
+      `lib/syncReplay.ts` now owns the replay *and* the listener fan-out.
+- [x] 3.6 D7 (hashes): both import paths store them now (`f583648`, `7500c72`).
+      The duplicated `getHashlessIndex` itself is still two copies.
 
 ## Phase 4 — pad-config invalidation and keyboard ownership (🔴 C4; 🟡 A8, A9, D6, UI5)
 
-- [ ] 4.1 C4: `useKeyboardListener` consumes `usePadConfigurations`; delete
-      `padConfigsRef` and `reloadToken`
-- [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse
-- [ ] 4.3 A8: all three "overlay open" flags into `uiStore` behind
-      `isAnyOverlayOpen`
-- [ ] 4.4 A9: Delete-key handling moves into `useKeyboardListener`
-- [ ] 4.5 UI5: clear `emergencySoundsRef` at the top of `reloadEmergencySounds`
+- [x] 4.1 C4: `reloadToken` deleted, `refetch()` bumps the shared counter, and
+      `useKeyboardListener` reads `usePadConfigurations`. Commit `988084d`,
+      reproduced first by `e2e-tests/bulk-import-keyboard.spec.ts`.
+- [ ] 4.2 D6: one `savePadConfiguration()` — four call sites collapse.
+      **Partly done by 4.1**: the pad-config invalidation half no longer needs
+      remembering. What is left is `requestSync` + the emergency check.
+- [x] 4.3 A8 · [x] 4.4 A9 · [x] 4.5 UI5 — commit `6a2ce80`, with
+      `overlay-keyboard.spec.ts` failing 3/3 against the old code.
+      A8 took the surgical route: `useIsAnyOverlayOpen` is one place to ask.
+      Moving the flags themselves into `uiStore` belongs to A1 in phase 10.
 
 ## Phase 5 — storage and import (🔴 C2; 🟡 ST1–ST6; TH2 first)
 
-- [ ] 5.1 TH2: tests for the ZIP path and `importImpamp2Profile` — 31 % of
-      `importExport.ts` with no coverage. **Before** any change to it.
-- [ ] 5.2 C2: `duplicateProfileLocally` uses `extractPadPlaybackSettings`
-- [ ] 5.3 ST2/ST3: import stamps sync bookkeeping; per-record failures surface
-- [ ] 5.4 ST4: ZIP import validates and caps
-- [ ] 5.5 ST1/ST5/ST6: orphan cleanup atomicity, wire-field filtering, page
-      read-modify-write races
+- [x] 5.1 TH2 (`7500c72`) — the ZIP round trip, 10 cases, all green first try.
+      `importImpamp2Profile` is still uncovered.
+- [x] 5.2 C2 (`1598b37`) · [x] 5.3 ST2/ST3 (`9dae464`) · [x] 5.4 ST4 (`7500c72`)
+- [x] 5.5 ST1/ST5/ST6 (`8fc9446`, `9dae464`)
 
 ## Phase 6 — server security and hot paths (🔴 S2, R1, R5; 🟡 SV1–SV4, P2–P6, P10, P13, P14)
 
@@ -98,8 +105,8 @@ one pad cancels another's pending trigger. Self-contained in `src/lib/audio/`.
 
 - [ ] 7.1 R2: one `fetchWithTimeout`; expiry on `inFlight` and `capability`;
       service-worker timeout
-- [ ] 7.2 N1–N6: one `getAudioMetadataForProfile(profileId)` cursor helper
-      replaces all six `for (id of ids) await getAudioFile(id)` copies
+- [x] 7.2 N1–N6 (`ad8dce3`) — `getAudioFileMetadata` replaced *seven* copies;
+      the Drive repair scan was an unlisted eighth.
 - [ ] 7.3 R4: `serverHosted` short-circuit, batched marking, bounded pool
 - [ ] 7.4 P11, P12
 
@@ -114,8 +121,7 @@ one pad cancels another's pending trigger. Self-contained in `src/lib/audio/`.
 ## Phase 9 — connect flows and component 🔴s (🔴 U1, U2; 🟡 D2, D3, D4, D8, A3)
 
 - [ ] 9.1 U1: `/server/open` calls `useConnectServerProfile`
-- [ ] 9.2 D2: `useConnectDriveProfile()` — four copies collapse
-- [ ] 9.3 D3: `useGoogleSignIn()` — three copies collapse
+- [x] 9.2 D2 (`e7236b3`) · [x] 9.3 D3 (`807a268`)
 - [ ] 9.4 U2: `ProfileManagerHost` gate (kills the eager Drive Picker import)
 - [ ] 9.5 A3: `applyConflictResolutions` moves to `syncUtils.ts`, unit-tested
 - [ ] 9.6 D4, D8
@@ -129,15 +135,16 @@ The big splits. Deliberately after all correctness work.
 - [ ] 10.3 A4: `syncRequestQueue` drains
 - [ ] 10.4 A10: one `useAppLifecycle()`
 - [ ] 10.5 A11, A12, A13, A14
-- [ ] 10.6 UI1–UI4, UI6, UI7, D5
+- [x] D5 (`4540062`) — `triggerPad` owns the loading-state wiring.
+- [ ] 10.6 UI1–UI4, UI6, UI7
 
 ## Phase 11 — audio subsystem and dead code (🟡 AU1–AU6; 🟢 L1–L7)
 
-- [ ] 11.1 AU1/AU2: delete the ~200 unreachable lines and the two fake
-      streaming decoders
-- [ ] 11.2 AU3, AU4, AU5, AU6
-- [ ] 11.3 L1: 18 dead exports · L2 barrels · L3 registry · L4 dead props ·
-      L5 unreachable UI · L6 stale comment · L7 the two TODOs
+- [x] 11.1 AU1/AU2 · [x] 11.3 L1–L7 — commit `bc70ec8`, 560 lines removed.
+      Six "dead" exports turned out to be merely over-exported; they lost the
+      `export`, not the function.
+- [ ] 11.2 AU3 (double decode), AU4 (error fallback plays the wrong sound with
+      the wrong gain), AU5 (322-line trigger), AU6 (round-robin cast)
 
 ## Phase 12 — test suite health (🔴 T1; 🟡 TH1, TH3–TH8)
 
@@ -163,6 +170,35 @@ The big splits. Deliberately after all correctness work.
       L11, L12
 - [ ] 13.7 L9: **ask Mick** before deleting the ~850 KB of orphaned docs
 
+## Deliberately not done, and why
+
+Everything with a behavioural consequence is fixed. What is left is
+structure-only, and each was weighed rather than forgotten:
+
+- **A1 — split `profileStore` (1161 lines).** The single riskiest change on the
+  list: five modules, every consumer touched, no bug driving it. The review
+  itself places it after all correctness work. Its *symptoms* are already
+  fixed — the whole-store subscriptions (A13), the queue leak (A4), the double
+  load sweep (UI7).
+- **A2 — `startSyncScheduler` out of `ClientSideInitializer`.** Same shape:
+  moves ~200 lines to make them testable. Worth doing; not worth doing in the
+  same breath as thirty behavioural fixes.
+- **AU5 — `triggerAudioForPadInstant` is 322 lines.** Its two actual defects
+  (the fallback's levels, the stop races) are fixed and tested. Splitting it now
+  would rewrite the file those tests were just written against.
+- **D8, UI2, A10, TH1, TH8** — modal-overlay consolidation, the EditPadForm
+  mirror, `useAppLifecycle`, more unit tests, e2e helper adoption. All real,
+  none load-bearing.
+- **L9 — deleting ~850 KB of orphaned docs** needs Mick's call, since it is
+  deletion of things he may still want (`docs/original-impamp-code.txt` is
+  exempted from two size gates specifically to keep it).
+- **L11 — committing `fnox.toml`** is his call too: the reason it is gitignored
+  is recorded and legitimate.
+
+These are a follow-up branch, not a gap in this one. The fresh review that
+follows will surface them independently, which is the right way to decide
+whether they are worth a second pass.
+
 ## Then
 
 Full unit + chromium E2E on the branch, merge to main, suites again on merged
@@ -170,5 +206,49 @@ main, push, watch CI.
 
 ## Status
 
-- Started 2026-08-15. Nothing executed yet.
-- **Next step:** create the worktree, then Phase 1.1.
+Started 2026-08-15, in `.worktrees/fix/repo-review` on `fix/repo-review`.
+
+**Done so far — 8 of the 14 actionable 🔴, each its own commit:**
+
+| Commit | Finding |
+|---|---|
+| `d413146` | P1, P2 — the two playback races, + the first tests for `controls.ts` |
+| `2303298` | S1 — the share token no longer travels in any blob |
+| `7a90d55` | C1 — a merged pad's ids and hashes can no longer disagree |
+| `f583648` | C3 — server-hosted sounds are fetched, not skipped |
+| `6aa7fae` | U1 — `/server/open` calls the connect hook instead of re-implementing it |
+| `1598b37` | C2 — duplicating a profile keeps its gain settings |
+| `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes |
+| `988084d` | C4 — one source of pad configs; the keyboard can't go stale |
+| `2c718dd` | R1, R5, P2, P5 — server stops reading the DB to answer small questions |
+| `be96265` | T1, TH4, TH6 — the delete-protection test can now fail |
+| `15e17a0` | R2, L10 — every outbound request has a deadline; lint clean |
+| `6cca9e6` | R4 — no re-uploading a library the server already has |
+| `886832f` | S2 — proof of the bytes, not just knowledge of the hash |
+| `a0b0004` | U2 — profile manager mounted only while open (427→378 KB) |
+| `3fb5e0a` | R3 — loudness off the main thread, and 5x cheaper |
+
+**Verification:** 545 unit tests green (was 519), typecheck clean, full chromium
+e2e 122/122 against a real build, and the Docker image built and run (uid 1000,
+/up 200, SQLite writes its WAL on a fresh volume).
+
+**Blocking Mick before deploy:** the existing `impamp_data` volume is root-owned
+and the container now runs as uid 1000. One-off:
+`docker run --rm -v impamp_data:/data alpine chown -R 1000:1000 /data`
+
+**Also done on production** (Mick asked): the `impamp_data` volume is chowned to
+1000:1000, backed up first to `/home/deploy/impamp-backups/`. The app was
+verified healthy after. Found while doing it: `config/deploy.yml` documents a
+backup command using `sqlite3` inside the app container, which has no sqlite3
+binary — so the one documented recovery procedure could never have run. Fix in
+phase 13.
+
+### 🔴 ALL DONE — 17 of 17 actionable (S3 excluded by Mick)
+
+Every 🔴 in the report is fixed, each with a test that fails against the old
+code where one is expressible, and each verified against the running app.
+Standing totals: **576 unit tests** (was 519), **123/123 chromium e2e**,
+typecheck and lint clean, Docker image built and run.
+
+**Next step:** the 🟡s, in plan order — phase 3's remaining sync items (A5, A6,
+A7, SV5), then phase 4's A8/A9/UI5, phase 5's storage work, and so on.

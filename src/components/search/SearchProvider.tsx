@@ -8,7 +8,13 @@
 
 "use client";
 
-import React, { createContext, useContext, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import SearchModal from "./SearchModal";
 
 // Create a context to share search functionality across components
@@ -51,14 +57,20 @@ export function SearchProvider({
 }: SearchProviderProps): React.ReactElement {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
-  const openSearchModal = () => setIsSearchModalOpen(true);
-  const closeSearchModal = () => setIsSearchModalOpen(false);
+  // Stable identities. `openSearchModal` is a dependency of the global keydown
+  // handler in `useKeyboardListener`, which is in turn the dependency of the
+  // effect that registers the window listeners — so a fresh function on every
+  // render tore down and re-added the app's keyboard handlers. Bounded today,
+  // because this only re-renders when the flag flips, but one `useState` away
+  // from doing it per keystroke, and any key held across the swap loses its
+  // `keyup` pairing.
+  const openSearchModal = useCallback(() => setIsSearchModalOpen(true), []);
+  const closeSearchModal = useCallback(() => setIsSearchModalOpen(false), []);
 
-  const value = {
-    isSearchModalOpen,
-    openSearchModal,
-    closeSearchModal,
-  };
+  const value = useMemo(
+    () => ({ isSearchModalOpen, openSearchModal, closeSearchModal }),
+    [isSearchModalOpen, openSearchModal, closeSearchModal],
+  );
 
   return (
     <SearchContext.Provider value={value}>

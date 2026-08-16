@@ -13,7 +13,6 @@ import { PadConfiguration, getAudioFile } from "../db";
 import {
   loadAndDecodeAudioInstant,
   loadAndDecodeAudioEnhanced,
-  preloadAudioFiles,
   LoadingState,
 } from "./decoder";
 import { getCachedAudioBuffer } from "./cache";
@@ -29,9 +28,9 @@ import {
   fadeOutAllTracks,
   isTrackPlaying,
   isTrackFading,
-  getActivePlaybackKeys,
   getActiveTrack,
   getStopGeneration,
+  stopRequestedSince,
 } from "./playback";
 import { resumeAudioContext, getAudioContext } from "./context";
 import {
@@ -196,14 +195,14 @@ async function recoverFromLoadError(
  * @param failedAudioFileId - The ID that failed to load
  * @param onStateChange - Loading state callback
  * @param onError - Error callback
- * @returns Promise that resolves to a fallback AudioBuffer or null
+ * @returns The buffer *and which file it belongs to*, or null
  */
 async function handleAudioFallback(
   audioFileIds: number[],
   failedAudioFileId: number,
   onStateChange?: LoadingStateCallback,
   onError?: (error: string) => void,
-): Promise<AudioBuffer | null> {
+): Promise<{ buffer: AudioBuffer; audioFileId: number } | null> {
   console.log(
     `[Audio Controls] Handling fallback for failed audio file ID: ${failedAudioFileId}`,
   );
@@ -225,7 +224,9 @@ async function handleAudioFallback(
         console.log(
           `[Audio Controls] Successfully loaded alternative audio file ID: ${alternativeId}`,
         );
-        return buffer;
+        // Which file this is matters to the caller: its gain, trim and the id
+        // reported to the playback store all have to follow the substitution.
+        return { buffer, audioFileId: alternativeId };
       }
     } catch (error) {
       console.warn(
@@ -250,9 +251,11 @@ async function handleAudioFallback(
     const errorMsg = `All audio files failed to load for this pad. Original ID: ${failedAudioFileId}, Alternatives tried: ${alternativeIds.length}`;
     onError?.(errorMsg);
     console.error(`[Audio Controls] ${errorMsg}`);
+    return null;
   }
 
-  return recoveredBuffer;
+  // Recovery re-read the *original* file, so it keeps its own id.
+  return { buffer: recoveredBuffer, audioFileId: failedAudioFileId };
 }
 
 /**
@@ -363,10 +366,11 @@ export async function triggerAudioForPadInstant(
     stopTrack(playbackKey);
   }
 
-  // Capture the stop generation so a stop during loading cancels this trigger.
+  // Capture the stop counters so a stop during loading cancels this trigger.
   // Re-baselined whenever this function stops a track itself, so its own
-  // bookkeeping stops are never mistaken for a user-requested stop.
-  let triggerGeneration = getStopGeneration();
+  // bookkeeping stops are never mistaken for a user-requested stop. Scoped to
+  // this playback key, so stopping a *different* pad no longer cancels us.
+  let triggerGeneration = getStopGeneration(playbackKey);
 
   try {
     // Use the strategy pattern to select which audio file to play
@@ -376,15 +380,25 @@ export async function triggerAudioForPadInstant(
     // Look up trim and gain for this specific audio file. Gain resolution is
     // synchronous by design — the analysis is held in memory precisely so the
     // trigger path never has to await a database read.
-    const trimForFile = audioTrimSettings?.[audioFileId];
-    const resolvedGain = resolveGain({
-      analysis: getCachedLoudness(audioFileId),
-      trimStart: trimForFile?.trimStart ?? 0,
-      trimEnd: trimForFile?.trimEnd,
-      soundGainDb: audioGainSettings?.[audioFileId] ?? 0,
-      padGainDb: padGainDb ?? 0,
-      normalisation: useProfileStore.getState().getNormalisationSettings(),
-    });
+    // Per file rather than captured once, because the fallback path can end
+    // up playing a *different* sound than the one selected: these used to be
+    // computed for the file that failed and then applied to whatever the
+    // fallback found, so a substituted sound played at the failed sound's
+    // normalisation level and inside its trim window.
+    const levelsFor = (fileId: number) => {
+      const trim = audioTrimSettings?.[fileId];
+      return {
+        trim,
+        gain: resolveGain({
+          analysis: getCachedLoudness(fileId),
+          trimStart: trim?.trimStart ?? 0,
+          trimEnd: trim?.trimEnd,
+          soundGainDb: audioGainSettings?.[fileId] ?? 0,
+          padGainDb: padGainDb ?? 0,
+          normalisation: useProfileStore.getState().getNormalisationSettings(),
+        }),
+      };
+    };
 
     // Advance the playback strategy at most once, even if the first
     // playback attempt fails and we fall back to another method
@@ -398,12 +412,18 @@ export async function triggerAudioForPadInstant(
 
     // Build playback params. Must be called after ensureStrategyUpdated so
     // the round-robin available indices reflect the sound being played.
-    const buildPlayParams = (): PlayAudioParams => {
+    const buildPlayParams = (
+      playingFileId: number = audioFileId,
+    ): PlayAudioParams => {
+      const { trim: trimForFile, gain: resolvedGain } =
+        levelsFor(playingFileId);
+      const playingIndex = audioFileIds.indexOf(playingFileId);
+
       // Resolved gain is not observable from the DOM, so E2E asserts on it
       // here. Read-only view of state the UI cannot otherwise reveal.
       exposeE2EHook("__impampLastResolvedGain", {
         playbackKey,
-        audioFileId,
+        audioFileId: playingFileId,
         totalDb: resolvedGain.totalDb,
         normDb: resolvedGain.normDb,
         linear: resolvedGain.linear,
@@ -424,17 +444,10 @@ export async function triggerAudioForPadInstant(
         multiSoundState: {
           playbackType,
           allAudioFileIds: audioFileIds,
-          currentAudioFileId: audioFileId,
-          currentAudioIndex: index,
-          availableAudioIndices:
-            playbackType === "round-robin"
-              ? (
-                  getStrategy(
-                    "round-robin",
-                    playbackKey,
-                  ) as import("./strategies/roundRobin").RoundRobinStrategy
-                ).getAvailableIndices?.()
-              : undefined,
+          currentAudioFileId: playingFileId,
+          currentAudioIndex: playingIndex >= 0 ? playingIndex : index,
+          // Ask the strategy; the ones without a cycle answer undefined.
+          availableAudioIndices: strategy.getAvailableIndices?.(),
         },
       };
     };
@@ -462,7 +475,7 @@ export async function triggerAudioForPadInstant(
 
       // Bail out if a stop was requested while the blob was being read —
       // nothing is audible yet, so just abandon the trigger
-      if (getStopGeneration() !== triggerGeneration) {
+      if (stopRequestedSince(playbackKey, triggerGeneration)) {
         console.log(
           `[Audio Controls] [Instant] Blob load cancelled by a stop request for key: ${playbackKey}`,
         );
@@ -489,7 +502,10 @@ export async function triggerAudioForPadInstant(
           const stillOurs =
             active?.source.kind === "media" &&
             active.source.element === element;
-          if (!stillOurs && getStopGeneration() !== triggerGeneration) {
+          if (
+            !stillOurs &&
+            stopRequestedSince(playbackKey, triggerGeneration)
+          ) {
             console.log(
               `[Audio Controls] [Instant] Streaming start cancelled by a stop request for key: ${playbackKey}`,
             );
@@ -508,7 +524,7 @@ export async function triggerAudioForPadInstant(
           // error handler already cleaned it up). This is our own stop, so
           // re-baseline the generation to keep the decode fallback alive.
           stopTrack(playbackKey);
-          triggerGeneration = getStopGeneration();
+          triggerGeneration = getStopGeneration(playbackKey);
         }
         console.warn(
           `[Audio Controls] [Instant] Streaming start failed for ID: ${audioFileId}, falling back to decode...`,
@@ -530,15 +546,10 @@ export async function triggerAudioForPadInstant(
     let buffer = await loadAndDecodeAudioInstant(
       audioFileId,
       onLoadingStateChange,
-      // onPartialReady callback for progressive playback
-      () => {
-        console.log(
-          `[Audio Controls] [Instant] Partial audio ready for ID: ${audioFileId}`,
-        );
-        // Start playback immediately when partial buffer is available
-        onAudioReady?.();
-      },
     );
+    // Which sound ends up playing. Normally the one the strategy chose; the
+    // fallback path below can change it.
+    let playingFileId = audioFileId;
 
     // If primary loading failed, attempt fallback and recovery
     if (!buffer) {
@@ -546,16 +557,22 @@ export async function triggerAudioForPadInstant(
         `[Audio Controls] [Instant] Primary load failed for ID: ${audioFileId}, attempting fallback...`,
       );
 
-      buffer = await handleAudioFallback(
+      const fallback = await handleAudioFallback(
         audioFileIds,
         audioFileId,
         onLoadingStateChange,
         onError,
       );
+      if (fallback) {
+        buffer = fallback.buffer;
+        // The substitute is what plays, so it is what the levels, the trim
+        // window and the id reported to the playback store must describe.
+        playingFileId = fallback.audioFileId;
+      }
     }
 
     // Bail out if a stop was requested while we were loading
-    if (getStopGeneration() !== triggerGeneration) {
+    if (stopRequestedSince(playbackKey, triggerGeneration)) {
       console.log(
         `[Audio Controls] [Instant] Load cancelled by a stop request for key: ${playbackKey}`,
       );
@@ -564,10 +581,10 @@ export async function triggerAudioForPadInstant(
 
     if (buffer) {
       // Track this file as recently played for intelligent preloading
-      audioPreloader.trackPlayedFile(audioFileId);
+      audioPreloader.trackPlayedFile(playingFileId);
 
       console.log(
-        `[Audio Controls] [Instant] Playing audio file ID: ${audioFileId} for pad ${padIndex}`,
+        `[Audio Controls] [Instant] Playing audio file ID: ${playingFileId} for pad ${padIndex}`,
       );
 
       ensureStrategyUpdated();
@@ -576,7 +593,7 @@ export async function triggerAudioForPadInstant(
       onAudioReady?.();
 
       // Play the buffer with the appropriate parameters
-      playBuffer(buffer, playbackKey, buildPlayParams());
+      playBuffer(buffer, playbackKey, buildPlayParams(playingFileId));
     } else {
       const errorMsg = `Failed to load audio file ID: ${audioFileId} for pad ${padIndex}`;
       console.error(`[Audio Controls] [Instant] ${errorMsg}`);
@@ -636,15 +653,6 @@ export function fadeOutAllAudio(durationInSeconds: number = 3): void {
 }
 
 /**
- * Returns an array of all currently playing audio keys
- *
- * @returns Array of playback keys
- */
-export function getPlayingAudioKeys(): string[] {
-  return getActivePlaybackKeys();
-}
-
-/**
  * Checks if a specific audio track is playing
  *
  * @param playbackKey - The key identifying the playback
@@ -675,39 +683,6 @@ export async function ensureAudioContextActive(): Promise<void> {
     await resumeAudioContext();
   } catch (error) {
     console.error("[Audio Controls] Failed to resume audio context:", error);
-  }
-}
-
-/**
- * Preloads audio for a collection of pad configurations (DEPRECATED - use intelligent preloader)
- *
- * @deprecated Use audioPreloader.preloadCurrentPage() instead for better performance
- * @param padConfigs - Array of pad configurations containing audio file IDs
- * @returns Promise that resolves when preloading is complete
- */
-export async function preloadAudioForPage(
-  padConfigs: PadConfiguration[],
-): Promise<void> {
-  // Extract all unique audio file IDs from all configurations
-  const allIds = padConfigs.flatMap((config) => config.audioFileIds || []);
-  const uniqueIds = [...new Set(allIds)].filter(Boolean);
-
-  if (uniqueIds.length === 0) {
-    console.log("[Audio Controls] No audio files to preload.");
-    return;
-  }
-
-  console.log(
-    `[Audio Controls] [DEPRECATED] Preloading ${uniqueIds.length} audio files for the current page...`,
-  );
-
-  try {
-    await preloadAudioFiles(uniqueIds);
-    console.log(
-      `[Audio Controls] Preloading complete for ${uniqueIds.length} audio files.`,
-    );
-  } catch (error) {
-    console.error("[Audio Controls] Error during audio preloading:", error);
   }
 }
 

@@ -33,7 +33,7 @@ import {
 } from "@/lib/audio/loudness/overview";
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import {
-  getAudioFile,
+  getAudioFileMetadata,
   upsertPadConfiguration,
   type PadConfiguration,
 } from "@/lib/db";
@@ -119,12 +119,16 @@ export default function LoudnessOverviewModalContent() {
         const uniqueIds = [
           ...new Set(loaded.flatMap((pad) => pad.audioFileIds ?? [])),
         ];
-        const entries = await Promise.all(
-          uniqueIds.map(async (id): Promise<[number, string]> => {
-            const file = await getAudioFile(id);
-            return [id, file?.name ?? `Sound ${id}`];
-          }),
-        );
+        // Deduping was right; firing the survivors off concurrently was not.
+        // Each `getAudioFile` reads the *whole* record, Blob included, to take
+        // a name — so a full board put up to 960 audio files in memory at once
+        // to populate a table of strings. One cursor pass reads the names and
+        // leaves the bytes on disk.
+        const metadata = await getAudioFileMetadata(uniqueIds);
+        const entries: [number, string][] = uniqueIds.map((id) => [
+          id,
+          metadata.get(id)?.name ?? `Sound ${id}`,
+        ]);
         if (!cancelled) {
           setNames(new Map(entries));
         }

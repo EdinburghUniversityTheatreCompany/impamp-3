@@ -9,6 +9,7 @@
  */
 
 import { NotSignedInError } from "@/lib/serverSync/types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const SHARE_TOKEN_HEADER = "x-impamp-share-token";
 
@@ -59,6 +60,15 @@ export interface UploadTicket {
   key: string;
   uploadUrl: string | null;
   alreadyStored: boolean;
+  /**
+   * The slice of the file to hash, when someone else already stored these
+   * bytes and there is therefore nothing to upload.
+   *
+   * Present exactly when `alreadyStored` is true. Commit will not hand out a
+   * reference on that path without it: the hash alone is not evidence of
+   * holding the file, and it travels in every profile blob a viewer can read.
+   */
+  proofRange: { offset: number; length: number } | null;
   expiresInSeconds: number;
 }
 
@@ -119,7 +129,7 @@ export async function fetchAudioLibrary(): Promise<{
   usage: AudioUsage;
   files: HostedAudioFile[];
 }> {
-  const response = await fetch("/api/audio");
+  const response = await fetchWithTimeout("/api/audio");
   if (!response.ok)
     await throwForStatus(response, "Could not read audio usage");
   return response.json();
@@ -132,7 +142,7 @@ export async function requestUploadUrl(file: {
   contentType: string;
   extension: string;
 }): Promise<UploadTicket> {
-  const response = await fetch("/api/audio/upload-url", {
+  const response = await fetchWithTimeout("/api/audio/upload-url", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(file),
@@ -149,25 +159,16 @@ export async function commitUpload(file: {
   name: string;
   contentType: string;
   extension: string;
+  /** Required when the ticket said `alreadyStored`; see `UploadTicket`. */
+  proof?: string;
 }): Promise<{ hash: string; sizeBytes: number; usage: AudioUsage }> {
-  const response = await fetch("/api/audio/commit", {
+  const response = await fetchWithTimeout("/api/audio/commit", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(file),
   });
   if (!response.ok) {
     await throwForStatus(response, "Could not finish the upload");
-  }
-  return response.json();
-}
-
-/** A presigned URL for audio the signed-in user holds. */
-export async function requestOwnDownloadUrl(
-  hash: string,
-): Promise<DownloadTicket> {
-  const response = await fetch(`/api/audio/${hash}`);
-  if (!response.ok) {
-    await throwForStatus(response, "Could not fetch that audio");
   }
   return response.json();
 }
@@ -184,7 +185,7 @@ export async function requestProfileDownloadUrl(
   const requestHeaders = new Headers();
   if (shareToken) requestHeaders.set(SHARE_TOKEN_HEADER, shareToken);
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `/api/profiles/${serverProfileId}/audio/${hash}`,
     { headers: requestHeaders },
   );
@@ -196,7 +197,9 @@ export async function requestProfileDownloadUrl(
 
 /** Give up this user's reference to an object. */
 export async function deleteHostedAudio(hash: string): Promise<void> {
-  const response = await fetch(`/api/audio/${hash}`, { method: "DELETE" });
+  const response = await fetchWithTimeout(`/api/audio/${hash}`, {
+    method: "DELETE",
+  });
   if (!response.ok) {
     await throwForStatus(response, "Could not delete that audio");
   }

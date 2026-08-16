@@ -30,6 +30,9 @@ import {
   requestUploadUrl,
 } from "./api";
 import type { ProfileSyncData } from "@/lib/syncUtils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getAudioFileMetadata } from "@/lib/db";
+import { proofOfPossession } from "./proofOfPossession";
 
 /** Filename extension, lowercased and without the dot. */
 export function extensionOf(name: string, contentType: string): string {
@@ -52,7 +55,14 @@ let capability: Promise<boolean> | null = null;
 export function canHostAudio(): Promise<boolean> {
   capability ??= fetchAudioLibrary()
     .then((library) => library.canUploadAudio)
-    .catch(() => false);
+    .catch(() => {
+      // Only a *successful* answer is worth keeping. Caching the failure meant
+      // one bad minute — a timeout, a blip, a reconnecting laptop — disabled
+      // hosted audio for the rest of the session with no way back short of a
+      // reload. Clearing it here lets the next sync ask again.
+      capability = null;
+      return false;
+    });
   return capability;
 }
 
@@ -87,7 +97,41 @@ export async function uploadProfileAudio(
   // account is not approved. Costs one cached request, not one per file.
   if (!(await canHostAudio())) return { hosted, warnings, aborted: true };
 
-  for (const id of audioFileIds) {
+  // One cursor pass for the metadata, so the decision about which files need
+  // anything is made without reading a single blob. This loop used to open
+  // every audio record and then issue `requestUploadUrl` *and* `commitUpload`
+  // for all of them regardless — two sequential HTTP round trips per file, on
+  // every sync, even for files the server already had. For a 500-sound profile
+  // that is a thousand round trips and a thousand write transactions, and sync
+  // runs on load, every 15 minutes, on reconnect, on every SSE event and ten
+  // seconds after every edit.
+  const metadata = await getAudioFileMetadata(audioFileIds);
+
+  const needsUpload: number[] = [];
+  for (const [id, meta] of metadata) {
+    if (meta.serverHosted && meta.hash) {
+      // Already up there. Still reported as hosted, because the caller uses
+      // this list to tell readers where the bytes are.
+      hosted.push(meta.hash);
+    } else {
+      needsUpload.push(id);
+    }
+  }
+
+  // Marked in one transaction rather than one per hash — but flushed before
+  // *every* exit, including the aborted ones, or a sync that gave up halfway
+  // would forget the files it did manage to upload and re-upload them next
+  // time.
+  const newlyHosted: string[] = [];
+  const rememberHosted = async () => {
+    // splice hands over a fresh array and empties the buffer in one step. The
+    // buffer must not be cleared *after* passing it on: the callee is async and
+    // would be reading an array this had already emptied.
+    const batch = newlyHosted.splice(0);
+    if (batch.length > 0) await markAudioFilesHosted(batch);
+  };
+
+  for (const id of needsUpload) {
     const file = await getAudioFile(id);
     if (!file) continue;
 
@@ -103,7 +147,8 @@ export async function uploadProfileAudio(
       });
 
       if (ticket.uploadUrl) {
-        const response = await fetch(ticket.uploadUrl, {
+        const response = await fetchWithTimeout(ticket.uploadUrl, {
+          timeoutKind: "transfer",
           method: "PUT",
           body: file.blob,
           headers: { "content-type": file.type },
@@ -119,17 +164,27 @@ export async function uploadProfileAudio(
         name: file.name,
         contentType: file.type,
         extension,
+        // Nothing was uploaded because someone else already stored these exact
+        // bytes, so the server asks this device to show it has them rather
+        // than taking the hash as evidence. We do have them — that is where
+        // the hash came from.
+        proof: ticket.proofRange
+          ? await proofOfPossession(file.blob, ticket.proofRange)
+          : undefined,
       });
       hosted.push(hash);
       // Remembered locally so a later sync that cannot upload — unapproved,
       // capped, or just unlucky — still tells readers where these bytes are.
-      await markAudioFilesHosted([hash]);
+      // Collected here and written once below: this used to open a separate
+      // read-write transaction per hash.
+      newlyHosted.push(hash);
     } catch (error) {
       // These two mean every later file would fail the same way.
       if (
         error instanceof NotApprovedForAudioError ||
         error instanceof AudioHostingUnavailableError
       ) {
+        await rememberHosted();
         return { hosted, warnings, aborted: true };
       }
       if (error instanceof AudioQuotaError) {
@@ -137,6 +192,7 @@ export async function uploadProfileAudio(
         // The global cap will refuse everything else too; a personal quota
         // might still have room for a smaller file.
         if (error.reason === "global_cap") {
+          await rememberHosted();
           return { hosted, warnings, aborted: true };
         }
         continue;
@@ -147,6 +203,7 @@ export async function uploadProfileAudio(
     }
   }
 
+  await rememberHosted();
   return { hosted, warnings, aborted: false };
 }
 
@@ -220,7 +277,9 @@ export async function downloadProfileAudio(
         shareToken,
       );
 
-      const response = await fetch(ticket.url);
+      const response = await fetchWithTimeout(ticket.url, {
+        timeoutKind: "transfer",
+      });
       if (!response.ok) {
         // A presigned URL that has expired, or a bucket hiccup — both are
         // worth another attempt on the next sync.
