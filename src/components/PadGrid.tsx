@@ -226,7 +226,16 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     }
   }, [padConfigs, activeProfileId, currentPageIndex]);
 
-  // Delete key state tracking
+  // Delete key state tracking.
+  //
+  // `keyup` is not guaranteed to arrive: alt-tab away with Delete held and the
+  // browser gives the release to whatever has focus next, leaving this stuck
+  // on. It is only consulted in edit mode, where a stuck `true` turns an
+  // ordinary click on a pad into *removing its sound* — so returning to the
+  // tab and clicking a pad deleted it.
+  //
+  // `useKeyboardListener` learned this for the Shift key and added exactly
+  // these two guards; this listener predates that and never got them.
   const [isDeleteKeyDown, setIsDeleteKeyDown] = React.useState(false);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -235,11 +244,20 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Delete") setIsDeleteKeyDown(false);
     };
+    const release = () => setIsDeleteKeyDown(false);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") release();
+    };
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", release);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", release);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 

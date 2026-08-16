@@ -23,6 +23,7 @@ import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
 import { usePadConfigurations } from "@/hooks/usePadConfigurations";
+import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 
 // Interface for emergency sound configuration
 interface EmergencySound {
@@ -195,6 +196,10 @@ export function useKeyboardListener() {
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
+  // Everything that should own the keyboard while it is up — including the
+  // profile manager, which is rendered outside the modal system and so was
+  // missed by the `isModalOpen` guard below.
+  const isAnyOverlayOpen = useIsAnyOverlayOpen();
   const modalConfig = useUIStore((state) => state.modalConfig);
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
@@ -229,14 +234,22 @@ export function useKeyboardListener() {
     console.log("Reloading emergency sounds...");
     if (activeProfileId === null) {
       console.log("No active profile, skipping emergency sounds load");
+      emergencySoundsRef.current = [];
+      currentEmergencyIndexRef.current = 0;
       return;
     }
 
+    // Dropped before the await, not after it. These refs are module-global, so
+    // they survive a profile switch, and between the switch and this load
+    // resolving Enter played the *previous* profile's emergency sound. The
+    // pad-config effect already clears its map for the same reason. The old
+    // set is kept only to decide whether the round-robin cursor should reset.
+    const previousSounds = emergencySoundsRef.current;
+    emergencySoundsRef.current = [];
+
     // Load emergency sounds
     const sounds = await loadEmergencySounds(activeProfileId);
-    const previousIdentity = describeEmergencySounds(
-      emergencySoundsRef.current,
-    );
+    const previousIdentity = describeEmergencySounds(previousSounds);
     emergencySoundsRef.current = sounds;
 
     // Only restart the round-robin when the set of sounds actually changed,
@@ -290,8 +303,11 @@ export function useKeyboardListener() {
         return; // Stop further processing
       }
 
-      // While a modal is open it owns the keyboard (Escape, Tab, typing, etc.)
-      if (isModalOpen) {
+      // While anything is open on top it owns the keyboard (Escape, Tab,
+      // typing, etc.). This used to ask only about the modal system, so the
+      // profile manager — rendered outside it — left every pad key, bank key,
+      // Enter and Escape live behind the overlay.
+      if (isAnyOverlayOpen) {
         return;
       }
 
@@ -660,6 +676,7 @@ export function useKeyboardListener() {
       openSearchModal,
       isSearchModalOpen,
       isModalOpen,
+      isAnyOverlayOpen,
       modalConfig,
     ],
   );
