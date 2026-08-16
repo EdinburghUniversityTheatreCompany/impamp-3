@@ -170,6 +170,35 @@ The big splits. Deliberately after all correctness work.
       L11, L12
 - [ ] 13.7 L9: **ask Mick** before deleting the ~850 KB of orphaned docs
 
+## Deliberately not done, and why
+
+Everything with a behavioural consequence is fixed. What is left is
+structure-only, and each was weighed rather than forgotten:
+
+- **A1 — split `profileStore` (1161 lines).** The single riskiest change on the
+  list: five modules, every consumer touched, no bug driving it. The review
+  itself places it after all correctness work. Its *symptoms* are already
+  fixed — the whole-store subscriptions (A13), the queue leak (A4), the double
+  load sweep (UI7).
+- **A2 — `startSyncScheduler` out of `ClientSideInitializer`.** Same shape:
+  moves ~200 lines to make them testable. Worth doing; not worth doing in the
+  same breath as thirty behavioural fixes.
+- **AU5 — `triggerAudioForPadInstant` is 322 lines.** Its two actual defects
+  (the fallback's levels, the stop races) are fixed and tested. Splitting it now
+  would rewrite the file those tests were just written against.
+- **D8, UI2, A10, TH1, TH8** — modal-overlay consolidation, the EditPadForm
+  mirror, `useAppLifecycle`, more unit tests, e2e helper adoption. All real,
+  none load-bearing.
+- **L9 — deleting ~850 KB of orphaned docs** needs Mick's call, since it is
+  deletion of things he may still want (`docs/original-impamp-code.txt` is
+  exempted from two size gates specifically to keep it).
+- **L11 — committing `fnox.toml`** is his call too: the reason it is gitignored
+  is recorded and legitimate.
+
+These are a follow-up branch, not a gap in this one. The fresh review that
+follows will surface them independently, which is the right way to decide
+whether they are worth a second pass.
+
 ## Then
 
 Full unit + chromium E2E on the branch, merge to main, suites again on merged
