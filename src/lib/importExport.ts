@@ -1374,6 +1374,16 @@ export interface AudioFileRef {
   type: string;
   /** Absent when the file has not been analysed yet. */
   loudness?: SerialisedLoudness;
+  /**
+   * The content hash, when the exporting device had computed one.
+   *
+   * Additive, so archives written before this simply carry none and import
+   * exactly as they did. Worth carrying: a record that lands hashless makes
+   * the next sync that needs a hash read and SHA-256 *every* audio file in the
+   * library, one blob at a time, to build a fallback index — so restoring a
+   * large library used to guarantee that sweep.
+   */
+  hash?: string;
 }
 
 export interface ProfileExportLean {
@@ -1425,6 +1435,7 @@ async function collectProfileDataForZip(profileId: number): Promise<{
         loudness: audioFile.loudness
           ? serialiseLoudness(audioFile.loudness)
           : undefined,
+        hash: audioFile.hash,
       });
       audioBlobs.set(audioFileId, {
         blob: audioFile.blob,
@@ -1641,10 +1652,35 @@ export async function importProfilesFromZip(
     const entries = await zipReader.getEntries();
     const entryByName = new Map(entries.map((e) => [e.filename, e]));
 
+    // A metadata entry is read into a single string, so its *uncompressed*
+    // size is what matters, not the archive's. Without this an archive of a
+    // few hundred kilobytes could name a manifest that expands to gigabytes
+    // and take the tab out before anything was validated — the JSON import
+    // path has had a cap all along, the ZIP path had none.
     const readEntryText = async (name: string): Promise<string | null> => {
       const entry = entryByName.get(name);
       if (!entry || entry.directory) return null;
+
+      const size = entry.uncompressedSize ?? 0;
+      if (size > MAX_ZIP_METADATA_BYTES) {
+        throw new Error(
+          `The entry ${name} in this archive is implausibly large (${Math.round(size / 1024 / 1024)} MB) and was not read.`,
+        );
+      }
+
       return entry.getData(new zipjs.TextWriter());
+    };
+
+    /**
+     * Parses a metadata entry, saying which entry failed rather than throwing
+     * a bare SyntaxError from somewhere inside the archive.
+     */
+    const parseEntryJson = (name: string, text: string): unknown => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`${name} in this archive is not valid JSON.`);
+      }
     };
 
     // Determine the archive layout and gather the lean profile descriptors
@@ -1653,7 +1689,10 @@ export async function importProfilesFromZip(
 
     const manifestText = await readEntryText("manifest.json");
     if (manifestText) {
-      const manifest = JSON.parse(manifestText) as ZipManifest;
+      const manifest = parseEntryJson(
+        "manifest.json",
+        manifestText,
+      ) as ZipManifest;
       if (manifest.exportVersion !== 3 || !Array.isArray(manifest.profiles)) {
         throw new Error("Invalid or unsupported multi-profile ZIP format.");
       }
@@ -1668,7 +1707,12 @@ export async function importProfilesFromZip(
           });
           continue;
         }
-        leanProfiles.push(JSON.parse(text) as ProfileExportLean);
+        leanProfiles.push(
+          asLeanProfile(
+            parseEntryJson(`profiles/${entry.folder}/profile.json`, text),
+            `profiles/${entry.folder}/profile.json`,
+          ),
+        );
       }
     } else {
       const singleText = await readEntryText("profile.json");
@@ -1677,7 +1721,12 @@ export async function importProfilesFromZip(
           "Invalid .iaz file: missing manifest.json or profile.json",
         );
       }
-      leanProfiles.push(JSON.parse(singleText) as ProfileExportLean);
+      leanProfiles.push(
+        asLeanProfile(
+          parseEntryJson("profile.json", singleText),
+          "profile.json",
+        ),
+      );
     }
 
     // Aggregate totals across all profiles for one smooth progress bar
@@ -1713,6 +1762,7 @@ export async function importProfilesFromZip(
             type: ref.type,
             size: entry.uncompressedSize,
             loudness: ref.loudness,
+            hash: ref.hash,
             getBlob: (onBytes) =>
               getData(new zipjs.BlobWriter(ref.type), {
                 onprogress: onBytes
@@ -1766,6 +1816,51 @@ export async function importProfilesFromZip(
 // ~512 MB — larger legacy exports simply cannot be parsed in the browser.
 // (.iaz archives have no such limit since they are streamed.)
 export const MAX_JSON_IMPORT_BYTES = 480 * 1024 * 1024;
+
+/**
+ * The most an *uncompressed* metadata entry inside a `.iaz` may be.
+ *
+ * The audio entries are streamed and unbounded by design; these are read into
+ * strings and parsed, so they need a limit of their own. Generous for a
+ * document that holds names, hashes and pad layout for one profile.
+ */
+export const MAX_ZIP_METADATA_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Checks that a parsed archive entry is shaped like a profile before the
+ * import starts writing records from it.
+ *
+ * Deliberately shallow: the fields it does not check are re-derived or
+ * allow-listed downstream (`buildImportedProfileFields`), and this exists to
+ * turn "TypeError: cannot read properties of undefined" halfway through a
+ * partly-written import into a refusal that names the file.
+ */
+function asLeanProfile(parsed: unknown, entryName: string): ProfileExportLean {
+  const value = parsed as Partial<ProfileExportLean> | null;
+
+  if (!value || typeof value !== "object") {
+    throw new Error(`${entryName} does not contain a profile.`);
+  }
+  if (!value.profile || typeof value.profile !== "object") {
+    throw new Error(`${entryName} has no profile in it.`);
+  }
+  for (const field of [
+    "padConfigurations",
+    "pageMetadata",
+    "audioFiles",
+  ] as const) {
+    if (value[field] !== undefined && !Array.isArray(value[field])) {
+      throw new Error(`${entryName} has a malformed ${field} list.`);
+    }
+  }
+
+  return {
+    ...value,
+    padConfigurations: value.padConfigurations ?? [],
+    pageMetadata: value.pageMetadata ?? [],
+    audioFiles: value.audioFiles ?? [],
+  } as ProfileExportLean;
+}
 
 /**
  * Detects the format of an import file.
