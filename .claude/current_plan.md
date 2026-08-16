@@ -194,6 +194,13 @@ Started 2026-08-15, in `.worktrees/fix/repo-review` on `fix/repo-review`.
 | `1598b37` | C2 — duplicating a profile keeps its gain settings |
 | `645d775` | S4, I1, I7, I8 — build context, root, debug echo, deploy notes |
 | `988084d` | C4 — one source of pad configs; the keyboard can't go stale |
+| `2c718dd` | R1, R5, P2, P5 — server stops reading the DB to answer small questions |
+| `be96265` | T1, TH4, TH6 — the delete-protection test can now fail |
+| `15e17a0` | R2, L10 — every outbound request has a deadline; lint clean |
+| `6cca9e6` | R4 — no re-uploading a library the server already has |
+| `886832f` | S2 — proof of the bytes, not just knowledge of the hash |
+| `a0b0004` | U2 — profile manager mounted only while open (427→378 KB) |
+| `3fb5e0a` | R3 — loudness off the main thread, and 5x cheaper |
 
 **Verification:** 545 unit tests green (was 519), typecheck clean, full chromium
 e2e 122/122 against a real build, and the Docker image built and run (uid 1000,
@@ -210,5 +217,12 @@ backup command using `sqlite3` inside the app container, which has no sqlite3
 binary — so the one documented recovery procedure could never have run. Fix in
 phase 13.
 
-**Next step:** phase 6's server 🔴s (S2, R1, R5), then phase 7's
-`fetchWithTimeout` (R2).
+### 🔴 ALL DONE — 17 of 17 actionable (S3 excluded by Mick)
+
+Every 🔴 in the report is fixed, each with a test that fails against the old
+code where one is expressible, and each verified against the running app.
+Standing totals: **576 unit tests** (was 519), **123/123 chromium e2e**,
+typecheck and lint clean, Docker image built and run.
+
+**Next step:** the 🟡s, in plan order — phase 3's remaining sync items (A5, A6,
+A7, SV5), then phase 4's A8/A9/UI5, phase 5's storage work, and so on.
