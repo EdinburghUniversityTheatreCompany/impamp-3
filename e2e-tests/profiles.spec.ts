@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { prepareAudioContext, gotoApp, waitForAppReady } from "./test-helpers";
+import {
+  prepareAudioContext,
+  gotoApp,
+  waitForAppReady,
+  createAndSwitchToProfile,
+  openProfileManager,
+} from "./test-helpers";
 
 test.describe("ImpAmp3 Profile Management", () => {
   test.beforeEach(async ({ page }) => {
@@ -57,7 +63,7 @@ test.describe("ImpAmp3 Profile Management", () => {
 
     // Close the profile manager
     const closeButton = page.getByLabel("Close");
-    closeButton.click();
+    await closeButton.click();
     await expect(
       page.getByRole("heading", { name: "Profile Manager" }),
     ).toBeHidden();
@@ -71,7 +77,7 @@ test.describe("ImpAmp3 Profile Management", () => {
     await expect(testProfilebutton).toBeVisible();
 
     // Click on the new profile to switch to it
-    testProfilebutton.click();
+    await testProfilebutton.click();
 
     // Verify the new profile is now active
     await expect(profileSelector).toContainText("Test Profile");
@@ -84,28 +90,38 @@ test.describe("ImpAmp3 Profile Management", () => {
     await expect(profileSelector).toContainText("Test Profile");
   });
 
-  test("Cannot delete the active profile", async ({ page }) => {
-    // Find and click profile selector
-    const profileSelector = await page.getByRole("button", {
-      name: /profile/i,
-    });
-    await profileSelector.click();
+  test("Cannot delete the active profile, but can delete another", async ({
+    page,
+  }) => {
+    // This used to look for `[role="listitem"]`, which appears nowhere in the
+    // app — ProfileManager renders ProfileCards inside plain divs. toBeHidden()
+    // passes on an element that does not exist, so the test passed whatever the
+    // app did, including the regression it exists to catch.
+    //
+    // It also asserted only the negative half. Deleting the guard would still
+    // leave "no Delete button on the active card" true if the button vanished
+    // for some unrelated reason, so the positive half is asserted too: the card
+    // that *is* deletable has to have one.
+    await createAndSwitchToProfile(page, "Second Profile");
 
-    // Open the manage profiles modal
-    await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
-    await expect(page.getByText(/Profile Manager/i)).toBeVisible();
+    await openProfileManager(page);
 
-    // Find the delete button for the active profile (assuming Default is active initially)
-    const activeProfileItem = page
-      .locator('[role="listitem"]')
-      .filter({ hasText: /Default/i })
-      .first();
-    const deleteButton = activeProfileItem.getByRole("button", {
-      name: /delete/i,
-    });
+    const activeCard = page
+      .getByTestId("profile-card")
+      .filter({ hasText: "Second Profile" });
+    const inactiveCard = page
+      .getByTestId("profile-card")
+      .filter({ hasText: "Default" });
 
-    // Delete button should be hidden for active profile
-    await expect(deleteButton).toBeHidden();
+    await expect(activeCard).toBeVisible();
+    await expect(inactiveCard).toBeVisible();
+
+    await expect(
+      activeCard.getByRole("button", { name: "Delete", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      inactiveCard.getByRole("button", { name: "Delete", exact: true }),
+    ).toBeVisible();
   });
 
   test("Can import an impamp2 profile file", async ({ page }) => {

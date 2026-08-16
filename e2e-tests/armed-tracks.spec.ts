@@ -526,9 +526,11 @@ test.describe("Armed tracks keep their sounds in the audio cache", () => {
     await page
       .locator('[data-testid="pad-drop-input-0"]')
       .setInputFiles(audioFilePath);
-    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName, {
-      timeout: 5000,
-    });
+    // No per-assertion timeout: playwright.config.ts sets expect.timeout to
+    // 15s precisely because 5000 — Playwright's old default written longhand —
+    // left no headroom for decode + Blob into IndexedDB + re-render under
+    // parallel load, and that is what made this suite flaky before.
+    await expect(page.locator('[id^="pad-"]').first()).toContainText(fileName);
   }
 
   test("Arming a pad pins its sound and preloads it into the cache", async ({
