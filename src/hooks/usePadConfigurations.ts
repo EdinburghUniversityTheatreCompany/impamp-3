@@ -9,7 +9,36 @@ interface UsePadConfigurationsResult {
   refetch: () => void; // Added a refetch function for manual refresh if needed
 }
 
-const NO_CONFIGS: Map<number, PadConfiguration> = new Map();
+/**
+ * The empty result, shared so every "no pads right now" is the same object and
+ * a consumer holding it in a ref does not see a change that isn't one.
+ */
+export const NO_CONFIGS: Map<number, PadConfiguration> = new Map();
+
+/**
+ * The pads a trigger may act on, as opposed to the pads worth drawing.
+ *
+ * These differ, and the difference is the whole point. This hook keeps the
+ * last successful result while the next read is in flight so the grid does not
+ * blank on every bank change — but during that window the map describes the
+ * bank you just left, under the new bank's key positions. Rendering it for a
+ * frame is a cosmetic choice; playing, arming, editing or deleting from it is
+ * not, and it is the same wrong sound either way.
+ *
+ * Written once because it was previously written once: `PadGrid` guarded its
+ * mouse path and `useKeyboardListener` did not, so the keyboard kept firing the
+ * previous bank's sounds long after the click path stopped.
+ *
+ * @param padConfigs - The latest configs on hand
+ * @param isLoading - Whether a newer read is still in flight
+ * @returns The configs safe to act on, empty while loading
+ */
+export function actionablePadConfigs(
+  padConfigs: Map<number, PadConfiguration>,
+  isLoading: boolean,
+): Map<number, PadConfiguration> {
+  return isLoading ? NO_CONFIGS : padConfigs;
+}
 
 /** What we last finished fetching, and for which request. */
 interface FetchResult {

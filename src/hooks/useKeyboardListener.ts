@@ -22,7 +22,10 @@ import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
-import { usePadConfigurations } from "@/hooks/usePadConfigurations";
+import {
+  usePadConfigurations,
+  actionablePadConfigs,
+} from "@/hooks/usePadConfigurations";
 import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 
 // Interface for emergency sound configuration
@@ -214,14 +217,14 @@ export function useKeyboardListener() {
   //
   // Held in a ref as well as read from the hook so `handleKeyDown` does not
   // have to be rebuilt (and the window listeners re-attached) on every change.
-  const { padConfigs } = usePadConfigurations(
+  const { padConfigs, isLoading: isLoadingConfigs } = usePadConfigurations(
     activeProfileId === null ? null : String(activeProfileId),
     currentPageIndex,
   );
   const padConfigsRef = useRef<Map<number, PadConfiguration>>(padConfigs);
   useEffect(() => {
-    padConfigsRef.current = padConfigs;
-  }, [padConfigs]);
+    padConfigsRef.current = actionablePadConfigs(padConfigs, isLoadingConfigs);
+  }, [padConfigs, isLoadingConfigs]);
 
   // Reference to track if we've loaded emergency sounds
   const hasLoadedEmergencySounds = useRef(false);

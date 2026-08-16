@@ -269,6 +269,12 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       // resolving these are still the *previous* bank's pads — shown under the
       // new bank's number. Acting on them played the old bank's sound at the
       // new bank's position, and in edit mode edited or deleted it.
+      //
+      // Same rule as `actionablePadConfigs`, which is what the keyboard path
+      // uses; an early return is the shape that fits here because an empty pad
+      // is still a legitimate click target in edit mode. Change one, change
+      // both — the keyboard went without this guard for a while and fired the
+      // previous bank's sounds the whole time.
       if (isLoadingConfigs) return;
 
       const config = padConfigs.get(padIndex);
