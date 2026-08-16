@@ -152,7 +152,20 @@ export function mirrorToProfile<
     },
     onError: (error: string | null) => {
       callbacks.onError(error);
+      // Clearing warnings alongside a *new* error state would be wrong, but a
+      // successful sync reports its warnings after onStatusChange, so they
+      // land after this and survive.
       syncStatusActions.patch(profileId, { error });
+    },
+    onWarnings: (warnings: string[]) => {
+      (callbacks as { onWarnings?: (w: string[]) => void }).onWarnings?.(
+        warnings,
+      );
+      // Without this the whole channel was write-only for background syncs.
+      // They run in ClientSideInitializer's hook instance, so a warning raised
+      // there was stored where no profile card could ever see it — the exact
+      // shape this store was introduced to fix.
+      syncStatusActions.patch(profileId, { warnings });
     },
     onConflictsDetected: (conflicts: ItemConflict[]) => {
       local.setConflicts(conflicts);

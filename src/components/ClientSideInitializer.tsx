@@ -361,27 +361,39 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
   // pushes "profile N moved to version V" and we pull immediately. The
   // periodic full sync below stays as a backstop for a dropped stream.
   useEffect(() => {
-    const subscriptions = new Map<number, () => void>();
+    // Keyed on everything the stream is *for*, not just which profile it
+    // belongs to. Keyed by profile id alone, a profile that was re-linked to a
+    // different server profile, or whose share token was rotated or revoked
+    // and re-issued, kept its old EventSource: the `continue` below saw a
+    // subscription already existed and left it pointed at the old id. It then
+    // either 401s forever — `onerror` only logs — or delivers changes for a
+    // profile this device is no longer looking at.
+    const subscriptions = new Map<string, () => void>();
+
+    const streamKeyFor = (profile: Profile) =>
+      `${profile.id}:${profile.serverProfileId}:${profile.serverShareToken ?? ""}`;
 
     const reconcileSubscriptions = (profiles: Profile[]) => {
       const wanted = new Map(
         profiles
           .filter((p) => isServerSynced(p) && p.serverProfileId)
-          .map((p) => [p.id!, p]),
+          .map((p) => [streamKeyFor(p), p]),
       );
 
-      // Drop streams for profiles that are gone or no longer server-synced.
-      for (const [profileId, unsubscribe] of subscriptions) {
-        if (!wanted.has(profileId)) {
+      // Drop streams for profiles that are gone, no longer server-synced, or
+      // whose identity or credential has changed.
+      for (const [streamKey, unsubscribe] of subscriptions) {
+        if (!wanted.has(streamKey)) {
           unsubscribe();
-          subscriptions.delete(profileId);
+          subscriptions.delete(streamKey);
         }
       }
 
-      for (const [profileId, profile] of wanted) {
-        if (subscriptions.has(profileId)) continue;
+      for (const [streamKey, profile] of wanted) {
+        if (subscriptions.has(streamKey)) continue;
+        const profileId = profile.id!;
         subscriptions.set(
-          profileId,
+          streamKey,
           subscribeToProfileChanges(
             profile.serverProfileId!,
             profile.serverShareToken ?? null,

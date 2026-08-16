@@ -500,6 +500,66 @@ describe("syncServerProfile — who may publish audio to Drive", () => {
   });
 });
 
+/**
+ * The recurring trap in this codebase: the sync that finds something is almost
+ * never the one a profile card is holding. Scheduled and SSE-driven syncs run
+ * in ClientSideInitializer's hook instance, so anything reported only to the
+ * caller that *started* a run is invisible to the card.
+ */
+describe("syncServerProfile — a caller that joins a running sync", () => {
+  beforeEach(() => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1", serverRole: "owner" }),
+    );
+    serverAudioMocks.uploadProfileAudio.mockResolvedValue({
+      hosted: [],
+      warnings: [],
+      aborted: false,
+    });
+  });
+
+  it("hears how the run ended, rather than waiting forever", async () => {
+    // Joining used to hand back the promise and drop the joiner's callbacks,
+    // so a card that pressed "Sync now" during a background sync sat on
+    // "syncing" with its button disabled until the panel was reopened.
+    const background = callbacks();
+    const joiner = callbacks();
+
+    const first = syncServerProfile(PROFILE_ID, background);
+    const second = syncServerProfile(PROFILE_ID, joiner);
+
+    await Promise.all([first, second]);
+
+    expect(joiner.onStatusChange).toHaveBeenLastCalledWith("success");
+    expect(joiner.onError).toHaveBeenCalledWith(null);
+  });
+
+  it("still runs the sync only once", async () => {
+    const background = callbacks();
+    const joiner = callbacks();
+
+    await Promise.all([
+      syncServerProfile(PROFILE_ID, background),
+      syncServerProfile(PROFILE_ID, joiner),
+    ]);
+
+    // The whole point of the in-flight map: two callers, one push.
+    expect(apiMocks.pushServerProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives both callers the same result", async () => {
+    const [a, b] = await Promise.all([
+      syncServerProfile(PROFILE_ID, callbacks()),
+      syncServerProfile(PROFILE_ID, callbacks()),
+    ]);
+
+    expect(a.status).toBe("success");
+    expect(b).toEqual(a);
+  });
+});
+
 describe("syncServerProfile — warnings are not errors", () => {
   beforeEach(() => {
     apiMocks.fetchServerProfile.mockResolvedValue(null);

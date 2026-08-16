@@ -248,13 +248,45 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
             onDriveTokenRefresh,
           );
         },
+        // A transition's whole point is to establish the profile at its new
+        // home, so anything short of a completed sync has to fail it. Only
+        // "error" used to count, which meant a *paused* profile — or one whose
+        // first sync hit a conflict — reported the move as successful while
+        // nothing had been published, leaving exactly the
+        // `server-awaiting-first-sync` defect the state model exists to name.
+        // "unchanged" is a success: the destination already has this profile.
         driveSyncNow: async (id) => {
           const result = await syncDriveProfile(id);
           if (result.status === "error") throw new Error(result.error);
+          if (result.status === "paused") {
+            throw new Error(
+              "Sync is paused for this profile, so it was not published. Resume sync and try again.",
+            );
+          }
+          if (result.status === "skipped") {
+            throw new Error(
+              "This profile was not published to Drive, so the move did not complete.",
+            );
+          }
+          if (result.status === "conflict") {
+            throw new Error(
+              "Drive has a conflicting copy of this profile. Resolve it before moving.",
+            );
+          }
         },
         serverSyncNow: async (id) => {
           const result = await syncServerProfile(id);
           if (result.status === "error") throw new Error(result.error);
+          if (result.status === "skipped") {
+            throw new Error(
+              `This profile was not published to the server, so the move did not complete: ${result.reason}`,
+            );
+          }
+          if (result.status === "conflict") {
+            throw new Error(
+              "The server has a conflicting copy of this profile. Resolve it before moving.",
+            );
+          }
         },
         deleteServerProfile,
         confirmDeleteServerProfile,

@@ -44,6 +44,7 @@ import {
   TokenInfo,
   ItemConflict,
 } from "./types";
+import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -386,6 +387,7 @@ async function pullPublicReadOnlyProfile(
   fileId: string,
   onStatusChange: (status: SyncStatus) => void,
   onError: (error: string | null) => void,
+  onWarnings?: (warnings: string[]) => void,
 ): Promise<SyncResult> {
   console.log(
     `Pulling read-only profile ${profileId} via public proxy (file ${fileId})...`,
@@ -424,7 +426,7 @@ async function pullPublicReadOnlyProfile(
   remoteData._lastSyncTimestamp = Date.now();
   const warnings = await updateLocalData(profileId, remoteData);
   if (warnings.length > 0) {
-    onError(warnings.join("\n"));
+    onWarnings?.(warnings);
   }
 
   onStatusChange("success");
@@ -438,6 +440,15 @@ async function pullPublicReadOnlyProfile(
 interface SyncStatusCallbacks {
   onStatusChange: (status: SyncStatus) => void;
   onError: (error: string | null) => void;
+  /**
+   * Things that went wrong without the sync failing — a sound that could not
+   * be fetched, say. Drive used to report these through `onError`, which the
+   * UI paints red, so a sync that merely missed one file showed as failed;
+   * meanwhile `status.warnings` stayed empty for every Drive profile, which
+   * the store's own docstring says is exactly the bug it exists to prevent.
+   * The server backend already had this channel.
+   */
+  onWarnings?: (warnings: string[]) => void;
   onConflictsDetected: (conflicts: ItemConflict[]) => void;
   onConflictDataAvailable: (data: SyncConflictData | null) => void;
 }
@@ -457,36 +468,6 @@ const inFlightSyncs = new Map<number, Promise<SyncResult>>();
  * was closed and reopened.
  */
 const inFlightListeners = new Map<number, Set<SyncStatusCallbacks>>();
-
-/**
- * Say how a run ended to a caller that missed the live events.
- *
- * A joiner can arrive after the terminal callback has already fired, so the
- * outcome is replayed from the result rather than only forwarded as it
- * happens. Setting the same terminal state twice is harmless; never setting
- * it is what leaves the UI claiming a sync is still going.
- */
-const replayOutcome = (
-  result: SyncResult,
-  callbacks: SyncStatusCallbacks,
-): void => {
-  switch (result.status) {
-    case "success":
-      callbacks.onError(null);
-      callbacks.onStatusChange("success");
-      break;
-    case "error":
-      callbacks.onError(result.error);
-      callbacks.onStatusChange("error");
-      break;
-    case "conflict":
-      callbacks.onConflictsDetected(result.conflicts);
-      callbacks.onStatusChange("conflict");
-      break;
-    default:
-      callbacks.onStatusChange("idle");
-  }
-};
 
 /**
  * Synchronize a profile with Google Drive.
@@ -512,7 +493,7 @@ export const syncProfile = (
     listeners?.add(callbacks);
     return inFlight.then((result) => {
       listeners?.delete(callbacks);
-      replayOutcome(result, callbacks);
+      replaySyncOutcome(result, callbacks);
       return result;
     });
   }
@@ -522,15 +503,7 @@ export const syncProfile = (
 
   // The run reports to whoever is waiting at the time, not only to whoever
   // started it.
-  const fanOut: SyncStatusCallbacks = {
-    onStatusChange: (status) =>
-      listeners.forEach((one) => one.onStatusChange(status)),
-    onError: (error) => listeners.forEach((one) => one.onError(error)),
-    onConflictsDetected: (conflicts) =>
-      listeners.forEach((one) => one.onConflictsDetected(conflicts)),
-    onConflictDataAvailable: (data) =>
-      listeners.forEach((one) => one.onConflictDataAvailable(data)),
-  };
+  const fanOut = fanOutSyncCallbacks(listeners);
 
   const run = performProfileSync(
     profileId,
@@ -555,6 +528,7 @@ const performProfileSync = async (
   const {
     onStatusChange,
     onError,
+    onWarnings,
     onConflictsDetected,
     onConflictDataAvailable,
   } = callbacks;
@@ -610,6 +584,7 @@ const performProfileSync = async (
           localProfile.googleDriveFileId,
           onStatusChange,
           onError,
+          onWarnings,
         );
       }
       onStatusChange("error");
@@ -650,6 +625,7 @@ const performProfileSync = async (
         localProfile.googleDriveFileId,
         onStatusChange,
         onError,
+        onWarnings,
       );
     }
 
@@ -852,7 +828,7 @@ const performProfileSync = async (
       console.log(`Profile ${profileId} synced successfully.`);
       if (warnings.length > 0) {
         console.warn(`Profile ${profileId} synced with warnings:`, warnings);
-        onError(warnings.join("\n"));
+        onWarnings?.(warnings);
       }
       return {
         status: "success",
@@ -894,6 +870,7 @@ export const applyConflictResolution = async (
   const {
     onStatusChange,
     onError,
+    onWarnings,
     onConflictsDetected,
     onConflictDataAvailable,
   } = callbacks;
@@ -971,7 +948,7 @@ export const applyConflictResolution = async (
         `Conflict resolution for profile ${profileId} produced warnings:`,
         warnings,
       );
-      onError(warnings.join("\n"));
+      onWarnings?.(warnings);
     }
 
     return {

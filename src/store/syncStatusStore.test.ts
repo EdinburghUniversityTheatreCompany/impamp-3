@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   IDLE_SYNC_STATUS,
+  mirrorToProfile,
   syncStatusActions,
   useSyncStatusStore,
 } from "@/store/syncStatusStore";
@@ -11,6 +12,33 @@ const read = (profileId: number) =>
 describe("syncStatusStore", () => {
   beforeEach(() => {
     syncStatusActions.clearAll();
+  });
+
+  it("carries a background sync's warnings to where a card can see them", () => {
+    // The sync that finds a problem is almost never the one a profile card is
+    // holding: scheduled and SSE-driven syncs run in ClientSideInitializer's
+    // hook instance. Warnings used to be the one callback `mirrorToProfile`
+    // did not mirror, so they were stored where nothing could read them.
+    const local = { setConflicts: () => {}, setConflictData: () => {} };
+    const seen: string[][] = [];
+
+    const mirrored = mirrorToProfile(
+      7,
+      {
+        onStatusChange: () => {},
+        onError: () => {},
+        onWarnings: (w: string[]) => seen.push(w),
+        onConflictsDetected: () => {},
+        onConflictDataAvailable: () => {},
+      },
+      local,
+    ) as { onWarnings: (w: string[]) => void };
+
+    mirrored.onWarnings(["horn.mp3: could not be downloaded"]);
+
+    expect(read(7)?.warnings).toEqual(["horn.mp3: could not be downloaded"]);
+    // The caller's own callback still runs.
+    expect(seen).toEqual([["horn.mp3: could not be downloaded"]]);
   });
 
   it("starts every profile idle", () => {
