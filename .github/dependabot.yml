@@ -1,0 +1,49 @@
+# Nothing proposed dependency updates, so they accumulated by hand — which is
+# also how three GitHub Actions ended up pinned at two different SHAs each.
+#
+# Grouped and weekly rather than one PR per package: this is a single-maintainer
+# repo, and a stream of individual bumps is a stream nobody reads.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Supply-chain seasoning: never propose a release less than a week old, so
+    # a compromised publish has time to be noticed and yanked.
+    #
+    # Seven rather than the four in mise.toml and scripts/run-jscpd.sh, which
+    # is what zizmor's dependabot-cooldown audit asks for and what this gate
+    # fails below. The two are not quite the same question either: those cover
+    # *tooling* pulled at run time by someone watching the output, this covers
+    # application dependencies proposed for merge on a schedule.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      # Patch and minor together — the ones that should just go in once CI is
+      # green. Majors stay separate so they get read.
+      routine:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Held back deliberately, with the reasons and retry conditions in
+      # plans/deferred-upgrades.md. Dependabot cannot know that, and would
+      # reopen these every week.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      - dependency-name: file-selector
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

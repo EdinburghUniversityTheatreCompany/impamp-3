@@ -39,6 +39,22 @@ local linters = new Mapping<String, Step> {
     // The version-cooldown policy (latest on a 4-day cooldown, floored at v5) and the
     // offline fallback live in scripts/run-jscpd.sh, shared with the CI audit job so the
     // local and CI gates can't drift.
+    // ESLint and the unit suite: CI runs both (the `unit` job), and this file
+    // ran neither — so a lint error or a failing test committed cleanly and was
+    // only caught after push. Every other gate here carries a comment claiming
+    // CI/pre-commit parity; these two were the exception, and they are the two
+    // most likely to catch a real regression.
+    ["eslint"] {
+        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx")
+        check = "npx eslint {{ files }}"
+        fix = "npx eslint --fix {{ files }}"
+    }
+    // Not glob-gated to the changed files: a change in one module breaks tests
+    // in another, which is the whole reason to run them.
+    ["vitest"] {
+        glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx")
+        check = "npx vitest run"
+    }
     ["jscpd"] {
         glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.css", "**/*.scss")
         check = "bash scripts/run-jscpd.sh javascript,typescript,css,scss"

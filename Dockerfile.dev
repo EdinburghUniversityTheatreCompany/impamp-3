@@ -1,12 +1,21 @@
 # Development Dockerfile for ImpAmp3
-FROM node:22-alpine
+#
+# Kept in step with .node-version, mise.toml and the production Dockerfile —
+# CLAUDE.md says Node 24.19.0 "everywhere", and this was on 22 because
+# scripts/check_version_sync.sh only looked at `Dockerfile` and `Containerfile`.
+# Anyone using the documented `COMPOSE_PROFILES=development docker-compose up`
+# path was developing on a different major from CI.
+ARG NODE_VERSION=24.19.0
+FROM node:${NODE_VERSION}-alpine
 
 # Set working directory
 WORKDIR /app
 
 # Install development dependencies
 COPY package*.json ./
-RUN npm install
+# `npm ci`, not `npm install`: the dev container should reproduce the lockfile
+# rather than quietly resolve its own versions.
+RUN npm ci
 
 # Copy application files
 # No need to copy node_modules as it's mounted as a volume in docker-compose.yml

@@ -93,10 +93,10 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -174,10 +174,10 @@ jobs:
       matrix:
         browser: [firefox, webkit]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -192,7 +192,7 @@ jobs:
           BROWSER: ${{ matrix.browser }}
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-${{ matrix.browser }}
           path: playwright-report/
@@ -209,6 +209,18 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
+      - name: Install dependencies
+        run: npm ci
+      - name: Known vulnerabilities (npm audit)
+        # The job was called `audit` and audited nothing but duplication and
+        # file sizes. Production dependencies only and high-or-worse, so a dev
+        # tool's advisory does not block a deploy but a shipped one does.
+        run: npm audit --omit=dev --audit-level=high
+      - name: Pinned action refs
+        # The header of this file has always said to verify with this script.
+        # It did not exist, which is very likely why three actions had drifted
+        # to two different SHAs each.
+        run: bash scripts/check_action_refs.sh
       - name: Duplication (jscpd)
         # -f scopes to code formats; .jscpd.json carries minTokens/threshold/reporters/ignore.
         # Runner + version policy (latest on a 4-day cooldown, floored at v5 — see

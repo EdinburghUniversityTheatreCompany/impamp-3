@@ -42,14 +42,16 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
 - **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
-- **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), and automatic [Google Drive Import/Export](docs/google-drive-sync.md).
+- **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), automatic [Google Drive sync](docs/google-drive-sync.md), and [sync against the app's own server](docs/server-sync.md) with live change notifications.
+- **Server-hosted audio** (optional): keep sounds in the app's own storage rather than Drive — see [docs/wasabi-audio.md](docs/wasabi-audio.md).
+- **Loudness normalisation**: every sound is measured once to BS.1770-4 so pads play at a consistent level — see [docs/loudness-normalisation.md](docs/loudness-normalisation.md).
 - **Containerization**: Deployed as a Docker container for easy deployment
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js (v18.x or later)
+- Node.js 24.19.0 (see `.node-version`; `node:sqlite` needs >= 22.13, so 18 and 20 cannot run the server-sync layer at all)
 - npm (v9.x or later)
 
 ### Installation
@@ -74,6 +76,13 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
    ```
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser
+
+5. Run the tests
+
+   ```bash
+   npm test          # unit and API suite (Vitest)
+   npm run test:e2e  # end-to-end (Playwright)
+   ```
 
 ### Building for Production
 
@@ -162,7 +171,7 @@ ImpAmp3 is configured as a Progressive Web App (PWA), which means it:
 - Caches audio files for offline playback
 - Updates automatically when new versions are deployed
 
-For installation instructions on different devices, refer to the [PWA Usage Guide](docs/pwa-usage-guide.md).
+It installs like any other PWA: your browser's "Install app" or "Add to Home Screen". (This used to link a `docs/pwa-usage-guide.md` that has never existed.)
 
 ## Usage
 
@@ -215,12 +224,12 @@ whenever dependencies are upgraded.
 - **Local Storage**: IndexedDB (via idb 8)
 - **Audio**: Web Audio API
 - **File Handling**: react-dropzone 20
-- **Testing**: Playwright 1.62 (chromium is what CI gates on)
+- **Testing**: Vitest 4 for the unit and API suite (`npm test`), Playwright 1.62 for end-to-end (chromium is what CI gates on)
 - **Linting**: ESLint 9 + eslint-config-next 16, Prettier 3.9
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENCE)
 
 ## Contributing
 
