@@ -176,6 +176,37 @@ async function loadAndDecodeAudioUnshared(
 }
 
 /**
+ * Hands out a fixed number of decode slots, queueing callers beyond that.
+ *
+ * A counter rather than "wait until the set of running work drains": the work
+ * promises are what a caller is *part of*, so waiting on them is waiting on
+ * yourself. Releasing passes the slot straight to the next waiter instead of
+ * decrementing, so a slot cannot be taken by a caller that arrives in the gap.
+ */
+function createDecodeSlots(limit: number) {
+  let inUse = 0;
+  const waiting: Array<() => void> = [];
+
+  return {
+    async acquire(): Promise<void> {
+      if (inUse < limit) {
+        inUse++;
+        return;
+      }
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    },
+    release(): void {
+      const next = waiting.shift();
+      if (next) {
+        next();
+        return;
+      }
+      inUse--;
+    },
+  };
+}
+
+/**
  * Load and decode audio files with pipelined processing - starts decoding as soon as files are loaded
  *
  * @param audioFileIds - Array of audio file IDs to load and decode
@@ -200,8 +231,11 @@ export async function loadAndDecodeAudioPipelined(
     `[Audio Decoder] Starting pipelined load & decode for ${uniqueIds.length} files...`,
   );
 
-  // Track ongoing decode operations
-  const activeDecodes = new Set<Promise<AudioBuffer | null>>();
+  // Work still running, and the slots that cap how much of it decodes at once.
+  // Two things, deliberately: the set says what to wait for, the slots say what
+  // may proceed. Conflating them is what deadlocked this function.
+  const activeWork = new Set<Promise<AudioBuffer | null>>();
+  const decodeSlots = createDecodeSlots(Math.max(1, maxConcurrentDecodes));
   let loadedCount = 0;
   let decodedCount = 0;
 
@@ -246,9 +280,10 @@ export async function loadAndDecodeAudioPipelined(
 
           // Wait for a decode slot. Holding the in-flight entry across this is
           // the point: a joiner waits for our decode instead of starting one.
-          while (activeDecodes.size >= maxConcurrentDecodes) {
-            await Promise.race(activeDecodes);
-          }
+          // Which also means a wait that cannot end strands every keypress for
+          // this file, so the slot must come from somewhere this task is not
+          // itself a member of.
+          await decodeSlots.acquire();
 
           try {
             console.log(
@@ -266,17 +301,19 @@ export async function loadAndDecodeAudioPipelined(
             results.set(id, null);
             decodedCount++;
             return null;
+          } finally {
+            decodeSlots.release();
           }
         });
 
-        activeDecodes.add(work);
+        activeWork.add(work);
         // `.catch` as well as `.finally`: this branch is not awaited, so a
         // rejection here would surface as an unhandled rejection even though
         // the `await` below handles it.
         void work
           .catch(() => undefined)
           .finally(() => {
-            activeDecodes.delete(work);
+            activeWork.delete(work);
           });
 
         // Awaited, so a batch completes before the next one starts. Slightly
@@ -300,7 +337,7 @@ export async function loadAndDecodeAudioPipelined(
   }
 
   // Wait for all remaining decode operations to complete
-  await Promise.allSettled(activeDecodes);
+  await Promise.allSettled(activeWork);
 
   const endTime = performance.now();
   const totalDuration = endTime - startTime;
