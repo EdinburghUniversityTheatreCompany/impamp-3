@@ -4,6 +4,7 @@ import { deleteProfile, updateProfile } from "@/lib/server/profiles";
 import { publishProfileChange } from "@/lib/server/events";
 import {
   loadAuthorizedProfile,
+  loadAuthorizedProfileMeta,
   parseProfileBody,
   etagMatches,
   parseVersionHeader,
@@ -28,15 +29,23 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
-  if (loaded instanceof NextResponse) return loaded;
+  // Meta first: the change poll is a conditional GET that almost always ends
+  // in 304, and answering it does not need the blob. This used to read up to
+  // MAX_PROFILE_BODY_BYTES off disk before even computing the ETag, which is
+  // what made the comment above ("costs almost nothing") untrue.
+  const meta = loadAuthorizedProfileMeta(request, id);
+  if (meta instanceof NextResponse) return meta;
 
-  const { profile, access } = loaded;
-  const etag = profileEtag(profile.version, access);
+  const { access } = meta;
+  const etag = profileEtag(meta.profile.version, access);
 
   if (etagMatches(request.headers.get("if-none-match"), etag)) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag } });
   }
+
+  const loaded = loadAuthorizedProfile(request, id);
+  if (loaded instanceof NextResponse) return loaded;
+  const { profile } = loaded;
 
   return NextResponse.json(
     {
@@ -121,7 +130,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
+  // Only `version` is read below, so the blob stays on disk.
+  const loaded = loadAuthorizedProfileMeta(request, id);
   if (loaded instanceof NextResponse) return loaded;
 
   if (loaded.access !== "owner") {

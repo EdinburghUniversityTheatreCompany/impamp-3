@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeProfileRequest, isErrorResponse } from "./apiAuth";
-import { getProfileById } from "./profiles";
+import { getProfileById, getProfileMeta, type ProfileMeta } from "./profiles";
 import type { Access, ProfileRow, UserRow } from "./db";
 
 export interface AuthorizedProfile {
@@ -36,9 +36,48 @@ export function loadAuthorizedProfile(
   return { profile, access: auth.access, user: auth.user };
 }
 
+export interface AuthorizedProfileMeta {
+  profile: ProfileMeta;
+  access: Access;
+  user: AuthorizedProfile["user"];
+}
+
+/**
+ * The same authorisation, without reading the blob.
+ *
+ * For callers that only need `version` or `owner_id`: the 304 branch of GET,
+ * DELETE, and the SSE connect and heartbeat. Those were each pulling up to
+ * MAX_PROFILE_BODY_BYTES off disk and turning it into a JS string, once per
+ * call — and the heartbeat runs every 25 seconds for every open stream.
+ */
+export function loadAuthorizedProfileMeta(
+  request: NextRequest,
+  id: string,
+): AuthorizedProfileMeta | NextResponse {
+  const auth = authorizeProfileRequest(request, id);
+  if (isErrorResponse(auth)) return auth;
+
+  const profile = getProfileMeta(id);
+  if (!profile) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  }
+
+  return { profile, access: auth.access, user: auth.user };
+}
+
 export interface ProfileWriteBody {
   name: string;
   data: object;
+  /**
+   * `data` already serialised, so the write path does not do it again.
+   *
+   * The size check has to serialise to know the real size (content-length can
+   * be absent or wrong), and the row stores that same string — but the second
+   * `JSON.stringify` used to run *inside* `BEGIN IMMEDIATE`, holding the
+   * global write lock across it. At the 8 MB cap that is a lot of synchronous
+   * string work to hold a single-instance database still for.
+   */
+  serialisedData: string;
 }
 
 /**
@@ -73,7 +112,9 @@ export async function parseProfileBody(
   }
 
   // Content-length can be absent or wrong, so the parsed size is what decides.
-  if (JSON.stringify(body.data ?? null).length > MAX_PROFILE_BODY_BYTES) {
+  // Kept rather than discarded: this is the exact string the row will store.
+  const serialisedData = JSON.stringify(body.data ?? null);
+  if (serialisedData.length > MAX_PROFILE_BODY_BYTES) {
     return NextResponse.json(
       { error: "That profile is too large to store" },
       { status: 413 },
@@ -93,7 +134,7 @@ export async function parseProfileBody(
     );
   }
 
-  return { name: body.name.trim(), data: body.data as object };
+  return { name: body.name.trim(), data: body.data as object, serialisedData };
 }
 
 /** The version a profile is at, in ETag form. Used by `If-Match` on writes. */

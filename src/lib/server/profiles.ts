@@ -20,28 +20,89 @@ export interface CreateProfileInput {
   ownerId: number;
   name: string;
   data: unknown;
+  /** `data` already serialised, when the caller has it (see ProfileWriteBody). */
+  serialisedData?: string;
 }
 
 export function getProfileById(id: string): ProfileRow | undefined {
   return queryOne<ProfileRow>("SELECT * FROM profiles WHERE id = ?", id);
 }
 
+/** A profile row without its blob. */
+export type ProfileMeta = Omit<ProfileRow, "data">;
+
+/**
+ * Everything about a profile except the thing that makes it expensive.
+ *
+ * `getProfileById` is `SELECT *`, which reads the `data` column — up to
+ * MAX_PROFILE_BODY_BYTES — off disk through SQLite's overflow chain and
+ * materialises it as a UTF-16 string, synchronously. Several callers need only
+ * `version` or `owner_id`: the 304 branch of GET, DELETE, and the SSE connect
+ * and 25-second heartbeat, which runs once per open stream per tab.
+ */
+export function getProfileMeta(id: string): ProfileMeta | undefined {
+  return queryOne<ProfileMeta>(
+    `SELECT id, owner_id, name, version, created_at, updated_at
+       FROM profiles WHERE id = ?`,
+    id,
+  );
+}
+
+/**
+ * The content hashes a profile blob names, deduplicated.
+ *
+ * Tolerant on purpose: the blob is written by clients of varying ages, and a
+ * shape this does not recognise should index nothing rather than throw on a
+ * write path.
+ */
+function hashesNamedBy(data: unknown): string[] {
+  const files = (data as { audioFiles?: unknown } | null)?.audioFiles;
+  if (!Array.isArray(files)) return [];
+
+  const hashes = new Set<string>();
+  for (const file of files) {
+    const hash = (file as { hash?: unknown } | null)?.hash;
+    if (typeof hash === "string" && hash.length > 0) hashes.add(hash);
+  }
+  return [...hashes];
+}
+
+/**
+ * Rewrites the `profile_audio` rows for one profile.
+ *
+ * Called inside the same transaction as the blob write, so the index cannot
+ * disagree with the blob it describes.
+ */
+function reindexProfileAudio(profileId: string, data: unknown): void {
+  execute("DELETE FROM profile_audio WHERE profile_id = ?", profileId);
+  for (const hash of hashesNamedBy(data)) {
+    execute(
+      "INSERT OR IGNORE INTO profile_audio (profile_id, hash) VALUES (?, ?)",
+      profileId,
+      hash,
+    );
+  }
+}
+
 export function createProfile(input: CreateProfileInput): ProfileRow {
   const id = randomUUID();
   const now = Date.now();
 
-  execute(
-    `INSERT INTO profiles (id, owner_id, name, data, version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 1, ?, ?)`,
-    id,
-    input.ownerId,
-    input.name,
-    JSON.stringify(input.data),
-    now,
-    now,
-  );
+  return transaction(() => {
+    execute(
+      `INSERT INTO profiles (id, owner_id, name, data, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+      id,
+      input.ownerId,
+      input.name,
+      input.serialisedData ?? JSON.stringify(input.data),
+      now,
+      now,
+    );
+    reindexProfileAudio(id, input.data);
 
-  return getProfileById(id)!;
+    return getProfileById(id)!;
+  });
 }
 
 export type UpdateProfileResult =
@@ -60,7 +121,12 @@ export type UpdateProfileResult =
  */
 export function updateProfile(
   id: string,
-  input: { name: string; data: unknown; expectedVersion: number },
+  input: {
+    name: string;
+    data: unknown;
+    expectedVersion: number;
+    serialisedData?: string;
+  },
 ): UpdateProfileResult {
   return transaction(() => {
     const current = getProfileById(id);
@@ -75,10 +141,14 @@ export function updateProfile(
           SET name = ?, data = ?, version = version + 1, updated_at = ?
         WHERE id = ?`,
       input.name,
-      JSON.stringify(input.data),
+      // Serialised before the transaction opened where the caller had it: this
+      // used to run under BEGIN IMMEDIATE, holding the write lock for the
+      // length of an 8 MB stringify.
+      input.serialisedData ?? JSON.stringify(input.data),
       Date.now(),
       id,
     );
+    reindexProfileAudio(id, input.data);
 
     return { status: "ok" as const, profile: getProfileById(id)! };
   });

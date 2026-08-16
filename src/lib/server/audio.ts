@@ -163,9 +163,14 @@ export function profileMayServeHash(
           AND (
             r.user_id = ?
             OR r.user_id IN (
+              -- Joined on the raw column, not lower(trim(u.email)): an
+              -- expression over an indexed column cannot use the index, so
+              -- this scanned every user on every hosted-audio download. Both
+              -- sides are already normalised on write (users.ts, shares.ts),
+              -- so the functions bought nothing.
               SELECT u.id
                 FROM users u
-                JOIN profile_shares s ON s.email = lower(trim(u.email))
+                JOIN profile_shares s ON s.email = u.email
                WHERE s.profile_id = ? AND s.role = 'editor'
             )
           )
@@ -205,17 +210,12 @@ export function storageKeyForHash(
  * owner tidying their library could make their own live profile 404.
  */
 export function hashIsUsedByAnyProfile(hash: string): boolean {
-  for (const row of queryAll<{ data: string }>("SELECT data FROM profiles")) {
-    try {
-      const parsed = JSON.parse(row.data) as {
-        audioFiles?: { hash?: string }[];
-      };
-      if (parsed.audioFiles?.some((file) => file?.hash === hash)) return true;
-    } catch {
-      // A profile whose blob will not parse cannot be shown to reference it.
-    }
-  }
-  return false;
+  return (
+    queryOne<{ one: number }>(
+      "SELECT 1 AS one FROM profile_audio WHERE hash = ? LIMIT 1",
+      hash,
+    ) !== undefined
+  );
 }
 
 export type UploadDecision =

@@ -154,6 +154,35 @@ const MIGRATIONS: string[] = [
   -- lifts everyone who has not been given a specific allowance.
   ALTER TABLE users ADD COLUMN audio_quota_bytes INTEGER;
   `,
+
+  // 3 — which sounds each profile names, as rows rather than as JSON
+  `
+  -- "Does any profile still play this sound?" used to be answered by reading
+  -- every profile blob in the deployment into memory and JSON.parse-ing each
+  -- one, on a single DELETE request. node:sqlite is synchronous and Node is
+  -- single-threaded, so with a few hundred profiles that stopped the whole
+  -- process — every other user's request, every SSE heartbeat, the health
+  -- check — for as long as it took.
+  --
+  -- The question is an existence check, so it gets an index. Rebuilt from the
+  -- blob whenever a profile is written; the blob stays the source of truth.
+  CREATE TABLE profile_audio (
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    hash       TEXT NOT NULL,
+    PRIMARY KEY (profile_id, hash)
+  );
+  CREATE INDEX profile_audio_hash_idx ON profile_audio(hash);
+
+  -- Backfill from what is already stored. json_each over a blob that does not
+  -- parse, or whose audioFiles is not an array, yields no rows rather than an
+  -- error, so a malformed profile is skipped instead of failing the migration.
+  INSERT OR IGNORE INTO profile_audio (profile_id, hash)
+  SELECT p.id, json_extract(f.value, '$.hash')
+    FROM profiles p, json_each(json_extract(p.data, '$.audioFiles')) f
+   WHERE json_valid(p.data)
+     AND json_type(p.data, '$.audioFiles') = 'array'
+     AND json_extract(f.value, '$.hash') IS NOT NULL;
+  `,
 ];
 
 let db: DatabaseSync | null = null;
