@@ -3,6 +3,7 @@ import type {
   LoudnessAnalysis,
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
+import { convertIndexToBankNumber } from "./bankUtils";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
@@ -471,6 +472,42 @@ const generateSyncFields = (existingRecord?: {
   const now = Date.now();
   return { _created: existingRecord?._created ?? now, _modified: now };
 };
+
+/**
+ * The sync bookkeeping a brand-new record needs.
+ *
+ * Every field counts as modified now, because from this device's point of view
+ * it was: the record did not exist a moment ago. Records written without this
+ * carry no `_modified` and no `_fieldsModified` at all, which is the entire
+ * basis `compareSyncableItems` decides a merge on — an imported profile's pads
+ * looked to the merge like they had never been touched, so the first sync
+ * could quietly prefer a remote copy over sounds the user had just imported.
+ *
+ * @param data - The record about to be written
+ * @param atMs - The timestamp to stamp, so a batch can share one
+ * @returns `_created`, `_modified` and a fully-populated `_fieldsModified`
+ */
+export function initialSyncFields<T extends object>(
+  data: T,
+  atMs: number = Date.now(),
+): {
+  _created: number;
+  _modified: number;
+  _fieldsModified: Record<string, number>;
+} {
+  const fieldsModified: Record<string, number> = {};
+  for (const key of Object.keys(data)) {
+    if (
+      !key.startsWith("_") &&
+      key !== "id" &&
+      key !== "createdAt" &&
+      key !== "updatedAt"
+    ) {
+      fieldsModified[key] = atMs;
+    }
+  }
+  return { _created: atMs, _modified: atMs, _fieldsModified: fieldsModified };
+}
 
 // Helper to update _fieldsModified based on changes
 // Use generic type parameter with no constraints
@@ -947,18 +984,7 @@ export async function addProfile(
   const tx = db.transaction("profiles", "readwrite");
   const now = new Date();
   const nowMs = now.getTime();
-  const syncFields = generateSyncFields();
-  const initialFieldsModified: Record<string, number> = {};
-  Object.keys(profileData).forEach((key) => {
-    if (
-      !key.startsWith("_") &&
-      key !== "id" &&
-      key !== "createdAt" &&
-      key !== "updatedAt"
-    ) {
-      initialFieldsModified[key as keyof typeof profileData] = nowMs;
-    }
-  });
+  const syncFields = initialSyncFields(profileData, nowMs);
 
   const profileToAdd: Omit<Profile, "id"> = {
     ...profileData,
@@ -970,7 +996,7 @@ export async function addProfile(
     updatedAt: now,
     _created: syncFields._created,
     _modified: syncFields._modified,
-    _fieldsModified: initialFieldsModified,
+    _fieldsModified: syncFields._fieldsModified,
   };
 
   try {
@@ -1289,25 +1315,14 @@ export async function upsertPadConfiguration(
       console.log(`Updated pad configuration with id: ${id}`);
     } else {
       // Add new
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {};
-      Object.keys(padConfig).forEach((key) => {
-        if (
-          !key.startsWith("_") &&
-          key !== "id" &&
-          key !== "createdAt" &&
-          key !== "updatedAt"
-        ) {
-          initialFieldsModified[key as keyof typeof padConfig] = nowMs;
-        }
-      });
+      const syncFields = initialSyncFields(padConfig, nowMs);
       const addData: Omit<PadConfiguration, "id"> = {
         ...padConfig,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       };
       id = await store.add(addData);
       console.log(`Added pad configuration with id: ${id}`);
@@ -1417,25 +1432,15 @@ export async function swapPadConfigurations(
         });
         return;
       }
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {
-        profileId: nowMs,
-        pageIndex: nowMs,
-        padIndex: nowMs,
-      };
-      Object.keys(content).forEach((key) => {
-        initialFieldsModified[key] = nowMs;
-      });
+      const record = { profileId, pageIndex, padIndex, ...content };
+      const syncFields = initialSyncFields(record, nowMs);
       await store.add({
-        profileId,
-        pageIndex,
-        padIndex,
-        ...content,
+        ...record,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       });
     };
 
@@ -1513,16 +1518,29 @@ export async function getAllPageMetadataForProfile(
 }
 
 // Function to add or update page metadata (Updated)
+/**
+ * Writes bank metadata, touching only the fields it is given.
+ *
+ * `name` and `isEmergency` are optional so a caller changing one does not have
+ * to read and re-send the other. They used to be required, which meant
+ * `renamePage` and `setPageEmergencyState` each read the record *outside* this
+ * transaction and wrote both fields back — so renaming a bank while toggling
+ * its emergency flag reverted whichever landed first. The merge inside the
+ * transaction below already does the right thing; the callers just were not
+ * allowed to use it.
+ */
 export async function upsertPageMetadata(
   pageMetadata: Omit<
     PageMetadata,
     | "id"
+    | "name"
+    | "isEmergency"
     | "createdAt"
     | "updatedAt"
     | "_created"
     | "_modified"
     | "_fieldsModified"
-  >,
+  > & { name?: string; isEmergency?: boolean },
 ): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("pageMetadata", "readwrite");
@@ -1558,26 +1576,22 @@ export async function upsertPageMetadata(
       await store.put(finalData);
       console.log(`Updated page metadata with id: ${id}`);
     } else {
-      // Add new
-      const syncFields = generateSyncFields();
-      const initialFieldsModified: Record<string, number> = {};
-      Object.keys(pageMetadata).forEach((key) => {
-        if (
-          !key.startsWith("_") &&
-          key !== "id" &&
-          key !== "createdAt" &&
-          key !== "updatedAt"
-        ) {
-          initialFieldsModified[key as keyof typeof pageMetadata] = nowMs;
-        }
-      });
-      const addData: Omit<PageMetadata, "id"> = {
+      // Add new. Defaults only matter here — an update keeps what is there.
+      const content = {
         ...pageMetadata,
+        name:
+          pageMetadata.name ??
+          `Bank ${convertIndexToBankNumber(pageMetadata.pageIndex)}`,
+        isEmergency: pageMetadata.isEmergency ?? false,
+      };
+      const syncFields = initialSyncFields(content, nowMs);
+      const addData: Omit<PageMetadata, "id"> = {
+        ...content,
         createdAt: now,
         updatedAt: now,
         _created: syncFields._created,
         _modified: syncFields._modified,
-        _fieldsModified: initialFieldsModified,
+        _fieldsModified: syncFields._fieldsModified,
       };
       id = await store.add(addData);
       console.log(`Added page metadata with id: ${id}`);
@@ -1619,14 +1633,9 @@ export async function renamePage(
   newName: string,
 ): Promise<void> {
   try {
-    const metadata = await getPageMetadata(profileId, pageIndex);
-    await upsertPageMetadata({
-      // upsert handles sync fields
-      profileId,
-      pageIndex,
-      name: newName,
-      isEmergency: metadata?.isEmergency || false,
-    });
+    // Only the name. Reading `isEmergency` here and writing it back is what
+    // let a rename revert a concurrent emergency toggle.
+    await upsertPageMetadata({ profileId, pageIndex, name: newName });
     console.log(`Renamed page ${pageIndex} to "${newName}"`);
   } catch (error) {
     console.error(`Error renaming page ${pageIndex}:`, error);
@@ -1641,14 +1650,8 @@ export async function setPageEmergencyState(
   isEmergency: boolean,
 ): Promise<void> {
   try {
-    const metadata = await getPageMetadata(profileId, pageIndex);
-    await upsertPageMetadata({
-      // upsert handles sync fields
-      profileId,
-      pageIndex,
-      name: metadata?.name || `Bank ${pageIndex}`,
-      isEmergency,
-    });
+    // Only the flag — see renamePage.
+    await upsertPageMetadata({ profileId, pageIndex, isEmergency });
     console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
   } catch (error) {
     console.error(

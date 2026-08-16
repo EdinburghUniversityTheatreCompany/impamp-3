@@ -13,6 +13,7 @@ import {
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
   collectReferencedAudioFileIds,
+  initialSyncFields,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
@@ -505,29 +506,39 @@ async function importPageMetadata(
 
   const pageTx = db.transaction("pageMetadata", "readwrite");
   const pageStore = pageTx.objectStore("pageMetadata");
+  const failures: number[] = [];
 
   const pagePromises = pageMetadata.map((page) => {
-    const newMetadata = {
+    const content = {
       profileId,
       pageIndex: page.pageIndex,
       name: page.name,
       isEmergency: page.isEmergency,
+    };
+    const newMetadata = {
+      ...content,
       createdAt: now,
+      // As for pads: without these the merge has nothing to compare on.
+      ...initialSyncFields(content, now.getTime()),
       updatedAt: now,
     };
-    return pageStore.add(newMetadata).catch((err) => {
+    return pageStore.add(newMetadata).catch((err: unknown) => {
       console.error(
         `Failed to add page metadata for pageIndex ${page.pageIndex}:`,
         err,
       );
-      // Decide if one failure should abort the whole transaction (by throwing)
-      // or just log and continue (current behavior)
+      failures.push(page.pageIndex);
     });
   });
 
   try {
     await Promise.all(pagePromises);
     await pageTx.done;
+    if (failures.length > 0) {
+      throw new Error(
+        `${failures.length} bank${failures.length === 1 ? "" : "s"} could not be imported (${failures.map((i) => i + 1).join(", ")}).`,
+      );
+    }
     console.log(`Imported ${pageMetadata.length} page metadata entries.`);
   } catch (txError) {
     console.error("Error during page metadata import transaction:", txError);
@@ -610,6 +621,7 @@ async function importPadConfigurations(
 
   const padTx = db.transaction("padConfigurations", "readwrite");
   const padStore = padTx.objectStore("padConfigurations");
+  const failures: string[] = [];
 
   const padPromises = padConfigurations.map((pad) => {
     // Map the array of audioFileIds
@@ -653,22 +665,41 @@ async function importPadConfigurations(
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
       createdAt: now,
+      // Sync bookkeeping, which these records used to be written without. It
+      // is the entire basis `compareSyncableItems` decides a merge on, so an
+      // imported pad looked to the merge like it had never been touched — and
+      // the first sync after an import could prefer a remote copy over sounds
+      // the user had just imported.
+      ...initialSyncFields(
+        { ...pad, profileId, audioFileIds: mappedAudioFileIds },
+        now.getTime(),
+      ),
       updatedAt: now,
     };
 
-    return padStore.add(newPadData).catch((err) => {
+    return padStore.add(newPadData).catch((err: unknown) => {
+      // Collected rather than swallowed. This used to log and carry on, and
+      // the import then reported success — so a board came back missing pads
+      // and said nothing, which is discovered mid-show.
       console.error(
         `Failed to add pad configuration for pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}:`,
         err,
       );
-      // Decide if one failure should abort the whole transaction (by throwing)
-      // or just log and continue (current behavior)
+      failures.push(`bank ${pad.pageIndex + 1}, pad ${pad.padIndex + 1}`);
     });
   });
 
   try {
     await Promise.all(padPromises);
     await padTx.done;
+    if (failures.length > 0) {
+      // `importProfileCore` deletes the partial profile when this throws, so
+      // the user gets a clear failure and an intact library rather than a
+      // board with holes in it.
+      throw new Error(
+        `${failures.length} of ${padConfigurations.length} pads could not be imported (${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "; …" : ""}).`,
+      );
+    }
     console.log(`Imported ${padConfigurations.length} pad configurations.`);
   } catch (txError) {
     console.error(

@@ -162,6 +162,31 @@ describe("exporting and re-importing a .iaz archive", () => {
     expect(audio?.hash).toBe("d".repeat(64));
   });
 
+  it("stamps the sync bookkeeping the merge decides on", async () => {
+    // Imported records used to carry no `_modified` and no `_fieldsModified`
+    // at all. That is the entire basis `compareSyncableItems` compares on, so
+    // an imported pad looked to a merge like it had never been touched — and
+    // the first sync after an import could prefer a remote copy over the
+    // sounds the user had just imported.
+    const { profileId } = await seedProfile("Freshly imported", "tom");
+    const { db, imported, pads } = await roundTrip(profileId);
+
+    expect(pads[0]._modified).toBeGreaterThan(0);
+    expect(pads[0]._created).toBeGreaterThan(0);
+    // Every field counts as modified now, because it was: the record did not
+    // exist a moment ago.
+    expect(pads[0]._fieldsModified?.audioFileIds).toBeGreaterThan(0);
+    expect(pads[0]._fieldsModified?.name).toBeGreaterThan(0);
+
+    const pages = await db.getAllFromIndex(
+      "pageMetadata",
+      "profileId",
+      imported.id!,
+    );
+    expect(pages[0]._modified).toBeGreaterThan(0);
+    expect(pages[0]._fieldsModified?.name).toBeGreaterThan(0);
+  });
+
   it("round-trips several profiles in one archive", async () => {
     const db = await getDb();
     const a = await seedProfile("First", "one");
