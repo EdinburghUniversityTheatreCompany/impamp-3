@@ -17,7 +17,9 @@ import type { PlaybackSettingsFormValues, FormErrors } from "@/types/forms";
  */
 export function usePlaybackSettings() {
   const { openFormModal } = useFormModal();
-  const { profiles, activeProfileId, updateProfile } = useProfileStore();
+  const profiles = useProfileStore((s) => s.profiles);
+  const activeProfileId = useProfileStore((s) => s.activeProfileId);
+  const updateProfile = useProfileStore((s) => s.updateProfile);
   const fadeoutDuration = useProfileStore((state) => state.fadeoutDuration);
   const setFadeoutDuration = useProfileStore(
     (state) => state.setFadeoutDuration,

@@ -6,8 +6,12 @@ import { syncTargetLabel } from "@/lib/syncState";
 import ChevronDownIcon from "@/components/shared/ChevronDownIcon";
 
 export default function ProfileSelector() {
-  const { profiles, activeProfileId, setActiveProfileId, openProfileManager } =
-    useProfileStore();
+  // Per-field: this sits in the header, so a bare subscription re-rendered it
+  // on every playback-adjacent store bump.
+  const profiles = useProfileStore((s) => s.profiles);
+  const activeProfileId = useProfileStore((s) => s.activeProfileId);
+  const setActiveProfileId = useProfileStore((s) => s.setActiveProfileId);
+  const openProfileManager = useProfileStore((s) => s.openProfileManager);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 

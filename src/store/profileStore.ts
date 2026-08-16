@@ -73,6 +73,8 @@ interface ProfileState {
   // Auto-sync after edits
   syncRequestQueue: Record<number, number>; // profileId → last request timestamp
   requestSync: (profileId: number) => void;
+  /** Forget a request once it has been acted on, so the queue cannot grow. */
+  clearSyncRequest: (profileId: number) => void;
 
   // Sync pausing methods
   pauseSync: (profileId: number, durationMs: number) => Promise<void>; // Pause sync for a profile
@@ -444,6 +446,15 @@ export const useProfileStore = create<ProfileState>()(
           set((state) => ({
             emergencySoundsVersion: state.emergencySoundsVersion + 1,
           }));
+        },
+
+        clearSyncRequest: (profileId: number) => {
+          set((state) => {
+            if (!(profileId in state.syncRequestQueue)) return state;
+            const next = { ...state.syncRequestQueue };
+            delete next[profileId];
+            return { syncRequestQueue: next };
+          });
         },
 
         requestSync: (profileId: number) => {

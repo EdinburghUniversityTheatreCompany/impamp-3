@@ -15,6 +15,7 @@ import type { TransferProgress } from "@/lib/importExport";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
+import { useShallow } from "zustand/react/shallow";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -83,6 +84,12 @@ function parseServerShareUrl(
 }
 
 export default function ProfileManager() {
+  // `useShallow`, not a bare `useProfileStore()`. Under Zustand v5 the bare
+  // form compares the whole state object, so every sync tick,
+  // `padConfigsVersion` bump, bank switch and token refresh re-rendered all of
+  // this — 29 useState calls and a 615-line hook — even while the manager was
+  // closed. It is only mounted while open now (ProfileManagerHost), but a
+  // fifteen-field read still has no business waking on an unrelated field.
   const {
     profiles,
     activeProfileId,
@@ -98,7 +105,24 @@ export default function ProfileManager() {
     googleUser,
     googleAccessToken,
     clearGoogleAuthDetails,
-  } = useProfileStore();
+  } = useProfileStore(
+    useShallow((s) => ({
+      profiles: s.profiles,
+      activeProfileId: s.activeProfileId,
+      isProfileManagerOpen: s.isProfileManagerOpen,
+      closeProfileManager: s.closeProfileManager,
+      createProfile: s.createProfile,
+      importProfileFromJSON: s.importProfileFromJSON,
+      importProfileFromImpamp2JSON: s.importProfileFromImpamp2JSON,
+      importMultipleProfilesFromJSON: s.importMultipleProfilesFromJSON,
+      exportMultipleProfilesToZip: s.exportMultipleProfilesToZip,
+      importProfilesFromZip: s.importProfilesFromZip,
+      isGoogleSignedIn: s.isGoogleSignedIn,
+      googleUser: s.googleUser,
+      googleAccessToken: s.googleAccessToken,
+      clearGoogleAuthDetails: s.clearGoogleAuthDetails,
+    })),
+  );
 
   const router = useRouter();
 

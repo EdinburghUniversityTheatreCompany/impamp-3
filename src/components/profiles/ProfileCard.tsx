@@ -64,8 +64,12 @@ interface ProfileCardProps {
  * longer competes with them for the reader's attention.
  */
 export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
-  const { setActiveProfileId, deleteProfile, setNormalisation } =
-    useProfileStore();
+  // Per-field. One card per profile, and each also instantiates
+  // useGoogleDriveSync and useServerSync — so with ten profiles a bare
+  // subscription re-ran ten pairs of sync hooks on every bank switch.
+  const setActiveProfileId = useProfileStore((s) => s.setActiveProfileId);
+  const deleteProfile = useProfileStore((s) => s.deleteProfile);
+  const setNormalisation = useProfileStore((s) => s.setNormalisation);
 
   const { openProfileEditor } = useProfileEdit();
 

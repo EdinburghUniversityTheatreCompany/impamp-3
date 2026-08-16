@@ -49,7 +49,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
     (state) => state.incrementEmergencySoundsVersion,
   );
   const requestSync = useProfileStore((state) => state.requestSync);
-  const { openModal, closeModal } = useUIStore();
+  // Consumed by PadGrid, so a bare subscription meant opening *any* modal
+  // re-rendered the grid's whole handler tree.
+  const openModal = useUIStore((s) => s.openModal);
+  const closeModal = useUIStore((s) => s.closeModal);
   const { openFormModal } = useFormModal();
 
   /**

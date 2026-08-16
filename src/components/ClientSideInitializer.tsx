@@ -327,14 +327,29 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 
     const unsubscribe = useProfileStore.subscribe(
       (state) => state.syncRequestQueue,
-      (syncRequestQueue) => {
+      (syncRequestQueue, previousQueue) => {
+        // Only the profiles whose request actually changed.
+        //
+        // This iterated *every* key, and nothing ever removes one, so the set
+        // grew monotonically for the life of the tab: edit profile 1, then 2,
+        // then 3, then 1 again, and all three got a fresh timer and all three
+        // synced. The engines' in-flight maps stop them stacking concurrently
+        // but not from being issued — a real round trip per profile per edit,
+        // including for profiles whose sync is paused.
         Object.keys(syncRequestQueue).forEach((key) => {
           const profileId = parseInt(key);
+          if (previousQueue?.[profileId] === syncRequestQueue[profileId]) {
+            return;
+          }
+
           if (debounceTimersRef.current[profileId]) {
             clearTimeout(debounceTimersRef.current[profileId]);
           }
           debounceTimersRef.current[profileId] = setTimeout(async () => {
             delete debounceTimersRef.current[profileId];
+            // The store entry is the one that leaked: the timer already
+            // cleaned up after itself, the queue never did.
+            useProfileStore.getState().clearSyncRequest(profileId);
             const { profiles, isGoogleSignedIn } = useProfileStore.getState();
             const profile = profiles.find((p) => p.id === profileId);
             if (profile?.syncType === "server") {

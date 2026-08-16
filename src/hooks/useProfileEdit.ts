@@ -18,7 +18,10 @@ import type { Profile } from "@/lib/db";
  */
 export function useProfileEdit() {
   const { openFormModal } = useFormModal();
-  const { updateProfile } = useProfileStore();
+  // Per-field: a bare `useProfileStore()` re-renders on every mutation of
+  // the store, and this store carries the bank index, edit mode, the sync
+  // request queue and every token refresh.
+  const updateProfile = useProfileStore((s) => s.updateProfile);
 
   /**
    * Opens a modal for editing a profile
