@@ -14,12 +14,23 @@
  */
 
 import { analyseLoudness } from "./analyse";
+import { exposeE2EHook } from "@/lib/testHooks";
 import type { LoudnessAnalysis } from "./types";
 import type { AnalyseResponse } from "./analyse.worker";
 
 let worker: Worker | null = null;
 let workerUnavailable = false;
 let nextRequestId = 1;
+
+/**
+ * How analyses have actually been served, for the e2e suite.
+ *
+ * The fallback is deliberately silent — better slow than wrong — which also
+ * means a worker that never loads is indistinguishable from one that works,
+ * from outside. It once did exactly that in every production build. Counting
+ * is the only way a test can tell the two apart.
+ */
+const served = { byWorker: 0, onMainThread: 0 };
 
 const pending = new Map<
   number,
@@ -37,6 +48,12 @@ function getWorker(): Worker | null {
   }
 
   try {
+    // A production build also emits this file's TypeScript verbatim to
+    // /_next/static/media/analyse.worker.<hash>.ts. That asset is a decoy: the
+    // constructor below is compiled to a turbopack-worker bootstrap that loads
+    // the real chunks, which `loudness-worker.spec.ts` asserts against the
+    // built app. Reading the build output alone suggests this is broken and it
+    // is not — check the spec before "fixing" the specifier.
     worker = new Worker(new URL("./analyse.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -86,19 +103,25 @@ export async function analyseAudioBufferOffThread(
   }
 
   const instance = getWorker();
-  if (!instance) return analyseLoudness(channels, buffer.sampleRate);
+  if (!instance) {
+    served.onMainThread++;
+    return analyseLoudness(channels, buffer.sampleRate);
+  }
 
   const id = nextRequestId++;
 
   try {
-    return await new Promise<LoudnessAnalysis>((resolve, reject) => {
+    const analysis = await new Promise<LoudnessAnalysis>((resolve, reject) => {
       pending.set(id, { resolve, reject });
       instance.postMessage(
         { id, channels, sampleRate: buffer.sampleRate },
         channels.map((c) => c.buffer),
       );
     });
+    served.byWorker++;
+    return analysis;
   } catch {
+    served.onMainThread++;
     // The worker died or refused. The copies were transferred away, so read
     // the buffer again for the fallback.
     pending.delete(id);
@@ -116,4 +139,8 @@ export function resetLoudnessWorker(): void {
   worker = null;
   workerUnavailable = false;
   pending.clear();
+  served.byWorker = 0;
+  served.onMainThread = 0;
 }
+
+exposeE2EHook("__impampLoudnessAnalysis", () => ({ ...served }));
