@@ -22,6 +22,7 @@ import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
+import { usePadConfigurations } from "@/hooks/usePadConfigurations";
 
 // Interface for emergency sound configuration
 interface EmergencySound {
@@ -189,8 +190,6 @@ export function useKeyboardListener() {
   const emergencySoundsVersion = useProfileStore(
     (state) => state.emergencySoundsVersion,
   );
-  // Get pad configs version to pick up edits, drops and sync results
-  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
@@ -200,14 +199,24 @@ export function useKeyboardListener() {
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
-  // We need access to the current pad configurations for the active page
-  // Fetching them here might be inefficient if PadGrid already has them.
-  // Consider passing configs down or using a shared state/context.
-  // For now, fetch directly within the hook.
-  // This map will store ALL configurations for the current page, keyed by padIndex.
-  const padConfigsRef = useRef<Map<number, PadConfiguration>>(new Map());
-  // Sequence number for pad configuration loads, so stale loads can be discarded
-  const configLoadRequestRef = useRef(0);
+  // The pad configurations for the active page, from the same hook the grid
+  // uses. This used to be a second, private fetch into a ref — the old comment
+  // here said "might be inefficient if PadGrid already has them, consider
+  // passing configs down", and the cost turned out to be worse than
+  // inefficiency: the two copies had different invalidation rules, so a write
+  // path could refresh the grid's and not this one, leaving pads you could see
+  // but not play until you switched bank.
+  //
+  // Held in a ref as well as read from the hook so `handleKeyDown` does not
+  // have to be rebuilt (and the window listeners re-attached) on every change.
+  const { padConfigs } = usePadConfigurations(
+    activeProfileId === null ? null : String(activeProfileId),
+    currentPageIndex,
+  );
+  const padConfigsRef = useRef<Map<number, PadConfiguration>>(padConfigs);
+  useEffect(() => {
+    padConfigsRef.current = padConfigs;
+  }, [padConfigs]);
 
   // Reference to track if we've loaded emergency sounds
   const hasLoadedEmergencySounds = useRef(false);
@@ -252,43 +261,6 @@ export function useKeyboardListener() {
     );
     reloadEmergencySounds();
   }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
-
-  // Effect to load pad configurations
-  useEffect(() => {
-    // Token to discard resolutions of superseded loads (e.g. rapid bank switching)
-    const requestId = ++configLoadRequestRef.current;
-    // Drop the previous bank's configs immediately so keys don't trigger stale pads
-    padConfigsRef.current = new Map();
-
-    const loadConfigs = async () => {
-      if (activeProfileId === null) {
-        return;
-      }
-      try {
-        const configs = await getPadConfigurationsForProfilePage(
-          activeProfileId,
-          currentPageIndex,
-        );
-        if (requestId !== configLoadRequestRef.current) {
-          return; // A newer load has started, ignore this result
-        }
-        // Store ALL configurations for the page, mapping padIndex to config
-        const configMap = new Map<number, PadConfiguration>(
-          configs.map((config) => [config.padIndex, config]),
-        );
-        padConfigsRef.current = configMap;
-        console.log(
-          `[KeyboardListener] Loaded ${configMap.size} pad configurations for profile ${activeProfileId}, page ${currentPageIndex}`,
-        );
-      } catch (error) {
-        console.error(
-          `[KeyboardListener] Failed to load pad configurations for profile ${activeProfileId}, page ${currentPageIndex}:`,
-          error,
-        );
-      }
-    };
-    loadConfigs();
-  }, [activeProfileId, currentPageIndex, padConfigsVersion]);
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {

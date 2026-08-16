@@ -31,9 +31,6 @@ export function usePadDrop(
   const incrementEmergencySoundsVersion = useProfileStore(
     (state) => state.incrementEmergencySoundsVersion,
   );
-  const incrementPadConfigsVersion = useProfileStore(
-    (state) => state.incrementPadConfigsVersion,
-  );
   const requestSync = useProfileStore((state) => state.requestSync);
   // Dropping a file is a write, and it is the one write that needs no edit
   // mode — so none of the Shift-key gates cover it. On a profile that cannot
@@ -92,8 +89,9 @@ export function usePadDrop(
         });
 
         // Refresh the UI
+        // One call: refreshing the configurations *is* bumping the shared
+        // version now, so the grid and the keyboard cannot disagree.
         refreshPadConfigs();
-        incrementPadConfigsVersion();
         requestSync(activeProfileId);
 
         // Check if we're on an emergency page and refresh if needed
@@ -124,7 +122,6 @@ export function usePadDrop(
       currentPageIndex,
       refreshPadConfigs,
       incrementEmergencySoundsVersion,
-      incrementPadConfigsVersion,
       requestSync,
     ],
   );
