@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { getAudioFile, PlaybackType } from "@/lib/db";
+import { getAudioFileMetadata, PlaybackType } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 
@@ -98,6 +98,22 @@ export function useSearch(searchOptions: SearchOptions = {}) {
         // Filter pads with audio files and matching names
         const searchResults: SearchResult[] = [];
 
+        // Warm the name cache for everything this search will ask about, in a
+        // single cursor pass over the ids not already known.
+        const nameCache = audioFileNamesRef.current;
+        const unknownIds = [
+          ...new Set(
+            allPads
+              .flatMap((pad) => pad.audioFileIds ?? [])
+              .filter((id) => !nameCache.has(id)),
+          ),
+        ];
+        if (unknownIds.length > 0) {
+          const metadata = await getAudioFileMetadata(unknownIds);
+          if (cancelled) return;
+          for (const [id, file] of metadata) nameCache.set(id, file.name);
+        }
+
         // Process each pad
         for (const pad of allPads) {
           // Ensure audioFileIds exists and is not empty
@@ -129,18 +145,12 @@ export function useSearch(searchOptions: SearchOptions = {}) {
           const originalFileNames: string[] = [];
           let displayFileName = ""; // Store the first filename for display
 
-          // Try to get all original file names, reusing previously cached names
+          // Names only, from the cache warmed in one pass above. This used to
+          // read the *whole* audio record — Blob included — per pad-sound slot
+          // it had not seen, so the first Ctrl+F of a session on a full board
+          // did up to 960 sequential reads before showing a single result.
           try {
-            const nameCache = audioFileNamesRef.current;
             for (const audioId of pad.audioFileIds) {
-              if (!nameCache.has(audioId)) {
-                const audioFile = await getAudioFile(audioId);
-                if (cancelled) return;
-                if (audioFile) {
-                  nameCache.set(audioId, audioFile.name);
-                }
-              }
-
               const fileName = nameCache.get(audioId);
               if (fileName) {
                 originalFileNames.push(fileName);

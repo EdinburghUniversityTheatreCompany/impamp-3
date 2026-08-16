@@ -9,6 +9,7 @@ import {
   getDb,
   getAudioFileIdsForProfile,
   getAudioFile,
+  getAudioFileMetadata,
   addAudioFile,
   updateAudioFileDriveId,
   getAudioFileByHash,
@@ -62,8 +63,11 @@ export async function repairDriveAudioFiles(
   let uploaded = 0;
   const errors: string[] = [];
 
+  // Metadata for the survey, blobs only for what turns out to need re-upload.
+  const metadata = await getAudioFileMetadata(audioFileIds);
+
   for (const id of audioFileIds) {
-    const audioFile = await getAudioFile(id);
+    const audioFile = metadata.get(id);
     if (!audioFile) continue;
     checked++;
 
@@ -118,11 +122,15 @@ export async function repairDriveAudioFiles(
       }
     }
 
+    // The bytes, at last — only for the files that actually need re-uploading.
+    const withBlob = await getAudioFile(id);
+    if (!withBlob) continue;
+
     try {
       const driveFile = await uploadAudioFile(
-        audioFile.name,
-        audioFile.blob,
-        audioFile.type,
+        withBlob.name,
+        withBlob.blob,
+        withBlob.type,
         null,
         profileId,
         tokenInfo,
@@ -155,8 +163,15 @@ export async function uploadMissingAudioFiles(
   folderId?: string,
 ): Promise<void> {
   const audioFileIds = await getAudioFileIdsForProfile(profileId);
+  // Which files need anything is decided from metadata, so the common case —
+  // everything already uploaded — reads no blobs at all. The short-circuit
+  // below was already here, but it sat *after* a full-record read, so a
+  // 960-sound board did 960 sequential reads per sync to discover there was
+  // nothing to do.
+  const metadata = await getAudioFileMetadata(audioFileIds);
+
   for (const id of audioFileIds) {
-    const audioFile = await getAudioFile(id);
+    const audioFile = metadata.get(id);
     if (!audioFile) continue;
     if (audioFile.driveFileIds?.[profileId]) {
       console.log(
@@ -164,11 +179,15 @@ export async function uploadMissingAudioFiles(
       );
       continue;
     }
+    // Only now is the blob needed, and only for the files actually going up.
+    const withBlob = await getAudioFile(id);
+    if (!withBlob) continue;
+
     try {
       const driveFile = await uploadAudioFile(
-        audioFile.name,
-        audioFile.blob,
-        audioFile.type,
+        withBlob.name,
+        withBlob.blob,
+        withBlob.type,
         null,
         profileId,
         tokenInfo,

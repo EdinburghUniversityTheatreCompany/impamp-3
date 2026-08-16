@@ -10,6 +10,7 @@ import type { LoudnessAnalysis } from "./types";
 // (see src/lib/serverAudio/transfer.test.ts).
 const dbMocks = vi.hoisted(() => ({
   getAudioFile: vi.fn(),
+  getAudioFileMetadata: vi.fn(),
   getAudioFileIdsForProfile: vi.fn(),
   updateAudioFileLoudness: vi.fn(),
   findUnanalysedAudioFileIds: vi.fn(),
@@ -147,6 +148,18 @@ function resetPipelineMocks(): void {
   clearFailedAnalysis();
   dbMocks.getAudioFile.mockImplementation(async (id: number) =>
     fakeAudioFile(id),
+  );
+  // Mirrors getAudioFile, so a test that stubs one gets a consistent answer
+  // from both without having to say it twice.
+  dbMocks.getAudioFileMetadata.mockImplementation(
+    async (ids: Iterable<number>) => {
+      const map = new Map();
+      for (const id of ids) {
+        const file = await dbMocks.getAudioFile(id);
+        if (file) map.set(id, { id, ...file });
+      }
+      return map;
+    },
   );
   cacheMocks.getCachedAudioBuffer.mockReturnValue(null);
 }

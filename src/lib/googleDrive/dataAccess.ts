@@ -9,7 +9,7 @@ import {
   PageMetadata,
   getProfile,
   getDb,
-  getAudioFile,
+  getAudioFileMetadata,
   ensureAudioFileHash,
   updateAudioFileDriveId,
   collectReferencedAudioFileIds,
@@ -67,15 +67,27 @@ export const getLocalProfileSyncData = async (
   // can fetch. `markHostedAudio` marks what is genuinely hosted, and the
   // downloaders dedupe by hash, so carrying both routes costs nothing and
   // leaves Drive as the fallback.
+  // One cursor pass rather than a full-record read per file. This was two to
+  // three sequential IndexedDB reads *each* — `getAudioFile`, then
+  // `ensureAudioFileHash` reading the record again — and the server push calls
+  // this inside its retry loop, so a 960-sound board did ~1920 round trips per
+  // attempt and up to three times that on a contended push.
+  const metadata = await getAudioFileMetadata(audioFileIds);
   const audioFiles = [];
+
   for (const audioFileId of audioFileIds) {
-    const audioFile = await getAudioFile(audioFileId);
+    const audioFile = metadata.get(audioFileId);
     if (audioFile) {
       audioFiles.push({
         id: audioFileId,
         name: audioFile.name,
         type: audioFile.type,
-        hash: (await ensureAudioFileHash(audioFileId)) ?? undefined,
+        // Only files that arrived without one need reading again, and
+        // `ensureAudioFileHash` is what computes and stores it.
+        hash:
+          audioFile.hash ??
+          (await ensureAudioFileHash(audioFileId)) ??
+          undefined,
         driveFileId: audioFile.driveFileIds?.[profileId],
         // What we already know about where these bytes live. `markHostedAudio`
         // adds whatever this run uploaded on top; without this, a run that
