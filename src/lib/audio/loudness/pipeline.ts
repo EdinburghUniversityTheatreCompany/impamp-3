@@ -18,7 +18,7 @@ import {
 import type { LoudnessAnalysis } from "./types";
 import { getCachedAudioBuffer } from "@/lib/audio/cache";
 import { decodeAudioBlob } from "@/lib/audio/decoder";
-import { analyseAudioBuffer } from "./analyse";
+import { analyseAudioBufferOffThread } from "./analyseOffThread";
 import { setCachedLoudness, warmLoudnessCache } from "./cache";
 import { LOUDNESS_ALGO_VERSION } from "./constants";
 
@@ -116,7 +116,9 @@ export async function analyseAndStore(
       buffer = await decodeAudioBlob(file.blob);
     }
 
-    const analysis = analyseAudioBuffer(buffer);
+    // Off the main thread: this is ~2.2 seconds of arithmetic per minute of
+    // stereo audio, and it used to run here, unqueued, once per file added.
+    const analysis = await analyseAudioBufferOffThread(buffer);
     await updateAudioFileLoudness(audioFileId, analysis);
     setCachedLoudness(audioFileId, analysis);
     return analysis;
