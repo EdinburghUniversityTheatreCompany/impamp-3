@@ -1,16 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import type { DrivePermission } from "@/lib/googleDrive/types";
+import { useRemoteList } from "@/hooks/useRemoteList";
 
 interface SharingPanelProps {
   folderId: string;
   profileFileId: string;
 }
-
-const loadFailureMessage = (err: unknown) =>
-  err instanceof Error ? err.message : "Failed to load permissions";
 
 export default function SharingPanel({
   folderId,
@@ -24,8 +22,6 @@ export default function SharingPanel({
   } = useGoogleDriveSync();
 
   const [permissions, setPermissions] = useState<DrivePermission[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"reader" | "writer">("writer");
@@ -52,43 +48,18 @@ export default function SharingPanel({
     setPublicAccess(
       !anyonePerm ? "off" : anyonePerm.role === "writer" ? "writer" : "reader",
     );
-    setError(null);
   }, []);
 
-  // The initial load, in the shape React documents for fetching in an effect:
-  // state is set from the promise's callbacks, and a cancelled flag stops a
-  // slow response from landing after unmount or after the panel has moved to
-  // another folder. It used to call a shared loader that set state before its
-  // first await, and had no cancellation at all.
-  useEffect(() => {
-    let cancelled = false;
-    fetchPermissions().then(
-      (perms) => {
-        if (cancelled) return;
-        applyPermissions(perms);
-        setLoading(false);
-      },
-      (err: unknown) => {
-        if (cancelled) return;
-        setError(loadFailureMessage(err));
-        setLoading(false);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchPermissions, applyPermissions]);
-
-  // Reload after a change. No spinner: every caller already shows its own
-  // in-flight state, and leaving the current list on screen while it refreshes
-  // beats blanking it out.
-  const loadPermissions = useCallback(async () => {
-    try {
-      applyPermissions(await fetchPermissions());
-    } catch (err) {
-      setError(loadFailureMessage(err));
-    }
-  }, [fetchPermissions, applyPermissions]);
+  const {
+    loading,
+    error,
+    setError,
+    reload: loadPermissions,
+  } = useRemoteList(
+    fetchPermissions,
+    applyPermissions,
+    "Failed to load permissions",
+  );
 
   const handlePublicAccessChange = async (
     access: "off" | "reader" | "writer",

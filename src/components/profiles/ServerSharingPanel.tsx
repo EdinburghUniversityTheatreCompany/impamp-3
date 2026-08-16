@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useServerSync } from "@/hooks/useServerSync";
 import type { ServerShare } from "@/lib/serverSync/types";
+import { useRemoteList } from "@/hooks/useRemoteList";
 
 interface ServerSharingPanelProps {
   /** The profile's ID on the server, not its local IndexedDB id. */
@@ -27,8 +28,6 @@ function shareUrlFor(serverProfileId: string, token: string): string {
  * sign in — there is no Picker grant to chase, because the server owns the
  * permission rather than Google Drive.
  */
-const loadFailureMessage = (err: unknown) =>
-  err instanceof Error ? err.message : "Failed to load sharing";
 
 export default function ServerSharingPanel({
   serverProfileId,
@@ -36,8 +35,6 @@ export default function ServerSharingPanel({
   const { listShares, addShare, revokeShare } = useServerSync();
 
   const [shares, setShares] = useState<ServerShare[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"viewer" | "editor">("editor");
@@ -52,42 +49,12 @@ export default function ServerSharingPanel({
     [serverProfileId, listShares],
   );
 
-  // The initial load, in the shape React documents for fetching in an effect:
-  // state is set from the promise's callbacks, and a cancelled flag stops a
-  // slow response from landing after unmount or after the panel has moved to
-  // another profile. It used to call a shared loader that set state before its
-  // first await, and had no cancellation at all.
-  useEffect(() => {
-    let cancelled = false;
-    fetchShares().then(
-      (next) => {
-        if (cancelled) return;
-        setShares(next);
-        setError(null);
-        setLoading(false);
-      },
-      (err: unknown) => {
-        if (cancelled) return;
-        setError(loadFailureMessage(err));
-        setLoading(false);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchShares]);
-
-  // Reload after a change. No spinner: every caller already shows its own
-  // in-flight state (isInviting, isCreatingLink, …), and leaving the current
-  // list on screen while it refreshes beats blanking it out.
-  const loadShares = useCallback(async () => {
-    try {
-      setShares(await fetchShares());
-      setError(null);
-    } catch (err) {
-      setError(loadFailureMessage(err));
-    }
-  }, [fetchShares]);
+  const {
+    loading,
+    error,
+    setError,
+    reload: loadShares,
+  } = useRemoteList(fetchShares, setShares, "Failed to load sharing");
 
   const handleInvite = async () => {
     if (!inviteEmail.trim()) return;
