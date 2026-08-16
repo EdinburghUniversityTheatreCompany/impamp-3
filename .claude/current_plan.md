@@ -121,8 +121,7 @@ is a behaviour change, not a security fix. The inbound side needed nothing:
 ## Phase 9 — connect flows and component 🔴s (🔴 U1, U2; 🟡 D2, D3, D4, D8, A3)
 
 - [ ] 9.1 U1: `/server/open` calls `useConnectServerProfile`
-- [ ] 9.2 D2: `useConnectDriveProfile()` — four copies collapse
-- [ ] 9.3 D3: `useGoogleSignIn()` — three copies collapse
+- [x] 9.2 D2 (`e7236b3`) · [x] 9.3 D3 (`807a268`)
 - [ ] 9.4 U2: `ProfileManagerHost` gate (kills the eager Drive Picker import)
 - [ ] 9.5 A3: `applyConflictResolutions` moves to `syncUtils.ts`, unit-tested
 - [ ] 9.6 D4, D8
@@ -136,15 +135,16 @@ The big splits. Deliberately after all correctness work.
 - [ ] 10.3 A4: `syncRequestQueue` drains
 - [ ] 10.4 A10: one `useAppLifecycle()`
 - [ ] 10.5 A11, A12, A13, A14
-- [ ] 10.6 UI1–UI4, UI6, UI7, D5
+- [x] D5 (`4540062`) — `triggerPad` owns the loading-state wiring.
+- [ ] 10.6 UI1–UI4, UI6, UI7
 
 ## Phase 11 — audio subsystem and dead code (🟡 AU1–AU6; 🟢 L1–L7)
 
-- [ ] 11.1 AU1/AU2: delete the ~200 unreachable lines and the two fake
-      streaming decoders
-- [ ] 11.2 AU3, AU4, AU5, AU6
-- [ ] 11.3 L1: 18 dead exports · L2 barrels · L3 registry · L4 dead props ·
-      L5 unreachable UI · L6 stale comment · L7 the two TODOs
+- [x] 11.1 AU1/AU2 · [x] 11.3 L1–L7 — commit `bc70ec8`, 560 lines removed.
+      Six "dead" exports turned out to be merely over-exported; they lost the
+      `export`, not the function.
+- [ ] 11.2 AU3 (double decode), AU4 (error fallback plays the wrong sound with
+      the wrong gain), AU5 (322-line trigger), AU6 (round-robin cast)
 
 ## Phase 12 — test suite health (🔴 T1; 🟡 TH1, TH3–TH8)
 
