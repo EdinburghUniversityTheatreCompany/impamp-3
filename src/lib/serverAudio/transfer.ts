@@ -30,6 +30,7 @@ import {
   requestUploadUrl,
 } from "./api";
 import type { ProfileSyncData } from "@/lib/syncUtils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /** Filename extension, lowercased and without the dot. */
 export function extensionOf(name: string, contentType: string): string {
@@ -52,7 +53,14 @@ let capability: Promise<boolean> | null = null;
 export function canHostAudio(): Promise<boolean> {
   capability ??= fetchAudioLibrary()
     .then((library) => library.canUploadAudio)
-    .catch(() => false);
+    .catch(() => {
+      // Only a *successful* answer is worth keeping. Caching the failure meant
+      // one bad minute — a timeout, a blip, a reconnecting laptop — disabled
+      // hosted audio for the rest of the session with no way back short of a
+      // reload. Clearing it here lets the next sync ask again.
+      capability = null;
+      return false;
+    });
   return capability;
 }
 
@@ -103,7 +111,8 @@ export async function uploadProfileAudio(
       });
 
       if (ticket.uploadUrl) {
-        const response = await fetch(ticket.uploadUrl, {
+        const response = await fetchWithTimeout(ticket.uploadUrl, {
+          timeoutKind: "transfer",
           method: "PUT",
           body: file.blob,
           headers: { "content-type": file.type },
@@ -220,7 +229,9 @@ export async function downloadProfileAudio(
         shareToken,
       );
 
-      const response = await fetch(ticket.url);
+      const response = await fetchWithTimeout(ticket.url, {
+        timeoutKind: "transfer",
+      });
       if (!response.ok) {
         // A presigned URL that has expired, or a bucket hiccup — both are
         // worth another attempt on the next sync.

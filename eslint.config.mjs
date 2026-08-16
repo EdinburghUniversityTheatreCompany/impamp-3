@@ -26,6 +26,23 @@ const eslintConfig = [
   // JSON.stringify's it and dies on the circular `plugins.react` reference.
   ...nextCoreWebVitals,
   ...nextTypeScript,
+  {
+    rules: {
+      // The `_name` convention was already in use for deliberately-unused
+      // parameters — a `fetch` stub has to accept the arguments it ignores to
+      // match the signature — but nothing told ESLint that, so those files
+      // carried permanent warnings. `npm run lint` exits 0 on warnings, so
+      // they were invisible in CI and just accumulated.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

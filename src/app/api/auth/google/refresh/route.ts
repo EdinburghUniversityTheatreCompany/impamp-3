@@ -4,6 +4,7 @@ import {
   establishSession,
 } from "@/lib/server/establishSession";
 import { getSessionUser, SESSION_COOKIE } from "@/lib/server/session";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Refreshes a Google OAuth access token using a refresh token.
@@ -49,11 +50,14 @@ export async function POST(request: NextRequest) {
       grant_type: "refresh_token",
     });
 
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params,
-    });
+    const response = await fetchWithTimeout(
+      "https://oauth2.googleapis.com/token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params,
+      },
+    );
 
     const data = await response.json();
 

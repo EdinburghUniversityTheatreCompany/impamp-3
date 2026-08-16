@@ -78,7 +78,7 @@ const SHAREABLE_PROFILE_FIELDS = [
  * below can prove that every field of `Profile` was considered — a new field is
  * a type error here until someone decides which side it belongs on.
  */
-const WITHHELD_PROFILE_FIELDS = [
+export const WITHHELD_PROFILE_FIELDS = [
   // A bearer credential. Never leaves the device that was granted it.
   "serverShareToken",
 ] as const satisfies readonly (keyof Profile)[];

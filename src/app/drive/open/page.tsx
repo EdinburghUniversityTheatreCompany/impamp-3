@@ -10,6 +10,7 @@ import {
 } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 
@@ -165,11 +166,14 @@ function DriveOpenContent() {
     onSuccess: async ({ code }) => {
       setSignInError(null);
       try {
-        const exchangeResponse = await fetch("/api/auth/google/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
-        });
+        const exchangeResponse = await fetchWithTimeout(
+          "/api/auth/google/exchange",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          },
+        );
 
         if (!exchangeResponse.ok) {
           const err = await exchangeResponse.json().catch(() => ({}));
@@ -184,7 +188,7 @@ function DriveOpenContent() {
 
         const expiresAt = Date.now() + expiresIn * 1000;
 
-        const userInfoResponse = await fetch(
+        const userInfoResponse = await fetchWithTimeout(
           "https://www.googleapis.com/oauth2/v3/userinfo",
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );

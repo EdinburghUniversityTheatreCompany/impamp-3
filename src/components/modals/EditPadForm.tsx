@@ -56,7 +56,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
   updateValue,
   errors,
   isSubmitting,
-  profileId: _profileId, // eslint-disable-line @typescript-eslint/no-unused-vars
+  profileId: _profileId,
   onSoundsAdded,
 }) => {
   const [sounds, setSounds] = useState<SoundListItem[]>([]);

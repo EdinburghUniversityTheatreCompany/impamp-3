@@ -9,6 +9,7 @@
  */
 
 import type { GoogleIdentity } from "./users";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 
@@ -29,7 +30,7 @@ export async function fetchGoogleIdentity(
   accessToken: string,
 ): Promise<GoogleIdentity | null> {
   try {
-    const response = await fetch(USERINFO_URL, {
+    const response = await fetchWithTimeout(USERINFO_URL, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!response.ok) {

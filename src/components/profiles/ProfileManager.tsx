@@ -12,6 +12,7 @@ import { useGoogleLogin, googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import type { ImportLink, TransferProgress } from "@/lib/importExport";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -232,11 +233,14 @@ export default function ProfileManager() {
       try {
         // Exchange the authorization code for tokens server-side so the
         // client secret is never exposed in the browser.
-        const exchangeResponse = await fetch("/api/auth/google/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
-        });
+        const exchangeResponse = await fetchWithTimeout(
+          "/api/auth/google/exchange",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          },
+        );
 
         if (!exchangeResponse.ok) {
           const err = await exchangeResponse.json().catch(() => ({}));
@@ -251,7 +255,7 @@ export default function ProfileManager() {
 
         const expiresAt = Date.now() + expiresIn * 1000;
 
-        const userInfoResponse = await fetch(
+        const userInfoResponse = await fetchWithTimeout(
           "https://www.googleapis.com/oauth2/v3/userinfo",
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
@@ -465,7 +469,7 @@ export default function ProfileManager() {
 
       // If no data (404/scope-invisible file or DRIVE_403), try public proxy
       if (!syncData) {
-        const proxyResponse = await fetch(
+        const proxyResponse = await fetchWithTimeout(
           `/api/drive/public-file?id=${encodeURIComponent(fileId!)}`,
         );
         if (proxyResponse.ok) {

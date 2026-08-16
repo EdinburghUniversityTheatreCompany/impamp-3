@@ -5,6 +5,7 @@
 
 import { isTokenValid } from "./utils";
 import { TokenInfo } from "./types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
  * Validates the authentication state
@@ -33,7 +34,7 @@ export const refreshAccessToken = async (
   try {
     console.log("Refreshing access token via server-side route...");
 
-    const response = await fetch("/api/auth/google/refresh", {
+    const response = await fetchWithTimeout("/api/auth/google/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refreshToken }),

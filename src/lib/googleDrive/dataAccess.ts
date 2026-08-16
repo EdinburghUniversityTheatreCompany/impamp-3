@@ -461,7 +461,6 @@ export const updateLocalData = async (
       if (existingLocalPad?.id) {
         await padStore.put({ ...padWithProfileId, id: existingLocalPad.id });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id: _remoteId, ...padToAdd } = padWithProfileId;
         await padStore.add(padToAdd);
       }
@@ -497,7 +496,6 @@ export const updateLocalData = async (
       if (existingLocalPage?.id) {
         await pageStore.put({ ...pageWithProfileId, id: existingLocalPage.id });
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id: _remoteId, ...pageToAdd } = pageWithProfileId;
         await pageStore.add(pageToAdd);
       }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toWireProfile } from "./profileWire";
+import { toWireProfile, WITHHELD_PROFILE_FIELDS } from "./profileWire";
 import type { Profile } from "./db";
 
 /** Every field a stored profile can carry, so nothing is withheld by omission. */
@@ -32,6 +32,12 @@ function fullProfile(overrides: Partial<Profile> = {}): Profile {
 }
 
 describe("toWireProfile", () => {
+  it.each(WITHHELD_PROFILE_FIELDS)("never carries %s", (field) => {
+    // Driven off the list itself, so a field added to it is covered the moment
+    // it is added rather than whenever someone remembers to write a case.
+    expect(toWireProfile(fullProfile())).not.toHaveProperty(field);
+  });
+
   it("never carries the share token", () => {
     // The token is a bearer credential: whoever holds it gets the role it was
     // issued with. It rode inside every export and every sync blob, and

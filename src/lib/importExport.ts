@@ -19,6 +19,7 @@ import { getPadIndexForKey } from "./keyboardUtils";
 import type { ProfileSyncData } from "./syncUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -181,7 +182,7 @@ export async function base64ToBlob(
   // fetch() decodes data URLs natively and streams the result, which is far
   // faster and lighter on memory than a manual atob() loop for large files.
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `data:${type || "application/octet-stream"};base64,${base64}`,
     );
     return await response.blob();

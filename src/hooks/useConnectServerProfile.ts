@@ -20,6 +20,7 @@ import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { fetchServerProfile } from "@/lib/serverSync/api";
 import type { ImportAudioProgress } from "@/lib/importExport";
 import { requestProfileDownloadUrl } from "@/lib/serverAudio/api";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 export type ConnectServerOutcome =
   | {
@@ -95,7 +96,9 @@ export function useConnectServerProfile() {
             hash,
             shareToken,
           );
-          const response = await fetch(ticket.url);
+          const response = await fetchWithTimeout(ticket.url, {
+            timeoutKind: "transfer",
+          });
           if (!response.ok) {
             throw new Error(
               `Could not download hosted audio (${response.status}).`,

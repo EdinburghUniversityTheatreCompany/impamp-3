@@ -9,6 +9,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
 import { useGoogleLogin } from "@react-oauth/google";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 interface AuthNotificationProps {
   // Optional class name for styling
@@ -69,11 +70,14 @@ export const AuthNotification: React.FC<AuthNotificationProps> = ({
       try {
         // Exchange the authorization code for tokens server-side so the
         // client secret is never exposed in the browser.
-        const exchangeResponse = await fetch("/api/auth/google/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
-        });
+        const exchangeResponse = await fetchWithTimeout(
+          "/api/auth/google/exchange",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          },
+        );
 
         if (!exchangeResponse.ok) {
           const err = await exchangeResponse.json().catch(() => ({}));
@@ -88,7 +92,7 @@ export const AuthNotification: React.FC<AuthNotificationProps> = ({
 
         const expiresAt = Date.now() + expiresIn * 1000;
 
-        const userInfoResponse = await fetch(
+        const userInfoResponse = await fetchWithTimeout(
           "https://www.googleapis.com/oauth2/v3/userinfo",
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
