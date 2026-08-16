@@ -6,7 +6,7 @@
  * @module hooks/modal/useFormModal
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useModal } from "./useModal";
 import type { BaseModalOptions } from "./useModal";
 import React, { type ReactNode } from "react";
@@ -73,8 +73,18 @@ export function useFormModal() {
         ...baseOptions
       } = options;
 
-      // Create a ref to hold submission method
-      let handleFormSubmit: () => Promise<void>;
+      // A box for the current submit handler, filled from an *effect* rather
+      // than during render.
+      //
+      // It used to be a bare `let` assigned in the middle of
+      // `FormModalContent`'s render, into a closure outside React's control —
+      // which React 19's concurrent renderer explicitly does not guarantee: a
+      // discarded or double-invoked render leaves the variable pointing at a
+      // throwaway closure's `values`. Assigning after commit means the box
+      // always holds a handler belonging to a render that actually happened.
+      const submitBox: { current: (() => Promise<void>) | null } = {
+        current: null,
+      };
 
       // Create FormModalContent component to manage form state
       const FormModalContent = () => {
@@ -93,8 +103,8 @@ export function useFormModal() {
           [],
         );
 
-        // Define form submission handler within component scope
-        handleFormSubmit = async () => {
+        // Defined in component scope so it closes over the live values.
+        const handleFormSubmit = useCallback(async () => {
           try {
             setIsSubmitting(true);
 
@@ -121,7 +131,17 @@ export function useFormModal() {
           } finally {
             setIsSubmitting(false);
           }
-        };
+        }, [values]);
+
+        // Commit phase, not render phase.
+        useEffect(() => {
+          submitBox.current = handleFormSubmit;
+          return () => {
+            if (submitBox.current === handleFormSubmit) {
+              submitBox.current = null;
+            }
+          };
+        }, [handleFormSubmit]);
 
         // Render the provided form with current state
         return renderForm({
@@ -135,13 +155,21 @@ export function useFormModal() {
 
       // External submit handler that delegates to the internal one
       const handleSubmit = async () => {
-        if (handleFormSubmit) {
-          await handleFormSubmit();
-        } else {
-          // Fallback if form hasn't rendered yet
-          await onSubmit(initialValues);
-          closeModal();
+        const submit = submitBox.current;
+        if (submit) {
+          await submit();
+          return;
         }
+
+        // The form has not committed, so there are no edits to lose and
+        // `initialValues` is exactly what would have been on screen. Reachable
+        // only if something confirms a modal whose content never rendered,
+        // which is worth knowing about.
+        console.warn(
+          "[useFormModal] Confirmed before the form rendered; submitting the initial values.",
+        );
+        await onSubmit(initialValues);
+        closeModal();
       };
 
       // Open the modal with our form content
