@@ -11,7 +11,6 @@
 
 import React, { useMemo } from "react";
 import { usePlaybackStore, PlaybackState } from "@/store/playbackStore";
-import { useTrackControls } from "@/hooks/useTrackControls";
 import { usePlaybackSettings } from "@/hooks/usePlaybackSettings";
 import PanelHeader from "./shared/PanelHeader";
 import TrackItem from "./shared/TrackItem";
@@ -28,9 +27,6 @@ const ActiveTracksPanel: React.FC = () => {
     () => Array.from(activePlaybackMap.values()),
     [activePlaybackMap],
   );
-
-  // Get track controls hook (used internally by TrackItem)
-  const {} = useTrackControls();
 
   // Get playback settings hook
   const { openPlaybackSettings } = usePlaybackSettings();
@@ -103,7 +99,6 @@ const ActiveTracksPanel: React.FC = () => {
                 trackKey={track.key}
                 name={track.name}
                 remainingTime={track.remainingTime}
-                totalDuration={track.totalDuration}
                 progress={track.progress}
                 isFading={track.isFading}
                 isActive={true}

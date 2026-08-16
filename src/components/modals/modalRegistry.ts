@@ -9,8 +9,11 @@ import { ComponentType, lazy } from "react";
 
 // Modal types enum for type safety
 export enum ModalType {
-  CONFIRM = "confirm",
-  PROMPT = "prompt",
+  // CONFIRM and PROMPT used to be here. Nothing referenced them: the two
+  // smallest modals are rendered directly as `content` by their callers
+  // (`usePadInteractions`, `app/page.tsx`), so the lazy-loading indirection
+  // was bypassed for exactly the components that least needed it. The four
+  // that remain are 500-600 line components, which is what this is for.
   BULK_IMPORT = "bulkImport",
   CONFLICT_RESOLUTION = "conflictResolution",
   HELP = "help",
@@ -19,8 +22,6 @@ export enum ModalType {
 
 // Lazy load all modal components
 const modalComponents = {
-  [ModalType.CONFIRM]: lazy(() => import("./ConfirmModalContent")),
-  [ModalType.PROMPT]: lazy(() => import("./PromptModalContent")),
   [ModalType.BULK_IMPORT]: lazy(() => import("./BulkImportModalContent")),
   [ModalType.CONFLICT_RESOLUTION]: lazy(() =>
     import("./ConflictResolutionModal").then((module) => ({
@@ -44,15 +45,6 @@ export function getModalComponent(modalType: ModalType): ComponentType {
     throw new Error(`Modal component not found for type: ${modalType}`);
   }
   return component as ComponentType;
-}
-
-/**
- * Check if a modal type exists in the registry
- * @param modalType The modal type to check
- * @returns True if the modal type exists
- */
-export function hasModalComponent(modalType: ModalType): boolean {
-  return modalType in modalComponents;
 }
 
 export { modalComponents };

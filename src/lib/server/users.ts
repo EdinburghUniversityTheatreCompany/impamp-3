@@ -32,7 +32,7 @@ export function getUserByEmail(email: string): UserRow | undefined {
   );
 }
 
-export function getUserByGoogleSub(sub: string): UserRow | undefined {
+function getUserByGoogleSub(sub: string): UserRow | undefined {
   return queryOne<UserRow>("SELECT * FROM users WHERE google_sub = ?", sub);
 }
 

@@ -50,7 +50,7 @@ export function audioHostingDisabled(): NextResponse {
 }
 
 /** A SHA-256 hex digest, which is the only shape of key we mint. */
-export function isValidHash(value: unknown): value is string {
+function isValidHash(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
@@ -74,7 +74,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "audio/x-m4a",
 ]);
 
-export function isAllowedContentType(value: unknown): value is string {
+function isAllowedContentType(value: unknown): value is string {
   return typeof value === "string" && ALLOWED_CONTENT_TYPES.has(value);
 }
 
@@ -159,9 +159,7 @@ export interface AudioBody {
   extension?: unknown;
 }
 
-export function parseAudioFields(
-  body: AudioBody,
-): AudioFileFields | NextResponse {
+function parseAudioFields(body: AudioBody): AudioFileFields | NextResponse {
   if (!isValidHash(body.hash)) {
     return NextResponse.json(
       { error: "hash must be a SHA-256 hex digest" },
@@ -183,7 +181,7 @@ export function parseAudioFields(
 }
 
 /** Parse a JSON body, or the 400 to send instead. */
-export async function parseJsonBody<T extends object>(
+async function parseJsonBody<T extends object>(
   request: NextRequest,
 ): Promise<T | NextResponse> {
   try {

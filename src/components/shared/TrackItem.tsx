@@ -33,7 +33,6 @@ interface TrackItemProps {
   /**
    * Total duration in seconds
    */
-  totalDuration?: number;
 
   /**
    * Current playback progress (0 to 1)
@@ -68,8 +67,6 @@ const TrackItem: React.FC<TrackItemProps> = ({
   trackKey,
   name,
   remainingTime,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  totalDuration, // Not currently used but kept for future use
   progress = 0,
   isFading = false,
   isActive = false,

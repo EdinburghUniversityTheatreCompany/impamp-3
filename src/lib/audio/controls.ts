@@ -13,7 +13,6 @@ import { PadConfiguration, getAudioFile } from "../db";
 import {
   loadAndDecodeAudioInstant,
   loadAndDecodeAudioEnhanced,
-  preloadAudioFiles,
   LoadingState,
 } from "./decoder";
 import { getCachedAudioBuffer } from "./cache";
@@ -29,7 +28,6 @@ import {
   fadeOutAllTracks,
   isTrackPlaying,
   isTrackFading,
-  getActivePlaybackKeys,
   getActiveTrack,
   getStopGeneration,
   stopRequestedSince,
@@ -535,14 +533,6 @@ export async function triggerAudioForPadInstant(
     let buffer = await loadAndDecodeAudioInstant(
       audioFileId,
       onLoadingStateChange,
-      // onPartialReady callback for progressive playback
-      () => {
-        console.log(
-          `[Audio Controls] [Instant] Partial audio ready for ID: ${audioFileId}`,
-        );
-        // Start playback immediately when partial buffer is available
-        onAudioReady?.();
-      },
     );
 
     // If primary loading failed, attempt fallback and recovery
@@ -641,15 +631,6 @@ export function fadeOutAllAudio(durationInSeconds: number = 3): void {
 }
 
 /**
- * Returns an array of all currently playing audio keys
- *
- * @returns Array of playback keys
- */
-export function getPlayingAudioKeys(): string[] {
-  return getActivePlaybackKeys();
-}
-
-/**
  * Checks if a specific audio track is playing
  *
  * @param playbackKey - The key identifying the playback
@@ -680,39 +661,6 @@ export async function ensureAudioContextActive(): Promise<void> {
     await resumeAudioContext();
   } catch (error) {
     console.error("[Audio Controls] Failed to resume audio context:", error);
-  }
-}
-
-/**
- * Preloads audio for a collection of pad configurations (DEPRECATED - use intelligent preloader)
- *
- * @deprecated Use audioPreloader.preloadCurrentPage() instead for better performance
- * @param padConfigs - Array of pad configurations containing audio file IDs
- * @returns Promise that resolves when preloading is complete
- */
-export async function preloadAudioForPage(
-  padConfigs: PadConfiguration[],
-): Promise<void> {
-  // Extract all unique audio file IDs from all configurations
-  const allIds = padConfigs.flatMap((config) => config.audioFileIds || []);
-  const uniqueIds = [...new Set(allIds)].filter(Boolean);
-
-  if (uniqueIds.length === 0) {
-    console.log("[Audio Controls] No audio files to preload.");
-    return;
-  }
-
-  console.log(
-    `[Audio Controls] [DEPRECATED] Preloading ${uniqueIds.length} audio files for the current page...`,
-  );
-
-  try {
-    await preloadAudioFiles(uniqueIds);
-    console.log(
-      `[Audio Controls] Preloading complete for ${uniqueIds.length} audio files.`,
-    );
-  } catch (error) {
-    console.error("[Audio Controls] Error during audio preloading:", error);
   }
 }
 

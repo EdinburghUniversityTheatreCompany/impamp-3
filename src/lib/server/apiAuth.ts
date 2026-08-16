@@ -10,7 +10,7 @@ import type { Access, UserRow } from "./db";
 /** Header a client may use instead of `?token=` to present a share link token. */
 export const SHARE_TOKEN_HEADER = "x-impamp-share-token";
 
-export function getRequestUser(request: NextRequest): UserRow | null {
+function getRequestUser(request: NextRequest): UserRow | null {
   return getSessionUser(request.cookies.get(SESSION_COOKIE)?.value);
 }
 
@@ -18,7 +18,7 @@ export function getRequestUser(request: NextRequest): UserRow | null {
  * A share link token from either the query string (what a pasted URL carries)
  * or a request header (what the client sends once it has stored the token).
  */
-export function getShareToken(request: NextRequest): string | null {
+function getShareToken(request: NextRequest): string | null {
   return (
     request.nextUrl.searchParams.get("token") ??
     request.headers.get(SHARE_TOKEN_HEADER)

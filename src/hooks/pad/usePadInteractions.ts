@@ -81,7 +81,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
         renderForm: (props) =>
           React.createElement(EditPadModalContent, {
             ...props,
-            profileId: activeProfileId,
             session,
           }),
         validate: (values) => {

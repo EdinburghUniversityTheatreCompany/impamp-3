@@ -709,15 +709,6 @@ export async function deleteAudioFile(id: number): Promise<void> {
 }
 
 // Get an audio file by name (returns first match)
-export async function getAudioFileByName(
-  name: string,
-): Promise<AudioFile | undefined> {
-  const db = await getDb();
-  const tx = db.transaction("audioFiles", "readonly");
-  const results = await tx.store.index("name").getAll(name);
-  await tx.done;
-  return results[0];
-}
 
 // Get an audio file by content hash (returns first match)
 export async function getAudioFileByHash(

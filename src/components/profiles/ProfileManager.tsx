@@ -205,12 +205,6 @@ export default function ProfileManager() {
     onError: setGoogleApiError,
   });
 
-  // Surface an error raised by the Drive hook in this panel's own status.
-  //
-  // Adjusted during render rather than in an effect — the pattern React
-  // documents for "state that depends on a value seen last render". An effect
-  // would render once with the stale status and then again with the error,
-
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProfileName.trim()) {

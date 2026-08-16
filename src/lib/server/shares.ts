@@ -25,7 +25,7 @@ export function listShares(profileId: string): ShareRow[] {
   );
 }
 
-export function getShareByLinkToken(token: string): ShareRow | undefined {
+function getShareByLinkToken(token: string): ShareRow | undefined {
   return queryOne<ShareRow>(
     "SELECT * FROM profile_shares WHERE link_token = ?",
     token,

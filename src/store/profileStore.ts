@@ -296,7 +296,8 @@ export const useProfileStore = create<ProfileState>()(
               isEditMode: false,
               isDeleteMoveMode: false,
             });
-            // TODO: Trigger loading of pad configurations for the new active profile
+            // Pad configurations are not loaded here: `usePadConfigurations`
+            // is keyed on the active profile, so switching it is the trigger.
 
             // Cues belong to the profile they were armed in. Profiles are
             // isolated, and the Armed Tracks panel shows nothing but a name, so

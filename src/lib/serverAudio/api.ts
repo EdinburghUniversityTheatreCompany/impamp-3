@@ -173,17 +173,6 @@ export async function commitUpload(file: {
   return response.json();
 }
 
-/** A presigned URL for audio the signed-in user holds. */
-export async function requestOwnDownloadUrl(
-  hash: string,
-): Promise<DownloadTicket> {
-  const response = await fetchWithTimeout(`/api/audio/${hash}`);
-  if (!response.ok) {
-    await throwForStatus(response, "Could not fetch that audio");
-  }
-  return response.json();
-}
-
 /**
  * A presigned URL for audio belonging to a profile the caller can see. This is
  * the path collaborators and anonymous link-share holders use.
