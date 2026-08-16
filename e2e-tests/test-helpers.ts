@@ -201,7 +201,9 @@ export async function activatePad(
     await padLocator.click({ force: true });
   }
 
-  await page.waitForTimeout(300);
+  // No sleep here. The assertion below already retries for 30 seconds, so a
+  // flat 300ms bought nothing and cost 300ms on every call, across four spec
+  // files.
 
   // Verify the active tracks panel shows something is playing
   await expect(page.locator("text=Nothing playing")).toBeHidden({
