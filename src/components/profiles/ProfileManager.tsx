@@ -3,16 +3,17 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { useProfileStore, GoogleUserInfo } from "@/store/profileStore";
+import { useProfileStore } from "@/store/profileStore";
 import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
-import { useGoogleLogin, googleLogout } from "@react-oauth/google";
+import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import type { ImportLink, TransferProgress } from "@/lib/importExport";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 
 /**
  * Progress bar shown while a ZIP export/import streams audio files.
@@ -97,7 +98,6 @@ export default function ProfileManager() {
     isGoogleSignedIn,
     googleUser,
     googleAccessToken,
-    setGoogleAuthDetails,
     clearGoogleAuthDetails,
   } = useProfileStore();
 
@@ -225,74 +225,8 @@ export default function ProfileManager() {
     }
   };
 
-  const googleLogin = useGoogleLogin({
-    flow: "auth-code",
-    onSuccess: async ({ code }) => {
-      console.log("Google Login Success (auth-code flow)");
-      setGoogleApiError(null);
-      try {
-        // Exchange the authorization code for tokens server-side so the
-        // client secret is never exposed in the browser.
-        const exchangeResponse = await fetchWithTimeout(
-          "/api/auth/google/exchange",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code }),
-          },
-        );
-
-        if (!exchangeResponse.ok) {
-          const err = await exchangeResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to exchange authorization code");
-        }
-
-        const {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          expires_in: expiresIn,
-        } = await exchangeResponse.json();
-
-        const expiresAt = Date.now() + expiresIn * 1000;
-
-        const userInfoResponse = await fetchWithTimeout(
-          "https://www.googleapis.com/oauth2/v3/userinfo",
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!userInfoResponse.ok) {
-          throw new Error(
-            `Failed to fetch user info: ${userInfoResponse.statusText}`,
-          );
-        }
-        const userInfo: GoogleUserInfo = await userInfoResponse.json();
-        console.log("Fetched Google User Info:", userInfo);
-
-        setGoogleAuthDetails(
-          userInfo,
-          accessToken,
-          refreshToken ?? null,
-          expiresAt,
-        );
-        console.log(
-          "Google authentication successful and stored in profile store",
-        );
-      } catch (error) {
-        console.error("Error completing Google login:", error);
-        setGoogleApiError(
-          error instanceof Error
-            ? error.message
-            : "Failed to complete Google sign-in.",
-        );
-      }
-    },
-    onError: (errorResponse) => {
-      console.error("Google Login Failed (hook):", errorResponse);
-      setGoogleApiError(
-        `Login failed: ${errorResponse.error_description || errorResponse.error || "Unknown error"}`,
-      );
-      clearGoogleAuthDetails();
-    },
-    scope: "https://www.googleapis.com/auth/drive.file",
+  const googleLogin = useGoogleSignIn({
+    onError: setGoogleApiError,
   });
 
   // Surface an error raised by the Drive hook in this panel's own status.

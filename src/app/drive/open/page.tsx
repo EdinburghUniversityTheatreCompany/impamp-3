@@ -2,15 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useGoogleLogin } from "@react-oauth/google";
-import {
-  useProfileStore,
-  whenProfilesLoaded,
-  GoogleUserInfo,
-} from "@/store/profileStore";
+import { useProfileStore, whenProfilesLoaded } from "@/store/profileStore";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 
@@ -26,8 +21,7 @@ function DriveOpenContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { isGoogleSignedIn, setGoogleAuthDetails, importProfileFromSyncData } =
-    useProfileStore();
+  const { isGoogleSignedIn, importProfileFromSyncData } = useProfileStore();
 
   const { listFilesInFolder, downloadDriveFile, downloadAudioFile } =
     useGoogleDriveSync();
@@ -160,62 +154,21 @@ function DriveOpenContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const googleLogin = useGoogleLogin({
-    flow: "auth-code",
-    scope: "https://www.googleapis.com/auth/drive.file",
-    onSuccess: async ({ code }) => {
-      setSignInError(null);
+  const googleLogin = useGoogleSignIn({
+    onError: setSignInError,
+    onSignedIn: async () => {
+      // Connect using the folder ID saved before the popup opened.
+      const pendingFolderId = sessionStorage.getItem(PENDING_FOLDER_KEY);
+      if (!pendingFolderId) {
+        setPageState({
+          kind: "error",
+          message: "Lost track of the folder to connect. Please try again.",
+        });
+        return;
+      }
+
       try {
-        const exchangeResponse = await fetchWithTimeout(
-          "/api/auth/google/exchange",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code }),
-          },
-        );
-
-        if (!exchangeResponse.ok) {
-          const err = await exchangeResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to exchange authorization code");
-        }
-
-        const {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          expires_in: expiresIn,
-        } = await exchangeResponse.json();
-
-        const expiresAt = Date.now() + expiresIn * 1000;
-
-        const userInfoResponse = await fetchWithTimeout(
-          "https://www.googleapis.com/oauth2/v3/userinfo",
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!userInfoResponse.ok) {
-          throw new Error(
-            `Failed to fetch user info: ${userInfoResponse.statusText}`,
-          );
-        }
-        const userInfo: GoogleUserInfo = await userInfoResponse.json();
-
-        setGoogleAuthDetails(
-          userInfo,
-          accessToken,
-          refreshToken ?? null,
-          expiresAt,
-        );
-
-        // Now connect using the folder ID we saved before sign-in
-        const pendingFolderId = sessionStorage.getItem(PENDING_FOLDER_KEY);
-        if (pendingFolderId) {
-          await connectToFolder(pendingFolderId);
-        } else {
-          setPageState({
-            kind: "error",
-            message: "Lost track of the folder to connect. Please try again.",
-          });
-        }
+        await connectToFolder(pendingFolderId);
       } catch (error) {
         console.error("Sign-in failed:", error);
         setSignInError(
@@ -224,11 +177,6 @@ function DriveOpenContent() {
             : "Sign-in failed. Please try again.",
         );
       }
-    },
-    onError: (errorResponse) => {
-      setSignInError(
-        `Sign-in failed: ${errorResponse.error_description || errorResponse.error || "Unknown error"}`,
-      );
     },
   });
 
