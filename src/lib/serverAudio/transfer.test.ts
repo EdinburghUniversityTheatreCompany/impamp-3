@@ -13,6 +13,7 @@ const dbMocks = vi.hoisted(() => ({
   ensureAudioFileHash: vi.fn(),
   getAudioFile: vi.fn(),
   getAudioFileByHash: vi.fn(),
+  getAudioFileMetadata: vi.fn(),
   getDb: vi.fn(),
   markAudioFilesHosted: vi.fn(),
 }));
@@ -67,6 +68,26 @@ beforeEach(() => {
     getAllKeys: vi.fn().mockResolvedValue([]),
   });
   dbMocks.getAudioFileByHash.mockResolvedValue(undefined);
+  // Mirrors whatever getAudioFile is stubbed to return, so a test that sets up
+  // a local file gets a consistent answer from both without saying it twice.
+  dbMocks.getAudioFileMetadata.mockImplementation(
+    async (ids: Iterable<number>) => {
+      const map = new Map();
+      for (const id of ids) {
+        const file = await dbMocks.getAudioFile(id);
+        if (file) {
+          map.set(id, {
+            id,
+            name: file.name,
+            type: file.type,
+            hash: file.hash,
+            serverHosted: file.serverHosted,
+          });
+        }
+      }
+      return map;
+    },
+  );
 });
 
 describe("extensionOf", () => {
@@ -151,10 +172,55 @@ describe("uploadProfileAudio", () => {
     expect(apiMocks.commitUpload).toHaveBeenCalledOnce();
   });
 
+  it("asks the server nothing about files it already knows are hosted", async () => {
+    // The loop used to issue requestUploadUrl *and* commitUpload for every
+    // file on every sync, ignoring the stored serverHosted flag entirely. On a
+    // 500-sound profile that is a thousand sequential round trips, repeated on
+    // load, every 15 minutes, on reconnect, on every SSE event and ten seconds
+    // after every edit.
+    dbMocks.getAudioFile.mockImplementation(async (id: number) => ({
+      ...localFile(id === 1 ? HASH_A : HASH_B),
+      id,
+      serverHosted: true,
+    }));
+
+    const result = await uploadProfileAudio([1, 2]);
+
+    expect(apiMocks.requestUploadUrl).not.toHaveBeenCalled();
+    expect(apiMocks.commitUpload).not.toHaveBeenCalled();
+    // Still reported: the caller uses this to tell readers where the bytes are.
+    expect(result.hosted).toEqual([HASH_A, HASH_B]);
+    expect(result.aborted).toBe(false);
+  });
+
+  it("marks newly hosted files in one write rather than one per hash", async () => {
+    dbMocks.getAudioFile.mockImplementation(async (id: number) => ({
+      ...localFile(id === 1 ? HASH_A : HASH_B),
+      id,
+    }));
+    apiMocks.requestUploadUrl.mockResolvedValue({
+      key: "k",
+      uploadUrl: null,
+      alreadyStored: true,
+      expiresInSeconds: 900,
+    });
+    apiMocks.commitUpload.mockResolvedValue({});
+
+    await uploadProfileAudio([1, 2]);
+
+    expect(dbMocks.markAudioFilesHosted).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markAudioFilesHosted).toHaveBeenCalledWith([HASH_A, HASH_B]);
+  });
+
   it("reports a per-file quota refusal but keeps going", async () => {
-    dbMocks.getAudioFile
-      .mockResolvedValueOnce(localFile(HASH_A, "big.wav"))
-      .mockResolvedValueOnce(localFile(HASH_B, "small.wav"));
+    // Keyed by id rather than by call order: the metadata pass and the upload
+    // loop both ask, and a `mockResolvedValueOnce` chain would hand the second
+    // asker the wrong file.
+    const byId: Record<number, ReturnType<typeof localFile>> = {
+      1: localFile(HASH_A, "big.wav"),
+      2: localFile(HASH_B, "small.wav"),
+    };
+    dbMocks.getAudioFile.mockImplementation(async (id: number) => byId[id]);
     apiMocks.requestUploadUrl
       .mockRejectedValueOnce(
         new AudioQuotaError("over your allowance", "user_quota"),

@@ -580,6 +580,64 @@ export async function findUnanalysedAudioFileIds(
   return ids;
 }
 
+/** An audio file's metadata, without the bytes. */
+export interface AudioFileMetadata {
+  id: number;
+  name: string;
+  type: string;
+  hash?: string;
+  serverHosted?: boolean;
+  driveFileIds?: Record<number, string>;
+  loudness?: AudioFile["loudness"];
+}
+
+/**
+ * Metadata for the given audio files, read in one cursor pass.
+ *
+ * The alternative — and what half a dozen call sites were doing — is
+ * `for (const id of ids) await getAudioFile(id)`, which reads the *whole*
+ * record each time, Blob included, just to look at a string. On a 960-sound
+ * board that is 960 sequential round trips, each materialising an audio file
+ * in memory, to answer a question about names and hashes. Some of those sites
+ * ran twice per sync, and sync runs on load, every 15 minutes, on reconnect,
+ * on every SSE event and 10 seconds after every edit.
+ *
+ * `cursor.value.blob` is never read or retained, so the bytes stay on disk.
+ *
+ * @param audioFileIds - Which files to describe; order is not preserved
+ * @returns A map from audio file id to its metadata, omitting ids not found
+ */
+export async function getAudioFileMetadata(
+  audioFileIds: Iterable<number>,
+): Promise<Map<number, AudioFileMetadata>> {
+  const wanted = new Set(audioFileIds);
+  const found = new Map<number, AudioFileMetadata>();
+  if (wanted.size === 0) return found;
+
+  const db = await getDb();
+  let cursor = await db.transaction("audioFiles").store.openCursor();
+
+  while (cursor) {
+    const record = cursor.value;
+    if (record.id !== undefined && wanted.has(record.id)) {
+      found.set(record.id, {
+        id: record.id,
+        name: record.name,
+        type: record.type,
+        hash: record.hash,
+        serverHosted: record.serverHosted,
+        driveFileIds: record.driveFileIds,
+        loudness: record.loudness,
+      });
+      // Stop as soon as everything asked for has been seen.
+      if (found.size === wanted.size) break;
+    }
+    cursor = await cursor.continue();
+  }
+
+  return found;
+}
+
 /**
  * Clears the stored loudness analysis for exactly the given audio files.
  *

@@ -31,6 +31,7 @@ import {
 } from "./api";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getAudioFileMetadata } from "@/lib/db";
 
 /** Filename extension, lowercased and without the dot. */
 export function extensionOf(name: string, contentType: string): string {
@@ -95,7 +96,41 @@ export async function uploadProfileAudio(
   // account is not approved. Costs one cached request, not one per file.
   if (!(await canHostAudio())) return { hosted, warnings, aborted: true };
 
-  for (const id of audioFileIds) {
+  // One cursor pass for the metadata, so the decision about which files need
+  // anything is made without reading a single blob. This loop used to open
+  // every audio record and then issue `requestUploadUrl` *and* `commitUpload`
+  // for all of them regardless — two sequential HTTP round trips per file, on
+  // every sync, even for files the server already had. For a 500-sound profile
+  // that is a thousand round trips and a thousand write transactions, and sync
+  // runs on load, every 15 minutes, on reconnect, on every SSE event and ten
+  // seconds after every edit.
+  const metadata = await getAudioFileMetadata(audioFileIds);
+
+  const needsUpload: number[] = [];
+  for (const [id, meta] of metadata) {
+    if (meta.serverHosted && meta.hash) {
+      // Already up there. Still reported as hosted, because the caller uses
+      // this list to tell readers where the bytes are.
+      hosted.push(meta.hash);
+    } else {
+      needsUpload.push(id);
+    }
+  }
+
+  // Marked in one transaction rather than one per hash — but flushed before
+  // *every* exit, including the aborted ones, or a sync that gave up halfway
+  // would forget the files it did manage to upload and re-upload them next
+  // time.
+  const newlyHosted: string[] = [];
+  const rememberHosted = async () => {
+    // splice hands over a fresh array and empties the buffer in one step. The
+    // buffer must not be cleared *after* passing it on: the callee is async and
+    // would be reading an array this had already emptied.
+    const batch = newlyHosted.splice(0);
+    if (batch.length > 0) await markAudioFilesHosted(batch);
+  };
+
+  for (const id of needsUpload) {
     const file = await getAudioFile(id);
     if (!file) continue;
 
@@ -132,13 +167,16 @@ export async function uploadProfileAudio(
       hosted.push(hash);
       // Remembered locally so a later sync that cannot upload — unapproved,
       // capped, or just unlucky — still tells readers where these bytes are.
-      await markAudioFilesHosted([hash]);
+      // Collected here and written once below: this used to open a separate
+      // read-write transaction per hash.
+      newlyHosted.push(hash);
     } catch (error) {
       // These two mean every later file would fail the same way.
       if (
         error instanceof NotApprovedForAudioError ||
         error instanceof AudioHostingUnavailableError
       ) {
+        await rememberHosted();
         return { hosted, warnings, aborted: true };
       }
       if (error instanceof AudioQuotaError) {
@@ -146,6 +184,7 @@ export async function uploadProfileAudio(
         // The global cap will refuse everything else too; a personal quota
         // might still have room for a smaller file.
         if (error.reason === "global_cap") {
+          await rememberHosted();
           return { hosted, warnings, aborted: true };
         }
         continue;
@@ -156,6 +195,7 @@ export async function uploadProfileAudio(
     }
   }
 
+  await rememberHosted();
   return { hosted, warnings, aborted: false };
 }
 
