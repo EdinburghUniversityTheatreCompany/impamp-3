@@ -283,6 +283,27 @@ export function getDb(): DatabaseSync {
 }
 
 /**
+ * Open the database and confirm it can be written to, or throw.
+ *
+ * `getDb()` alone is not enough on its own to prove much — but it is where the
+ * file is created, the migrations run and WAL is turned on, so an unwritable
+ * volume fails there. `BEGIN IMMEDIATE` then takes the write lock, which needs
+ * the -wal and -shm files to be creatable, so a directory that is readable but
+ * not writable is caught too. That is not a hypothetical failure: the deployed
+ * `impamp_data` volume was root-owned while the container runs as uid 1000, and
+ * a human had to notice and chown it.
+ *
+ * Cheap enough for a health check: the handle is memoised, node:sqlite is
+ * synchronous and single-threaded so no other transaction can be open while
+ * this runs, and an empty transaction writes nothing.
+ */
+export function assertDatabaseUsable(): void {
+  const database = getDb();
+  database.exec("BEGIN IMMEDIATE");
+  database.exec("ROLLBACK");
+}
+
+/**
  * Close and forget the shared handle. Tests use this to start from a clean
  * database; production never calls it.
  */
