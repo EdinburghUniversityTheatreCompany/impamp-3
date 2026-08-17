@@ -150,6 +150,14 @@ describe("applyTransition", () => {
       PROFILE_ID,
       expect.objectContaining(plan.rollbackTo),
     );
+    // Naming the value as well as the shape: asserting only against
+    // `plan.rollbackTo` is tautological, since that is the plan's own output.
+    // The profile started local, so that is where a failed adopt must leave it.
+    expect(r.updateProfile).toHaveBeenLastCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ syncType: "local" }),
+    );
+    expect(plan.fieldUpdates.syncType).toBe("server");
   });
 
   it("also takes back what the failed effect wrote", async () => {
