@@ -140,9 +140,14 @@ Next.js 16, React 19, TypeScript 6, Tailwind CSS 4, Zustand 5, idb 8,
 react-dropzone 20, Playwright 1.62, ESLint 9 with eslint-config-next 16,
 Prettier 3.9.
 
-Two upgrades are deliberately held back, with the reasons and retry conditions
-in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
-7 API) and ESLint 10 (eslint-plugin-react has no ESLint 10 release).
+Three upgrades are deliberately held back, with the reasons and retry
+conditions in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint
+refuses the TS 7 API), ESLint 10 (eslint-plugin-react has no ESLint 10 release)
+and file-selector 5 (react-dropzone 20 depends on `^4.1.0`, so bumping the top
+level installs a second copy and `fromEvent` stops being the one react-dropzone
+calls internally). These are exactly the three `npm outdated` reports, and
+exactly the three `.github/dependabot.yml` ignores — if you see three outdated
+packages, none of them is fair game.
 
 ### Code Style
 
@@ -175,8 +180,10 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
   `docs/cross-browser-e2e.md` before acting on either. In short: Playwright's
   Linux WebKit cannot write a `Blob` to IndexedDB (so no pad ever gets a
   sound), and CI's runner has no audio device (so Firefox never starts
-  playback, though it is 64/64 locally). Worth running deliberately after a
-  dependency upgrade, or when touching storage or playback
+  playback, though it was green locally when last measured). Worth running
+  deliberately after a dependency upgrade, or when touching storage or
+  playback. The per-browser counts in that doc are a dated measurement from a
+  64-test suite, not a running total — do not compare them against a fresh run
 
 ### Audio File Handling
 
@@ -232,6 +239,9 @@ answers. Two hand-maintained lists of the same facts will always drift, so this
 one now covers only what is machine-checked.
 
 - Node 24.19.0 (LTS) everywhere — `.node-version`, `mise.toml` and the
-  Dockerfile's `NODE_VERSION` ARG, cross-checked by
-  `scripts/check_version_sync.sh`. `node:sqlite` requires Node >= 22.13, so
-  that is the floor
+  `NODE_VERSION` ARG in **both** `Dockerfile` and `Dockerfile.dev`.
+  `scripts/check_version_sync.sh` cross-checks the first three;
+  `scripts/check_extra_dockerfiles.sh` covers every `Dockerfile*`, because the
+  first script is a shared template that reads only one of them and
+  `Dockerfile.dev` drifted to Node 22 unnoticed for months as a result.
+  `node:sqlite` requires Node >= 22.13, so that is the floor

@@ -16,10 +16,22 @@ RUN npm ci
 # Copy application files
 COPY . .
 
-# Declare build-time arguments that Next.js needs during the build
+# Declare build-time arguments that Next.js needs during the build.
+#
+# Every NEXT_PUBLIC_* value a client component reads has to be here. Next inlines
+# them into the client bundle AT BUILD TIME, so supplying one to the running
+# container does nothing at all — the browser never sees it. The Drive Picker in
+# ProfileManager.tsx reads all three; only the client id used to be passed, so
+# the deployed image rendered <drive-picker> with app-id and developer-key both
+# undefined, while config/deploy.yml's env.clear entry for the API key looked
+# like configuration and was inert.
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG NEXT_PUBLIC_GOOGLE_API_KEY
+ARG NEXT_PUBLIC_GOOGLE_APP_ID
 # Make them available as environment variables within this build stage
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+ENV NEXT_PUBLIC_GOOGLE_API_KEY=${NEXT_PUBLIC_GOOGLE_API_KEY}
+ENV NEXT_PUBLIC_GOOGLE_APP_ID=${NEXT_PUBLIC_GOOGLE_APP_ID}
 
 # Build the application
 RUN npm run build
@@ -48,6 +60,16 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 # already exists keeps whatever ownership it has, so an existing deployment
 # needs a one-off `chown -R 1000:1000` on it; see config/deploy.yml.
 RUN mkdir -p /data && chown node:node /data
+
+# Point the app at the directory the line above just created and chowned. The
+# app's own default is relative — `process.env.IMPAMP_DB_PATH || "./data/impamp.db"`
+# — and server.js does `process.chdir(__dirname)`, so without this it resolves
+# to /app/data. /app is created by WORKDIR as root and COPY --chown does not
+# change it, so as uid 1000 that mkdir fails with EACCES and every server-sync
+# route 500s. docker-compose.yml and config/deploy.yml both set this variable,
+# which is exactly why the gap went unnoticed: the two paths anyone tests were
+# fine, and the bare `docker run` the README documents was not.
+ENV IMPAMP_DB_PATH=/data/impamp.db
 
 # Drop root. The server needs no privileged port and writes nothing outside
 # /data, so running as uid 0 only widened what a Next.js RCE or path traversal

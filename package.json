@@ -10,8 +10,6 @@
     "start": "node scripts/start-standalone.js",
     "lint": "eslint .",
     "analyze": "ANALYZE=true npm run build",
-    "analyze:server": "BUNDLE_ANALYZE=server npm run build",
-    "analyze:client": "BUNDLE_ANALYZE=client npm run build",
     "generate-favicon": "node scripts/generate-favicon.js",
     "test": "vitest run",
     "test:watch": "vitest",

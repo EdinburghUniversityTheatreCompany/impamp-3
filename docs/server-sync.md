@@ -7,11 +7,12 @@ performs a Picker grant, and polling every 15 minutes means people work on
 stale data. See `sync-strategies-investigation.md` for how that decision was
 reached — this is "Option 4, core".
 
-**Audio is not stored on the server.** A profile row holds only the profile
+**Audio stays in Drive by default.** A profile row holds only the profile
 JSON, which carries content hashes and Google Drive file IDs. Collaborators
 fetch the bytes from the owner's Drive, or through the public proxy when
-signed out. Hosting audio ourselves is a separate, gated feature that has not
-been built yet.
+signed out. Hosting audio on the server is a separate, opt-in feature — off
+unless the five `IMPAMP_S3_*` variables are set, and then still per-account.
+See [`wasabi-audio.md`](wasabi-audio.md).
 
 ## What it gives you
 
@@ -21,7 +22,7 @@ been built yet.
 | Inviting someone    | Drive share **plus** a Picker grant | invite by email, works at next sign-in             |
 | Anonymous view-only | public Drive link                   | share link, no sign-in at all                      |
 | Simultaneous edits  | last-write-wins or a conflict modal | version-checked; a lost race re-merges and retries |
-| Where audio lives   | Google Drive                        | Google Drive (unchanged)                           |
+| Where audio lives   | Google Drive                        | Drive, or the app's own storage when enabled       |
 | Infrastructure      | none                                | one SQLite file on a volume                        |
 
 Server sync does _not_ give true simultaneous editing of the same pad — that
@@ -58,11 +59,21 @@ The database holds users, profiles, shares and sessions. Losing it unlinks
 every server-synced profile, but it is not the only copy of anyone's
 soundboard: the profile data is also in each collaborator's IndexedDB, and the
 audio is in Drive. Still, back it up — WAL mode means a plain `cp` can capture
-a torn state, so use SQLite's own backup:
+a torn state, so the copy has to go through SQLite's own backup API.
 
-```sh
-kamal app exec --reuse 'sqlite3 /data/impamp.db ".backup /data/backup.db"'
-```
+**If server-hosted audio is enabled, the database is only half the backup.**
+The bucket then holds the only copy of those sounds, and the two have to be
+captured and restored as a pair, in that order. See
+[Backups](wasabi-audio.md#backups) in `wasabi-audio.md`.
+
+**The runnable command lives in the comment block above `volumes:` in
+[`config/deploy.yml`](../config/deploy.yml)**, next to the volume it copies. It
+is deliberately not repeated here. This file used to carry its own copy, which
+ran `sqlite3` through `kamal app exec` — and the app image is `node:alpine`,
+which has no `sqlite3` binary, so that command could never have worked. The
+same command was corrected in `deploy.yml` and not here, which left the broken
+copy sitting in the file a maintainer actually opens during an incident. One
+command, one home.
 
 ## How a user turns it on
 
@@ -146,8 +157,10 @@ hash is stored. Establishing a session is best-effort — if it fails, Drive
 sync carries on unaffected.
 
 The **first user to sign in becomes an admin**. This instance is self-hosted,
-so bootstrapping from the first sign-in avoids shipping a credential. Nothing
-gates on `is_admin` yet; it exists for the hosted-audio feature.
+so bootstrapping from the first sign-in avoids shipping a credential.
+`is_admin` gates the hosted-audio admin surface: `/api/admin/audio` and
+`/api/admin/users/[id]`, both of which answer 404 rather than 403 so the
+surface is not advertised to non-admins.
 
 ## Limitations
 

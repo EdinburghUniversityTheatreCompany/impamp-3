@@ -15,13 +15,22 @@ and in CI on 2026-08-13 (commit `f0486eb`).
 
 ## Summary
 
-| Project  | Local         | CI        | Cause                               |
+**These counts are a measurement, not a running total.** They are what the three
+projects did on 2026-08-13 at `f0486eb`, when the suite was 64 tests. It is 127
+now, so treat the columns below as ratios rather than as figures to compare
+against a fresh run — in particular the WebKit cascade is certainly larger than
+38 today, because it scales with the number of tests that use a sound.
+
+| Project  | Local (64)    | CI (64)   | Cause                               |
 | -------- | ------------- | --------- | ----------------------------------- |
 | chromium | 64 passed     | 64 passed | — (this is the gate)                |
 | firefox  | **64 passed** | 17 failed | No audio device on the CI runner    |
 | webkit   | 38 failed     | 38 failed | WebKit can't put Blobs in IndexedDB |
 
-Neither failure mode is a bug a user would hit. Neither is worth gating on.
+The **causes** are what this document is for, and they have not changed. Neither
+failure mode is a bug a user would hit; neither is worth gating on. Re-running
+to refresh the numbers would cost about 35 minutes and would not alter a single
+conclusion below, which is why it has not been done.
 
 ## WebKit — cannot store a Blob in IndexedDB
 
@@ -48,9 +57,10 @@ handle `setInputFiles` hands the page.
 
 impamp stores audio as `AudioFile.blob`, written through `addAudioFile` in
 `src/lib/db.ts`. So under WebKit no pad ever receives a sound, and that single
-failure cascades into all 38: armed-tracks, audio-playback, edit-mode,
-pad-disable, search-modal and import-export all assume a pad with a sound on it.
-The 26 that pass are the ones that never touch audio.
+failure cascaded into all 38 of the then-64: armed-tracks, audio-playback,
+edit-mode, pad-disable, search-modal and import-export all assume a pad with a
+sound on it. The 26 that passed are the ones that never touch audio. The split
+moves with the suite; the single cause does not.
 
 **This is not a Safari bug.** Blob-in-IndexedDB is a normal, working pattern in
 released Safari; it is this headless Linux build that lacks it. A red WebKit run
@@ -64,7 +74,8 @@ reasons, prefer `ArrayBuffer` and WebKit comes along for free.
 
 ## Firefox — passes locally, fails in CI for want of an audio device
 
-Firefox is **64/64 green locally**. In CI, 17 tests fail, and all of them fail
+Firefox was **64/64 green locally** on the run recorded above. In CI, 17 tests
+failed, and all of them failed
 the same way: the sound is assigned and the pad renders it, but nothing ever
 appears in the active-tracks panel — playback never starts.
 

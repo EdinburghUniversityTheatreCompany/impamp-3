@@ -37,6 +37,17 @@ local linters = new Mapping<String, Step> {
         glob = List("mise.toml", ".node-version", "package.json", "Dockerfile", "docker-compose.yml", "compose.yaml", "config/deploy.yml", ".devcontainer/compose.yaml", ".github/workflows/*.yml")
         check = "bash scripts/check_version_sync.sh"
     }
+    // The template above picks the FIRST of Dockerfile / Containerfile and cross-checks only
+    // that one. This repo has two images, so Dockerfile.dev's Node pin was invisible to it —
+    // which is how the dev container sat on Node 22 while CI and production were on 24, for
+    // months. That was fixed by hand; the gate that should have caught it still could not see
+    // the file. check_version_sync.sh asks not to be hand-edited (it is a shared, re-copyable
+    // template), so this covers what it skips instead of forking it. Note the separate glob:
+    // editing ONLY Dockerfile.dev has to trigger something, and the step above never fires on it.
+    ["extra-dockerfiles"] {
+        glob = List(".node-version", "Dockerfile*", "Containerfile*")
+        check = "bash scripts/check_extra_dockerfiles.sh"
+    }
     // --- Audits (duplication) ---------------------------------------------------
     // jscpd 5.x via npx; config in `.jscpd.json`. `-f` scopes to code formats
     // (no config equivalent) so docs/yaml aren't flagged. (See dev-env-setup SKILL.md.)
@@ -77,6 +88,16 @@ local linters = new Mapping<String, Step> {
     // is staged. Flags credential persistence, template injection, over-broad GITHUB_TOKEN
     // permissions, etc. (see the github-actions skill). Needs `zizmor` from mise (mise.toml).
     ["zizmor"] = Builtins.zizmor
+    // Every `uses:` must be a commit SHA, and each action must resolve to ONE SHA across all
+    // workflows. Neither actionlint nor zizmor flags a tag-pinned action at the default persona,
+    // so without this the only check was CI's `audit` job — the one asymmetry left in a file
+    // whose whole design is that the local and CI gates cannot drift. The drift it exists to
+    // catch (three actions pinned at two SHAs each, because `pinact run -u` reached six of eight
+    // jobs) is now caught before the commit rather than one push later.
+    ["action-refs"] {
+        glob = List(".github/workflows/*.yml", ".github/workflows/*.yaml")
+        check = "bash scripts/check_action_refs.sh"
+    }
     // Secret scanning (defense-in-depth alongside fnox). hk builtin.
     ["gitleaks"] = Builtins.gitleaks
     // Block accidentally-committed large files. hk builtin.

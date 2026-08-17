@@ -45,7 +45,16 @@ builder:
   arch: amd64
   # Pass in additional build args needed for your Dockerfile.
   args:
+    # NEXT_PUBLIC_* values are inlined into the client bundle at BUILD time, so
+    # they belong here and nowhere else. The API key used to sit in env.clear
+    # below, which reaches the running container and never the browser — the
+    # Drive Picker was rendered with developer-key={undefined}.
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: <%= ENV["NEXT_PUBLIC_GOOGLE_CLIENT_ID"] %>
+    NEXT_PUBLIC_GOOGLE_API_KEY: <%= ENV["NEXT_PUBLIC_GOOGLE_FILE_PICKER_API_KEY"] %>
+    # No value is configured for this anywhere — not in .env.dist, not in
+    # fnox.toml. The Picker's app-id is the Cloud project number. Set it and the
+    # picker gets one; leave it and behaviour is exactly as it has been.
+    NEXT_PUBLIC_GOOGLE_APP_ID: <%= ENV["NEXT_PUBLIC_GOOGLE_APP_ID"] %>
   #   RUBY_VERSION: <%= ENV["RBENV_VERSION"] || ENV["rvm_ruby_string"] || "#{RUBY_ENGINE}-#{RUBY_ENGINE_VERSION}" %>
 
 # Inject ENV variables into containers (secrets come from .kamal/secrets or .kamal/env files).
@@ -55,7 +64,9 @@ env:
   #   DB_HOST: 192.168.0.2
   clear:
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: $NEXT_PUBLIC_GOOGLE_CLIENT_ID
-    NEXT_PUBLIC_GOOGLE_API_KEY: $NEXT_PUBLIC_GOOGLE_FILE_PICKER_API_KEY
+    # NEXT_PUBLIC_GOOGLE_API_KEY is NOT here: a NEXT_PUBLIC_* value is baked
+    # into the client bundle when the image is built, so setting it on the
+    # container has no effect. It moved to builder.args above.
     # Server-sync database, on the persistent volume declared below.
     IMPAMP_DB_PATH: /data/impamp.db
     # Who may hold a server-sync account. UNSET MEANS ANY Google account can
@@ -112,6 +123,18 @@ ssh:
 #   docker run --rm -v impamp_data:/data -v "$PWD:/backup" alpine \
 #     sh -c 'apk add --no-cache sqlite && \
 #            sqlite3 /data/impamp.db ".backup /backup/impamp-$(date +%F).db"'
+#
+# THAT IS ONLY HALF THE BACKUP. Server-hosted audio is on below
+# (IMPAMP_S3_BUCKET), so the bucket holds the only copy of those sounds and the
+# two must be captured and restored together — rows without objects leave pads
+# pointing at nothing. Run the database copy FIRST, then mirror the bucket with
+# a command that never deletes:
+#
+#   rclone copy wasabi:impamp-audio /backup/impamp-audio --transfers 8
+#
+# The order is not arbitrary and the `copy`-not-`sync` is not a preference;
+# docs/wasabi-audio.md's "Backups" section explains why each is the only safe
+# choice, and gives the reconciliation query to check a restore.
 #
 # The container runs as uid 1000 (`node`) rather than root. A volume created
 # from this image onwards already lands owned by 1000, but a volume that

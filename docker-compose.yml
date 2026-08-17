@@ -4,6 +4,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Required, and not merely nice to have: `useGoogleLogin` runs during
+        # prerender, so an unset OR empty value fails `next build` outright with
+        # a stack trace in /_not-found that names nothing about configuration.
+        # Nothing passed this, so `docker compose up app` could not build the
+        # image at all. Real Drive sign-in needs a real client id — put it in a
+        # local .env (see .env.dist), which compose loads automatically — but a
+        # placeholder is enough for everything that is not Google sign-in.
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-unset.apps.googleusercontent.com}
     image: impamp3:latest
     container_name: impamp3-app
     restart: unless-stopped
@@ -16,6 +25,28 @@ services:
     volumes:
       # Server-sync SQLite database — must outlive the container.
       - impamp_data:/data
+    # CLAUDE.md advertises the /up health endpoint and src/app/up/route.ts
+    # implements it, but nothing asked the container about it: `docker compose ps`
+    # reported a wedged app as healthy.
+    #
+    # The URL uses $HOSTNAME, not localhost, and that is not a style choice.
+    # Next's standalone server binds the address in HOSTNAME, which Docker sets to
+    # the container id — so it listens on the container IP alone and a request to
+    # localhost or 127.0.0.1 inside the container is refused outright. Verified:
+    # both spellings of loopback give "fetch failed"; $HOSTNAME gives 200. (From
+    # the host, published ports work either way, which is what hides this.)
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://'+process.env.HOSTNAME+':3000/up').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # Development service with hot-reloading
   dev:
@@ -30,7 +61,7 @@ services:
       - /app/node_modules
       - /app/.next
     ports:
-      - "${DEV_PORT:-3000}:3000" # Map to host port specified by DEV_PORT env var (default: 3002)
+      - "${DEV_PORT:-3000}:3000" # Map to host port specified by DEV_PORT env var (default: 3000)
     environment:
       - NODE_ENV=development
       - IMPAMP_DB_PATH=/app/data/impamp.db
