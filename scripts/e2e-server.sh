@@ -55,6 +55,11 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
+# Start from an empty server database. This is the only safe moment: the old
+# server is dead and the new one has not opened the file yet. A Playwright
+# globalSetup cannot do it, because the webServer plugin's setup runs first.
+node e2e-tests/reset-db.js
+
 npm run build >"/tmp/e2e-build-$PORT.log" 2>&1 || {
   echo "build failed — see /tmp/e2e-build-$PORT.log" >&2
   tail -30 "/tmp/e2e-build-$PORT.log" >&2

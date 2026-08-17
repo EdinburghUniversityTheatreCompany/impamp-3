@@ -351,6 +351,29 @@ describe("planTransition — invariants across every legal move", () => {
     }
   });
 
+  it("rolls back to the values the profile had, not the ones that failed", () => {
+    // Covering the same *keys* as the write says nothing about the values, and
+    // a rollback that simply replays the failed write is a total no-op that
+    // leaves the profile in the split state this module exists to prevent.
+    let differed = 0;
+    for (const { name, from, plan } of accepted) {
+      for (const [key, rolledBack] of Object.entries(plan.rollbackTo)) {
+        const previous = (from as unknown as Record<string, unknown>)[key];
+        // `planTransition` cannot restore `undefined` — writing it would leave
+        // the new value in place — so an absent prior value comes back as the
+        // falsy member of its own type.
+        const expected = previous ?? (key === "readOnly" ? false : null);
+        expect(rolledBack, `${name}: rollbackTo.${key}`).toEqual(expected);
+        if ((plan.fieldUpdates as Record<string, unknown>)[key] !== expected) {
+          differed++;
+        }
+      }
+    }
+    // Without this the loop above would be satisfied by a plan that never
+    // changes anything, so every comparison would hold vacuously.
+    expect(differed).toBeGreaterThan(0);
+  });
+
   it("never leaves a profile stuck uneditable with no way out", () => {
     // A profile that refuses edits is fine when the remote refuses writes, or
     // while you are choosing to follow it — both say so, and both offer a way

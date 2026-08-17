@@ -274,6 +274,10 @@ describe("detectProfileConflicts — audio references survive an id collision", 
 
     const localPad = mergedData.padConfigurations.find((p) => p.padIndex === 0);
     expect(localPad?.audioFileHashes).toEqual([KICK]);
+    // The regression lives in `audioFileIds` — nothing in the translation
+    // block writes `audioFileHashes`, so the assertion above holds whether or
+    // not the guard exists. This is the one that can fail.
+    expect(localPad?.audioFileIds).toEqual([3]);
   });
 
   it("gives appended remote-only audio an id that is free in the merged list", async () => {

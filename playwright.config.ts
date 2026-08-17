@@ -60,10 +60,15 @@ export default defineConfig({
   //
   // NEXT_PUBLIC_GOOGLE_CLIENT_ID must be set for the build to prerender, so
   // fall back to a dummy value: no test signs in to Google.
+  // The database is emptied here rather than in a `globalSetup`, because the
+  // webServer plugin's setup runs *before* globalSetup — by then the server
+  // holds the file open, and unlinking it would leave the server writing to an
+  // orphaned inode instead. See e2e-tests/reset-db.js; scripts/e2e-server.sh
+  // runs the same step for the detached local server.
   webServer: {
     command: process.env.E2E_DEV_SERVER
-      ? `npm run dev -- --port ${port}`
-      : `npm run build && npm start -- --port ${port}`,
+      ? `node e2e-tests/reset-db.js && npm run dev -- --port ${port}`
+      : `node e2e-tests/reset-db.js && npm run build && npm start -- --port ${port}`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 300 * 1000, // 5 minutes — a cold production build is included

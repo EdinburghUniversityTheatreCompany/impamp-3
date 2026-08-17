@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { ItemConflict } from "@/lib/syncUtils";
+import type { SyncConflictData } from "@/lib/googleDrive/types";
 import {
   IDLE_SYNC_STATUS,
   mirrorToProfile,
+  selectProfileSyncStatus,
   syncStatusActions,
   useSyncStatusStore,
 } from "@/store/syncStatusStore";
@@ -9,37 +12,80 @@ import {
 const read = (profileId: number) =>
   useSyncStatusStore.getState().byProfileId.get(profileId);
 
+/**
+ * Every sink the wrapper might delegate to, recording what each one saw.
+ *
+ * One recorder rather than five spies, because the point of the table below is
+ * that exactly one delegate fires per callback — a wrapper that called two, or
+ * the wrong one, has to be visible.
+ */
+function sinks() {
+  const seen: Array<[string, unknown]> = [];
+  const record = (name: string) => (value: unknown) => {
+    seen.push([name, value]);
+  };
+  return {
+    seen,
+    callbacks: {
+      onStatusChange: record("onStatusChange"),
+      onError: record("onError"),
+      onWarnings: record("onWarnings"),
+      onConflictsDetected: record("onConflictsDetected"),
+      onConflictDataAvailable: record("onConflictDataAvailable"),
+    },
+    local: {
+      setConflicts: record("setConflicts"),
+      setConflictData: record("setConflictData"),
+    },
+  };
+}
+
+const A_CONFLICT = {
+  storeName: "profiles",
+  key: 1,
+  id: 1,
+  type: "field_conflict",
+} as unknown as ItemConflict;
+
+const CONFLICT_DATA = {
+  profileId: 1,
+} as unknown as SyncConflictData;
+
 describe("syncStatusStore", () => {
   beforeEach(() => {
     syncStatusActions.clearAll();
   });
 
-  it("carries a background sync's warnings to where a card can see them", () => {
-    // The sync that finds a problem is almost never the one a profile card is
-    // holding: scheduled and SSE-driven syncs run in ClientSideInitializer's
-    // hook instance. Warnings used to be the one callback `mirrorToProfile`
-    // did not mirror, so they were stored where nothing could read them.
-    const local = { setConflicts: () => {}, setConflictData: () => {} };
-    const seen: string[][] = [];
+  // The sync that finds a problem is almost never the one a profile card is
+  // holding: scheduled and SSE-driven syncs run in ClientSideInitializer's
+  // hook instance, and hook state does not cross instances. Anything this
+  // wrapper fails to mirror is therefore stored where nothing can read it —
+  // which is what happened to warnings, and what this file used to test one
+  // callback out of five for. Deleting the other four `patch` calls left the
+  // whole suite green.
+  it.each([
+    ["onStatusChange", "syncing", "activity", "onStatusChange"],
+    ["onError", "the server said no", "error", "onError"],
+    ["onWarnings", ["horn.mp3: could not be downloaded"], "warnings", "onWarnings"], // prettier-ignore
+    ["onConflictsDetected", [A_CONFLICT], "conflicts", "setConflicts"],
+    ["onConflictDataAvailable", CONFLICT_DATA, "conflictData", "setConflictData"], // prettier-ignore
+  ] as const)(
+    "carries a background sync's %s to where a card can see it",
+    (callback, argument, field, delegate) => {
+      const s = sinks();
+      const mirrored = mirrorToProfile(
+        7,
+        s.callbacks,
+        s.local,
+      ) as unknown as Record<string, (value: unknown) => void>;
 
-    const mirrored = mirrorToProfile(
-      7,
-      {
-        onStatusChange: () => {},
-        onError: () => {},
-        onWarnings: (w: string[]) => seen.push(w),
-        onConflictsDetected: () => {},
-        onConflictDataAvailable: () => {},
-      },
-      local,
-    ) as { onWarnings: (w: string[]) => void };
+      mirrored[callback](argument);
 
-    mirrored.onWarnings(["horn.mp3: could not be downloaded"]);
-
-    expect(read(7)?.warnings).toEqual(["horn.mp3: could not be downloaded"]);
-    // The caller's own callback still runs.
-    expect(seen).toEqual([["horn.mp3: could not be downloaded"]]);
-  });
+      expect(read(7)?.[field]).toEqual(argument);
+      // The engine's own callback still runs, and nothing else does.
+      expect(s.seen).toEqual([[delegate, argument]]);
+    },
+  );
 
   it("starts every profile idle", () => {
     expect(read(1)).toBeUndefined();
@@ -49,12 +95,38 @@ describe("syncStatusStore", () => {
 
   it("hands out the same idle record every time", () => {
     // A selector that built a fresh object per call would hand React a new
-    // identity on every render and never settle.
-    const first =
-      useSyncStatusStore.getState().byProfileId.get(1) ?? IDLE_SYNC_STATUS;
-    const second =
-      useSyncStatusStore.getState().byProfileId.get(1) ?? IDLE_SYNC_STATUS;
-    expect(first).toBe(second);
+    // identity on every render and never settle. This used to write the `??`
+    // fallback out in the test rather than calling the selector, so it
+    // asserted IDLE_SYNC_STATUS === IDLE_SYNC_STATUS and the real selector was
+    // never called by this file at all.
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, 1)).toBe(
+      selectProfileSyncStatus(state, 1),
+    );
+    expect(selectProfileSyncStatus(state, 1)).toBe(IDLE_SYNC_STATUS);
+  });
+
+  it("hands out the idle record for no profile at all", () => {
+    // ProfileCard renders before a profile id exists, so this branch is on the
+    // first render of every card.
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, null)).toBe(IDLE_SYNC_STATUS);
+    expect(selectProfileSyncStatus(state, undefined)).toBe(IDLE_SYNC_STATUS);
+  });
+
+  it("hands out a stored status by reference, not a copy", () => {
+    // The stable-identity requirement is not only about the idle record: a
+    // profile that *is* syncing re-renders on every unrelated store write if
+    // its status arrives as a fresh object each time.
+    syncStatusActions.patch(1, { activity: "syncing" });
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, 1)).toBe(state.byProfileId.get(1));
+    expect(selectProfileSyncStatus(state, 1)).toBe(
+      selectProfileSyncStatus(state, 1),
+    );
   });
 
   it("refuses to be mutated in place", () => {

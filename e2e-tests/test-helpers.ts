@@ -544,12 +544,24 @@ export async function readActiveProfile(
   });
 }
 
-/** Open the Profile Manager through the header, as a user would. */
+/**
+ * Open the Profile Manager through the header, as a user would.
+ *
+ * Every locator here auto-waits and nothing is guarded, which is the point.
+ * This used to open with `getByRole("button", {name: /Profile/i}).first()` —
+ * a regex that also matches "Edit Profile", "Create Profile" and "Use This
+ * Profile" inside an already-open manager — and then
+ * `if (await manage.count()) await manage.click()`. `count()` does not
+ * auto-wait and the dropdown renders on a React state update after `click()`
+ * resolves, so under load a zero count turned "the menu had not painted yet"
+ * into "silently skip opening the manager". Callers assert afterwards, so it
+ * failed red rather than green, but on `sync-status-chip not found` rather
+ * than on the real cause.
+ */
 export async function openProfileManager(page: Page) {
-  await page
-    .getByRole("button", { name: /Profile/i })
-    .first()
-    .click();
-  const manage = page.getByText(/Manage Profiles/i).first();
-  if (await manage.count()) await manage.click();
+  await page.getByRole("button", { name: /^Profile: / }).click();
+  await page.getByRole("menuitem", { name: "Manage Profiles" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Profile Manager" }),
+  ).toBeVisible();
 }

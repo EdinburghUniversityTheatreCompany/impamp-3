@@ -18,6 +18,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm test` - Run the Vitest unit/integration suite (server sync, storage, API routes)
 - `npm run test:watch` - Vitest in watch mode
+- `npm run test:coverage` - The same suite with V8 coverage, and the floor in
+  `vitest.config.ts` enforced. CI runs this as its own step. The thresholds are
+  a **ratchet set just under the current number**, not a target: raise them
+  when a run comes in comfortably above, and never lower them to make a build
+  pass
 - `npm run test:e2e` - Run all Playwright end-to-end tests
 - `npm run test:e2e:audio` - Run audio playback tests specifically
 - `npm run test:e2e:profiles` - Run profile management tests
@@ -143,7 +148,9 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 As resolved in `package-lock.json` — keep in sync when upgrading dependencies:
 Next.js 16, React 19, TypeScript 6, Tailwind CSS 4, Zustand 5, idb 8,
 react-dropzone 20, Playwright 1.62, ESLint 9 with eslint-config-next 16,
-Prettier 3.9.
+Prettier 3.9, Vitest 4.1 with `@vitest/coverage-v8` on the same version (the
+coverage provider is released in lockstep with Vitest, so bump the two
+together).
 
 Three upgrades are deliberately held back, with the reasons and retry
 conditions in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint

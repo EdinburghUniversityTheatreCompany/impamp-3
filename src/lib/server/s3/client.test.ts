@@ -21,10 +21,14 @@ const HASH = "a".repeat(64);
  * A `fetch` stand-in that always answers `status`. The parameters are declared
  * so `mock.calls` stays typed and the assertions below can read the request.
  */
-function respond(status: number, headers: Record<string, string> = {}) {
+function respond(
+  status: number,
+  headers: Record<string, string> = {},
+  body: BodyInit | null = null,
+) {
   return vi.fn(
     async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(null, { status, headers }),
+      new Response(body, { status, headers }),
   );
 }
 
@@ -129,6 +133,85 @@ describe("head", () => {
   it("throws on a real failure, so a 403 is never read as 'absent'", async () => {
     const store = createObjectStore(config, respond(403));
     await expect(store.head("audio/aa/x.wav")).rejects.toThrow("403");
+  });
+});
+
+/**
+ * The read the whole possession check rests on.
+ *
+ * Until now the only `getRange` any test executed was `fakeObjectStore`'s
+ * eleven-line slice of an in-memory Map, so the hosted-audio integration tests
+ * proved the fake agreed with the test's own `proofFor()` helper — a closed
+ * loop between two pieces of test code, with the implementation that talks to
+ * Wasabi outside it.
+ */
+describe("getRange", () => {
+  /** Deterministic bytes standing in for a stored object. */
+  const object = new Uint8Array(512).map((_, i) => (i * 31 + 7) % 251);
+
+  it("asks for exactly the window, signed", async () => {
+    const fetchImpl = respond(206, {}, object.slice(100, 164));
+    await createObjectStore(config, fetchImpl).getRange(
+      "audio/aa/x.wav",
+      100,
+      64,
+    );
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(
+      "https://s3.eu-central-2.wasabisys.com/impamp-audio/audio/aa/x.wav",
+    );
+    expect(init).toMatchObject({ method: "GET" });
+    const headers = init!.headers as Record<string, string>;
+    // Inclusive on both ends, so 64 bytes from 100 ends at 163, not 164.
+    expect(headers.range).toBe("bytes=100-163");
+    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=/);
+  });
+
+  it("hands back an honoured range untouched", async () => {
+    const window = object.slice(100, 164);
+    const store = createObjectStore(config, respond(206, {}, window));
+
+    expect(await store.getRange("audio/aa/x.wav", 100, 64)).toEqual(window);
+  });
+
+  it("slices the window out when the store ignored the Range header", async () => {
+    // Wasabi answering 200 with the whole object instead of 206 is the case
+    // the comment beside this branch anticipates. Returning the body as-is
+    // would make every dedup commit of a file over the proof window 403 with
+    // "Send the proof from the upload-url response to claim it" — nobody could
+    // host any file somebody else already had.
+    const store = createObjectStore(config, respond(200, {}, object));
+
+    expect(await store.getRange("audio/aa/x.wav", 100, 64)).toEqual(
+      object.slice(100, 164),
+    );
+  });
+
+  it("reports a missing object as null rather than empty bytes", async () => {
+    // Empty bytes would reach `proofMatches`, which refuses them — but as a
+    // failed proof rather than a missing object, and the two get different
+    // answers from commit.
+    const store = createObjectStore(config, respond(404));
+    expect(await store.getRange("audio/aa/missing.wav", 0, 64)).toBeNull();
+  });
+
+  it("throws on a refused read, so a 403 is never read as 'absent'", async () => {
+    const store = createObjectStore(config, respond(403));
+    await expect(store.getRange("audio/aa/x.wav", 0, 64)).rejects.toThrow(
+      "403",
+    );
+  });
+
+  it("answers an empty window without asking the bucket", async () => {
+    const fetchImpl = respond(200, {}, object);
+    const store = createObjectStore(config, fetchImpl);
+
+    expect(await store.getRange("audio/aa/x.wav", 0, 0)).toEqual(
+      new Uint8Array(0),
+    );
+    // `bytes=0--1` is not a range any store would accept.
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

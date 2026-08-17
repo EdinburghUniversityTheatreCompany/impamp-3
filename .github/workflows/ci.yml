@@ -118,6 +118,14 @@ jobs:
       - run: npm ci
       - name: Run unit tests (vitest)
         run: npm test
+      # Separate from the run above, which stays bare so a failing test reports
+      # as a failing test. This one exists for the thresholds in
+      # vitest.config.ts, which are a ratchet under today's number rather than
+      # a target: coverage was unmeasured and unmeasurable here, so "711 tests"
+      # was the only figure anyone had for a suite covering a third of the
+      # lines. Nothing watched it, so it could only drift down.
+      - name: Check coverage floor
+        run: npm run test:coverage
       - name: Lint (eslint)
         run: npm run lint
 

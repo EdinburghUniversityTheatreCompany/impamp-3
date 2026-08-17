@@ -592,6 +592,95 @@ describe("POST /api/audio/commit", () => {
   });
 });
 
+describe("POST /api/audio/commit — a file bigger than the proof window", () => {
+  // Every other fixture in this file is 8 KB or less, under the 64 KB proof
+  // window, so `proofRangeFor` returns `{offset: 0, length: wholeFile}` and
+  // the offset arithmetic never runs. Client and server agree there only
+  // because both compute zero. Real audio files are all on this side of the
+  // line, so an off-by-one between the offset the server names and the one it
+  // reads back would refuse every legitimate second uploader of every real
+  // file, with the suite green.
+  const BIG = 200 * KB;
+
+  beforeEach(() => {
+    setObjectStoreForTests({
+      store,
+      config: {
+        ...config,
+        maxObjectBytes: 1024 * KB,
+        globalCapBytes: 8 * 1024 * KB,
+        defaultUserQuotaBytes: 1024 * KB,
+      },
+    });
+  });
+
+  it("challenges a window from inside the file, not its header", async () => {
+    const owner = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+    expect((await storeAudio(owner.token, "big", BIG)).status).toBe(200);
+
+    const askResponse = await uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: second.token,
+        body: {
+          hash: hashOf("big", BIG),
+          sizeBytes: BIG,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+    const ask = await askResponse.json();
+
+    expect(ask.alreadyStored).toBe(true);
+    expect(ask.proofRange.length).toBe(64 * KB);
+    expect(ask.proofRange.offset).toBeGreaterThan(0);
+    expect(ask.proofRange.offset + ask.proofRange.length).toBeLessThanOrEqual(
+      BIG,
+    );
+  });
+
+  it("lets a second holder of the file claim it", async () => {
+    const owner = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+    await storeAudio(owner.token, "big", BIG);
+
+    const result = await storeAudio(second.token, "big", BIG);
+
+    expect(result.status).toBe(200);
+    expect(result.commit.usage.usedBytes).toBe(BIG);
+  });
+
+  it("refuses a proof taken from the head of the file", async () => {
+    // The one failure a fixture under 64 KB cannot distinguish from success.
+    // If the server hashed the first window rather than the one it named,
+    // this would be accepted — and every honest client would be refused.
+    const owner = signIn(1, { approved: true });
+    const attacker = signIn(2, { approved: true });
+    await storeAudio(owner.token, "big", BIG);
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: hashOf("big", BIG),
+          name: "mine-now.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+          proof: proofFor(bytesFor("big", BIG), {
+            offset: 0,
+            length: 64 * KB,
+          }),
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+});
+
 describe("GET /api/audio", () => {
   it("lists what the user holds with their usage", async () => {
     const { token } = signIn(1, { approved: true });
@@ -941,7 +1030,11 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
       }),
     );
 
-    expect(response.status).not.toBe(200);
+    // Not `not.toBe(200)`, which every sibling in this file avoids: that
+    // accepts 400, 403, 404 and 500 equally, so the quota refusal could become
+    // an auth failure or a crash and this would stay green.
+    expect(response.status).toBe(413);
+    expect((await response.json()).reason).toBe("too_large");
   });
 
   it("refuses a hash nobody who can publish here ever uploaded", async () => {
@@ -983,6 +1076,29 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it("refuses a sound a mere viewer of the profile happens to hold", async () => {
+    // The sibling above covers `role = 'editor'`; deleting that clause from
+    // `profileMayServeHash` left the whole suite green. A viewer cannot
+    // publish here, so a sound they merely hold is not "audio a collaborator
+    // uploaded to this board" — serving it is the escalation the clause
+    // closes, where reaching a profile as a viewer gets you any bytes you have
+    // a reference to through it.
+    const owner = signIn(1, { approved: true });
+    const viewer = signIn(2, { approved: true });
+    const { hash } = await storeAudio(viewer.token, "viewers-sound", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+    upsertEmailShare(profile.id, viewer.user.email, "viewer", owner.user.id);
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+        sessionToken: owner.token,
+      }),
+      routeParams({ id: profile.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(404);
   });
 
   it("serves a sound a link-share editor added, to the owner and to them", async () => {

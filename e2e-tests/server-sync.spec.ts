@@ -30,11 +30,29 @@ import {
 
 const SESSION_COOKIE = "impamp_session";
 
-/** Sign in as `email`, returning the raw session token. */
+/**
+ * Sign in as a brand-new account, returning the raw session token.
+ *
+ * `who` names the role the test needs, not an address: the address is minted
+ * fresh every time on purpose. `/api/test/session` reuses the user behind a
+ * given address, and while `e2e-tests/reset-db.js` now empties the database
+ * when the server starts, a developer runs many suites against one server.
+ * Twelve of the sixteen sign-ins here used to pass a literal, so each account
+ * carried one profile per run the suite had ever done on that machine — nine,
+ * eighteen — and every assertion that counted something was measuring history.
+ *
+ * "Enabling server sync exposes the sharing controls" is what that cost. It
+ * ended in `expect.poll(() => profiles.length).toBeGreaterThan(0)`, the one
+ * assertion separating "the adopt reached the server" from "a label changed
+ * locally", and the poll's first sample already read 9. If adoption stopped
+ * writing to the server entirely, that test would have stayed green on every
+ * developer machine.
+ */
 async function mintSession(
   request: APIRequestContext,
-  email: string,
-): Promise<string> {
+  who: string,
+): Promise<{ token: string; email: string }> {
+  const email = `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
   const response = await request.post("/api/test/session", {
     headers: { "x-impamp-e2e-secret": E2E_SIGNIN_SECRET },
     data: { email },
@@ -43,23 +61,16 @@ async function mintSession(
     response.status(),
     "test sign-in route should be enabled during E2E",
   ).toBe(200);
-  return (await response.json()).token as string;
+  return { token: (await response.json()).token as string, email };
 }
 
-/**
- * A throwaway account per run, signed in on both the page and the API client.
- *
- * Fresh because the E2E database persists between runs and `mintSession`
- * reuses the user for a given address, so a fixed one accumulates state and
- * any count or version becomes a lie.
- */
+/** A throwaway account, signed in on both the page and the API client. */
 async function signedInAs(
   page: Page,
   request: APIRequestContext,
   who: string,
 ): Promise<{ cookie: string }> {
-  const email = `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-  const token = await mintSession(request, email);
+  const { token } = await mintSession(request, who);
   await signIn(page, token);
   return { cookie: `${SESSION_COOKIE}=${token}` };
 }
@@ -119,7 +130,7 @@ test.describe("server sync API", () => {
   });
 
   test("round-trips a profile with ETag and If-Match", async ({ request }) => {
-    const token = await mintSession(request, "etag@example.com");
+    const { token } = await mintSession(request, "etag");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const created = await request.post("/api/profiles", {
@@ -153,7 +164,7 @@ test.describe("server sync API", () => {
   test("rejects a stale write and hands back the winning data", async ({
     request,
   }) => {
-    const token = await mintSession(request, "conflict@example.com");
+    const { token } = await mintSession(request, "conflict");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const { id } = await (
@@ -189,7 +200,7 @@ test.describe("server sync API", () => {
   test("share links let an anonymous viewer read but not write", async ({
     request,
   }) => {
-    const token = await mintSession(request, "sharer@example.com");
+    const { token } = await mintSession(request, "sharer");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     const { id } = await (
@@ -224,8 +235,8 @@ test.describe("server sync API", () => {
   });
 
   test("hides profiles the caller has no grant on", async ({ request }) => {
-    const owner = await mintSession(request, "owner2@example.com");
-    const stranger = await mintSession(request, "stranger@example.com");
+    const { token: owner } = await mintSession(request, "owner2");
+    const { token: stranger } = await mintSession(request, "stranger");
 
     const { id } = await (
       await request.post("/api/profiles", {
@@ -252,7 +263,7 @@ test.describe("server sync UI", () => {
     page,
     request,
   }) => {
-    const token = await mintSession(request, "linksharer@example.com");
+    const { token } = await mintSession(request, "linksharer");
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
     // A full ProfileSyncData payload: the client-side import needs the
@@ -302,15 +313,24 @@ test.describe("server sync UI", () => {
     page,
     request,
   }) => {
-    await signIn(page, await mintSession(request, "ui@example.com"));
-    await page.goto("/");
+    await signIn(page, (await mintSession(request, "ui")).token);
+    await gotoApp(page);
+    await openProfileManager(page);
 
-    await page
-      .getByRole("button", { name: /Profile/i })
-      .first()
-      .click();
-    const manage = page.getByText(/Manage Profiles/i).first();
-    if (await manage.count()) await manage.click();
+    // Measured before the act, so the assertion at the end is about what this
+    // test did rather than about how many profiles the account happens to
+    // hold. It used to sign in as a fixed address against a database nothing
+    // reset, so the account already had one profile per run the suite had ever
+    // done on this machine and `toBeGreaterThan(0)` passed on its first sample.
+    const profileCount = async () =>
+      (
+        await (
+          await request.get("/api/profiles", {
+            headers: { cookie: await sessionCookieOf(page) },
+          })
+        ).json()
+      ).profiles.length as number;
+    const before = await profileCount();
 
     // Everything about syncing now lives behind the profile's status chip,
     // and turning it on is choosing where the profile syncs rather than
@@ -328,17 +348,7 @@ test.describe("server sync UI", () => {
     await expect(chip).toHaveText(/ImpAmp server/, { timeout: 15_000 });
 
     // The profile really reached the server, not just the local UI.
-    await expect
-      .poll(
-        async () => {
-          const response = await request.get("/api/profiles", {
-            headers: { cookie: await sessionCookieOf(page) },
-          });
-          return (await response.json()).profiles.length;
-        },
-        { timeout: 15_000 },
-      )
-      .toBeGreaterThan(0);
+    await expect.poll(profileCount, { timeout: 15_000 }).toBe(before + 1);
   });
 });
 
@@ -429,50 +439,41 @@ async function stageServerConflict(
 async function reloadAndWaitForConflict(page: Page) {
   await page.reload();
   await waitForAppReady(page);
+  // Not optional: the modal is opened from an effect in `ProfileCard`, and no
+  // card is mounted until the manager is. Removing this step while testing the
+  // rest of this helper produced a clean 30-second timeout on a page that had
+  // detected the conflict perfectly well.
   await openProfileManager(page);
 
-  // The reload is the deterministic trigger, but under a parallel run that
-  // first sync can still be slow, so nudge as well rather than let the test
-  // turn on how busy the machine is. The click timeout is short on purpose:
-  // once the modal opens it covers this button, and click()'s default 30s
-  // retry would eat the whole poll window.
-  await expect
-    .poll(
-      async () => {
-        if ((await page.getByTestId("custom-modal").count()) > 0) return true;
-        const syncNow = page.getByTestId("sync-now");
-        if ((await syncNow.count()) > 0 && (await syncNow.isEnabled())) {
-          await syncNow.click({ timeout: 1_000 }).catch(() => {});
-        }
-        return false;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(true);
+  await expect(page.getByTestId("custom-modal")).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 test.describe("server sync conflicts", () => {
-  /**
-   * Retried, deliberately and narrowly.
+  /*
+   * These used to carry `test.describe.configure({ retries: 2 })`, argued for
+   * on the grounds that a retry "cannot hide a regression: if conflicts
+   * stopped surfacing, every attempt would fail". That is true of a total
+   * regression and false of a partial one, and the retry was firing routinely
+   * rather than rarely — the account behind the first test had accumulated
+   * twice as many profiles as its sibling, which is one per attempt, so it had
+   * been averaging two attempts a run. A newly introduced 50 % flake would
+   * have landed inside a budget a permanent one was already consuming.
    *
-   * A conflict needs both sides to have moved since the other last saw them,
-   * and the app syncs on its own timers throughout. Under a loaded parallel
-   * run the staging can interleave with one of those syncs and produce an
-   * ordinary auto-merge instead — the app behaving correctly, the test having
-   * asked the wrong question. Pausing sync while staging was tried and made it
-   * worse.
-   *
-   * A retry is safe here because it cannot hide a regression: if conflicts
-   * stopped surfacing, every attempt would fail. It only absorbs the case
-   * where the scenario never got set up.
+   * The permanent one had a cause: the lost-update bug where a merge computed
+   * against a pre-rename snapshot wrote `_fieldsModified.name = 0` back over a
+   * name the user had just changed, so no conflict was ever detected. That is
+   * fixed, and the describe now takes the config's default — none locally, the
+   * usual two in CI. If either of these starts needing a retry again, that is
+   * a report about the app and should be visible as one.
    */
-  test.describe.configure({ retries: 2 });
 
   test("a conflict opens the resolution modal, naming the server", async ({
     page,
     request,
   }) => {
-    const token = await mintSession(request, "conflicted@example.com");
+    const { token } = await mintSession(request, "conflicted");
     await signIn(page, token);
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
@@ -492,7 +493,7 @@ test.describe("server sync conflicts", () => {
     page,
     request,
   }) => {
-    const token = await mintSession(request, "resolver@example.com");
+    const { token } = await mintSession(request, "resolver");
     await signIn(page, token);
     const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
 
@@ -702,13 +703,14 @@ test.describe("the server account", () => {
     page,
     request,
   }) => {
-    await signIn(page, await mintSession(request, "account@example.com"));
+    const { token, email } = await mintSession(request, "account");
+    await signIn(page, token);
     await gotoApp(page);
     await openProfileManager(page);
     await page.getByText("Import / Export").click();
 
     const account = page.getByTestId("server-account");
-    await expect(account).toContainText("account@example.com");
+    await expect(account).toContainText(email);
     // The link to the storage page, which nothing in the app pointed at.
     await expect(page.getByTestId("server-storage-link")).toBeVisible();
 
@@ -731,7 +733,7 @@ test.describe("the server account", () => {
     // the account panel is the only caller. Every card went on believing it
     // was signed in, so the server option stayed enabled and the scheduled
     // syncs and SSE streams kept firing against a dead cookie until a reload.
-    await signIn(page, await mintSession(request, "cards@example.com"));
+    await signIn(page, (await mintSession(request, "cards")).token);
     await gotoApp(page);
     await openProfileManager(page);
 
@@ -770,7 +772,7 @@ test.describe("hosted audio, unconfigured", () => {
     page,
     request,
   }) => {
-    const token = await mintSession(request, "audio-off@example.com");
+    const { token } = await mintSession(request, "audio-off");
     await signIn(page, token);
     const cookie = `${SESSION_COOKIE}=${token}`;
 
