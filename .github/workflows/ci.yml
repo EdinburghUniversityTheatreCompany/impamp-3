@@ -16,6 +16,15 @@ on:
 permissions:
   contents: read
 
+# One pipeline per ref. Two pushes in quick succession otherwise run two complete
+# pipelines — including two chromium e2e jobs and now two image builds — and the
+# older one's result is discarded anyway. Cancelled on pull_request, where only the
+# tip matters; NOT on push, so a run against a commit on main always completes and
+# main keeps an unbroken record of which commits were green.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
