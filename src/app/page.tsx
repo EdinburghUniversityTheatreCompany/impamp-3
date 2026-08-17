@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import PadGrid from "@/components/PadGrid";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import ArmedTracksPanel from "@/components/ArmedTracksPanel";
+import PlaybackAnnouncer from "@/components/PlaybackAnnouncer";
 import {
   HelpButton,
   DeleteMoveModeButton,
@@ -451,6 +452,11 @@ export default function Home() {
           <PadGrid currentPageIndex={currentPageIndex} />
         </div>
       </div>
+
+      {/* What the panels below show, for anyone who cannot see them. Outside
+          the panels on purpose — ArmedTracksPanel unmounts when its queue
+          empties, and that is the transition most worth announcing. */}
+      <PlaybackAnnouncer />
 
       {/* Tracks panels at the bottom of the screen */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
