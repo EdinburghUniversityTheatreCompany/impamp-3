@@ -4,6 +4,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Required, and not merely nice to have: `useGoogleLogin` runs during
+        # prerender, so an unset OR empty value fails `next build` outright with
+        # a stack trace in /_not-found that names nothing about configuration.
+        # Nothing passed this, so `docker compose up app` could not build the
+        # image at all. Real Drive sign-in needs a real client id — put it in a
+        # local .env (see .env.dist), which compose loads automatically — but a
+        # placeholder is enough for everything that is not Google sign-in.
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-unset.apps.googleusercontent.com}
     image: impamp3:latest
     container_name: impamp3-app
     restart: unless-stopped
