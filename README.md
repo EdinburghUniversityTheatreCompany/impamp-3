@@ -124,7 +124,16 @@ The docker-compose.yml file is configured with profiles to allow you to run only
 
    # Or specify a custom port
    docker run -p 8080:3000 impamp3:latest
+
+   # Server sync keeps its SQLite database at /data (IMPAMP_DB_PATH, set in
+   # the image). Without a volume it lives only as long as the container, so
+   # mount one to keep accounts, profiles and shares across restarts:
+   docker run -p 3025:3000 -v impamp_data:/data impamp3:latest
    ```
+
+   The soundboard itself needs none of this — profiles live in the browser's
+   IndexedDB, and the container is stateless until someone turns on server
+   sync.
 
 2. Using Docker Compose:
 

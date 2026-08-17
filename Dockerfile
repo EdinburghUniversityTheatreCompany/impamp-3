@@ -49,6 +49,16 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 # needs a one-off `chown -R 1000:1000` on it; see config/deploy.yml.
 RUN mkdir -p /data && chown node:node /data
 
+# Point the app at the directory the line above just created and chowned. The
+# app's own default is relative — `process.env.IMPAMP_DB_PATH || "./data/impamp.db"`
+# — and server.js does `process.chdir(__dirname)`, so without this it resolves
+# to /app/data. /app is created by WORKDIR as root and COPY --chown does not
+# change it, so as uid 1000 that mkdir fails with EACCES and every server-sync
+# route 500s. docker-compose.yml and config/deploy.yml both set this variable,
+# which is exactly why the gap went unnoticed: the two paths anyone tests were
+# fine, and the bare `docker run` the README documents was not.
+ENV IMPAMP_DB_PATH=/data/impamp.db
+
 # Drop root. The server needs no privileged port and writes nothing outside
 # /data, so running as uid 0 only widened what a Next.js RCE or path traversal
 # would reach — including that volume.
