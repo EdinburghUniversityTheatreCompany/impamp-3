@@ -21,7 +21,15 @@ description = "gitignored local artifacts + local-only secret files (never commi
 paths = [
   '''^\.worktrees/''',                # in-repo git worktrees — separate checkouts, not this repo's content
   '''^\.claude/worktrees/''',         # native worktree tool location — separate checkouts, scanned by their own repo
-  '''^\.env''',                        # dotenv — gitignored
+  # dotenv — gitignored. Enumerated rather than written as the prefix `^\.env`, because that
+  # also matched `.env.dist`, which .gitignore deliberately re-includes (`!.env.dist`) and which
+  # IS tracked. A real credential pasted into the committed template — the likeliest mistake for
+  # a file whose whole purpose is to list secret names — passed both the hook and CI. gitleaks
+  # is RE2, so there is no lookahead to say "`.env*` but not `.env.dist`"; extend this list if a
+  # new gitignored dotenv form appears, rather than restoring the prefix.
+  '''^\.env$''',
+  '''^\.env\.local''',
+  '''^\.env\.(development|production|test|staging)''',
   '''^log/''', '''^tmp/''',            # Rails runtime artifacts
   '''^\.venv/''',                      # Python (shell/py stacks)
   '''^node_modules/''', '''^vendor/''',
