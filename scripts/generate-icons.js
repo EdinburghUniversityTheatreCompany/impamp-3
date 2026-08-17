@@ -1,55 +1,56 @@
+/**
+ * Regenerates the PWA icon set in public/icons from a single master image.
+ *
+ * This script used to draw the icons from scratch with node-canvas — black
+ * squares with the word "ImpAmp3" and three arcs — and it could not run at
+ * all, because `canvas` has never been a dependency of this repo. That left
+ * the icon set unreproducible: the orange PNGs that are actually checked in
+ * came from somewhere else entirely, and the two sizes the old
+ * public/manifest.json advertised (144 and 152) were simply missing, so an
+ * installing browser fetched two 404s.
+ *
+ * So the master is now the largest icon that exists, and every other size is a
+ * resize of it with sharp — the image library this repo already depends on and
+ * already uses for the favicon. Running this is idempotent and its output is
+ * what is committed, which is the only arrangement in which "how were these
+ * made?" has an answer.
+ *
+ * Not a build step: icons change roughly never, and rasterising eight sizes on
+ * every `next build` would be pure cost. Run it by hand after changing the
+ * master:
+ *
+ *   node scripts/generate-icons.js
+ */
+
 import fs from "fs";
 import path from "path";
-import { createCanvas } from "canvas";
+import sharp from "sharp";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Icon sizes required by PWA
-const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
-
-// Ensure icons directory exists
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const iconsDir = path.join(__dirname, "../public/icons");
-if (!fs.existsSync(iconsDir)) {
-  fs.mkdirSync(iconsDir, { recursive: true });
+const masterPath = path.join(iconsDir, "icon-512x512.png");
+
+/**
+ * Kept in step with the `icons` array in src/app/manifest.ts, which is the one
+ * place these are declared to a browser. 144 and 152 are here because iOS and
+ * older Android launchers ask for them by name; the rest are the conventional
+ * ladder.
+ */
+const sizes = [48, 72, 96, 128, 144, 152, 192, 384, 512];
+
+const master = await sharp(fs.readFileSync(masterPath));
+const { width, height } = await master.metadata();
+if (width !== 512 || height !== 512) {
+  throw new Error(`Expected a 512x512 master, got ${width}x${height}`);
 }
 
-// Generate icons for each size
-sizes.forEach((size) => {
-  const canvas = createCanvas(size, size);
-  const ctx = canvas.getContext("2d");
-
-  // Background
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, size, size);
-
-  // Calculate dimensions (10% of size for padding)
-
-  // Draw a stylized 'IA' for ImpAmp
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `bold ${size * 0.5}px Arial`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("ImpAmp3", size / 2, size / 2);
-
-  // Add a sound wave effect (simplified)
-  ctx.strokeStyle = "#4a9eff";
-  ctx.lineWidth = Math.max(2, size * 0.02);
-
-  // Draw 3 sound wave arcs
-  for (let i = 1; i <= 3; i++) {
-    const radius = size * 0.2 * i;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, radius, Math.PI * 0.8, Math.PI * 1.2);
-    ctx.stroke();
-  }
-
-  // Save the icon to file
-  const buffer = canvas.toBuffer("image/png");
-  fs.writeFileSync(path.join(iconsDir, `icon-${size}x${size}.png`), buffer);
-
-  console.log(`Generated icon with size ${size}x${size}`);
-});
-
-console.log("All icons generated successfully!");
+for (const size of sizes) {
+  const output = path.join(iconsDir, `icon-${size}x${size}.png`);
+  const buffer = await sharp(fs.readFileSync(masterPath))
+    .resize(size, size, { fit: "cover" })
+    .png()
+    .toBuffer();
+  fs.writeFileSync(output, buffer);
+  console.log(`Generated ${path.relative(process.cwd(), output)}`);
+}

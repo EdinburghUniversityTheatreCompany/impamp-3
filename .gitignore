@@ -49,10 +49,6 @@ fnox.toml
 *.tsbuildinfo
 next-env.d.ts
 
-# PWA builds
-public/sw.js
-public/workbox-*.js
-
 # Generated favicon, from icon.svg
 /src/app/favicon.ico
 /src/generated

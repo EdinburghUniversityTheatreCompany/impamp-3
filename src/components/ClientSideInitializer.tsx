@@ -17,6 +17,7 @@ import {
   BORROWED_LINK_SWEEP_KEY,
   reconcileBorrowedDriveLinks,
 } from "@/lib/syncReconcile";
+import { registerServiceWorker } from "@/lib/serviceWorker/register";
 
 /**
  * A profile can sync right now if it's Drive-linked and either the user is
@@ -81,6 +82,16 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
     console.log("ClientSideInitializer mounted, fetching initial profiles...");
     useProfileStore.getState().fetchProfiles();
   }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Cache the app shell so the board survives losing the venue's wifi. The
+  // registration deliberately lives next to the other once-per-mount startup
+  // work rather than in the root layout: this component is already the app's
+  // "things that must happen on the client, once" home, and it is a client
+  // component, which the layout is not. See src/lib/serviceWorker/register.ts
+  // for why production-only, and public/sw.js for what is cached.
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
 
   // One-off repair for profiles imported from a server share link before the
   // import stopped copying the owner's Drive ids. Left in place, those ids

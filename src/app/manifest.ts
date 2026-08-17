@@ -1,5 +1,24 @@
 import type { MetadataRoute } from "next";
 
+/**
+ * The web app manifest, served by Next at /manifest.webmanifest and linked
+ * automatically from the document head.
+ *
+ * This is the only manifest. There used to be a second, hand-written
+ * public/manifest.json which nothing linked but anyone could still fetch, and
+ * the two had drifted: different theme colours, different icon `purpose`, and
+ * two icon sizes (144 and 152) that the static file advertised but which had
+ * never existed on disk, so an installing browser fetched two 404s. Those two
+ * sizes now exist — see scripts/generate-icons.js — and the static file is
+ * gone.
+ *
+ * `purpose` stays "any" rather than "any maskable", which is what the old file
+ * claimed. These icons are full-bleed: the glyph reaches close enough to the
+ * corners that a launcher's circular mask would clip it. Declaring maskable
+ * without a safe zone drawn for it is a promise the artwork does not keep.
+ */
+const ICON_SIZES = [48, 72, 96, 128, 144, 152, 192, 384, 512];
+
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "ImpAmp3 Soundboard",
@@ -11,44 +30,12 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#000000",
     theme_color: "#f2801f",
     orientation: "any",
-    icons: [
-      {
-        src: "/icons/icon-72x72.png",
-        sizes: "72x72",
-        type: "image/png",
-        purpose: "any", // Can also be "maskable" or "monochrome"
-      },
-      {
-        src: "/icons/icon-96x96.png",
-        sizes: "96x96",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-128x128.png",
-        sizes: "128x128",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-192x192.png",
-        sizes: "192x192",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-384x384.png",
-        sizes: "384x384",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/icons/icon-512x512.png",
-        sizes: "512x512",
-        type: "image/png",
-        purpose: "any",
-      },
-    ],
+    icons: ICON_SIZES.map((size) => ({
+      src: `/icons/icon-${size}x${size}.png`,
+      sizes: `${size}x${size}`,
+      type: "image/png",
+      purpose: "any",
+    })),
     prefer_related_applications: false,
   };
 }

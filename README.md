@@ -10,7 +10,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
   - [Installation](#installation)
   - [Building for Production](#building-for-production)
   - [Docker Deployment](#docker-deployment)
-  - [PWA Features](#pwa-features)
+  - [PWA and offline use](#pwa-and-offline-use)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
 - [Tech Stack](#tech-stack)
@@ -22,7 +22,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 ## Features
 
-- **Offline-First PWA**: Operates fully offline after initial load using PWA techniques
+- **Works offline**: after one online visit the whole board — banks, pads, playback, editing, import/export — runs with no network. Only syncing needs one
 - **Local Storage**: Stores configurations and audio files within the browser's IndexedDB
 - **Profile Management**: Create, edit, and switch between multiple sound profiles/collections
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
@@ -86,7 +86,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
 ### Building for Production
 
-To build the application for production deployment with PWA support:
+To build the application for production:
 
 1. Build the application
 
@@ -103,7 +103,10 @@ To build the application for production deployment with PWA support:
    This serves `.next/standalone/server.js`, the same server the Docker image
    runs. It reads `PORT`; pass `--port` and it is translated for you.
 
-3. The app is now available with full PWA capabilities
+3. The app is now installable, and caches itself for offline use — see
+   [PWA and offline use](#pwa-and-offline-use). The service worker registers
+   only in production builds, so this is the first point at which you can
+   exercise it
 
 ### Docker Deployment
 
@@ -171,16 +174,34 @@ COMPOSE_PROFILES=development docker-compose up dev
 COMPOSE_PROFILES=development DEV_PORT=8081 docker-compose up dev
 ```
 
-### PWA Features
+### PWA and offline use
 
-ImpAmp3 is configured as a Progressive Web App (PWA), which means it:
+ImpAmp3 installs like any other Progressive Web App — your browser's "Install
+app" or "Add to Home Screen" — and a service worker caches the app itself so a
+show does not depend on the venue's wifi.
 
-- Can be installed on desktops, mobile devices, and tablets
-- Works offline after the initial load
-- Caches audio files for offline playback
-- Updates automatically when new versions are deployed
+What works with the network down, after one online visit:
 
-It installs like any other PWA: your browser's "Install app" or "Add to Home Screen". (This used to link a `docs/pwa-usage-guide.md` that has never existed.)
+- Launching the board, switching banks, triggering pads
+- Editing pads and banks, managing profiles, import and export
+- Every sound. Audio lives in IndexedDB and is never fetched over the network,
+  so playback was already independent of it
+
+What does not, by design:
+
+- Syncing — Google Drive, server sync, and hosted audio. Nothing under `/api`
+  is cached, because a stale sync response could resurrect a deleted profile or
+  hide a failed write. Those calls fail while offline and resume when the
+  connection returns
+
+Updates deliberately do **not** apply while the app is open. A new build is
+downloaded in the background and takes over the next time you open the app with
+no other tab still running it. Swapping an app's code under a running board
+mid-performance is a worse failure than being one version behind for an
+evening.
+
+`docs/offline-pwa.md` has the details, including what to do if a client seems
+stuck on an old build.
 
 ## Usage
 
