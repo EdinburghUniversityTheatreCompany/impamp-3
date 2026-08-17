@@ -11,6 +11,7 @@ import { createProfile } from "@/lib/server/profiles";
 import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
 import {
   makeApiRequest as makeRequest,
+  makeChunkedApiRequest,
   routeParams,
   type ApiRequestOptions,
 } from "@/lib/server/testSupport";
@@ -228,6 +229,31 @@ describe("GET /api/profiles/:id", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("refuses an anonymous editor-link holder's huge chunked write without buffering it", async () => {
+    // The reach is the point. `PUT /api/profiles/:id` resolves access before
+    // parsing, a bare editor link token grants `editor` with no session at
+    // all, and the body was buffered before `If-Match` was ever compared — so
+    // the request need not write anything to cost the memory. On a single
+    // instance with a synchronous SQLite layer, that is the whole service.
+    const owner = signIn(1);
+    const profile = ownedProfile(owner);
+    const share = createLinkShare(profile.id, "editor", owner.user.id);
+
+    const { request, delivered } = makeChunkedApiRequest(
+      `/api/profiles/${profile.id}`,
+      {
+        totalBytes: 64 * 1024 * 1024,
+        query: `token=${share.link_token}`,
+        headers: { "if-match": '"1"' },
+      },
+    );
+
+    const response = await putProfile(request, routeParams({ id: profile.id }));
+
+    expect(response.status).toBe(413);
+    expect(delivered()).toBeLessThan(9 * 1024 * 1024);
   });
 
   it("serves an anonymous caller holding a share link", async () => {

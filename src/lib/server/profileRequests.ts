@@ -89,36 +89,97 @@ export interface ProfileWriteBody {
  */
 const MAX_PROFILE_BODY_BYTES = 8 * 1024 * 1024;
 
-/** Validate the JSON body shared by profile create and update. */
-export async function parseProfileBody(
+function tooLarge(): NextResponse {
+  return NextResponse.json(
+    { error: "That profile is too large to store" },
+    { status: 413 },
+  );
+}
+
+/**
+ * The request body as text, or the response to send instead.
+ *
+ * Read through a counting reader rather than `await request.json()`, which
+ * buffers and parses whatever arrives with no ceiling of its own — Next 16 App
+ * Router handlers have no body-size limit (`api.bodyParser.sizeLimit` was
+ * Pages-only, and `next.config.ts` sets nothing). The `content-length` check
+ * below is not a substitute: a chunked request carries no such header, and
+ * `Number(null ?? "")` is 0, which is finite and comfortably under the cap. So
+ * the guard passed and the whole body was buffered anyway.
+ *
+ * That matters because of who can reach it. `PUT /api/profiles/:id` resolves
+ * access before parsing, and a bare editor link token grants `editor` with no
+ * session at all — and the body is buffered before `If-Match` is compared, so
+ * the request need not write anything to cost the memory. On a single instance
+ * with a synchronous SQLite layer, that is the whole service.
+ */
+async function readBodyText(
   request: NextRequest,
-): Promise<ProfileWriteBody | NextResponse> {
+): Promise<string | NextResponse> {
   const declaredLength = Number(request.headers.get("content-length") ?? "");
   if (
     Number.isFinite(declaredLength) &&
     declaredLength > MAX_PROFILE_BODY_BYTES
   ) {
-    return NextResponse.json(
-      { error: "That profile is too large to store" },
-      { status: 413 },
-    );
+    return tooLarge();
   }
 
+  const body = request.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_PROFILE_BODY_BYTES) {
+        // Abort rather than drain: nothing further is going to be stored, and
+        // reading it to the end is the cost this exists to avoid.
+        await reader.cancel().catch(() => {});
+        return tooLarge();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  return text;
+}
+
+/** Validate the JSON body shared by profile create and update. */
+export async function parseProfileBody(
+  request: NextRequest,
+): Promise<ProfileWriteBody | NextResponse> {
+  const text = await readBodyText(request);
+  if (text instanceof NextResponse) return text;
+
+  // `JSON.parse` happily yields null, a number or an array; narrowed here so
+  // the field checks below are reading properties off an object.
   let body: { name?: unknown; data?: unknown };
   try {
-    body = await request.json();
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object") throw new Error("not an object");
+    body = parsed as { name?: unknown; data?: unknown };
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   // Content-length can be absent or wrong, so the parsed size is what decides.
   // Kept rather than discarded: this is the exact string the row will store.
+  //
+  // Measured in bytes, not `.length`: that counts UTF-16 code units, so a blob
+  // of astral-plane characters — an emoji-named pad, at scale — could be two
+  // to three times the intended byte ceiling and still pass.
   const serialisedData = JSON.stringify(body.data ?? null);
-  if (serialisedData.length > MAX_PROFILE_BODY_BYTES) {
-    return NextResponse.json(
-      { error: "That profile is too large to store" },
-      { status: 413 },
-    );
+  if (Buffer.byteLength(serialisedData, "utf8") > MAX_PROFILE_BODY_BYTES) {
+    return tooLarge();
   }
 
   if (typeof body.name !== "string" || !body.name.trim()) {
