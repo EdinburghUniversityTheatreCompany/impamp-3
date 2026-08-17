@@ -282,7 +282,7 @@ export function buildImportedProfileFields(
   backupReminderDefault: number,
   link: ImportLink = {},
 ): Omit<Profile, "id"> {
-  return {
+  const fields: Omit<Profile, "id"> = {
     name: profileName,
     syncType: link.syncType ?? "local",
     audioLocation: link.audioLocation ?? null,
@@ -299,6 +299,15 @@ export function buildImportedProfileFields(
     createdAt: now,
     updatedAt: now,
   };
+
+  // The same stamping `addProfile` does, and for the same reason the pad and
+  // page importers were given it: without `_modified` and `_fieldsModified`
+  // the merge reads every field's local timestamp as 0, so nothing counts as
+  // changed here and the remote wins each differing field on the first sync —
+  // reverting normalisation, active-pad behaviour and the reminder period
+  // with no conflict raised. The export carries the donor's stamps, but those
+  // describe the donor's edits, not this device's copy.
+  return { ...fields, ...initialSyncFields(fields, now.getTime()) };
 }
 
 // Helper function to create a new profile for import, handling name conflicts
@@ -711,7 +720,7 @@ async function importPadConfigurations(
     );
 
     // Construct the new pad configuration using the updated structure
-    const newPadData: Omit<PadConfiguration, "id"> = {
+    const content = {
       profileId,
       padIndex: pad.padIndex,
       pageIndex: pad.pageIndex,
@@ -723,16 +732,23 @@ async function importPadConfigurations(
       padGainDb: pad.padGainDb, // Whole-pad gain isn't keyed by audio file ID
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
+    };
+    const newPadData: Omit<PadConfiguration, "id"> = {
+      ...content,
       createdAt: now,
       // Sync bookkeeping, which these records used to be written without. It
       // is the entire basis `compareSyncableItems` decides a merge on, so an
       // imported pad looked to the merge like it had never been touched — and
       // the first sync after an import could prefer a remote copy over sounds
       // the user had just imported.
-      ...initialSyncFields(
-        { ...pad, profileId, audioFileIds: mappedAudioFileIds },
-        now.getTime(),
-      ),
+      //
+      // Stamped over the record being written, not over the one that arrived:
+      // an incoming pad from the wire carries derived keys that are never
+      // stored (`audioFileHashes` and the *ByHash* settings) and lacks stored
+      // ones it does not send (`isDisabled`, `padGainDb`), so stamping the
+      // source voted on fields that do not exist and abstained on fields that
+      // do — and an absent entry is a losing vote.
+      ...initialSyncFields(content, now.getTime()),
       updatedAt: now,
     };
 
