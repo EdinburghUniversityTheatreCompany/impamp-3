@@ -302,10 +302,22 @@ export const useProfileStore = create<ProfileState>()(
             // on an editable profile would otherwise stay on across a switch
             // to one that cannot be edited, leaving its pads fully editable
             // and both banners stacked on top of each other.
+            //
+            // The bank goes back to the first one for the same class of
+            // reason. Banks 11-20 are opt-in per profile — `setCurrentPageIndex`
+            // refuses any index >= 10 the active profile has no page metadata
+            // for — and a profile switch bypassed that check entirely. Being on
+            // bank 16 in a profile that has it and switching to one that does
+            // not gave 48 empty pads with no bank tab selected, and in edit mode
+            // a drop then wrote a padConfiguration at a pageIndex with no
+            // pageMetadata: no tab is ever drawn for it, `setCurrentPageIndex`
+            // refuses to navigate to it, and it syncs in that state. Bank 1
+            // always exists, so resetting is cheap and cannot be wrong.
             set({
               activeProfileId: id,
               isEditMode: false,
               isDeleteMoveMode: false,
+              ...(previousId !== id ? { currentPageIndex: 0 } : {}),
             });
             // Pad configurations are not loaded here: `usePadConfigurations`
             // is keyed on the active profile, so switching it is the trigger.
