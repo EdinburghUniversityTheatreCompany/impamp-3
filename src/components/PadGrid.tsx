@@ -8,7 +8,6 @@ import {
   actionablePadConfigs,
   usePadConfigurations,
 } from "@/hooks/usePadConfigurations";
-import { isEmergencyPage } from "@/lib/db";
 import {
   stopAllAudio,
   fadeOutAllAudio,
@@ -153,9 +152,6 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
-  const incrementEmergencySoundsVersion = useProfileStore(
-    (state) => state.incrementEmergencySoundsVersion,
-  );
   const { openLazyModal, closeModal } = useModal();
 
   // Refs
@@ -361,16 +357,9 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
         existingPadConfigs: existingConfigMap,
         onAssignmentComplete: () => {
           closeModal();
+          // Invalidates every cached copy of pad data, the keyboard's
+          // emergency set included.
           refreshPadConfigs();
-          // Check if we're on an emergency page and refresh if needed
-          isEmergencyPage(activeProfileId, currentPageIndex).then(
-            (isEmergency) => {
-              if (isEmergency) {
-                incrementEmergencySoundsVersion();
-                console.log("Emergency page updated after bulk import");
-              }
-            },
-          );
         },
       },
       confirmText: "",

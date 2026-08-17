@@ -11,7 +11,6 @@ import { useProfileStore } from "@/store/profileStore";
 import {
   addAudioFile,
   DEFAULT_PLAYBACK_TYPE,
-  isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
 import { loadAndDecodeAudio } from "@/lib/audio/decoder";
@@ -28,9 +27,6 @@ export function usePadDrop(
   refreshPadConfigs: () => void,
 ) {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const incrementEmergencySoundsVersion = useProfileStore(
-    (state) => state.incrementEmergencySoundsVersion,
-  );
   const requestSync = useProfileStore((state) => state.requestSync);
   // Dropping a file is a write, and it is the one write that needs no edit
   // mode — so none of the Shift-key gates cover it. On a profile that cannot
@@ -90,19 +86,11 @@ export function usePadDrop(
 
         // Refresh the UI
         // One call: refreshing the configurations *is* bumping the shared
-        // version now, so the grid and the keyboard cannot disagree.
+        // version now, so the grid, the keyboard and the emergency set cannot
+        // disagree. There used to be an isEmergencyPage() read and a second
+        // counter here as well, which is how they came to.
         refreshPadConfigs();
         requestSync(activeProfileId);
-
-        // Check if we're on an emergency page and refresh if needed
-        const isEmergency = await isEmergencyPage(
-          activeProfileId,
-          currentPageIndex,
-        );
-        if (isEmergency) {
-          incrementEmergencySoundsVersion();
-          console.log(`Emergency page ${currentPageIndex} updated after drop`);
-        }
 
         // Preload the audio file to ensure it's ready to play
         await loadAndDecodeAudio(audioFileId);
@@ -117,13 +105,7 @@ export function usePadDrop(
         alert(`Failed to add audio file "${file.name}". Please try again.`);
       }
     },
-    [
-      activeProfileId,
-      currentPageIndex,
-      refreshPadConfigs,
-      incrementEmergencySoundsVersion,
-      requestSync,
-    ],
+    [activeProfileId, currentPageIndex, refreshPadConfigs, requestSync],
   );
 
   /**

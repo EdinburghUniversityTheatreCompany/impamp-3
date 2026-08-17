@@ -190,10 +190,10 @@ export function useKeyboardListener() {
   );
   // Get edit mode states and setters from store
   const setEditMode = useProfileStore((state) => state.setEditMode);
-  // Get emergency sounds version to detect changes
-  const emergencySoundsVersion = useProfileStore(
-    (state) => state.emergencySoundsVersion,
-  );
+  // The emergency set is a cached copy of pad data, so it is invalidated by
+  // the counter every other copy uses. It had one of its own, bumped only by
+  // the local edit paths, so a bank a sync changed never reached the Enter key.
+  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
@@ -270,13 +270,12 @@ export function useKeyboardListener() {
     console.log(`Reloaded ${sounds.length} emergency sounds`);
   }, [activeProfileId]);
 
-  // Effect to load emergency sounds when profile changes or when emergency sounds version changes
+  // Effect to load emergency sounds when the profile changes, or when anything
+  // has written pad configurations or page metadata — locally or via sync.
   useEffect(() => {
-    console.log(
-      `Loading emergency sounds (version: ${emergencySoundsVersion})`,
-    );
+    console.log(`Loading emergency sounds (version: ${padConfigsVersion})`);
     reloadEmergencySounds();
-  }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
+  }, [activeProfileId, reloadEmergencySounds, padConfigsVersion]);
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {

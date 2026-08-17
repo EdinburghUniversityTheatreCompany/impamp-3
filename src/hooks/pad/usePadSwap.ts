@@ -8,11 +8,7 @@
 
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import {
-  PadConfiguration,
-  isEmergencyPage,
-  swapPadConfigurations,
-} from "@/lib/db";
+import { PadConfiguration, swapPadConfigurations } from "@/lib/db";
 
 interface PadSwapParams {
   currentPageIndex: number;
@@ -31,9 +27,6 @@ export function usePadSwap(params: PadSwapParams) {
   const { currentPageIndex, padConfigs, refreshPadConfigs, specialPadIndices } =
     params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const incrementEmergencySoundsVersion = useProfileStore(
-    (state) => state.incrementEmergencySoundsVersion,
-  );
   const requestSync = useProfileStore((state) => state.requestSync);
 
   /**
@@ -80,19 +73,11 @@ export function usePadSwap(params: PadSwapParams) {
           toIndex,
         );
 
-        // Success - refresh grid and update emergency sounds if needed
+        // One call invalidates every cached copy of pad data, the emergency
+        // set included, so there is no page-is-emergency question to ask.
         refreshPadConfigs();
         requestSync(activeProfileId);
         console.log(`Successfully swapped pads ${fromIndex} and ${toIndex}`);
-
-        // Check if we're on an emergency page and refresh if needed
-        const isEmergency = await isEmergencyPage(
-          activeProfileId,
-          currentPageIndex,
-        );
-        if (isEmergency) {
-          incrementEmergencySoundsVersion();
-        }
       } catch (error) {
         console.error(
           `Failed to swap pads ${fromIndex} and ${toIndex}:`,
@@ -107,7 +92,6 @@ export function usePadSwap(params: PadSwapParams) {
       padConfigs,
       refreshPadConfigs,
       specialPadIndices,
-      incrementEmergencySoundsVersion,
       requestSync,
     ],
   );

@@ -50,8 +50,19 @@ interface ProfileState {
   isLoading: boolean;
   error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
-  emergencySoundsVersion: number; // Track changes to emergency sounds configuration
-  padConfigsVersion: number; // Incremented after sync to trigger pad grid refresh
+  /**
+   * The single invalidation signal for every cached copy of pad data.
+   *
+   * There are three copies — the grid's, the keyboard listener's map and the
+   * emergency set — and the rule is that anything writing pad configurations
+   * or page metadata bumps this, once. The emergency set used to watch a
+   * second counter of its own, `emergencySoundsVersion`, which only the local
+   * edit paths bumped; `incrementEmergencySoundsVersion` appeared nowhere in
+   * src/lib, so a sync refreshed the grid and left Enter firing the sound the
+   * emergency bank held before the sync. Two counters for one fact is the same
+   * defect `usePadConfigurations` removed a hook-local `reloadToken` for.
+   */
+  padConfigsVersion: number;
   fadeoutDuration: number; // Duration in seconds for the fadeout effect
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
@@ -61,8 +72,7 @@ interface ProfileState {
   canEditActiveProfile: () => boolean;
   setDeleteMoveMode: (isActive: boolean) => void; // Set delete/move mode
   toggleDeleteMoveMode: () => void; // Toggle delete/move mode
-  incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
-  incrementPadConfigsVersion: () => void; // Increment counter after sync to refresh pad grid
+  incrementPadConfigsVersion: () => void; // Invalidate every cached copy of pad data
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
@@ -232,7 +242,6 @@ export const useProfileStore = create<ProfileState>()(
         isLoading: true,
         error: null,
         isProfileManagerOpen: false, // Profile manager modal is closed by default
-        emergencySoundsVersion: 0, // Initial version for emergency sounds tracking
         padConfigsVersion: 0,
         fadeoutDuration: 3, // Default fadeout duration in seconds
         syncRequestQueue: {},
@@ -437,15 +446,6 @@ export const useProfileStore = create<ProfileState>()(
 
         incrementPadConfigsVersion: () => {
           set((state) => ({ padConfigsVersion: state.padConfigsVersion + 1 }));
-        },
-
-        incrementEmergencySoundsVersion: () => {
-          console.log(
-            "Emergency sounds configuration changed, incrementing version",
-          );
-          set((state) => ({
-            emergencySoundsVersion: state.emergencySoundsVersion + 1,
-          }));
         },
 
         clearSyncRequest: (profileId: number) => {
