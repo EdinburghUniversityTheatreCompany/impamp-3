@@ -113,6 +113,27 @@ function reindexProfileAudio(
   }
 }
 
+/**
+ * Whether this profile names this sound, answered from the index.
+ *
+ * Hits `profile_audio`'s primary key. The alternative — `SELECT *` and a
+ * `JSON.parse` of up to 8 MB — is what the hosted-audio download did for a
+ * membership question, once per sound per collaborator per session,
+ * synchronously, on the thread serving everyone else. Migration 3 added this
+ * table for exactly this class of question and backfilled it, and every write
+ * rebuilds it inside the same transaction as the blob, so it cannot disagree
+ * with what it describes.
+ */
+export function profileNamesHash(profileId: string, hash: string): boolean {
+  return (
+    queryOne<{ one: number }>(
+      "SELECT 1 AS one FROM profile_audio WHERE profile_id = ? AND hash = ?",
+      profileId,
+      hash,
+    ) !== undefined
+  );
+}
+
 export function createProfile(input: CreateProfileInput): ProfileRow {
   const id = randomUUID();
   const now = Date.now();

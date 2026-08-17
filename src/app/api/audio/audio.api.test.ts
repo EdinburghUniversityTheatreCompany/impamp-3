@@ -755,6 +755,36 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect((await response.json()).url).toContain("download=1");
   });
 
+  it("answers from the profile_audio index rather than re-reading the blob", async () => {
+    // The membership question is answered by an index migration 3 added for
+    // exactly this, and which every write rebuilds inside the same transaction
+    // as the blob. The route used to SELECT * and JSON.parse up to 8 MB
+    // instead — synchronously, once per sound per collaborator per session, on
+    // the thread serving everyone else.
+    //
+    // Corrupting the blob behind the index's back is the only way to tell the
+    // two apart from outside: with the blob as the source of truth this 404s,
+    // with the index it does not.
+    const owner = signIn(1, { approved: true });
+    const { hash } = await storeAudio(owner.token, "indexed", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+
+    execute(
+      "UPDATE profiles SET data = ? WHERE id = ?",
+      "not json",
+      profile.id,
+    );
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+        sessionToken: owner.token,
+      }),
+      routeParams({ id: profile.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("refuses a hash the profile does not list, so a share is not a skeleton key", async () => {
     const owner = signIn(1, { approved: true });
     const listed = await storeAudio(owner.token, "listed", KB);
