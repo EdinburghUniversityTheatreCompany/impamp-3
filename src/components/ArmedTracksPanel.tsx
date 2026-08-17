@@ -36,10 +36,13 @@ const ArmedTracksPanel: React.FC = () => {
     return null;
   }
 
-  // Play the next armed track
-  const handlePlayNext = () => {
-    // Currently the store only supports playing the next armed track in queue
-    playbackStoreActions.playNextArmedTrack();
+  // Play one specific armed track.
+  //
+  // This used to call playNextArmedTrack() with no key, so every row's button
+  // played the head of the queue while `TrackItem` labelled it `Play ${name}`
+  // for the row it belonged to. `onRemove` below already passed `track.key`.
+  const handlePlayArmedTrack = (key: string) => {
+    playbackStoreActions.playArmedTrack(key);
   };
 
   // Remove an armed track without playing it
@@ -74,7 +77,7 @@ const ArmedTracksPanel: React.FC = () => {
               trackKey={track.key}
               name={track.name}
               isActive={false}
-              onPlay={() => handlePlayNext()}
+              onPlay={() => handlePlayArmedTrack(track.key)}
               onRemove={() => handleRemoveArmedTrack(track.key)}
             />
           ))}
