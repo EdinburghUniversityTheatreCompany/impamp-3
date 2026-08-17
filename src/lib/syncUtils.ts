@@ -547,6 +547,7 @@ export const detectProfileConflicts = async (
     const remoteMod = remoteProfileFields[field] ?? 0;
     const localVal = localProfile[key];
     const remoteVal = remoteProfile[key];
+    const stamps = (mergedData.profile._fieldsModified ??= {});
 
     if (
       localMod > (remoteData._lastSyncTimestamp ?? 0) &&
@@ -562,23 +563,22 @@ export const detectProfileConflicts = async (
         remoteModTime: remoteMod,
       });
       requiresManualResolution = true;
+      // Undecided, so the merged record still holds local's value and keeps
+      // local's stamp with it.
+      stampMergedField(stamps, field, stamps[field] ?? localMod);
     } else if (remoteMod > localMod) {
       // Remote is newer, update merged data
       // Use 'any' cast for dynamic property assignment, disabling ESLint for this line
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mergedData.profile as any)[key] = remoteVal;
+      stampMergedField(stamps, field, remoteMod);
+    } else {
+      // Local is newer or the two are tied, so local's value stands — it is
+      // already in `mergedData` — and so does the stamp that came with it. A
+      // field neither side has ever stamped gets no entry at all; see
+      // `stampMergedField` for what an explicit 0 costs.
+      stampMergedField(stamps, field, stamps[field] || localMod);
     }
-    // If local is newer or times are equal, keep local (already in mergedData).
-    // Either way the merged record needs the stamp that goes with the value it
-    // ended up holding: whatever the clone of local already carried, or the
-    // remote stamp that has just won. A field neither side ever stamped gets no
-    // entry — see `stampMergedField`.
-    const stamps = (mergedData.profile._fieldsModified ??= {});
-    stampMergedField(
-      stamps,
-      field,
-      stamps[field] || (remoteMod > localMod ? remoteMod : localMod),
-    );
   });
 
   if (profileConflicts.length > 0) {

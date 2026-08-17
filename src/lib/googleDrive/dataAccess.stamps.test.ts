@@ -158,6 +158,30 @@ describe("a merge written back must not forget what this device just changed", (
     expect(second.conflicts.map((c) => c.storeName)).toContain("profiles");
   });
 
+  it("stamps a field the remote won with the remote's time, not the local one", async () => {
+    // The stamp and the value have to describe the same event. Keeping local's
+    // stamp beside remote's value says "this device changed it, then", which
+    // makes the two sides tie on the next merge — and a tie is decided in
+    // local's favour, so the value that just arrived is pushed straight back
+    // out. The stamp is the merge's whole memory; a wrong one is worse than a
+    // missing one.
+    const snapshot = await getLocalProfileSyncData(PROFILE_ID);
+    const theirs = unchangedRemote(snapshot!);
+    const theirStamp = SEEDED_AT + 5_000;
+    theirs.profile.activePadBehavior = "stop";
+    theirs.profile._fieldsModified = {
+      ...theirs.profile._fieldsModified,
+      activePadBehavior: theirStamp,
+    };
+
+    const { mergedData } = await detectProfileConflicts(snapshot!, theirs);
+
+    expect(mergedData.profile.activePadBehavior).toBe("stop");
+    expect(mergedData.profile._fieldsModified?.activePadBehavior).toBe(
+      theirStamp,
+    );
+  });
+
   it("does not invent a stamp of 0 for a field neither side has ever stamped", async () => {
     const snapshot = await getLocalProfileSyncData(PROFILE_ID);
     const { mergedData } = await detectProfileConflicts(
