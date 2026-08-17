@@ -11,7 +11,13 @@ const eslintConfig = [
       "build/**",
       "coverage/**",
       "node_modules/**",
+      // Both spellings: `.worktrees/` is the manual convention, and
+      // `.claude/worktrees/` is where the agent tooling puts them. Each holds a
+      // full checkout plus its own node_modules, so missing one turns
+      // `npm run lint` into tens of thousands of problems from other people's
+      // dependencies and hides the handful that are actually yours.
       ".worktrees/**",
+      ".claude/worktrees/**",
       "playwright-report/**",
       "test-results/**",
       "src/generated/**",
