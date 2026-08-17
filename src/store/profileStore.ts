@@ -48,7 +48,6 @@ interface ProfileState {
   isEditMode: boolean; // Track if we're in edit mode (shift key)
   isDeleteMoveMode: boolean; // Track if we're in delete and move mode
   isLoading: boolean;
-  error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
   /**
    * The single invalidation signal for every cached copy of pad data.
@@ -76,7 +75,6 @@ interface ProfileState {
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
-  setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
   getNormalisationSettings: () => NormalisationSettings; // Get the loudness normalisation settings for the active profile
   setNormalisation: (settings: NormalisationSettings) => Promise<void>; // Set the loudness normalisation settings for the active profile
 
@@ -224,6 +222,24 @@ const _markProfilesBackedUpNow = async (
   return nowMs;
 };
 
+// Stamping the backup time is bookkeeping, not the export. Both export paths
+// used to funnel a failure here into `set({ error })`, which meant the caller
+// was told the export succeeded — correctly, the file exists — and the reason
+// the reminder was about to fire again went into a field with no readers.
+const _warnIfTimestampFails = async (
+  set: ProfileSetState,
+  profileIds: number[],
+): Promise<void> => {
+  try {
+    await _markProfilesBackedUpNow(set, profileIds);
+  } catch (updateError) {
+    console.warn(
+      "Profiles exported, but the backup timestamp could not be updated, so the backup reminder will fire again:",
+      updateError,
+    );
+  }
+};
+
 // subscribeWithSelector lets a non-React subscriber watch one slice —
 // `subscribe(selector, listener)` — instead of being woken by every mutation
 // of the store and diffing by hand. ClientSideInitializer alone held four
@@ -240,7 +256,6 @@ export const useProfileStore = create<ProfileState>()(
         isEditMode: false, // Default to not in edit mode
         isDeleteMoveMode: false, // Default to not in delete and move mode
         isLoading: true,
-        error: null,
         isProfileManagerOpen: false, // Profile manager modal is closed by default
         padConfigsVersion: 0,
         fadeoutDuration: 3, // Default fadeout duration in seconds
@@ -255,7 +270,7 @@ export const useProfileStore = create<ProfileState>()(
         needsReauth: false,
 
         fetchProfiles: async () => {
-          set({ isLoading: true, error: null });
+          set({ isLoading: true });
           try {
             // Ensure the default profile exists before fetching
             await ensureDefaultProfile();
@@ -282,12 +297,7 @@ export const useProfileStore = create<ProfileState>()(
             }
           } catch (err) {
             console.error("Failed to fetch profiles:", err);
-            const errorMessage =
-              err instanceof Error ? err.message : "An unknown error occurred";
-            set({
-              error: `Failed to load profiles: ${errorMessage}`,
-              isLoading: false,
-            });
+            set({ isLoading: false });
           }
         },
 
@@ -505,11 +515,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to create profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to create profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -527,11 +532,6 @@ export const useProfileStore = create<ProfileState>()(
             }));
           } catch (error) {
             console.error(`Failed to update profile ${id}:`, error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to update profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -552,11 +552,6 @@ export const useProfileStore = create<ProfileState>()(
             // Removed: await get().fetchProfiles();
           } catch (error) {
             console.error(`Failed to delete profile ${id}:`, error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to delete profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -597,11 +592,6 @@ export const useProfileStore = create<ProfileState>()(
             return results;
           } catch (error) {
             console.error("Failed to import multiple profiles:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profiles: ${errorMessage}` });
             throw error; // Re-throw for UI handling
           }
         },
@@ -651,11 +641,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -687,11 +672,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import impamp2 profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import impamp2 profile: ${errorMessage}` });
             throw error; // Re-throw so the UI can catch it
           }
         },
@@ -758,13 +738,11 @@ export const useProfileStore = create<ProfileState>()(
                   }
                   throw error;
                 }
-                try {
-                  await _markProfilesBackedUpNow(set, profileIds);
-                } catch (updateError) {
-                  set({
-                    error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-                  });
-                }
+                // The archive is on disk, so this is a successful export
+                // whatever happens next. A failed timestamp update only means
+                // the backup reminder will fire again, which is the safe way
+                // round; it used to be reported into a store field nobody read.
+                await _warnIfTimestampFails(set, profileIds);
                 return true;
               }
             }
@@ -781,25 +759,14 @@ export const useProfileStore = create<ProfileState>()(
               zipBlob !== null && _triggerBlobDownload(zipBlob, filename);
 
             if (success) {
-              try {
-                await _markProfilesBackedUpNow(set, profileIds);
-              } catch (updateError) {
-                set({
-                  error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-                });
-              }
+              await _warnIfTimestampFails(set, profileIds);
             } else {
-              set({ error: `Failed to trigger download for profile export.` });
+              console.error("Failed to trigger download for profile export.");
             }
 
             return success;
           } catch (error) {
             console.error("Failed to export profiles as ZIP:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to export profiles: ${errorMessage}` });
             throw error;
           }
         },
@@ -835,11 +802,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import profile from sync data:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to connect profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -864,11 +826,6 @@ export const useProfileStore = create<ProfileState>()(
             return results;
           } catch (error) {
             console.error("Failed to import profiles from ZIP:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profiles: ${errorMessage}` });
             throw error;
           }
         },
@@ -910,56 +867,6 @@ export const useProfileStore = create<ProfileState>()(
           return activeProfile?.normalisation ?? DEFAULT_NORMALISATION;
         },
 
-        setActivePadBehavior: async (behavior: ActivePadBehavior) => {
-          console.log(
-            `[ProfileStore] setActivePadBehavior called with behavior: ${behavior}`,
-          ); // Log received value
-          const { activeProfileId } = get();
-          if (activeProfileId === null) {
-            console.warn(
-              "Cannot set active pad behavior: No active profile selected.",
-            );
-            return;
-          }
-
-          try {
-            // Persist change to DB
-            await updateProfile(activeProfileId, {
-              activePadBehavior: behavior,
-            });
-
-            // Update state
-            set((state) => ({
-              profiles: state.profiles.map((p) =>
-                p.id === activeProfileId
-                  ? { ...p, activePadBehavior: behavior, updatedAt: new Date() }
-                  : p,
-              ),
-            }));
-            // Log the state *after* update to verify
-            const updatedProfile = get().profiles.find(
-              (p) => p.id === activeProfileId,
-            );
-            console.log(
-              `[ProfileStore] State updated for profile ${activeProfileId}. New behavior: ${updatedProfile?.activePadBehavior}`,
-            );
-          } catch (error) {
-            console.error(
-              `Failed to set activePadBehavior for profile ${activeProfileId}:`,
-              error,
-            );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({
-              error: `Failed to set active pad behavior: ${errorMessage}`,
-            });
-            // Re-throw might be useful depending on how calling code handles errors
-            // throw error;
-          }
-        },
-
         setNormalisation: async (settings: NormalisationSettings) => {
           const { activeProfileId } = get();
           if (activeProfileId === null) {
@@ -984,13 +891,14 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to set normalisation settings for profile ${activeProfileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({
-              error: `Failed to set normalisation settings: ${errorMessage}`,
-            });
+            // Said out loud, because this is the one place a write failure has
+            // no other symptom: the control simply snaps back to where it was,
+            // with the explanation previously going into a store field that
+            // had no readers. The store's other write failures either throw to
+            // a caller that alerts, or are alerted about by the pad hooks.
+            alert(
+              `Could not save the loudness settings: ${error instanceof Error ? error.message : "unknown error"}`,
+            );
           }
         },
 
@@ -1010,7 +918,6 @@ export const useProfileStore = create<ProfileState>()(
             tokenExpiresAt: expiresAt,
             isGoogleSignedIn: true,
             needsReauth: false,
-            error: null, // Clear any previous auth errors
           });
         },
 
@@ -1090,11 +997,6 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to pause sync for profile ${profileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to pause sync: ${errorMessage}` });
             throw error;
           }
         },
@@ -1118,11 +1020,6 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to resume sync for profile ${profileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to resume sync: ${errorMessage}` });
             throw error;
           }
         },

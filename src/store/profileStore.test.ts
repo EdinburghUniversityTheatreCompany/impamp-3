@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "@/store/profileStore";
 import type { Profile } from "@/lib/db";
+
+const mocks = vi.hoisted(() => ({ updateProfile: vi.fn() }));
+
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
+  updateProfile: mocks.updateProfile,
+}));
 
 function profile(id: number, overrides: Partial<Profile> = {}): Profile {
   return {
@@ -72,5 +79,70 @@ describe("switching profile", () => {
 
     expect(state().isEditMode).toBe(false);
     expect(state().isDeleteMoveMode).toBe(false);
+  });
+});
+
+describe("reporting a failed write", () => {
+  const alerts: string[] = [];
+  const originalAlert = globalThis.alert;
+
+  beforeEach(() => {
+    alerts.length = 0;
+    globalThis.alert = ((message: string) => {
+      alerts.push(message);
+    }) as typeof globalThis.alert;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.updateProfile.mockReset();
+
+    useProfileStore.setState({
+      profiles: [profile(1)],
+      activeProfileId: 1,
+    });
+  });
+
+  afterEach(() => {
+    globalThis.alert = originalAlert;
+    vi.restoreAllMocks();
+  });
+
+  it("keeps no error channel of its own", () => {
+    // Seventeen actions used to compose a message into `state.error`, and
+    // nothing anywhere selected it. A field that looks like error handling and
+    // is read by nobody is worse than either surfacing it or dropping it: it
+    // makes a swallowed failure look handled.
+    expect("error" in state()).toBe(false);
+  });
+
+  it("tells the user when the loudness settings cannot be saved", async () => {
+    // The only failure in this store with no other symptom. Every other action
+    // throws to a caller that reports it; this one is called as
+    // `void setNormalisation(...)` from a checkbox and a slider, so without
+    // this the control simply snaps back with no explanation.
+    mocks.updateProfile.mockRejectedValue(new Error("QuotaExceededError"));
+
+    await state().setNormalisation({ enabled: true, targetLufs: -18 });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("QuotaExceededError");
+  });
+
+  it("leaves the profile untouched when the write fails", async () => {
+    mocks.updateProfile.mockRejectedValue(new Error("nope"));
+
+    await state().setNormalisation({ enabled: true, targetLufs: -18 });
+
+    expect(state().profiles[0].normalisation).toBeUndefined();
+  });
+
+  it("says nothing when the write succeeds", async () => {
+    mocks.updateProfile.mockResolvedValue(undefined);
+
+    await state().setNormalisation({ enabled: true, targetLufs: -18 });
+
+    expect(alerts).toHaveLength(0);
+    expect(state().profiles[0].normalisation).toEqual({
+      enabled: true,
+      targetLufs: -18,
+    });
   });
 });
