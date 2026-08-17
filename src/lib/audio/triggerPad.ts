@@ -52,9 +52,17 @@ export interface TriggerPadOptions {
  * Plays a pad, keeping the shared loading state in step.
  *
  * The loading key is computed once here rather than in each callback, and
- * cleared on both success and failure — a pad left in its loading state after
- * an error is the failure mode the three hand-written copies each had to
- * remember to avoid.
+ * cleared however the trigger ends — a pad left in its loading state is the
+ * failure mode the three hand-written copies each had to remember to avoid.
+ *
+ * "However it ends" is the part that took a second go. Clearing on
+ * `onAudioReady` and `onError` covers played and failed, but not cancelled:
+ * `triggerAudioForPadInstant` abandons a trigger whose pad was stopped while
+ * it was loading, and calls neither callback, because nothing became audible
+ * and nothing went wrong. Pressing ESC during a slow load therefore left the
+ * spinner up — and with a leftover status of "ready" the overlay shows no
+ * label either, just a spinner over a full progress bar, until that pad is
+ * next triggered successfully.
  *
  * @param pad - What to play
  * @param context - The profile and bank it belongs to
@@ -76,26 +84,34 @@ export async function triggerPad(
   const clearLoading = () =>
     loadingStoreActions.clearPadLoadingState(loadingKey);
 
-  await triggerAudioForPadInstant({
-    padIndex: pad.padIndex,
-    audioFileIds: pad.audioFileIds,
-    playbackType: pad.playbackType,
-    activeProfileId,
-    currentPageIndex,
-    name: pad.name,
-    audioTrimSettings: pad.audioTrimSettings,
-    audioGainSettings: pad.audioGainSettings,
-    padGainDb: pad.padGainDb,
-    isDisabled: pad.isDisabled,
-    onInstantFeedback: options.onInstantFeedback,
-    onLoadingStateChange: (state: LoadingState) => {
-      loadingStoreActions.setPadLoadingState(loadingKey, state);
-    },
-    onAudioReady: clearLoading,
-    onError: (error: string) => {
-      console.error(`${logPrefix} pad ${pad.padIndex}:`, error);
-      clearLoading();
-      options.onError?.(error);
-    },
-  });
+  try {
+    await triggerAudioForPadInstant({
+      padIndex: pad.padIndex,
+      audioFileIds: pad.audioFileIds,
+      playbackType: pad.playbackType,
+      activeProfileId,
+      currentPageIndex,
+      name: pad.name,
+      audioTrimSettings: pad.audioTrimSettings,
+      audioGainSettings: pad.audioGainSettings,
+      padGainDb: pad.padGainDb,
+      isDisabled: pad.isDisabled,
+      onInstantFeedback: options.onInstantFeedback,
+      onLoadingStateChange: (state: LoadingState) => {
+        loadingStoreActions.setPadLoadingState(loadingKey, state);
+      },
+      onAudioReady: clearLoading,
+      onError: (error: string) => {
+        console.error(`${logPrefix} pad ${pad.padIndex}:`, error);
+        clearLoading();
+        options.onError?.(error);
+      },
+    });
+  } finally {
+    // Every terminal outcome wants the overlay gone — played, failed, or
+    // cancelled by a stop. Clearing a key that is already clear is a no-op,
+    // so the callbacks above stay as the thing that clears it *promptly*,
+    // and this is only what catches the outcomes they do not describe.
+    clearLoading();
+  }
 }
