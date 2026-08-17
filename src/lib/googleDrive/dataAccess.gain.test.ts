@@ -271,7 +271,12 @@ describe("updateLocalData — gain settings on a linked profile", () => {
     expect(profile?.audioLocation).toBe("googleDrive");
     expect(profile?.readOnly).toBe(false);
     expect(profile?.followOnly).toBe(false);
-    expect(profile?.name).toBe("Show board");
+    // The name is not one of them, and used to be asserted here as though it
+    // were. It is content: the merge compares it field by field like any other,
+    // and pinning it here threw that decision away while still storing the
+    // stamp that came with it — so a rename made on one device was recorded as
+    // having happened on the other, and the two swapped names forever.
+    expect(profile?.name).toBe("Their name for it");
 
     // And the gain the blob carried did land.
     const stored = await readPad();

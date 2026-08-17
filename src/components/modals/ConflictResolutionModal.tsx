@@ -2,20 +2,14 @@ import React, { useState, useCallback, useMemo } from "react"; // Removed useEff
 import {
   ItemConflict,
   ProfileSyncData,
-  Syncable,
-  deepClone,
-} from "@/lib/syncUtils"; // Removed FieldConflict (unused in this file)
+  applyConflictResolutions,
+  type ConflictResolutionState,
+  type FieldResolutions,
+  type ResolutionChoice,
+} from "@/lib/syncUtils";
 import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import type { SyncConflictData } from "@/lib/googleDrive/types";
 import { conflictOriginLabel } from "@/lib/syncUtils";
-
-type ResolutionChoice =
-  "local" | "remote" | "keep" | "delete" | "accept" | "discard";
-type FieldResolutions = Record<string, ResolutionChoice>; // field -> 'local' | 'remote'
-type ConflictResolutionState = Record<
-  string | number,
-  ResolutionChoice | FieldResolutions
->; // conflict.key -> choice or field choices
 
 interface ConflictResolutionModalProps {
   conflicts: ItemConflict[];
@@ -128,183 +122,11 @@ export const ConflictResolutionModal: React.FC<
     });
   }, [conflicts, resolutions]);
 
-  const buildResolvedData = useCallback((): ProfileSyncData => {
-    // Start from the automatically merged data so every non-conflicting remote
-    // change survives; only the flagged conflicts are decided here
-    const resolved = deepClone(conflictData.merged);
-    const now = Date.now();
-
-    const resolvedPadConfigs = new Map(
-      resolved.padConfigurations.map((p) => [
-        `${p.pageIndex}-${p.padIndex}`,
-        p,
-      ]),
-    );
-    const resolvedPageMeta = new Map(
-      resolved.pageMetadata.map((p) => [p.pageIndex.toString(), p]),
-    );
-
-    conflicts.forEach((conflict) => {
-      const keyStr = String(conflict.key);
-      const resolution = resolutions[keyStr];
-      if (!resolution) return;
-
-      // Conflicting items are held back from the merged base, so they have to
-      // be seeded from their local version before the choices are applied
-      const seedFromLocal = (): Syncable | null => {
-        const source = conflict.localItem ?? conflict.remoteItem;
-        return source ? (deepClone(source) as Syncable) : null;
-      };
-
-      switch (conflict.type) {
-        case "field_conflict": {
-          const fieldResolutions = resolution as FieldResolutions;
-          let targetItem: Syncable | undefined | null = null;
-
-          if (conflict.storeName === "profiles") {
-            targetItem = resolved.profile;
-          } else if (conflict.storeName === "padConfigurations") {
-            targetItem = resolvedPadConfigs.get(keyStr);
-            if (!targetItem) {
-              targetItem = seedFromLocal();
-              if (targetItem)
-                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
-            }
-          } else if (conflict.storeName === "pageMetadata") {
-            targetItem = resolvedPageMeta.get(keyStr);
-            if (!targetItem) {
-              targetItem = seedFromLocal();
-              if (targetItem)
-                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
-            }
-          }
-
-          if (targetItem) {
-            let itemModified = false;
-            conflict.fieldConflicts?.forEach((fc) => {
-              const choice = fieldResolutions[fc.field];
-              // Safe access with type casting through unknown
-              const currentValStr = JSON.stringify(
-                (targetItem as unknown as Record<string, unknown>)[fc.field],
-              );
-
-              if (choice === "local") {
-                const localValStr = JSON.stringify(fc.localValue);
-                if (currentValStr !== localValStr) {
-                  // Safe assignment with double casting
-                  (targetItem as unknown as Record<string, unknown>)[fc.field] =
-                    fc.localValue;
-                  itemModified = true;
-                }
-                if (!targetItem._fieldsModified)
-                  targetItem._fieldsModified = {};
-                targetItem._fieldsModified[fc.field] = fc.localModTime;
-              } else if (choice === "remote") {
-                const remoteValStr = JSON.stringify(fc.remoteValue);
-                if (currentValStr !== remoteValStr) {
-                  // Safe assignment with double casting
-                  (targetItem as unknown as Record<string, unknown>)[fc.field] =
-                    fc.remoteValue;
-                  itemModified = true;
-                }
-                if (!targetItem._fieldsModified)
-                  targetItem._fieldsModified = {};
-                targetItem._fieldsModified[fc.field] = fc.remoteModTime;
-              }
-            });
-            // Update the overall modified time only if a field actually changed value
-            if (itemModified) {
-              targetItem._modified = now;
-            } else {
-              // If only timestamps changed, still update _modified to latest of the chosen fields
-              const latestFieldMod = conflict.fieldConflicts
-                ? Math.max(
-                    0,
-                    ...conflict.fieldConflicts.map((fc) =>
-                      fieldResolutions[fc.field] === "local"
-                        ? fc.localModTime
-                        : fc.remoteModTime,
-                    ),
-                  )
-                : 0;
-              targetItem._modified = Math.max(
-                targetItem._modified ?? 0,
-                latestFieldMod,
-              );
-            }
-          }
-          break;
-        }
-        case "local_only": {
-          if (resolution === "delete") {
-            if (conflict.storeName === "padConfigurations") {
-              resolvedPadConfigs.delete(keyStr);
-            } else if (conflict.storeName === "pageMetadata") {
-              resolvedPageMeta.delete(keyStr);
-            }
-          }
-          // If 'keep', restore the local item and mark it as touched by this sync
-          else if (resolution === "keep") {
-            const targetItem = seedFromLocal();
-            if (targetItem) {
-              targetItem._modified = now;
-              if (conflict.storeName === "padConfigurations")
-                resolvedPadConfigs.set(keyStr, targetItem as PadConfiguration);
-              else if (conflict.storeName === "pageMetadata")
-                resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
-            }
-          }
-          break;
-        }
-        case "remote_only": {
-          if (resolution === "accept" && conflict.remoteItem) {
-            const itemToAdd = deepClone(conflict.remoteItem);
-            // Ensure sync fields exist and mark as modified now
-            itemToAdd._created = itemToAdd._created ?? now;
-            itemToAdd._modified = now;
-            itemToAdd._fieldsModified = itemToAdd._fieldsModified ?? {};
-            // Mark all fields as modified at this time
-            Object.keys(itemToAdd).forEach((k) => {
-              if (
-                !k.startsWith("_") &&
-                k !== "id" &&
-                k !== "createdAt" &&
-                k !== "updatedAt"
-              ) {
-                if (!itemToAdd._fieldsModified) itemToAdd._fieldsModified = {};
-                itemToAdd._fieldsModified[k] = now;
-              }
-            });
-
-            if (conflict.storeName === "padConfigurations") {
-              resolvedPadConfigs.set(keyStr, itemToAdd as PadConfiguration);
-            } else if (conflict.storeName === "pageMetadata") {
-              resolvedPageMeta.set(keyStr, itemToAdd as PageMetadata);
-            }
-          }
-          break;
-        }
-      }
-    });
-
-    resolved.padConfigurations = Array.from(resolvedPadConfigs.values());
-    resolved.pageMetadata = Array.from(resolvedPageMeta.values());
-    resolved._lastSyncTimestamp = now; // Set final sync timestamp for the whole profile data
-
-    // Ensure top-level profile _modified reflects the latest change
-    const latestItemMod = Math.max(
-      0,
-      ...resolved.padConfigurations.map((p) => p._modified ?? 0),
-      ...resolved.pageMetadata.map((p) => p._modified ?? 0),
-    );
-    resolved.profile._modified = Math.max(
-      resolved.profile._modified ?? 0,
-      latestItemMod,
-      now,
-    );
-
-    return resolved;
-  }, [conflictData, resolutions, conflicts]);
+  const buildResolvedData = useCallback(
+    (): ProfileSyncData =>
+      applyConflictResolutions(conflictData.merged, conflicts, resolutions),
+    [conflictData, resolutions, conflicts],
+  );
 
   const handleResolveClick = useCallback(() => {
     if (!allConflictsResolved || isResolving) return;

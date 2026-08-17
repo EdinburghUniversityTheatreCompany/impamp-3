@@ -89,6 +89,98 @@ const DERIVED_HASH_TWINS: Readonly<Record<string, string>> = {
 
 const DERIVED_HASH_FIELDS = new Set(Object.values(DERIVED_HASH_TWINS));
 
+/**
+ * Records a merged field's modification stamp, or removes it when there is
+ * nothing to record.
+ *
+ * An unstamped field must stay unstamped. Writing an explicit `0` reads as a
+ * real answer everywhere downstream, and the merged record is written straight
+ * back over the stored one — so a `0` computed from a snapshot taken before the
+ * user's edit landed on top of the stamp that edit had just raised. The value
+ * survived; the record that this device had changed it did not. The next merge
+ * then found a field nobody here had touched and settled it silently, which is
+ * a lost update with no conflict raised.
+ *
+ * @param stamps - The merged record's `_fieldsModified`, mutated in place
+ * @param field - The field being merged
+ * @param stamp - The stamp the merge settled on; 0 means "neither side ever
+ *   stamped this"
+ */
+const stampMergedField = (
+  stamps: Record<string, number>,
+  field: string,
+  stamp: number,
+): void => {
+  if (stamp > 0) stamps[field] = stamp;
+  else delete stamps[field];
+};
+
+/** Fields that describe the record's identity rather than its content. */
+const isContentField = (key: string): boolean =>
+  !key.startsWith("_") &&
+  key !== "id" &&
+  key !== "profileId" &&
+  key !== "createdAt" &&
+  key !== "updatedAt";
+
+/**
+ * Reconciles a merged record with the record as it actually is on this device
+ * now, rather than as it was when the merge read it.
+ *
+ * A sync is not instant. It reads the local data, spends a round trip or two on
+ * the network — plus however long the audio downloads take — and only then
+ * writes the merged result back. Anything the user edited in that window is
+ * edited on a record the merge has never seen, and a plain `put` of the merged
+ * record discards it: the pad name reverts, and the `_fieldsModified` entry
+ * that would have raised a conflict next time reverts with it.
+ *
+ * Two rules, both derived from the one the merge itself uses — the later stamp
+ * wins:
+ *
+ * - stamps are combined per field, keeping the later of the two, so a merge can
+ *   never lower one;
+ * - a field the stored record stamped **after** the merge read it keeps its
+ *   stored value, because that edit is strictly newer than anything the merge
+ *   could have known about. It is then still stamped, so the next merge sees it
+ *   and can raise a conflict properly.
+ *
+ * @param merged - The record the merge produced
+ * @param stored - The record as it is in IndexedDB right now, if it exists
+ * @param localReadAt - When the merge read its local snapshot. Omit for a write
+ *   that is not merge-derived — an authoritative pull of a read-only profile
+ *   has no local edits to protect and must not keep local values.
+ * @returns A copy of `merged` with newer local edits and stamps carried across
+ */
+export const reconcileWithStoredRecord = <T extends Syncable>(
+  merged: T,
+  stored: T | undefined,
+  localReadAt?: number,
+): T => {
+  if (!stored) return merged;
+
+  const storedStamps = stored._fieldsModified ?? {};
+  const mergedStamps = merged._fieldsModified ?? {};
+  const reconciled: T = { ...merged };
+  const stamps: Record<string, number> = { ...mergedStamps };
+
+  for (const [field, storedStamp] of Object.entries(storedStamps)) {
+    if (storedStamp > (stamps[field] ?? 0)) stamps[field] = storedStamp;
+    if (
+      localReadAt !== undefined &&
+      storedStamp > localReadAt &&
+      isContentField(field) &&
+      field in stored
+    ) {
+      (reconciled as unknown as Record<string, unknown>)[field] = (
+        stored as unknown as Record<string, unknown>
+      )[field];
+    }
+  }
+
+  reconciled._fieldsModified = stamps;
+  return reconciled;
+};
+
 const compareSyncableItems = (
   localItem: Syncable,
   remoteItem: Syncable,
@@ -170,7 +262,14 @@ const compareSyncableItems = (
       mergedFieldsModified[field] = localMod;
       localWinsOverall = true;
     } else {
-      mergedFieldsModified[field] = Math.max(localMod, remoteMod);
+      // No entry at all for a field neither side has ever stamped, rather than
+      // an explicit 0 — see `stampMergedField` for what a 0 costs once this
+      // record is written back over the stored one.
+      stampMergedField(
+        mergedFieldsModified,
+        field,
+        Math.max(localMod, remoteMod),
+      );
       if (
         valuesDiffer &&
         (remoteItem._modified ?? 0) > (localItem._modified ?? 0)
@@ -448,6 +547,7 @@ export const detectProfileConflicts = async (
     const remoteMod = remoteProfileFields[field] ?? 0;
     const localVal = localProfile[key];
     const remoteVal = remoteProfile[key];
+    const stamps = (mergedData.profile._fieldsModified ??= {});
 
     if (
       localMod > (remoteData._lastSyncTimestamp ?? 0) &&
@@ -463,28 +563,21 @@ export const detectProfileConflicts = async (
         remoteModTime: remoteMod,
       });
       requiresManualResolution = true;
+      // Undecided, so the merged record still holds local's value and keeps
+      // local's stamp with it.
+      stampMergedField(stamps, field, stamps[field] ?? localMod);
     } else if (remoteMod > localMod) {
       // Remote is newer, update merged data
       // Use 'any' cast for dynamic property assignment, disabling ESLint for this line
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mergedData.profile as any)[key] = remoteVal;
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = remoteMod;
-    }
-    // If local is newer or times are equal, keep local (already in mergedData)
-    // Ensure timestamp is updated if remote was newer but value was same
-    if (remoteMod > localMod && !mergedData.profile._fieldsModified?.[field]) {
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = remoteMod;
-    } else if (
-      localMod >= remoteMod &&
-      !mergedData.profile._fieldsModified?.[field]
-    ) {
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = localMod;
+      stampMergedField(stamps, field, remoteMod);
+    } else {
+      // Local is newer or the two are tied, so local's value stands — it is
+      // already in `mergedData` — and so does the stamp that came with it. A
+      // field neither side has ever stamped gets no entry at all; see
+      // `stampMergedField` for what an explicit 0 costs.
+      stampMergedField(stamps, field, stamps[field] || localMod);
     }
   });
 
@@ -700,3 +793,310 @@ export function resolveSyncedPadAudio(
   }
   return { audioFileIds, keptLocal: false, unresolved };
 }
+
+/**
+ * A sync blob reduced to what it actually tells the *other* side.
+ *
+ * Two devices holding identical boards do not hold identical blobs, and cannot:
+ * `audioFileIds` are IndexedDB autoincrement keys, so id 3 names a different
+ * recording on every device, and the same is true of both settings maps keyed
+ * by them and of every `audioFiles[].id`. Compared literally, two blobs saying
+ * exactly the same thing look different every time.
+ *
+ * So each of those is dropped in favour of the hash-keyed twin that says the
+ * same thing in terms every device shares, audio is keyed by content hash
+ * rather than by id, and the profile is reduced to the fields the merge
+ * actually compares — the rest are this device's answers about itself and were
+ * never the remote's business.
+ *
+ * Key order is normalised too, because one side built its blob and the other
+ * parsed it back out of JSON.
+ */
+const remoteFacingView = (data: ProfileSyncData): unknown => {
+  const sortedStamps = (
+    stamps: Record<string, number> | undefined,
+    include: (key: string) => boolean,
+  ) =>
+    Object.entries(stamps ?? {})
+      .filter(([key]) => include(key))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+  const itemView = (item: Record<string, unknown>) => {
+    const supersededByTwin = (key: string) => {
+      const twin = DERIVED_HASH_TWINS[key];
+      return twin !== undefined && item[twin] !== undefined;
+    };
+    const says = (key: string) => isContentField(key) && !supersededByTwin(key);
+    return {
+      fields: Object.keys(item)
+        .filter(says)
+        .sort()
+        .map((key) => [key, item[key]] as const),
+      stamps: sortedStamps(
+        item._fieldsModified as Record<string, number> | undefined,
+        (key) => !supersededByTwin(key),
+      ),
+    };
+  };
+
+  const profile = data.profile as unknown as Record<string, unknown>;
+  return {
+    profile: {
+      fields: Object.keys(profile)
+        .filter(isComparableProfileField)
+        .sort()
+        .map((key) => [key, profile[key]] as const),
+      stamps: sortedStamps(
+        data.profile._fieldsModified,
+        isComparableProfileField,
+      ),
+    },
+    pads: [...data.padConfigurations]
+      .sort((a, b) => a.pageIndex - b.pageIndex || a.padIndex - b.padIndex)
+      .map((pad) => itemView(pad as unknown as Record<string, unknown>)),
+    pages: [...data.pageMetadata]
+      .sort((a, b) => a.pageIndex - b.pageIndex)
+      .map((page) => itemView(page as unknown as Record<string, unknown>)),
+    audio: (data.audioFiles ?? [])
+      .map((file) => ({
+        key: file.hash ?? `name:${file.name}`,
+        type: file.type,
+        driveFileId: file.driveFileId ?? null,
+        serverHosted: file.serverHosted ?? false,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
+};
+
+/**
+ * Whether two sync blobs would tell a reader the same thing.
+ *
+ * Used to decide whether a merge is worth pushing. It has to be true whenever
+ * the remote already knows everything the merge produced, and false whenever it
+ * does not — a false positive silently drops the user's edit, and a false
+ * negative is only wasted work.
+ *
+ * @param a - One blob
+ * @param b - The other
+ * @returns true when neither would teach the other anything
+ */
+export const describesSameSyncState = (
+  a: ProfileSyncData,
+  b: ProfileSyncData,
+): boolean =>
+  JSON.stringify(remoteFacingView(a)) === JSON.stringify(remoteFacingView(b));
+
+/** What the user chose for one conflicting item, or for one of its fields. */
+export type ResolutionChoice =
+  "local" | "remote" | "keep" | "delete" | "accept" | "discard";
+
+/** Per-field choices for a `field_conflict`, keyed by field name. */
+export type FieldResolutions = Record<string, ResolutionChoice>;
+
+/** Every choice the user has made, keyed by `ItemConflict.key`. */
+export type ConflictResolutionState = Record<
+  string | number,
+  ResolutionChoice | FieldResolutions
+>;
+
+/**
+ * Applies a set of hand-made conflict resolutions to the automatic merge.
+ *
+ * This belongs here, beside `compareSyncableItems`, because it is the same rule
+ * set applied by a person instead of by a timestamp — and the two have to
+ * agree. It lived in the modal instead, and drifted: the automatic merge
+ * learned that a hash-keyed field follows whichever side won the field it
+ * derives from (`DERIVED_HASH_TWINS`), and the hand-resolved path did not.
+ * Choosing "use the remote version" for `audioFileIds` wrote the remote's ids
+ * beside the *local* hashes, and `updateLocalData` believes the hashes — so the
+ * user was handed back their own sounds, or a mixture of both devices', from
+ * the one path where they had been asked explicitly.
+ *
+ * Pure, so it can be tested without a modal: same inputs, same blob, and no
+ * clock except the one passed in.
+ *
+ * @param merged - The automatic merge; conflicting items are absent from it
+ * @param conflicts - The conflicts that were presented to the user
+ * @param resolutions - The user's choices, keyed by conflict key
+ * @param now - The timestamp to stamp the resolution with
+ * @returns A new blob with every resolved conflict applied
+ */
+export const applyConflictResolutions = (
+  merged: ProfileSyncData,
+  conflicts: ItemConflict[],
+  resolutions: ConflictResolutionState,
+  now: number = Date.now(),
+): ProfileSyncData => {
+  // Start from the automatically merged data so every non-conflicting remote
+  // change survives; only the flagged conflicts are decided here
+  const resolved = deepClone(merged);
+
+  const resolvedPadConfigs = new Map(
+    resolved.padConfigurations.map((p) => [`${p.pageIndex}-${p.padIndex}`, p]),
+  );
+  const resolvedPageMeta = new Map(
+    resolved.pageMetadata.map((p) => [p.pageIndex.toString(), p]),
+  );
+
+  conflicts.forEach((conflict) => {
+    const keyStr = String(conflict.key);
+    const resolution = resolutions[keyStr];
+    if (!resolution) return;
+
+    // Conflicting items are held back from the merged base, so they have to
+    // be seeded from their local version before the choices are applied
+    const seedFromLocal = (): Syncable | null => {
+      const source = conflict.localItem ?? conflict.remoteItem;
+      return source ? (deepClone(source) as Syncable) : null;
+    };
+
+    switch (conflict.type) {
+      case "field_conflict": {
+        const fieldResolutions = resolution as FieldResolutions;
+        let targetItem: Syncable | undefined | null = null;
+
+        if (conflict.storeName === "profiles") {
+          targetItem = resolved.profile as Syncable;
+        } else if (conflict.storeName === "padConfigurations") {
+          targetItem = resolvedPadConfigs.get(keyStr);
+          if (!targetItem) {
+            targetItem = seedFromLocal();
+            if (targetItem)
+              resolvedPadConfigs.set(
+                keyStr,
+                targetItem as SyncedPadConfiguration,
+              );
+          }
+        } else if (conflict.storeName === "pageMetadata") {
+          targetItem = resolvedPageMeta.get(keyStr);
+          if (!targetItem) {
+            targetItem = seedFromLocal();
+            if (targetItem)
+              resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+          }
+        }
+
+        if (!targetItem) break;
+        const item = targetItem;
+        let itemModified = false;
+
+        conflict.fieldConflicts?.forEach((fc) => {
+          const choice = fieldResolutions[fc.field];
+          if (choice !== "local" && choice !== "remote") return;
+
+          const chosenSide =
+            choice === "local" ? conflict.localItem : conflict.remoteItem;
+          const value = choice === "local" ? fc.localValue : fc.remoteValue;
+          const modTime =
+            choice === "local" ? fc.localModTime : fc.remoteModTime;
+          const fields = item as unknown as Record<string, unknown>;
+
+          if (JSON.stringify(fields[fc.field]) !== JSON.stringify(value)) {
+            fields[fc.field] = value;
+            itemModified = true;
+          }
+
+          // The chosen side's hash-keyed view of the same fact travels with it,
+          // exactly as `adoptRemoteValue` does in the automatic merge. Without
+          // this, the pad's ids come from one device and its hashes from the
+          // other, and the hashes are what the writer believes.
+          const twin = DERIVED_HASH_TWINS[fc.field];
+          if (twin) {
+            const twinValue = (
+              chosenSide as unknown as
+                Record<string, unknown> | null | undefined
+            )?.[twin];
+            if (twinValue === undefined) delete fields[twin];
+            else fields[twin] = twinValue;
+            itemModified = true;
+          }
+
+          item._fieldsModified ??= {};
+          item._fieldsModified[fc.field] = modTime;
+        });
+
+        // Update the overall modified time only if a field actually changed value
+        if (itemModified) {
+          item._modified = now;
+        } else {
+          // If only timestamps changed, still update _modified to latest of the chosen fields
+          const latestFieldMod = conflict.fieldConflicts
+            ? Math.max(
+                0,
+                ...conflict.fieldConflicts.map((fc) =>
+                  fieldResolutions[fc.field] === "local"
+                    ? fc.localModTime
+                    : fc.remoteModTime,
+                ),
+              )
+            : 0;
+          item._modified = Math.max(item._modified ?? 0, latestFieldMod);
+        }
+        break;
+      }
+      case "local_only": {
+        if (resolution === "delete") {
+          if (conflict.storeName === "padConfigurations") {
+            resolvedPadConfigs.delete(keyStr);
+          } else if (conflict.storeName === "pageMetadata") {
+            resolvedPageMeta.delete(keyStr);
+          }
+        }
+        // If 'keep', restore the local item and mark it as touched by this sync
+        else if (resolution === "keep") {
+          const targetItem = seedFromLocal();
+          if (targetItem) {
+            targetItem._modified = now;
+            if (conflict.storeName === "padConfigurations")
+              resolvedPadConfigs.set(
+                keyStr,
+                targetItem as SyncedPadConfiguration,
+              );
+            else if (conflict.storeName === "pageMetadata")
+              resolvedPageMeta.set(keyStr, targetItem as PageMetadata);
+          }
+        }
+        break;
+      }
+      case "remote_only": {
+        if (resolution === "accept" && conflict.remoteItem) {
+          const itemToAdd = deepClone(conflict.remoteItem);
+          // Ensure sync fields exist and mark every field modified now
+          itemToAdd._created = itemToAdd._created ?? now;
+          itemToAdd._modified = now;
+          const stamps: Record<string, number> =
+            itemToAdd._fieldsModified ?? {};
+          Object.keys(itemToAdd).forEach((k) => {
+            if (isContentField(k)) stamps[k] = now;
+          });
+          itemToAdd._fieldsModified = stamps;
+
+          if (conflict.storeName === "padConfigurations") {
+            resolvedPadConfigs.set(keyStr, itemToAdd as SyncedPadConfiguration);
+          } else if (conflict.storeName === "pageMetadata") {
+            resolvedPageMeta.set(keyStr, itemToAdd as PageMetadata);
+          }
+        }
+        break;
+      }
+    }
+  });
+
+  resolved.padConfigurations = Array.from(resolvedPadConfigs.values());
+  resolved.pageMetadata = Array.from(resolvedPageMeta.values());
+  resolved._lastSyncTimestamp = now;
+
+  // Ensure top-level profile _modified reflects the latest change
+  const latestItemMod = Math.max(
+    0,
+    ...resolved.padConfigurations.map((p) => p._modified ?? 0),
+    ...resolved.pageMetadata.map((p) => p._modified ?? 0),
+  );
+  resolved.profile._modified = Math.max(
+    resolved.profile._modified ?? 0,
+    latestItemMod,
+    now,
+  );
+
+  return resolved;
+};

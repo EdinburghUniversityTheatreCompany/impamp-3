@@ -18,16 +18,22 @@
 import {
   getAudioFileIdsForProfile,
   getProfile,
+  hasProfileChangedSince,
   updateProfile,
   type Profile,
 } from "@/lib/db";
-import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
+import {
+  describesSameSyncState,
+  detectProfileConflicts,
+  type ConflictOrigin,
+} from "@/lib/syncUtils";
 import {
   getSyncState,
   isReadOnlyForSync,
   ownsDriveFolder,
 } from "@/lib/syncState";
 import {
+  backfillDriveFileIdsFromRemote,
   getLocalProfileSyncData,
   updateLocalData,
 } from "@/lib/googleDrive/dataAccess";
@@ -169,33 +175,8 @@ async function performServerSync(
       return { status: "skipped", reason: `Paused until ${resumeTime}` };
     }
 
-    // Audio must reach its host before the blob that references it does,
-    // otherwise a collaborator pulls pads pointing at files that aren't there
-    // yet. Only the owner uploads, and only when Drive is actually connected.
-    //
-    // "Only the owner" has to be checked, not assumed. A collaborator's
-    // `googleDriveFolderId` was copied out of the owner's blob, so an editor
-    // reaching this line would write into someone else's Drive folder — and
-    // `uploadMissingAudioFiles` treats per-file failures as non-fatal, so it
-    // failed silently and the sounds never arrived. Ownership is "unknown" for
-    // profiles written before `serverRole` existed; those keep the old
-    // behaviour, because assuming they are collaborators would stop real
-    // owners publishing at all.
     const warnings: string[] = [];
     const { audio, audioIsExplicit } = getSyncState(profile);
-    if (
-      audio === "googleDrive" &&
-      ownsDriveFolder(profile) &&
-      drive.tokenInfo &&
-      profile.googleDriveFolderId
-    ) {
-      await uploadMissingAudioFiles(
-        profileId,
-        drive.tokenInfo,
-        drive.onTokenRefresh,
-        profile.googleDriveFolderId,
-      );
-    }
 
     // Optional, gated server-hosted audio. Silently does nothing when the
     // deployment hosts none or the account is not approved, which is the
@@ -217,6 +198,8 @@ async function performServerSync(
     }
 
     if (!profile.serverProfileId) {
+      // Nothing to pull, so there is nothing to learn from first.
+      await publishAudioToDrive(profile, drive);
       return await adoptProfile(profileId, callbacks, hostedHashes);
     }
 
@@ -235,6 +218,48 @@ async function performServerSync(
     onStatusChange("error");
     return { status: "error", error: message };
   }
+}
+
+/**
+ * Puts this profile's audio in Drive, for the profiles whose audio lives there.
+ *
+ * Audio must reach its host before the blob that references it does, otherwise
+ * a collaborator pulls pads pointing at files that aren't there yet.
+ *
+ * "Only the owner" has to be checked, not assumed. A collaborator's
+ * `googleDriveFolderId` was copied out of the owner's blob, so an editor
+ * reaching this line would write into someone else's Drive folder — and
+ * `uploadMissingAudioFiles` treats per-file failures as non-fatal, so it failed
+ * silently and the sounds never arrived. Ownership is "unknown" for profiles
+ * written before `serverRole` existed; those keep the old behaviour, because
+ * assuming they are collaborators would stop real owners publishing at all.
+ *
+ * Call this *after* the remote blob has been read and backfilled, never before:
+ * the decision about what still needs uploading is made purely on
+ * `driveFileIds[profileId]`, so a device that holds the audio without a
+ * per-profile Drive id — after an `.iaz` restore, a duplicated profile, or a
+ * profile switched from local to server sync — would otherwise upload the whole
+ * library again and leave two Drive files per sound.
+ */
+async function publishAudioToDrive(
+  profile: Profile,
+  drive: DriveAccess,
+): Promise<void> {
+  const { audio } = getSyncState(profile);
+  if (
+    audio !== "googleDrive" ||
+    !ownsDriveFolder(profile) ||
+    !drive.tokenInfo ||
+    !profile.googleDriveFolderId
+  ) {
+    return;
+  }
+  await uploadMissingAudioFiles(
+    profile.id!,
+    drive.tokenInfo,
+    drive.onTokenRefresh,
+    profile.googleDriveFolderId,
+  );
 }
 
 /** First sync of a local profile: create it on the server as-is. */
@@ -283,6 +308,16 @@ async function pullMergePush(
     knownAccess: profile.serverRole,
   });
 
+  // What the remote already knows about where the audio lives, adopted before
+  // deciding what still needs uploading. The Drive engine has always done this
+  // in this order and says why; the server engine uploaded first and never
+  // backfilled at all, so it re-uploaded files the remote blob was already
+  // naming.
+  if (remote?.data.audioFiles?.length) {
+    await backfillDriveFileIdsFromRemote(remote.data.audioFiles, profileId);
+  }
+  await publishAudioToDrive(profile, drive);
+
   // 304: the server is where we left it. Local edits, if any, still need
   // pushing, so carry on with the version we already know.
   let remoteVersion = remote?.version ?? profile.serverVersion ?? 1;
@@ -292,6 +327,10 @@ async function pullMergePush(
   const following = Boolean(profile.followOnly);
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    // Before the read, not after: everything from here until the write below
+    // is a window in which the user can edit a record this merge will never
+    // see, and `updateLocalData` needs to know where that window opened.
+    const localReadAt = Date.now();
     const raw = await getLocalProfileSyncData(profileId);
     if (!raw) throw new Error("Could not load local profile data.");
     const localData = markHostedAudio(raw, hostedHashes);
@@ -357,14 +396,48 @@ async function pullMergePush(
       return { status: "conflict", conflicts };
     }
 
+    // Marking audio as hosted has to reach the blob, and it touches no pad, so
+    // `hasProfileChangedSince` cannot see it. Read from `raw`, which is what
+    // this device believed before `markHostedAudio` had its say.
+    const hostedAudioIsNew = raw.audioFiles.some(
+      (file) => file.hash && hostedHashes.has(file.hash) && !file.serverHosted,
+    );
+
+    // Nothing the other side does not already know.
+    //
+    // Every push bumps the server's version, every bump publishes an SSE
+    // change, and every change triggers a sync — so a sync that pushed
+    // unconditionally closed a loop: two tabs with the same profile open
+    // pushed to each other at SSE latency for as long as both stayed open,
+    // each round a full GET, a full local read, a merge and a full PUT. Two
+    // tabs of one browser were enough, because the origin id that suppresses
+    // an echo is per tab.
+    //
+    // The comparison has to be the honest one, not `JSON.stringify` of the
+    // two blobs: the ids in them are per-device, so literally identical
+    // boards never compare equal. `describesSameSyncState` is that comparison.
+    // On a 304 there is no remote blob to compare against, and the question
+    // becomes "has anything changed here since we last synced".
+    const nothingToSend =
+      !hostedAudioIsNew &&
+      (remote
+        ? describesSameSyncState(mergedData, remote.data)
+        : !(await hasProfileChangedSince(
+            profileId,
+            localData._lastSyncTimestamp ?? 0,
+          )));
+
     mergedData._lastSyncTimestamp = Date.now();
 
-    // Two separate reasons not to push, and both must hold it back: the
-    // server refusing writes, and us choosing not to make any. Gating on the
-    // first alone let a follower keep writing to a profile it could write to
-    // — which is the one thing following promises not to do.
-    if (remoteReadOnly || following) {
-      warnings.push(...(await updateLocalData(profileId, mergedData)));
+    // Three separate reasons not to push, and any of them holds it back: the
+    // server refusing writes, us choosing not to make any, and having nothing
+    // to say. Gating on the first alone let a follower keep writing to a
+    // profile it could write to — which is the one thing following promises
+    // not to do.
+    if (remoteReadOnly || following || nothingToSend) {
+      warnings.push(
+        ...(await updateLocalData(profileId, mergedData, localReadAt)),
+      );
       await updateProfile(profileId, {
         serverVersion: remoteVersion,
         ...accessFields(remote),
@@ -381,7 +454,9 @@ async function pullMergePush(
         shareToken,
       );
 
-      warnings.push(...(await updateLocalData(profileId, mergedData)));
+      warnings.push(
+        ...(await updateLocalData(profileId, mergedData, localReadAt)),
+      );
       await updateProfile(profileId, {
         serverVersion: pushed.version,
         ...accessFields(remote),

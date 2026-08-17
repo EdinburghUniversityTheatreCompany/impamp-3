@@ -53,6 +53,12 @@ export function subscribeToProfileChanges(
     `/api/profiles/${serverProfileId}/events${query}`,
   );
 
+  // The highest version this stream has already acted on. The server greets
+  // every new connection with the current version and forces a reconnect every
+  // half hour, so without this each stream re-announced a version it had
+  // already reported and triggered a full sync for it.
+  let reportedVersion = 0;
+
   const handler = (event: MessageEvent) => {
     try {
       const change = JSON.parse(event.data) as {
@@ -61,6 +67,9 @@ export function subscribeToProfileChanges(
       };
       // Our own write comes back to us; syncing on it would be pointless work.
       if (change.originId === ORIGIN_ID) return;
+      // A version we have already handled says nothing new.
+      if (change.version <= reportedVersion) return;
+      reportedVersion = change.version;
       onChange(change.version);
     } catch (error) {
       console.warn("Malformed profile change event:", error);
