@@ -175,8 +175,10 @@ in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
   `docs/cross-browser-e2e.md` before acting on either. In short: Playwright's
   Linux WebKit cannot write a `Blob` to IndexedDB (so no pad ever gets a
   sound), and CI's runner has no audio device (so Firefox never starts
-  playback, though it is 64/64 locally). Worth running deliberately after a
-  dependency upgrade, or when touching storage or playback
+  playback, though it was green locally when last measured). Worth running
+  deliberately after a dependency upgrade, or when touching storage or
+  playback. The per-browser counts in that doc are a dated measurement from a
+  64-test suite, not a running total — do not compare them against a fresh run
 
 ### Audio File Handling
 
