@@ -1078,6 +1078,29 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(200);
   });
 
+  it("refuses a sound a mere viewer of the profile happens to hold", async () => {
+    // The sibling above covers `role = 'editor'`; deleting that clause from
+    // `profileMayServeHash` left the whole suite green. A viewer cannot
+    // publish here, so a sound they merely hold is not "audio a collaborator
+    // uploaded to this board" — serving it is the escalation the clause
+    // closes, where reaching a profile as a viewer gets you any bytes you have
+    // a reference to through it.
+    const owner = signIn(1, { approved: true });
+    const viewer = signIn(2, { approved: true });
+    const { hash } = await storeAudio(viewer.token, "viewers-sound", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+    upsertEmailShare(profile.id, viewer.user.email, "viewer", owner.user.id);
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+        sessionToken: owner.token,
+      }),
+      routeParams({ id: profile.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
   it("serves a sound a link-share editor added, to the owner and to them", async () => {
     // profileMayServeHash admitted the owner or a *current email-share*
     // editor. A link share has `email IS NULL` by schema constraint, so it

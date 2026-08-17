@@ -93,6 +93,29 @@ describe("sessions", () => {
     expect(options.httpOnly).toBe(true);
     expect(options.sameSite).toBe("lax");
     expect(options.path).toBe("/");
+    // The cookie is the whole credential, so an expiry that outlived the
+    // session row would leave the browser sending a token the server has
+    // already forgotten.
+    expect(options.maxAge).toBe(Math.floor(SESSION_TTL_MS / 1000));
+  });
+
+  it("marks the cookie Secure in production, and only there", () => {
+    // A test named for cookie hardening delivered three attributes of four:
+    // `secure` was asserted nowhere in the repo, and forcing it to false left
+    // the whole suite green. Development has to keep it off, or
+    // http://localhost cannot hold a session at all — so both directions
+    // matter and both are checked.
+    const original = process.env.NODE_ENV;
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      expect(sessionCookieOptions().secure).toBe(true);
+
+      vi.stubEnv("NODE_ENV", "development");
+      expect(sessionCookieOptions().secure).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      expect(process.env.NODE_ENV).toBe(original);
+    }
   });
 });
 
