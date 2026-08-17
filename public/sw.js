@@ -112,18 +112,16 @@ const CACHEABLE_SHELL_PATHS = new Set([
  * the directory segment so `chunks/`, `css/`, `media/` and the build-id
  * directory are all covered without naming any of them.
  *
- * `ts` is in the extension list on purpose and is not a mistake: Turbopack
- * emits the loudness analysis Web Worker as
- * `/_next/static/media/analyse.worker.<hash>.ts`, keeping the source
- * extension. Without it the worker is the one thing on the board that needs
- * the network, and adding a sound offline would silently fall back to no
- * loudness normalisation.
+ * `.ts` is deliberately *not* in the extension list. A production build does
+ * emit `/_next/static/media/analyse.worker.<hash>.ts`, and precaching it looks
+ * like the right thing to do, but that asset is a decoy — see the comment in
+ * src/lib/audio/loudness/analyseOffThread.ts. Nothing ever loads it.
  */
 const ASSET_REFERENCE =
-  /static\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.(?:js|mjs|ts|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|avif)/g;
+  /static\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|avif)/g;
 
 /** Extensions worth re-reading for further references. */
-const TEXT_ASSET = /\.(?:js|mjs|ts|css)$/;
+const TEXT_ASSET = /\.(?:js|mjs|css)$/;
 
 /**
  * Bounds on the graph walk. Neither has ever been reached by a real build —
@@ -290,6 +288,29 @@ self.addEventListener("fetch", (event) => {
 
   // The sync. Never cached, never intercepted — see the header comment.
   if (url.pathname.startsWith("/api/") || url.pathname === "/up") return;
+
+  // Worker scripts must come from the network, and this is not a preference.
+  //
+  // Turbopack bootstraps a Web Worker by putting its configuration in the URL
+  // *fragment* — the loudness analysis worker is loaded as
+  // `turbopack-worker-<hash>.js#params=[[…chunks…]]`, and the bootstrap reads
+  // it back off `self.location.hash`. A response served from Cache Storage
+  // carries the bare URL, so the fragment is gone by the time the worker
+  // starts and it dies with "Missing worker bootstrap config" — which
+  // `loudness-worker.spec.ts` caught, and which nothing else would have: the
+  // analysis silently falls back to the main thread, produces identical
+  // numbers, and merely blocks the thread that is also feeding Web Audio.
+  //
+  // Leaving these to the network also leaves the worker uncontrolled, so its
+  // own imports bypass this worker too, which is the consistent behaviour.
+  // The cost is that analysing a *newly added* sound offline runs on the main
+  // thread. Playback, including of everything already analysed, is unaffected.
+  if (
+    request.destination === "worker" ||
+    request.destination === "sharedworker"
+  ) {
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(handleNavigation(request));
