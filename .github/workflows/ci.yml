@@ -56,6 +56,12 @@ jobs:
           persist-credentials: false
       - name: Toolchain and service versions agree across files
         run: bash scripts/check_version_sync.sh
+      - name: Every Dockerfile pins the same Node
+        # check_version_sync.sh is a shared template that inspects only the
+        # first of Dockerfile / Containerfile, so Dockerfile.dev's pin was
+        # unguarded — the dev container ran a different Node major from CI for
+        # months. Mirrors the hk `extra-dockerfiles` step.
+        run: bash scripts/check_extra_dockerfiles.sh
 
   # Run the MIT-licensed gitleaks CLI (via mise, version-pinned in mise.lock) rather than
   # gitleaks/gitleaks-action: the action requires a paid GITLEAKS_LICENSE on org-owned repos,
