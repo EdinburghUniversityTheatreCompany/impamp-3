@@ -20,6 +20,7 @@ const {
   findOrphanedAudioFiles,
   cleanupOrphanedAudioFiles,
   getAudioFile,
+  getPadConfigurationsForProfilePage,
 } = await import("./db");
 
 let profileId: number;
@@ -62,9 +63,15 @@ describe("orphaned audio cleanup", () => {
     expect(await getAudioFile(kept)).toBeDefined();
   });
 
-  it("does not delete audio a concurrent import is still attaching", async () => {
-    // The import order: audio first, pads after. Racing the cleanup against
-    // the pad write is the window that used to lose the sound.
+  /**
+   * The import order — audio first, pads after — raced against a cleanup.
+   *
+   * Faithful to what an import really does: `importAudioSources` commits each
+   * audio file in a transaction of its own and the pads that name them are
+   * written later, so this window is open in production and not an artefact of
+   * the harness.
+   */
+  async function raceCleanupAgainstPadWrite() {
     const arriving = await soundNamed("mid-import.wav");
 
     const [cleanup] = await Promise.all([
@@ -78,16 +85,59 @@ describe("orphaned audio cleanup", () => {
       }),
     ]);
 
-    // Whichever transaction goes first, the two must agree: either the pad
-    // was already visible and the file is kept, or the file was deleted and
-    // the pad write happened after — never a pad naming a file that is gone.
-    const stillThere = await getAudioFile(arriving);
-    if (cleanup.deletedCount > 0) {
-      expect(stillThere).toBeUndefined();
-    } else {
-      expect(stillThere).toBeDefined();
-    }
+    const pads = await getPadConfigurationsForProfilePage(profileId, 0);
+    return {
+      arriving,
+      cleanup,
+      named: pads.flatMap((pad) => pad.audioFileIds ?? []),
+    };
+  }
+
+  it("still lands the pad write, whoever wins the race", async () => {
+    const { arriving, cleanup, named } = await raceCleanupAgainstPadWrite();
+
+    expect(cleanup.errors).toEqual([]);
+    // Guards the setup: without this the invariant below would be vacuous on
+    // any change that lost the pad write entirely.
+    expect(named).toContain(arriving);
   });
+
+  it.fails(
+    "does not delete audio a concurrent import is still attaching",
+    async () => {
+      // KNOWN DEFECT, deliberately recorded rather than asserted away.
+      //
+      // This test used to branch on `cleanup.deletedCount` — "if something was
+      // deleted the file must be gone, otherwise it must be there" — which is
+      // satisfiable either way and never looked at the pad at all. Its comment
+      // stated the real invariant and the code checked neither half of it.
+      // Reading the pads back shows what was actually happening: the pad
+      // deterministically ends up naming a file the cleanup deleted, and the
+      // test called that a pass.
+      //
+      // Making the scan and the delete one transaction, which is what the
+      // file's header describes, closes a different window — nothing can start
+      // referencing a file *between* the decision and the delete. It does not
+      // close this one: the cleanup transaction is created first, so it scans
+      // before the pad exists, deletes, and the pad write lands afterwards
+      // naming nothing.
+      //
+      // Closing it is a product decision rather than a test one (a grace
+      // period on recently-created audio, one transaction spanning an import's
+      // audio and pads, or a lock while an import runs), so it is out of scope
+      // here. `it.fails` keeps the invariant written down, keeps the suite
+      // honest about it, and turns red the moment the defect is fixed — at
+      // which point delete this marker.
+      const { named } = await raceCleanupAgainstPadWrite();
+
+      for (const audioFileId of named) {
+        expect(
+          await getAudioFile(audioFileId),
+          `pad names audio ${audioFileId}, which cleanup deleted`,
+        ).toBeDefined();
+      }
+    },
+  );
 
   it("reports the same set the scan reports", async () => {
     const orphan = await soundNamed("orphan.wav");
