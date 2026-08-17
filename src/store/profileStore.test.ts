@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "@/store/profileStore";
+import { syncStatusActions, useSyncStatusStore } from "@/store/syncStatusStore";
 import type { Profile } from "@/lib/db";
 
-const mocks = vi.hoisted(() => ({ updateProfile: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  updateProfile: vi.fn(),
+  deleteProfile: vi.fn(),
+}));
 
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
   updateProfile: mocks.updateProfile,
+  deleteProfile: mocks.deleteProfile,
 }));
 
 function profile(id: number, overrides: Partial<Profile> = {}): Profile {
@@ -79,6 +84,49 @@ describe("switching profile", () => {
 
     expect(state().isEditMode).toBe(false);
     expect(state().isDeleteMoveMode).toBe(false);
+  });
+});
+
+describe("deleting a profile", () => {
+  beforeEach(() => {
+    mocks.deleteProfile.mockReset();
+    mocks.deleteProfile.mockResolvedValue(undefined);
+    syncStatusActions.clearAll();
+    useProfileStore.setState({
+      profiles: [profile(1), profile(2)],
+      activeProfileId: 1,
+    });
+  });
+
+  it("forgets the profile's sync status with it", async () => {
+    // `syncStatusStore.byProfileId` had no route to shrinking: `clear` and
+    // `clearAll` existed and were called from nowhere outside their own test,
+    // so a deleted profile's status entry outlived it for the life of the tab.
+    syncStatusActions.patch(2, { activity: "error", error: "gone wrong" });
+
+    await state().deleteProfile(2);
+
+    expect(useSyncStatusStore.getState().byProfileId.has(2)).toBe(false);
+  });
+
+  it("leaves other profiles' statuses alone", async () => {
+    syncStatusActions.patch(1, { activity: "syncing" });
+    syncStatusActions.patch(2, { activity: "syncing" });
+
+    await state().deleteProfile(2);
+
+    expect(useSyncStatusStore.getState().byProfileId.get(1)?.activity).toBe(
+      "syncing",
+    );
+  });
+
+  it("keeps the status when the delete itself fails", async () => {
+    mocks.deleteProfile.mockRejectedValue(new Error("locked"));
+    syncStatusActions.patch(2, { activity: "error", error: "gone wrong" });
+
+    await expect(state().deleteProfile(2)).rejects.toThrow("locked");
+
+    expect(useSyncStatusStore.getState().byProfileId.has(2)).toBe(true);
   });
 });
 

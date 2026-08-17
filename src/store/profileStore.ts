@@ -29,6 +29,7 @@ import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
+import { syncStatusActions } from "@/store/syncStatusStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 import { getSyncState } from "@/lib/syncState";
 
@@ -565,6 +566,11 @@ export const useProfileStore = create<ProfileState>()(
             set((state) => ({
               profiles: state.profiles.filter((p) => p.id !== id),
             }));
+            // The profile is gone, so its sync status is describing nothing.
+            // `syncStatusStore.byProfileId` had no route to shrinking at all —
+            // it only ever grew, for the life of the tab — and `clear` was
+            // written for exactly this and then never called.
+            syncStatusActions.clear(id);
             // Removed: await get().fetchProfiles();
           } catch (error) {
             console.error(`Failed to delete profile ${id}:`, error);
