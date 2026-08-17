@@ -7,11 +7,12 @@ performs a Picker grant, and polling every 15 minutes means people work on
 stale data. See `sync-strategies-investigation.md` for how that decision was
 reached — this is "Option 4, core".
 
-**Audio is not stored on the server.** A profile row holds only the profile
+**Audio stays in Drive by default.** A profile row holds only the profile
 JSON, which carries content hashes and Google Drive file IDs. Collaborators
 fetch the bytes from the owner's Drive, or through the public proxy when
-signed out. Hosting audio ourselves is a separate, gated feature that has not
-been built yet.
+signed out. Hosting audio on the server is a separate, opt-in feature — off
+unless the five `IMPAMP_S3_*` variables are set, and then still per-account.
+See [`wasabi-audio.md`](wasabi-audio.md).
 
 ## What it gives you
 
@@ -21,7 +22,7 @@ been built yet.
 | Inviting someone    | Drive share **plus** a Picker grant | invite by email, works at next sign-in             |
 | Anonymous view-only | public Drive link                   | share link, no sign-in at all                      |
 | Simultaneous edits  | last-write-wins or a conflict modal | version-checked; a lost race re-merges and retries |
-| Where audio lives   | Google Drive                        | Google Drive (unchanged)                           |
+| Where audio lives   | Google Drive                        | Drive, or the app's own storage when enabled       |
 | Infrastructure      | none                                | one SQLite file on a volume                        |
 
 Server sync does _not_ give true simultaneous editing of the same pad — that
@@ -156,8 +157,10 @@ hash is stored. Establishing a session is best-effort — if it fails, Drive
 sync carries on unaffected.
 
 The **first user to sign in becomes an admin**. This instance is self-hosted,
-so bootstrapping from the first sign-in avoids shipping a credential. Nothing
-gates on `is_admin` yet; it exists for the hosted-audio feature.
+so bootstrapping from the first sign-in avoids shipping a credential.
+`is_admin` gates the hosted-audio admin surface: `/api/admin/audio` and
+`/api/admin/users/[id]`, both of which answer 404 rather than 403 so the
+surface is not advertised to non-admins.
 
 ## Limitations
 
