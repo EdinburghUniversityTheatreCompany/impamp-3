@@ -38,6 +38,16 @@ const donorProfile = {
 const blobFor = (name: string) =>
   new Blob([`bytes:${name}`], { type: "audio/mpeg" });
 
+/**
+ * The same blob with a different set of audio references, so the three ways of
+ * carrying bytes can be tested against one fixture rather than three copies.
+ */
+function syncDataWith(audioFiles: unknown[]): ProfileSyncData {
+  const data = hostedSyncData() as unknown as { audioFiles: unknown[] };
+  data.audioFiles = audioFiles;
+  return data as unknown as ProfileSyncData;
+}
+
 function hostedSyncData(): ProfileSyncData {
   return {
     _syncFormatVersion: 2,
@@ -158,5 +168,73 @@ describe("joining a profile whose audio the server hosts", () => {
       profileId,
     );
     expect(pads).toHaveLength(1);
+  });
+});
+
+/**
+ * The hash travels on the same `ref` whichever route carries the bytes, but
+ * only the hosted branch above read it. The Drive and base64 branches dropped
+ * it, and `importAudioSources` writes through a raw transaction rather than
+ * `addAudioFile`, so nothing computed a replacement afterwards — the record
+ * landed hashless.
+ *
+ * Expensive rather than wrong: the next sync needing a hash index finds none
+ * and reads and SHA-256s every audio file in the library, one blob at a time,
+ * on the main thread. Accept a Drive share of a large board and you pay for
+ * the whole library to rebuild what you were handed.
+ */
+describe("the hash a shared profile already supplied", () => {
+  /** `horn` by Drive file and also flagged hosted; `stab` as embedded base64. */
+  const mixedRefs = [
+    {
+      id: 200,
+      name: "horn.mp3",
+      type: "audio/mpeg",
+      hash: "hash-horn",
+      driveFileId: "drive-horn",
+      // A board migrated to hosted audio publishes both routes deliberately,
+      // so this combination is legitimate and the Drive branch is what runs.
+      serverHosted: true,
+    },
+    {
+      id: 201,
+      name: "stab.mp3",
+      type: "audio/mpeg",
+      hash: "hash-stab",
+      data: Buffer.from("stab-bytes").toString("base64"),
+    },
+  ];
+
+  /** Imports the mixed blob and returns the audio rows the pad names. */
+  async function importMixed() {
+    const db = await getDb();
+    const profileId = await importProfileFromSyncData(
+      db,
+      syncDataWith(mixedRefs),
+      async () => blobFor("horn"),
+      undefined,
+      { syncType: "local" },
+    );
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    const rows = await Promise.all(
+      pads[0].audioFileIds!.map((id) => db.get("audioFiles", id)),
+    );
+    return { drive: rows[0], base64: rows[1] };
+  }
+
+  it("is stored whichever route the bytes arrived by", async () => {
+    const { drive, base64 } = await importMixed();
+
+    expect([drive?.name, base64?.name]).toEqual(["horn.mp3", "stab.mp3"]);
+    expect([drive?.hash, base64?.hash]).toEqual(["hash-horn", "hash-stab"]);
+  });
+
+  it("keeps serverHosted when a sound is published by both routes", async () => {
+    // Losing this re-uploads a library the server already holds.
+    expect((await importMixed()).drive?.serverHosted).toBe(true);
   });
 });

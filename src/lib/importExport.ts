@@ -1049,6 +1049,16 @@ export async function importProfileFromSyncData(
         originalId: ref.id,
         name: ref.name,
         type: ref.type,
+        // Carried, not recomputed. The blob already names this sound by
+        // content hash, and `importAudioSources` writes through a raw
+        // transaction rather than `addAudioFile`, so dropping it here means
+        // nothing computes one later: the record lands hashless and the next
+        // sync SHA-256s every blob in the library on the main thread to
+        // rebuild an index it was handed. `serverHosted` travels for the same
+        // reason — a migrated profile publishes both routes deliberately, so a
+        // ref can be a Drive file *and* hosted, and this branch wins.
+        hash: ref.hash,
+        serverHosted: ref.serverHosted,
         getBlob: async () => {
           const blob = await downloadAudioBlob(driveFileId);
           if (!blob) {
@@ -1066,6 +1076,7 @@ export async function importProfileFromSyncData(
         originalId: ref.id,
         name: ref.name,
         type: ref.type,
+        hash: ref.hash,
         getBlob: () => base64ToBlob(data, ref.type),
       });
     } else if (ref.serverHosted && ref.hash && downloadHostedBlob) {
