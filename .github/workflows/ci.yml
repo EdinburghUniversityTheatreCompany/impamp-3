@@ -204,6 +204,65 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  # Build and smoke-test the production image — the artefact that actually ships.
+  #
+  # Nothing in this pipeline used to touch it: `kamal deploy` builds locally on the
+  # operator's machine, so a broken Dockerfile or .dockerignore was discovered mid-deploy,
+  # on the deploying machine, with the running site already being replaced. Both failure
+  # modes have happened. The .dockerignore rewrite dropped playwright.config.ts while
+  # keeping e2e-tests/ out, which fails `next build` at the type-check step; and the image
+  # created /data but never set IMPAMP_DB_PATH, so every server-sync route 500'd with
+  # EACCES on /app/data under the README's own `docker run`.
+  #
+  # Hence a build AND a run: a green build would not have caught the second one. No buildx
+  # or registry cache, deliberately — it would mean pinning more third-party actions for a
+  # job that takes a few minutes, and this needs to be the least trusted-code path here.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the production image
+        run: docker build --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID=ci-placeholder -t impamp3:ci .
+      - name: Boot it the way README.md documents, with no volume and no env
+        run: docker run -d --name impamp-ci -p 3000:3000 impamp3:ci
+      - name: Wait for the health endpoint
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS localhost:3000/up >/dev/null 2>&1; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "never became healthy"
+          docker logs impamp-ci
+          exit 1
+      - name: The server-sync database must open
+        # getDb() is reached only from route handlers, so an unwritable database
+        # leaves the soundboard loading perfectly while every API call 500s —
+        # which is why this asserts a real route and not just /up. This request
+        # needs no session, and 404 is the correct answer for a profile that does
+        # not exist. A 500 here means the app cannot open its own database.
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' 'localhost:3000/api/profiles/1?token=ci')
+          echo "status=$code"
+          if [ "$code" = "500" ]; then
+            echo "The container cannot open its database."
+            docker logs impamp-ci
+            exit 1
+          fi
+      - name: No permission errors in the log
+        run: |
+          if docker logs impamp-ci 2>&1 | grep -q EACCES; then
+            docker logs impamp-ci
+            exit 1
+          fi
+      - name: Stop the container
+        if: always()
+        run: docker rm -f impamp-ci || true
+
   # Noisier audits — mirror the hk `check` hook.
   audit:
     runs-on: ubuntu-latest
