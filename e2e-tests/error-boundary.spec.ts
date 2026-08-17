@@ -31,6 +31,17 @@ async function breakLazyChunks(page: import("@playwright/test").Page) {
 }
 
 test.describe("a failed lazy chunk does not unmount the soundboard", () => {
+  // Without this the service worker answers the chunk out of Cache Storage and
+  // the abort above intercepts nothing — Playwright's routing does not sit
+  // between the worker and its cache. The test then passes for the wrong
+  // reason: no chunk ever fails, so no boundary is ever exercised.
+  //
+  // Blocking the worker rather than clearing its caches, because precaching
+  // walks the asset graph at install and would simply fetch them again.
+  // What this spec is about is what React does when an import() rejects, which
+  // is orthogonal to how the bytes are normally obtained.
+  test.use({ serviceWorkers: "block" });
+
   test("the grid survives, and the fallback can stop the audio", async ({
     page,
   }) => {

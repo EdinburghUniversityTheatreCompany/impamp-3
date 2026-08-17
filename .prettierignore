@@ -22,5 +22,4 @@ src/generated/
 data/
 
 # Not ours to format.
-public/sw.js
 package-lock.json

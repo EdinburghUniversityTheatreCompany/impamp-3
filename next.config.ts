@@ -52,6 +52,31 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // The sync API said nothing about caching: no Cache-Control, no ETag,
+        // no Last-Modified on any route handler. Chromium happens not to reuse
+        // such a response — with no validator there is no heuristic freshness —
+        // but "no browser currently does this" is not the same as "nothing may".
+        // Any intermediary is free to hold a profile read, and for this API the
+        // consequence is a deleted profile coming back or a failed write looking
+        // like it landed. The service worker already refuses to touch /api for
+        // the same reason; this says it to everything else too.
+        //
+        // Excluding the two routes that set their own, because a header here
+        // *replaces* theirs rather than losing to it — measured, not assumed.
+        // The public Drive proxies are deliberately cacheable for an hour, so
+        // blanket no-store would send every viewer of a shared board back
+        // through this deployment's Google quota for bytes it just served. The
+        // SSE stream needs its own no-transform so intermediaries do not buffer
+        // it, which is the difference between live updates and none.
+        source: "/api/:path((?!drive/public-|profiles/[^/]+/events).*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-store",
+          },
+        ],
+      },
     ];
   },
 };
