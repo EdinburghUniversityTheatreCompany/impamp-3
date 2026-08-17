@@ -388,6 +388,58 @@ export interface ImportAudioSource {
   serverHosted?: boolean;
 }
 
+/** One audio file the import could not write, and why. */
+interface AudioImportFailure {
+  name: string;
+  error: unknown;
+}
+
+/** What `importAudioSources` managed to write, and what it did not. */
+interface AudioImportOutcome {
+  /** Original export id → the id the local store assigned. */
+  audioIdMap: Map<number, number>;
+  failures: AudioImportFailure[];
+}
+
+/**
+ * The browser's "you have filled your storage" error.
+ *
+ * It arrives as a DOMException from the write, or from anything upstream that
+ * had to allocate, and it is the one import failure that retrying unchanged
+ * cannot fix — so it earns a message of its own rather than being folded into
+ * the generic count.
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "QuotaExceededError"
+  );
+}
+
+/**
+ * Turns collected audio failures into the message the user is shown.
+ *
+ * Named files rather than a bare count, because the answer to "which sounds
+ * are missing?" is the whole point of failing loudly here.
+ */
+function describeAudioImportFailures(
+  failures: AudioImportFailure[],
+  total: number,
+): string {
+  const named = failures
+    .slice(0, 3)
+    .map((f) => f.name)
+    .join("; ");
+  const ellipsis = failures.length > 3 ? "; …" : "";
+  const detail = `${failures.length} of ${total} sound${total === 1 ? "" : "s"} could not be imported (${named}${ellipsis}).`;
+
+  if (failures.some((f) => isQuotaExceededError(f.error))) {
+    return `${detail} This device has run out of storage space, so importing again will fail the same way — free some up (deleting an unused profile, or clearing other sites' data) first.`;
+  }
+  return detail;
+}
+
 /** Progress information reported while importing audio files. */
 export interface ImportAudioProgress {
   fileName: string;
@@ -412,8 +464,9 @@ async function importAudioSources(
   now: Date,
   onProgress?: (progress: ImportAudioProgress) => void,
   concurrency = 1,
-): Promise<Map<number, number>> {
+): Promise<AudioImportOutcome> {
   const audioIdMap = new Map<number, number>();
+  const failures: AudioImportFailure[] = [];
   const totalBytes = audioSources.reduce((sum, s) => sum + (s.size ?? 0), 0);
   let processedBytes = 0;
   let completedFiles = 0;
@@ -453,11 +506,16 @@ async function importAudioSources(
       await audioTx.done;
       audioIdMap.set(source.originalId, newAudioId);
     } catch (error) {
+      // Collected rather than swallowed, for the same reason the pad and page
+      // importers collect theirs: the failed id never reaches `audioIdMap`, so
+      // the pad naming it lands one sound short and the import used to report
+      // success anyway. The remaining files are still attempted, so the
+      // message can name all of them at once instead of one per retry.
       console.error(
         `Failed to import audio file: ${source.name} (Original ID: ${source.originalId})`,
         error,
       );
-      // Skip this file, but continue with others
+      failures.push({ name: source.name, error });
     }
     completedFiles++;
     processedBytes += source.size ?? 0;
@@ -489,7 +547,7 @@ async function importAudioSources(
   }
 
   console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
-  return audioIdMap;
+  return { audioIdMap, failures };
 }
 
 // Helper function to import page metadata (Refactored for single transaction)
@@ -789,7 +847,7 @@ async function importProfileCore(
     console.log(`Created imported profile with ID ${profileId}`);
 
     // Step 2: Import audio files (one short transaction per file)
-    const audioIdMap = await importAudioSources(
+    const { audioIdMap, failures: audioFailures } = await importAudioSources(
       db,
       audioSources,
       now,
@@ -797,6 +855,16 @@ async function importProfileCore(
       audioConcurrency,
     );
     console.log(`Imported ${audioIdMap.size} audio files`);
+
+    if (audioFailures.length > 0) {
+      // Same rule as the pad importer: a sound that did not arrive is a failed
+      // import, not a successful one with a quieter board. Throwing here also
+      // removes the partial profile, so the user is never left with pads that
+      // look assigned and do nothing.
+      throw new Error(
+        describeAudioImportFailures(audioFailures, audioSources.length),
+      );
+    }
 
     // Step 3: Import page metadata (single transaction)
     await importPageMetadata(db, exportData.pageMetadata, profileId, now);
