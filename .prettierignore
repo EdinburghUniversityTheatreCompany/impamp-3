@@ -1,0 +1,26 @@
+# Prettier's own default is only .gitignore-unaware node_modules, so without
+# this `npx prettier --check .` — which is exactly what CI runs — walks every
+# other checkout of this repo living under a worktree directory, plus their
+# dependencies and build output. It reported 3,595 files needing formatting,
+# none of them this repo's.
+#
+# Both spellings on purpose: `.worktrees/` is the manual convention and
+# `.claude/worktrees/` is where the agent tooling puts them. eslint.config.mjs
+# and vitest.config.ts each carry the same pair, for the same reason.
+.worktrees/
+.claude/worktrees/
+
+# Build output and generated files.
+.next/
+out/
+build/
+coverage/
+node_modules/
+playwright-report/
+test-results/
+src/generated/
+data/
+
+# Not ours to format.
+public/sw.js
+package-lock.json
