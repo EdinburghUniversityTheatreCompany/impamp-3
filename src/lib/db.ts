@@ -439,11 +439,31 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             .catch((err) => console.error("Error counting profiles:", err));
         }
       },
-      blocked() {
-        console.error("IndexedDB blocked.");
+      blocked(currentVersion, blockedVersion) {
+        // This side wanted to upgrade and something else is holding the old
+        // version open. Nothing here can close that connection, so say which
+        // versions are involved — the fix is to close the other tab.
+        console.error(
+          `IndexedDB upgrade from ${currentVersion} to ${blockedVersion} is blocked. ` +
+            "ImpAmp is open in another tab or window; close it to finish updating.",
+        );
       },
-      blocking() {
-        console.warn("IndexedDB blocking.");
+      blocking(currentVersion, blockedVersion, event) {
+        // *This* connection is the one in the way: another tab is trying to
+        // upgrade and cannot while we hold the old version open. Closing is
+        // the documented response, and it used to only log — so the other
+        // tab's `openDB` never settled, `getDb()` there stayed pending
+        // forever, and everything awaiting it (the profile store's load,
+        // usePadConfigurations, ensureDefaultProfile) hung with no error and
+        // no UI. A blank soundboard that reloading could not fix.
+        console.warn(
+          `Closing this IndexedDB connection (version ${currentVersion}) so another can upgrade to ${blockedVersion}.`,
+        );
+        (event.target as IDBDatabase | null)?.close();
+        // Drop the memoised connection too, the way `terminated` does: the
+        // next getDb() then opens the new schema instead of handing out a
+        // closed database.
+        dbPromise = null;
       },
       terminated() {
         console.error("IndexedDB terminated.");
