@@ -250,3 +250,64 @@ describe("a merge written back must not forget what this device just changed", (
     expect(storedPad?._fieldsModified?.name).toBe(padRenameStamp);
   });
 });
+
+/**
+ * The other half of the same question: a rename made on the *other* device has
+ * to arrive, and then stay arrived.
+ *
+ * `updateLocalData` used to pin the stored name to whatever this device already
+ * had, while still storing the merge's stamp for it. So the merge decided the
+ * name, the writer threw the decision away, and the next merge saw the two
+ * sides tied on `name` and let the local — old — value win and be pushed. Two
+ * devices swapped names forever and neither ever saw the other's.
+ */
+describe("a rename made elsewhere arrives, and does not flap back", () => {
+  const THEIR_RENAME = SEEDED_AT + 5_000;
+
+  /** Their blob, with the profile renamed after our last sync. */
+  function renamedRemote(snapshot: ProfileSyncData): ProfileSyncData {
+    const remote = unchangedRemote(snapshot);
+    remote._lastSyncTimestamp = SEEDED_AT;
+    remote.profile.name = "Theirs";
+    remote.profile._fieldsModified = {
+      ...remote.profile._fieldsModified,
+      name: THEIR_RENAME,
+    };
+    return remote;
+  }
+
+  beforeEach(async () => {
+    const db = await getDb();
+    await db.put("profiles", {
+      ...storedProfile,
+      _fieldsModified: { ...storedProfile._fieldsModified, name: SEEDED_AT },
+    });
+    localStorage.setItem(`lastSync_${PROFILE_ID}`, String(SEEDED_AT));
+  });
+
+  it("stores the name the merge chose", async () => {
+    const snapshot = await getLocalProfileSyncData(PROFILE_ID);
+    const { requiresManualResolution, mergedData } =
+      await detectProfileConflicts(snapshot!, renamedRemote(snapshot!));
+
+    expect(requiresManualResolution).toBe(false);
+    expect(mergedData.profile.name).toBe("Theirs");
+
+    await updateLocalData(PROFILE_ID, mergedData);
+    expect((await readProfile()).name).toBe("Theirs");
+  });
+
+  it("does not push the old name back on the next sync", async () => {
+    const snapshot = await getLocalProfileSyncData(PROFILE_ID);
+    const remote = renamedRemote(snapshot!);
+    const first = await detectProfileConflicts(snapshot!, remote);
+    await updateLocalData(PROFILE_ID, first.mergedData);
+
+    const fresh = await getLocalProfileSyncData(PROFILE_ID);
+    const second = await detectProfileConflicts(fresh!, remote);
+
+    // The merge is only ever as good as what the writer keeps. Storing the
+    // stamp without the value is what let the old name win the tie.
+    expect(second.mergedData.profile.name).toBe("Theirs");
+  });
+});

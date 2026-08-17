@@ -367,7 +367,18 @@ export const updateLocalData = async (
         localReadAt,
       ) as typeof data.profile),
       id: profileId,
-      name: existingLocalProfile?.name ?? data.profile.name,
+      // The name is deliberately *not* pinned to the local one, unlike every
+      // field below it. It is content, not a location: `isComparableProfileField`
+      // lets it take part in the merge, so the merge has already decided it.
+      // Pinning threw that decision away while still storing the stamp that
+      // came with it, so a rename made on another device was written down as
+      // having happened here and then pushed back as the old name on the next
+      // sync — the two devices swapped names forever and neither ever saw the
+      // other's. On Drive it was worse than cosmetic: the file name is derived
+      // from it, so the sync file was renamed every round.
+      //
+      // A rename made *here* while the sync was in flight is still safe, but
+      // for the right reason now: `reconcileWithStoredRecord` above keeps it.
       // Where this profile syncs, where its audio lives, and what we may do
       // with it are all this device's own answers — a blob written by another
       // device must never repoint them.
