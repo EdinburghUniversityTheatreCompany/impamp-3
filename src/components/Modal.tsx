@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
+import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 
 type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
 
@@ -32,20 +33,9 @@ const Modal: React.FC<ModalProps> = ({
   size = "sm",
 }) => {
   // Escape closes the modal, and must not reach the global keyboard listener
-  // (where it doubles as the panic button)
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      onClose();
-    };
-
-    window.addEventListener("keydown", handleEscape, true);
-    return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [isOpen, onClose]);
+  // (where it doubles as the panic button). Shared with the profile manager,
+  // which is the one overlay outside this system and went without it.
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
