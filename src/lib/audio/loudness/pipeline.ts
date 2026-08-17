@@ -11,20 +11,47 @@
 
 import {
   findUnanalysedAudioFileIds,
-  getAudioFile,
   getAudioFileIdsForProfile,
   getAudioFileMetadata,
   updateAudioFileLoudness,
 } from "@/lib/db";
 import type { LoudnessAnalysis } from "./types";
-import { getCachedAudioBuffer } from "@/lib/audio/cache";
-import { decodeAudioBlob } from "@/lib/audio/decoder";
+import { loadAndDecodeAudio } from "@/lib/audio/decoder";
+import { createConcurrencyGate } from "@/lib/audio/concurrencyGate";
 import { analyseAudioBufferOffThread } from "./analyseOffThread";
 import { setCachedLoudness, warmLoudnessCache } from "./cache";
 import { LOUDNESS_ALGO_VERSION } from "./constants";
 
 /** How many files to analyse per idle slice. */
 const BACKFILL_BATCH_SIZE = 3;
+
+/**
+ * How many analyses may be under way at once, from every caller together.
+ *
+ * The backfill sweep has always taken files three at a time. `addAudioFile`
+ * did not: it fired one analysis per file with no gate, and the bulk-import
+ * modal calls it in a loop, so importing N sounds started N overlapping
+ * analyses. Each holds a fully decoded `AudioBuffer` *and* a full per-channel
+ * copy — deliberately copied, since the buffer may still be playing and
+ * transferring would detach it — until the single worker gets to it. The
+ * worker is serial, so those copies queue in its message queue rather than
+ * draining: forty three-minute stereo files is roughly 2.7 GB resident, and a
+ * hundred five-minute ones is past what a tab survives.
+ *
+ * One gate shared by both entry points, so the cap holds however the work
+ * arrives.
+ */
+const ANALYSIS_CONCURRENCY = 3;
+const analysisSlots = createConcurrencyGate(ANALYSIS_CONCURRENCY);
+
+/**
+ * Analyses currently running, keyed by audio file id.
+ *
+ * The same file genuinely arrives twice: `addAudioFile` fires an analysis as
+ * a sound is added while the backfill sweep, which snapshots its queue from
+ * the database, is picking the same id up.
+ */
+const inFlightAnalyses = new Map<number, Promise<LoudnessAnalysis | null>>();
 
 // Monotonic token so a superseded load can never write. A profile switch
 // starts a new load; a slow load for the profile just left must abandon its
@@ -102,19 +129,49 @@ export function nextBackfillBatch(
 }
 
 /**
- * Analyses one audio file and stores the result. Reuses an already-decoded
- * buffer when the cache has one, since decoding is the expensive part.
+ * Analyses one audio file and stores the result.
+ *
+ * Bounded on both axes that used to be unbounded: one run per file at a time,
+ * and at most {@link ANALYSIS_CONCURRENCY} runs across the whole app.
+ *
+ * @param audioFileId - The file to measure
+ * @returns The analysis, or null if it could not be produced
  */
-export async function analyseAndStore(
+export function analyseAndStore(
   audioFileId: number,
 ): Promise<LoudnessAnalysis | null> {
-  try {
-    let buffer = getCachedAudioBuffer(audioFileId);
+  const existing = inFlightAnalyses.get(audioFileId);
+  if (existing) return existing;
 
+  const run = analyseAndStoreOnce(audioFileId).finally(() => {
+    if (inFlightAnalyses.get(audioFileId) === run) {
+      inFlightAnalyses.delete(audioFileId);
+    }
+  });
+
+  inFlightAnalyses.set(audioFileId, run);
+  return run;
+}
+
+/** The body of one analysis, holding a slot for as long as it runs. */
+async function analyseAndStoreOnce(
+  audioFileId: number,
+): Promise<LoudnessAnalysis | null> {
+  await analysisSlots.acquire();
+
+  try {
+    // Through the shared loader, not the raw decoder. `decodeAudioBlob`
+    // neither joins the in-flight registry nor caches what it produces, so a
+    // file being decoded for playback at the same moment — which is the normal
+    // case, since a drag-and-drop assignment decodes for the pad and analyses
+    // for the level in the same breath — was decoded twice, and the analysis
+    // decode was then thrown away.
+    const buffer = await loadAndDecodeAudio(audioFileId);
     if (!buffer) {
-      const file = await getAudioFile(audioFileId);
-      if (!file) return null;
-      buffer = await decodeAudioBlob(file.blob);
+      // Missing or undecodable amounts to the same thing here: nothing to
+      // measure, and no point offering it again this session.
+      failedAnalysis.add(audioFileId);
+      return null;
     }
 
     // Off the main thread: this is ~2.2 seconds of arithmetic per minute of
@@ -134,6 +191,8 @@ export async function analyseAndStore(
       error,
     );
     return null;
+  } finally {
+    analysisSlots.release();
   }
 }
 

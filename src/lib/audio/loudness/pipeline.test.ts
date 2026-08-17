@@ -22,10 +22,11 @@ const cacheMocks = vi.hoisted(() => ({
 
 const decoderMocks = vi.hoisted(() => ({
   decodeAudioBlob: vi.fn(),
+  loadAndDecodeAudio: vi.fn(),
 }));
 
 const analyseMocks = vi.hoisted(() => ({
-  analyseAudioBuffer: vi.fn(),
+  analyseAudioBufferOffThread: vi.fn(),
 }));
 
 const loudnessCacheMocks = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ const loudnessCacheMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/audio/cache", () => cacheMocks);
 vi.mock("@/lib/audio/decoder", () => decoderMocks);
-vi.mock("./analyse", () => analyseMocks);
+vi.mock("./analyseOffThread", () => analyseMocks);
 vi.mock("./cache", () => loudnessCacheMocks);
 
 const {
@@ -162,6 +163,8 @@ function resetPipelineMocks(): void {
     },
   );
   cacheMocks.getCachedAudioBuffer.mockReturnValue(null);
+  decoderMocks.loadAndDecodeAudio.mockResolvedValue({} as AudioBuffer);
+  analyseMocks.analyseAudioBufferOffThread.mockResolvedValue(fakeAnalysis());
 }
 
 describe("failed-analysis filtering", () => {
@@ -171,8 +174,15 @@ describe("failed-analysis filtering", () => {
     resetPipelineMocks();
   });
 
+  /** Which files the pipeline actually tried to decode, in ascending order. */
+  function attemptedIds(): number[] {
+    return decoderMocks.loadAndDecodeAudio.mock.calls
+      .map((args: unknown[]) => args[0] as number)
+      .sort((a, b) => a - b);
+  }
+
   it("stops offering a file that failed to decode this session", async () => {
-    decoderMocks.decodeAudioBlob.mockRejectedValue(new Error("corrupt file"));
+    decoderMocks.loadAndDecodeAudio.mockResolvedValue(null);
 
     // File 1 fails to decode once; analyseAndStore records it as failed for
     // this session. Nothing is written to the DB on a failed attempt, so
@@ -181,31 +191,127 @@ describe("failed-analysis filtering", () => {
     await expect(analyseAndStore(1)).resolves.toBeNull();
 
     dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1, 2, 3]);
-    dbMocks.getAudioFile.mockClear();
+    decoderMocks.loadAndDecodeAudio.mockClear();
 
     await runBackfill();
 
-    const attemptedIds = dbMocks.getAudioFile.mock.calls
-      .map((args: unknown[]) => args[0] as number)
-      .sort((a, b) => a - b);
-    expect(attemptedIds).toEqual([2, 3]);
+    expect(attemptedIds()).toEqual([2, 3]);
   });
 
   it("clearFailedAnalysis lets a previously failed file be retried", async () => {
-    decoderMocks.decodeAudioBlob.mockRejectedValue(new Error("corrupt file"));
+    decoderMocks.loadAndDecodeAudio.mockResolvedValue(null);
     await expect(analyseAndStore(1)).resolves.toBeNull();
 
     clearFailedAnalysis();
 
     dbMocks.findUnanalysedAudioFileIds.mockResolvedValue([1]);
-    dbMocks.getAudioFile.mockClear();
+    decoderMocks.loadAndDecodeAudio.mockClear();
 
     await runBackfill();
 
-    const attemptedIds = dbMocks.getAudioFile.mock.calls.map(
-      (args: unknown[]) => args[0] as number,
+    expect(attemptedIds()).toEqual([1]);
+  });
+});
+
+describe("analyseAndStore and the decode it needs", () => {
+  useSyntheticIdleWindow();
+
+  beforeEach(() => {
+    resetPipelineMocks();
+  });
+
+  it("goes through the shared loader rather than decoding on its own", async () => {
+    await analyseAndStore(1);
+
+    // `decodeAudioBlob` is the raw decoder: it neither joins the in-flight
+    // registry nor caches what it produces. Using it meant a file being
+    // decoded for playback at the same moment was decoded a second time here,
+    // and the second decode was thrown away.
+    expect(decoderMocks.loadAndDecodeAudio).toHaveBeenCalledWith(1);
+    expect(decoderMocks.decodeAudioBlob).not.toHaveBeenCalled();
+  });
+
+  it("shares one decode between two callers asking for the same file", async () => {
+    const both = await Promise.all([analyseAndStore(4), analyseAndStore(4)]);
+
+    // `addAudioFile` fires an analysis per file while the backfill sweep is
+    // also picking that file up, so the same id genuinely arrives twice.
+    expect(decoderMocks.loadAndDecodeAudio).toHaveBeenCalledTimes(1);
+    expect(both[0]).toBe(both[1]);
+  });
+
+  it("lets a later caller start again once the first has finished", async () => {
+    await analyseAndStore(4);
+    await analyseAndStore(4);
+
+    expect(decoderMocks.loadAndDecodeAudio).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * Makes every decode hang until released, and returns the release queue.
+   *
+   * The slots are module state, so a test that leaves one held would wedge
+   * every test after it — hence releasing rather than abandoning.
+   */
+  function controllableDecodes(): Array<(buffer: AudioBuffer) => void> {
+    const releases: Array<(buffer: AudioBuffer) => void> = [];
+    decoderMocks.loadAndDecodeAudio.mockImplementation(
+      () => new Promise<AudioBuffer>((resolve) => releases.push(resolve)),
     );
-    expect(attemptedIds).toEqual([1]);
+    return releases;
+  }
+
+  /**
+   * Releases whatever is in flight, round by round, until `all` settles.
+   *
+   * Bounded, so a genuine stall fails the test rather than hanging it.
+   */
+  async function drain<T>(
+    releases: Array<(buffer: AudioBuffer) => void>,
+    all: Promise<T>,
+  ): Promise<T> {
+    let settled = false;
+    const done = all.then((value) => {
+      settled = true;
+      return value;
+    });
+
+    for (let round = 0; round < 50 && !settled; round++) {
+      for (const release of releases.splice(0)) release({} as AudioBuffer);
+      // A macrotask, not a microtask: each released analysis still has to walk
+      // through the worker call and the store write before it frees its slot.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    return done;
+  }
+
+  it("caps how many files are decoded and measured at once", async () => {
+    const releases = controllableDecodes();
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const all = Promise.all(ids.map((id) => analyseAndStore(id)));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The bulk-import modal calls `addAudioFile` in a loop and each call fans
+    // out an analysis with no gate at all. Each one holds a fully decoded
+    // buffer plus a full per-channel copy until the single worker reaches it,
+    // and the worker is serial — so the copies queue up rather than draining.
+    // Forty three-minute stereo files is roughly 2.7 GB resident.
+    expect(decoderMocks.loadAndDecodeAudio).toHaveBeenCalledTimes(3);
+
+    await drain(releases, all);
+  });
+
+  it("lets the queue drain as slots come free", async () => {
+    const releases = controllableDecodes();
+    const ids = [1, 2, 3, 4, 5, 6];
+    const all = Promise.all(ids.map((id) => analyseAndStore(id)));
+
+    // A gate that handed a freed slot back to a counter rather than to the
+    // next waiter would stall part way through this instead.
+    await expect(drain(releases, all)).resolves.toHaveLength(ids.length);
+    expect(decoderMocks.loadAndDecodeAudio).toHaveBeenCalledTimes(ids.length);
   });
 });
 
@@ -214,8 +320,6 @@ describe("runBackfill coalescing", () => {
 
   beforeEach(() => {
     resetPipelineMocks();
-    decoderMocks.decodeAudioBlob.mockResolvedValue({});
-    analyseMocks.analyseAudioBuffer.mockReturnValue(fakeAnalysis());
   });
 
   it("returns the in-flight promise to a caller that arrives mid-run, and does one coalesced re-run for it", async () => {
@@ -276,12 +380,12 @@ describe("runBackfill coalescing", () => {
     await first;
     await second;
 
-    const attemptedIds = dbMocks.getAudioFile.mock.calls.map(
+    const attempted = decoderMocks.loadAndDecodeAudio.mock.calls.map(
       (args: unknown[]) => args[0] as number,
     );
     // Under the old supersede logic, a second concurrent caller could take
     // over the generation token and leave the first caller's work undone.
-    expect(attemptedIds).toContain(1);
+    expect(attempted).toContain(1);
   });
 });
 
@@ -290,8 +394,6 @@ describe("runBackfill survives a throwing progress listener", () => {
 
   beforeEach(() => {
     resetPipelineMocks();
-    decoderMocks.decodeAudioBlob.mockResolvedValue({});
-    analyseMocks.analyseAudioBuffer.mockReturnValue(fakeAnalysis());
   });
 
   it("still resolves, and clears backfillInFlight, when a subscriber throws", async () => {

@@ -14,6 +14,7 @@ import {
   cacheAudioBuffer,
   isAudioBufferCached,
 } from "./cache";
+import { createConcurrencyGate } from "./concurrencyGate";
 
 // Loads/decodes that are currently running, keyed by audio file ID.
 // Lets concurrent callers (e.g. a preload and a live trigger) share one decode.
@@ -176,37 +177,6 @@ async function loadAndDecodeAudioUnshared(
 }
 
 /**
- * Hands out a fixed number of decode slots, queueing callers beyond that.
- *
- * A counter rather than "wait until the set of running work drains": the work
- * promises are what a caller is *part of*, so waiting on them is waiting on
- * yourself. Releasing passes the slot straight to the next waiter instead of
- * decrementing, so a slot cannot be taken by a caller that arrives in the gap.
- */
-function createDecodeSlots(limit: number) {
-  let inUse = 0;
-  const waiting: Array<() => void> = [];
-
-  return {
-    async acquire(): Promise<void> {
-      if (inUse < limit) {
-        inUse++;
-        return;
-      }
-      await new Promise<void>((resolve) => waiting.push(resolve));
-    },
-    release(): void {
-      const next = waiting.shift();
-      if (next) {
-        next();
-        return;
-      }
-      inUse--;
-    },
-  };
-}
-
-/**
  * Load and decode audio files with pipelined processing - starts decoding as soon as files are loaded
  *
  * @param audioFileIds - Array of audio file IDs to load and decode
@@ -235,7 +205,7 @@ export async function loadAndDecodeAudioPipelined(
   // Two things, deliberately: the set says what to wait for, the slots say what
   // may proceed. Conflating them is what deadlocked this function.
   const activeWork = new Set<Promise<AudioBuffer | null>>();
-  const decodeSlots = createDecodeSlots(Math.max(1, maxConcurrentDecodes));
+  const decodeSlots = createConcurrencyGate(maxConcurrentDecodes);
   let loadedCount = 0;
   let decodedCount = 0;
 

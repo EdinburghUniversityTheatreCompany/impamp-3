@@ -1,4 +1,14 @@
 /**
+ * The trigger path, with everything below `controls` stubbed.
+ *
+ * One fixture for two findings, because they need exactly the same one: the
+ * whole audio stack faked down to the decoder, the playback module and the
+ * database, so a trigger can be walked step by step. Splitting them across two
+ * files meant the fixture written twice, which is a second place for "what a
+ * trigger sees" to drift.
+ *
+ * ---
+ *
  * When a pad's chosen sound will not load, the fallback plays a different one
  * — and everything about *how* it plays must follow the substitution.
  *
@@ -13,6 +23,7 @@
  * a shock.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LoadingState } from "./decoder";
 
 const decoderMocks = vi.hoisted(() => ({
   loadAndDecodeAudioInstant: vi.fn(),
@@ -68,6 +79,9 @@ vi.mock("@/store/profileStore", () => ({
 }));
 
 const { triggerAudioForPadInstant } = await import("./controls");
+const { triggerPad } = await import("./triggerPad");
+const { useLoadingStore, generatePadLoadingKey } =
+  await import("@/store/loadingStore");
 
 const GOOD = 200;
 const BROKEN = 100;
@@ -148,5 +162,95 @@ describe("falling back to another sound on a pad", () => {
     expect(params.trimStart).toBe(5);
     // -12 dB, the chosen sound's own setting.
     expect(params.volume).toBeLessThan(0.3);
+  });
+});
+
+/**
+ * `loadAndDecodeAudioInstant` reports a loading state before it does anything,
+ * and `triggerPad` forwards that to the shared loading store, which is what
+ * mounts the spinner over the pad. Only two things cleared it again:
+ * `onAudioReady` and `onError`. The cancellation branches call neither — they
+ * simply `return`, because nothing is audible and nothing failed — so pressing
+ * ESC during a slow load left the entry behind. The leftover status is
+ * "ready", so none of the overlay's three text branches match either: the pad
+ * shows a bare spinner over a full progress bar, and nothing clears it but a
+ * later successful trigger of that same pad.
+ */
+function loadingStateFor(padIndex: number) {
+  return useLoadingStore
+    .getState()
+    .padLoadingStates.get(generatePadLoadingKey(1, 0, padIndex));
+}
+
+/** Triggers a pad whose decode reports a loading state before it resolves. */
+async function triggerReportingProgress(): Promise<number> {
+  const padIndex = nextPadIndex++;
+  await triggerPad(
+    {
+      padIndex,
+      audioFileIds: [GOOD],
+      playbackType: "sequential",
+      name: "Pad",
+    },
+    { activeProfileId: 1, currentPageIndex: 0 },
+  );
+  return padIndex;
+}
+
+describe("the pad's loading overlay", () => {
+  beforeEach(() => {
+    useLoadingStore.getState().actions.clearAllLoadingStates();
+    decoderMocks.loadAndDecodeAudioInstant.mockImplementation(
+      async (
+        audioFileId: number,
+        onStateChange?: (state: LoadingState) => void,
+      ) => {
+        onStateChange?.({
+          audioFileId,
+          status: "loading",
+          progress: 0,
+          startTime: 0,
+        });
+        return fakeBuffer;
+      },
+    );
+  });
+
+  it("comes down when a stop cancels the load", async () => {
+    // False at the check after the blob read, true at the one after the
+    // decode: ESC landed while the file was being decoded, which is an
+    // ordinary thing to do during a slow load.
+    playbackMocks.stopRequestedSince
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    const padIndex = await triggerReportingProgress();
+
+    expect(playbackMocks.playBuffer).not.toHaveBeenCalled();
+    expect(loadingStateFor(padIndex)).toBeUndefined();
+  });
+
+  it("comes down when the stop lands before the decode even starts", async () => {
+    playbackMocks.stopRequestedSince.mockReturnValue(true);
+
+    const padIndex = await triggerReportingProgress();
+
+    expect(loadingStateFor(padIndex)).toBeUndefined();
+  });
+
+  it("comes down when the sound plays", async () => {
+    const padIndex = await triggerReportingProgress();
+
+    expect(playbackMocks.playBuffer).toHaveBeenCalledTimes(1);
+    expect(loadingStateFor(padIndex)).toBeUndefined();
+  });
+
+  it("comes down when nothing could be loaded at all", async () => {
+    decoderMocks.loadAndDecodeAudioInstant.mockResolvedValue(null);
+    decoderMocks.loadAndDecodeAudioEnhanced.mockResolvedValue(null);
+
+    const padIndex = await triggerReportingProgress();
+
+    expect(loadingStateFor(padIndex)).toBeUndefined();
   });
 });
