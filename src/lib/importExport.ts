@@ -1,6 +1,5 @@
 import { IDBPDatabase } from "idb";
 import {
-  AudioFile,
   AudioLocation,
   Profile,
   PadConfiguration,
@@ -12,7 +11,9 @@ import {
   getProfile,
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
+  deleteUnreferencedAudioFiles,
   collectReferencedAudioFileIds,
+  computeBlobHash,
   initialSyncFields,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
@@ -281,7 +282,7 @@ export function buildImportedProfileFields(
   backupReminderDefault: number,
   link: ImportLink = {},
 ): Omit<Profile, "id"> {
-  return {
+  const fields: Omit<Profile, "id"> = {
     name: profileName,
     syncType: link.syncType ?? "local",
     audioLocation: link.audioLocation ?? null,
@@ -298,6 +299,15 @@ export function buildImportedProfileFields(
     createdAt: now,
     updatedAt: now,
   };
+
+  // The same stamping `addProfile` does, and for the same reason the pad and
+  // page importers were given it: without `_modified` and `_fieldsModified`
+  // the merge reads every field's local timestamp as 0, so nothing counts as
+  // changed here and the remote wins each differing field on the first sync —
+  // reverting normalisation, active-pad behaviour and the reminder period
+  // with no conflict raised. The export carries the donor's stamps, but those
+  // describe the donor's edits, not this device's copy.
+  return { ...fields, ...initialSyncFields(fields, now.getTime()) };
 }
 
 // Helper function to create a new profile for import, handling name conflicts
@@ -388,6 +398,58 @@ export interface ImportAudioSource {
   serverHosted?: boolean;
 }
 
+/** One audio file the import could not write, and why. */
+interface AudioImportFailure {
+  name: string;
+  error: unknown;
+}
+
+/** What `importAudioSources` managed to write, and what it did not. */
+interface AudioImportOutcome {
+  /** Original export id → the id the local store assigned. */
+  audioIdMap: Map<number, number>;
+  failures: AudioImportFailure[];
+}
+
+/**
+ * The browser's "you have filled your storage" error.
+ *
+ * It arrives as a DOMException from the write, or from anything upstream that
+ * had to allocate, and it is the one import failure that retrying unchanged
+ * cannot fix — so it earns a message of its own rather than being folded into
+ * the generic count.
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "QuotaExceededError"
+  );
+}
+
+/**
+ * Turns collected audio failures into the message the user is shown.
+ *
+ * Named files rather than a bare count, because the answer to "which sounds
+ * are missing?" is the whole point of failing loudly here.
+ */
+function describeAudioImportFailures(
+  failures: AudioImportFailure[],
+  total: number,
+): string {
+  const named = failures
+    .slice(0, 3)
+    .map((f) => f.name)
+    .join("; ");
+  const ellipsis = failures.length > 3 ? "; …" : "";
+  const detail = `${failures.length} of ${total} sound${total === 1 ? "" : "s"} could not be imported (${named}${ellipsis}).`;
+
+  if (failures.some((f) => isQuotaExceededError(f.error))) {
+    return `${detail} This device has run out of storage space, so importing again will fail the same way — free some up (deleting an unused profile, or clearing other sites' data) first.`;
+  }
+  return detail;
+}
+
 /** Progress information reported while importing audio files. */
 export interface ImportAudioProgress {
   fileName: string;
@@ -412,8 +474,9 @@ async function importAudioSources(
   now: Date,
   onProgress?: (progress: ImportAudioProgress) => void,
   concurrency = 1,
-): Promise<Map<number, number>> {
+): Promise<AudioImportOutcome> {
   const audioIdMap = new Map<number, number>();
+  const failures: AudioImportFailure[] = [];
   const totalBytes = audioSources.reduce((sum, s) => sum + (s.size ?? 0), 0);
   let processedBytes = 0;
   let completedFiles = 0;
@@ -453,11 +516,16 @@ async function importAudioSources(
       await audioTx.done;
       audioIdMap.set(source.originalId, newAudioId);
     } catch (error) {
+      // Collected rather than swallowed, for the same reason the pad and page
+      // importers collect theirs: the failed id never reaches `audioIdMap`, so
+      // the pad naming it lands one sound short and the import used to report
+      // success anyway. The remaining files are still attempted, so the
+      // message can name all of them at once instead of one per retry.
       console.error(
         `Failed to import audio file: ${source.name} (Original ID: ${source.originalId})`,
         error,
       );
-      // Skip this file, but continue with others
+      failures.push({ name: source.name, error });
     }
     completedFiles++;
     processedBytes += source.size ?? 0;
@@ -489,7 +557,7 @@ async function importAudioSources(
   }
 
   console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
-  return audioIdMap;
+  return { audioIdMap, failures };
 }
 
 // Helper function to import page metadata (Refactored for single transaction)
@@ -652,7 +720,7 @@ async function importPadConfigurations(
     );
 
     // Construct the new pad configuration using the updated structure
-    const newPadData: Omit<PadConfiguration, "id"> = {
+    const content = {
       profileId,
       padIndex: pad.padIndex,
       pageIndex: pad.pageIndex,
@@ -664,16 +732,23 @@ async function importPadConfigurations(
       padGainDb: pad.padGainDb, // Whole-pad gain isn't keyed by audio file ID
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
+    };
+    const newPadData: Omit<PadConfiguration, "id"> = {
+      ...content,
       createdAt: now,
       // Sync bookkeeping, which these records used to be written without. It
       // is the entire basis `compareSyncableItems` decides a merge on, so an
       // imported pad looked to the merge like it had never been touched — and
       // the first sync after an import could prefer a remote copy over sounds
       // the user had just imported.
-      ...initialSyncFields(
-        { ...pad, profileId, audioFileIds: mappedAudioFileIds },
-        now.getTime(),
-      ),
+      //
+      // Stamped over the record being written, not over the one that arrived:
+      // an incoming pad from the wire carries derived keys that are never
+      // stored (`audioFileHashes` and the *ByHash* settings) and lacks stored
+      // ones it does not send (`isDisabled`, `padGainDb`), so stamping the
+      // source voted on fields that do not exist and abstained on fields that
+      // do — and an absent entry is a losing vote.
+      ...initialSyncFields(content, now.getTime()),
       updatedAt: now,
     };
 
@@ -712,7 +787,12 @@ async function importPadConfigurations(
 
 // Shared metadata shape for imports: a full ProfileExport minus the audio
 // payload (audio arrives separately via ImportAudioSource[]).
-type ProfileImportMeta = Omit<ProfileExport, "audioFiles">;
+// The profile is deliberately looser than `ProfileExport`'s: an import reads
+// content off it and derives everything else (see buildImportedProfileFields),
+// and the legacy impamp2 format carries nothing but a name.
+type ProfileImportMeta = Omit<ProfileExport, "audioFiles" | "profile"> & {
+  profile: Partial<Profile> & { name: string };
+};
 
 /**
  * Core import routine shared by the JSON and ZIP paths. Creates the profile,
@@ -729,6 +809,10 @@ async function importProfileCore(
   link: ImportLink = {},
 ): Promise<number> {
   let profileId: number | undefined = undefined;
+  // Every audio record this import created, so the failure path can take them
+  // back out. `deleteProfile` alone cannot: it derives what to delete from the
+  // profile's pads, and audio is written two steps before those exist.
+  const createdAudioIds: number[] = [];
   const now = new Date();
   let padConfigsToImport: PadConfiguration[] = exportData.padConfigurations; // Start with potentially new format
 
@@ -789,14 +873,25 @@ async function importProfileCore(
     console.log(`Created imported profile with ID ${profileId}`);
 
     // Step 2: Import audio files (one short transaction per file)
-    const audioIdMap = await importAudioSources(
+    const { audioIdMap, failures: audioFailures } = await importAudioSources(
       db,
       audioSources,
       now,
       onAudioProgress,
       audioConcurrency,
     );
+    createdAudioIds.push(...audioIdMap.values());
     console.log(`Imported ${audioIdMap.size} audio files`);
+
+    if (audioFailures.length > 0) {
+      // Same rule as the pad importer: a sound that did not arrive is a failed
+      // import, not a successful one with a quieter board. Throwing here also
+      // removes the partial profile, so the user is never left with pads that
+      // look assigned and do nothing.
+      throw new Error(
+        describeAudioImportFailures(audioFailures, audioSources.length),
+      );
+    }
 
     // Step 3: Import page metadata (single transaction)
     await importPageMetadata(db, exportData.pageMetadata, profileId, now);
@@ -856,6 +951,25 @@ async function importProfileCore(
       } catch (cleanupError) {
         console.error(
           `Failed to clean up partially imported profile ID: ${profileId}`,
+          cleanupError,
+        );
+      }
+    }
+
+    // And the audio, which the profile delete above could not reach: it
+    // decides what to remove from the profile's pads, and a failure between
+    // step 2 and step 4 means those pads were never written. Whatever the
+    // surviving pads do still name is kept, so this can never take a sound
+    // out from under another profile.
+    if (createdAudioIds.length > 0) {
+      try {
+        const removed = await deleteUnreferencedAudioFiles(createdAudioIds);
+        console.log(
+          `Cleaned up ${removed} of ${createdAudioIds.length} audio files written by the failed import.`,
+        );
+      } catch (cleanupError) {
+        console.error(
+          "Failed to clean up audio files from the failed import:",
           cleanupError,
         );
       }
@@ -1066,8 +1180,14 @@ export async function importMultipleProfiles(
 
 /**
  * Imports a profile from the legacy impamp2 JSON export format.
- * Parses the data, transforms it to the current application's structure,
- * and saves it as a new profile.
+ *
+ * Parses the export into the same three arrays every other import produces —
+ * profile metadata, pages, pads — plus one `ImportAudioSource` per embedded
+ * data URL, and hands them to `importProfileCore`. It used to write all three
+ * stores itself, which is how it came to be the one import path that stamped
+ * no sync fields, hashed no audio, started no loudness analysis and reported
+ * success after swallowing every per-record failure. Sharing the core is what
+ * stops that drifting apart again.
  *
  * @param db The IDBPDatabase instance.
  * @param jsonData The JSON string content of the impamp2 export file.
@@ -1077,7 +1197,6 @@ export async function importImpamp2Profile(
   db: IDBPDatabase<ImpAmpDBSchema>,
   jsonData: string,
 ): Promise<number> {
-  let profileId: number | undefined = undefined; // Initialize profileId
   const now = new Date();
   let impamp2Data: Impamp2Export;
 
@@ -1106,295 +1225,180 @@ export async function importImpamp2Profile(
     throw new Error(`Invalid impamp2 JSON format: ${message}`);
   }
 
-  // Step 2: Create a placeholder profile name
+  // Step 2: Name the profile after the first page, as this format carries no
+  // profile name of its own.
   const firstPageKey = Object.keys(impamp2Data.pages)[0];
-  const initialProfileName = firstPageKey
+  const profileName = firstPageKey
     ? impamp2Data.pages[firstPageKey]?.name || "Imported Impamp2 Profile"
     : "Imported Impamp2 Profile";
 
-  // Create a temporary structure for createImportedProfile
-  const pseudoExportData = {
-    profile: {
-      name: initialProfileName,
-      syncType: "local" as SyncType, // Assume local sync
+  // Step 3: Translate the export into the shapes the shared import takes.
+  // `profileId` is a placeholder on both records: the importers overwrite it
+  // with the id of the profile they create.
+  const pageMetadata: PageMetadata[] = [];
+  const padConfigurations: PadConfiguration[] = [];
+  const audioSources: ImportAudioSource[] = [];
+  let nextAudioId = 1;
+
+  for (const pageNoStr in impamp2Data.pages) {
+    if (!Object.prototype.hasOwnProperty.call(impamp2Data.pages, pageNoStr))
+      continue;
+
+    const pageData = impamp2Data.pages[pageNoStr];
+    const pageIndex = parseInt(pageNoStr, 10);
+
+    if (isNaN(pageIndex)) {
+      console.warn(`Skipping page with invalid page number key: ${pageNoStr}`);
+      continue;
+    }
+
+    pageMetadata.push({
+      profileId: 0,
+      pageIndex,
+      name: pageData.name || `Page ${pageIndex + 1}`,
+      isEmergency: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (const key in pageData.pads) {
+      if (!Object.prototype.hasOwnProperty.call(pageData.pads, key)) continue;
+
+      const padData = pageData.pads[key];
+      const padIndex = getPadIndexForKey(key);
+
+      if (padIndex === undefined) {
+        console.warn(
+          `Skipping pad: No valid pad index found for key "${key}" on page ${pageIndex}.`,
+        );
+        continue;
+      }
+
+      const audioFileIds: number[] = [];
+      const source = await impamp2AudioSource(
+        padData,
+        nextAudioId,
+        pageIndex,
+        padIndex,
+      );
+      if (source) {
+        audioSources.push(source);
+        audioFileIds.push(nextAudioId);
+        nextAudioId++;
+      }
+
+      padConfigurations.push({
+        profileId: 0,
+        pageIndex,
+        padIndex,
+        keyBinding: key,
+        name: padData.name || padData.filename || `Pad ${padIndex}`,
+        audioFileIds,
+        playbackType: DEFAULT_PLAYBACK_TYPE, // impamp2 files predate the field
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+
+  return importProfileCore(
+    db,
+    {
+      exportVersion: 2,
+      exportDate: now.toISOString(),
+      profile: { name: profileName, syncType: "local" },
+      padConfigurations,
+      pageMetadata,
     },
-  };
+    audioSources,
+  );
+}
+
+/**
+ * The one sound an impamp2 pad can carry, as an import source.
+ *
+ * Returns null for a pad that genuinely has no audio — plenty of legacy pads
+ * are empty, and those import as empty pads rather than as failures. A data
+ * URL that is present but cannot be decoded is a different matter: it becomes
+ * a source whose `getBlob` rejects, so the shared importer names the file and
+ * fails the import instead of quietly handing back a silent pad.
+ *
+ * The blob is materialised here rather than in `getBlob` because the content
+ * hash needs it, and a record that lands hashless makes the next sync read and
+ * SHA-256 every audio file in the library. This path already held every
+ * decoded blob at once, so nothing is spent that was not being spent before.
+ */
+async function impamp2AudioSource(
+  padData: Impamp2Pad,
+  originalId: number,
+  pageIndex: number,
+  padIndex: number,
+): Promise<ImportAudioSource | null> {
+  const dataUrl = padData.file;
+  // Accept both proper audio MIME types and generic octet-stream (legacy V1)
+  if (
+    !dataUrl ||
+    !(
+      dataUrl.startsWith("data:audio/") ||
+      dataUrl.startsWith("data:application/octet-stream")
+    )
+  ) {
+    console.warn(
+      `Skipping audio for pad "${padData.name}" (page ${pageIndex}, pad ${padIndex}): invalid or missing audio data URL.`,
+    );
+    return null;
+  }
+
+  const name =
+    padData.filename ||
+    padData.name ||
+    `imported_audio_${pageIndex}_${padIndex}`;
 
   try {
-    // Step 3: Create the new profile entry (handles name conflicts)
-    profileId = await createImportedProfile(db, pseudoExportData, now);
-    console.log(
-      `Created base profile entry for impamp2 import with ID: ${profileId}`,
-    );
+    const parts = dataUrl.match(/^data:(.+);base64,(.+)$/);
+    if (!parts || parts.length !== 3)
+      throw new Error("Could not parse data URL format.");
 
-    // Step 4: Prepare data for bulk import (audio, pages, pads)
-    const audioToImport: {
-      originalKey: string;
-      pageIndex: number;
-      padIndex: number;
-      data: Omit<AudioFile, "id" | "createdAt">;
-    }[] = [];
-    const pagesToImport: Omit<
-      PageMetadata,
-      "id" | "createdAt" | "updatedAt"
-    >[] = [];
-    // Corrected type definition for padsToImport
-    const padsToImport: {
-      originalKey: string;
-      pageIndex: number;
-      padIndex: number;
-      data: Omit<
-        PadConfiguration,
-        "id" | "createdAt" | "updatedAt" | "audioFileId"
-      >;
-      audioOriginalKey?: string; // Moved audioOriginalKey here
-    }[] = [];
+    const mimeType = impamp2MimeType(parts[1], padData);
+    const blob = await base64ToBlob(parts[2], mimeType);
 
-    for (const pageNoStr in impamp2Data.pages) {
-      if (!Object.prototype.hasOwnProperty.call(impamp2Data.pages, pageNoStr))
-        continue;
-
-      const pageData = impamp2Data.pages[pageNoStr];
-      const pageIndex = parseInt(pageNoStr, 10);
-
-      if (isNaN(pageIndex)) {
-        console.warn(
-          `Skipping page with invalid page number key: ${pageNoStr}`,
-        );
-        continue;
-      }
-
-      console.log(`Preparing page ${pageIndex}: "${pageData.name}"`);
-      pagesToImport.push({
-        profileId,
-        pageIndex,
-        name: pageData.name || `Page ${pageIndex + 1}`,
-        isEmergency: false,
-      });
-
-      for (const key in pageData.pads) {
-        if (!Object.prototype.hasOwnProperty.call(pageData.pads, key)) continue;
-
-        const padData = pageData.pads[key];
-        const padIndex = getPadIndexForKey(key);
-
-        if (padIndex === undefined) {
-          console.warn(
-            `Skipping pad: No valid pad index found for key "${key}" on page ${pageIndex}.`,
-          );
-          continue;
-        }
-
-        const dataUrl = padData.file;
-        let audioOriginalKey: string | undefined = undefined;
-
-        // Process audio data for this pad
-        console.log(
-          `Processing pad "${padData.name}" (key: ${key}, page: ${pageIndex})`,
-        );
-        if (dataUrl) {
-          console.log(
-            `  - Data URL detected (${dataUrl.length} chars), MIME: ${dataUrl.split(";")[0].split(":")[1] || "unknown"}`,
-          );
-        }
-
-        // Accept both proper audio MIME types and generic octet-stream (legacy V1 format)
-        if (
-          dataUrl &&
-          (dataUrl.startsWith("data:audio/") ||
-            dataUrl.startsWith("data:application/octet-stream"))
-        ) {
-          try {
-            const parts = dataUrl.match(/^data:(.+);base64,(.+)$/);
-            if (!parts || parts.length !== 3)
-              throw new Error("Could not parse data URL format.");
-            let mimeType = parts[1];
-            const base64Data = parts[2];
-
-            // Fix legacy V1 MIME type: application/octet-stream should be treated as audio
-            if (mimeType === "application/octet-stream") {
-              // Try to determine actual audio format from filename or default to mp3
-              const filename = padData.filename || padData.name || "";
-              if (filename.toLowerCase().includes(".wav")) {
-                mimeType = "audio/wav";
-              } else if (filename.toLowerCase().includes(".ogg")) {
-                mimeType = "audio/ogg";
-              } else if (filename.toLowerCase().includes(".m4a")) {
-                mimeType = "audio/mp4";
-              } else {
-                // Default to mp3 for unknown legacy formats
-                mimeType = "audio/mpeg";
-              }
-              console.log(
-                `Fixed legacy MIME type for "${padData.name}": application/octet-stream -> ${mimeType}`,
-              );
-            }
-
-            const blob = await base64ToBlob(base64Data, mimeType); // Convert outside transaction
-
-            audioOriginalKey = `${profileId}_${pageIndex}_${padIndex}`; // Unique key for mapping later
-            audioToImport.push({
-              originalKey: audioOriginalKey,
-              pageIndex,
-              padIndex,
-              data: {
-                blob,
-                name:
-                  padData.filename ||
-                  padData.name ||
-                  `imported_audio_${audioOriginalKey}`,
-                type: mimeType,
-              },
-            });
-          } catch (error) {
-            console.error(
-              `Failed to prepare audio for pad "${padData.name}" (key: ${key}, page: ${pageIndex}):`,
-              error,
-            );
-            // Audio won't be added, audioOriginalKey remains undefined
-          }
-        } else {
-          console.warn(
-            `Skipping audio for pad "${padData.name}" (key: ${key}, page: ${pageIndex}): Invalid or missing audio data URL.`,
-          );
-          if (
-            dataUrl &&
-            typeof dataUrl === "string" &&
-            dataUrl.startsWith("data:")
-          ) {
-            console.warn(
-              `  - Unsupported data URL format: ${dataUrl.substring(0, 50)}...`,
-            );
-          }
-        }
-
-        padsToImport.push({
-          originalKey: key,
-          pageIndex,
-          padIndex,
-          data: {
-            profileId,
-            pageIndex,
-            padIndex,
-            keyBinding: key,
-            name: padData.name || padData.filename || `Pad ${padIndex}`,
-            audioFileIds: [], // Initialize with empty array
-            playbackType: DEFAULT_PLAYBACK_TYPE,
-          },
-          audioOriginalKey, // Link pad to prepared audio
-        });
-      } // End pad loop
-    } // End page loop
-
-    // Step 5: Bulk import audio files (single transaction)
-    const audioKeyToIdMap = new Map<string, number>();
-    if (audioToImport.length > 0) {
-      const audioTx = db.transaction("audioFiles", "readwrite");
-      const audioStore = audioTx.objectStore("audioFiles");
-      const audioPromises = audioToImport.map((item) =>
-        audioStore
-          .add({ ...item.data, createdAt: now })
-          .then((id) => {
-            audioKeyToIdMap.set(item.originalKey, id);
-            console.log(`Added audio: ${item.data.name}, New ID: ${id}`);
-          })
-          .catch((err) =>
-            console.error(`Failed to add audio ${item.data.name}:`, err),
-          ),
-      );
-      await Promise.all(audioPromises);
-      await audioTx.done;
-      console.log(
-        `Imported ${audioKeyToIdMap.size} audio files from impamp2 data.`,
-      );
-    }
-
-    // Step 6: Bulk import page metadata (single transaction)
-    if (pagesToImport.length > 0) {
-      const pageTx = db.transaction("pageMetadata", "readwrite");
-      const pageStore = pageTx.objectStore("pageMetadata");
-      const pagePromises = pagesToImport.map((pageData) =>
-        pageStore
-          .add({ ...pageData, createdAt: now, updatedAt: now })
-          .catch((err) =>
-            console.error(
-              `Failed to add page metadata for pageIndex ${pageData.pageIndex}:`,
-              err,
-            ),
-          ),
-      );
-      await Promise.all(pagePromises);
-      await pageTx.done;
-      console.log(
-        `Imported ${pagesToImport.length} page metadata entries from impamp2 data.`,
-      );
-    }
-
-    // Step 7: Bulk import pad configurations (single transaction)
-    if (padsToImport.length > 0) {
-      const padTx = db.transaction("padConfigurations", "readwrite");
-      const padStore = padTx.objectStore("padConfigurations");
-      const padPromises = padsToImport.map((item) => {
-        const audioFileId = item.audioOriginalKey
-          ? audioKeyToIdMap.get(item.audioOriginalKey)
-          : undefined;
-        if (item.audioOriginalKey && audioFileId === undefined) {
-          console.warn(
-            `Could not find imported audio ID for original key ${item.audioOriginalKey} (Pad key: ${item.originalKey}, Page: ${item.pageIndex})`,
-          );
-        }
-        // Construct the final pad data with the new structure
-        const finalPadData: Omit<PadConfiguration, "id"> = {
-          ...item.data,
-          audioFileIds: audioFileId !== undefined ? [audioFileId] : [], // Set as array
-          playbackType: DEFAULT_PLAYBACK_TYPE, // impamp2 files predate the field
-          createdAt: now,
-          updatedAt: now,
-        };
-        return padStore
-          .add(finalPadData)
-          .catch((err) =>
-            console.error(
-              `Failed to add pad config for key ${item.originalKey}, pageIndex ${item.pageIndex}:`,
-              err,
-            ),
-          );
-      });
-      await Promise.all(padPromises);
-      await padTx.done;
-      console.log(
-        `Imported ${padsToImport.length} pad configurations from impamp2 data.`,
-      );
-    }
-
-    console.log(
-      `Successfully completed impamp2 profile import. New profile ID: ${profileId}`,
-    );
-    return profileId;
+    return {
+      originalId,
+      name,
+      type: mimeType,
+      size: blob.size,
+      hash: await computeBlobHash(blob),
+      getBlob: async () => blob,
+    };
   } catch (error) {
     console.error(
-      "Critical error during impamp2 profile import process:",
+      `Failed to decode audio for pad "${padData.name}" (page ${pageIndex}, pad ${padIndex}):`,
       error,
     );
-    // Attempt cleanup if profile was created
-    if (profileId !== undefined) {
-      console.warn(
-        `Attempting to delete partially imported impamp2 profile ID: ${profileId}`,
-      );
-      try {
-        await deleteProfile(profileId); // Use the DB utility function
-        console.log(
-          `Cleaned up partially imported impamp2 profile ID: ${profileId}`,
-        );
-      } catch (cleanupError) {
-        console.error(
-          `Failed to clean up partially imported impamp2 profile ID: ${profileId}`,
-          cleanupError,
-        );
-      }
-    }
-    throw error; // Re-throw the original error
+    return {
+      originalId,
+      name,
+      type: "audio/mpeg",
+      getBlob: () => Promise.reject(error),
+    };
   }
+}
+
+/**
+ * The real MIME type behind an impamp2 data URL.
+ *
+ * V1 exports label every sound `application/octet-stream`, which no decoder
+ * will touch, so the filename is the only evidence of the actual format.
+ */
+function impamp2MimeType(declared: string, padData: Impamp2Pad): string {
+  if (declared !== "application/octet-stream") return declared;
+
+  const filename = (padData.filename || padData.name || "").toLowerCase();
+  if (filename.includes(".wav")) return "audio/wav";
+  if (filename.includes(".ogg")) return "audio/ogg";
+  if (filename.includes(".m4a")) return "audio/mp4";
+  // Default to mp3 for unknown legacy formats
+  return "audio/mpeg";
 }
 
 // --- ZIP Export/Import ---

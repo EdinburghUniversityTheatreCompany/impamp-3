@@ -109,4 +109,17 @@ describe("buildImportedProfileFields", () => {
     expect(fields.lastBackedUpAt).toBe(NOW.getTime());
     expect(fields.createdAt).toBe(NOW);
   });
+
+  it("carries the sync bookkeeping a merge decides on", () => {
+    // Without it every field's local timestamp reads as 0, so the first sync
+    // after an import hands the remote each differing field — reverting
+    // settings the importer had just chosen, with no conflict raised.
+    const fields = build();
+
+    expect(fields._created).toBe(NOW.getTime());
+    expect(fields._modified).toBe(NOW.getTime());
+    expect(fields._fieldsModified?.normalisation).toBe(NOW.getTime());
+    expect(fields._fieldsModified?.activePadBehavior).toBe(NOW.getTime());
+    expect(fields._fieldsModified?.backupReminderPeriod).toBe(NOW.getTime());
+  });
 });

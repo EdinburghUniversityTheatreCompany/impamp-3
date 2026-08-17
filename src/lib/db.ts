@@ -439,11 +439,31 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             .catch((err) => console.error("Error counting profiles:", err));
         }
       },
-      blocked() {
-        console.error("IndexedDB blocked.");
+      blocked(currentVersion, blockedVersion) {
+        // This side wanted to upgrade and something else is holding the old
+        // version open. Nothing here can close that connection, so say which
+        // versions are involved — the fix is to close the other tab.
+        console.error(
+          `IndexedDB upgrade from ${currentVersion} to ${blockedVersion} is blocked. ` +
+            "ImpAmp is open in another tab or window; close it to finish updating.",
+        );
       },
-      blocking() {
-        console.warn("IndexedDB blocking.");
+      blocking(currentVersion, blockedVersion, event) {
+        // *This* connection is the one in the way: another tab is trying to
+        // upgrade and cannot while we hold the old version open. Closing is
+        // the documented response, and it used to only log — so the other
+        // tab's `openDB` never settled, `getDb()` there stayed pending
+        // forever, and everything awaiting it (the profile store's load,
+        // usePadConfigurations, ensureDefaultProfile) hung with no error and
+        // no UI. A blank soundboard that reloading could not fix.
+        console.warn(
+          `Closing this IndexedDB connection (version ${currentVersion}) so another can upgrade to ${blockedVersion}.`,
+        );
+        (event.target as IDBDatabase | null)?.close();
+        // Drop the memoised connection too, the way `terminated` does: the
+        // next getDb() then opens the new schema instead of handing out a
+        // closed database.
+        dbPromise = null;
       },
       terminated() {
         console.error("IndexedDB terminated.");
@@ -804,14 +824,29 @@ export async function clearAudioFileDriveIds(profileId: number): Promise<void> {
   await tx.done;
 }
 
-// Collects the unique audio file IDs referenced across a set of pad configurations.
+/**
+ * The unique audio file ids some pad in this set still names.
+ *
+ * The single answer to "what counts as referenced", because the alternative
+ * has already gone wrong: `deleteProfile` used to compute this itself and knew
+ * about the pre-V3 singular `audioFileId` while this did not, so a pad left on
+ * the old shape was "referenced" to the delete and "orphaned" to the clean-up
+ * button — which then deleted a sound that pad was still using. Such pads
+ * should not exist, but `migrateStoreV4` catches a per-record update error and
+ * continues, so a record whose rewrite failed keeps the old shape forever.
+ */
 export function collectReferencedAudioFileIds(
-  padConfigurations: Pick<PadConfiguration, "audioFileIds">[],
+  padConfigurations: (Pick<PadConfiguration, "audioFileIds"> & {
+    audioFileId?: number;
+  })[],
 ): Set<number> {
   const audioFileIds = new Set<number>();
   padConfigurations.forEach((pad) => {
     if (pad.audioFileIds && pad.audioFileIds.length > 0) {
       pad.audioFileIds.forEach((id) => audioFileIds.add(id));
+    }
+    if (typeof pad.audioFileId === "number") {
+      audioFileIds.add(pad.audioFileId);
     }
   });
   return audioFileIds;
@@ -857,6 +892,68 @@ function separateOrphans(
   }
 
   return { orphanedIds, referencedIds };
+}
+
+/**
+ * Drops decoded-buffer cache entries for audio whose records have gone.
+ *
+ * Dynamic import for the same reason the other callers use one: `audio/cache`
+ * reaches Web Audio, and `db.ts` is imported by code that runs on the server.
+ */
+async function clearAudioCacheEntries(ids: Iterable<number>): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  try {
+    const { clearCachedAudioBuffer } = await import("./audio/cache");
+    let cleared = 0;
+    for (const id of ids) {
+      if (clearCachedAudioBuffer(id)) cleared++;
+    }
+    return cleared;
+  } catch (error) {
+    console.warn("Failed to clear audio cache entries:", error);
+    return 0;
+  }
+}
+
+/**
+ * Deletes specific audio files, keeping any a pad still names.
+ *
+ * For cleaning up after a write that got halfway: an import creates its audio
+ * records before the pads that reference them, so a failure in between leaves
+ * files no pad has ever named. `deleteProfile` cannot reach those — it derives
+ * what to delete from the profile's pad configurations, and in that window
+ * there are none — and nothing else sweeps them without the user pressing the
+ * orphan-cleanup button. A 2 GB restore that failed at the last step used to
+ * leave 2 GB behind, and each retry left another copy.
+ *
+ * Deciding and deleting share one transaction, so nothing can start
+ * referencing a file between the two.
+ *
+ * @param candidateIds The ids this operation created
+ * @returns How many were actually deleted
+ */
+export async function deleteUnreferencedAudioFiles(
+  candidateIds: Iterable<number>,
+): Promise<number> {
+  const candidates = new Set(candidateIds);
+  if (candidates.size === 0) return 0;
+
+  const db = await getDb();
+  const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
+  const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
+  const audioStore = tx.objectStore("audioFiles");
+
+  const deletedIds: number[] = [];
+  for (const audioFileId of candidates) {
+    if (referencedIds.has(audioFileId)) continue;
+    await audioStore.delete(audioFileId);
+    deletedIds.push(audioFileId);
+  }
+  await tx.done;
+
+  await clearAudioCacheEntries(deletedIds);
+  return deletedIds.length;
 }
 
 export async function findOrphanedAudioFiles(): Promise<{
@@ -1131,21 +1228,18 @@ export async function deleteProfile(id: number): Promise<void> {
 
     // Audio files can be shared between profiles (sync deduplicates by hash and
     // by name), so collect everything still referenced by the remaining profiles
-    // and keep those files.
-    const stillReferencedIds = new Set<number>();
+    // and keep those files. Through the shared helper, so this cannot drift
+    // from what the orphan scan and the clean-up button call referenced — it
+    // already had, over the legacy singular `audioFileId`.
+    const survivingPads: PadConfiguration[] = [];
     let refCursor = await padStore.openCursor();
     while (refCursor) {
-      const pad = refCursor.value as PadConfiguration & {
-        audioFileId?: number;
-      };
-      if (pad.profileId !== id) {
-        pad.audioFileIds?.forEach((audioId) => stillReferencedIds.add(audioId));
-        if (typeof pad.audioFileId === "number") {
-          stillReferencedIds.add(pad.audioFileId);
-        }
+      if (refCursor.value.profileId !== id) {
+        survivingPads.push(refCursor.value);
       }
       refCursor = await refCursor.continue();
     }
+    const stillReferencedIds = collectReferencedAudioFileIds(survivingPads);
 
     // Delete the audio files this profile exclusively referenced
     const deletableAudioFileIds = new Set(
