@@ -58,11 +58,16 @@ The database holds users, profiles, shares and sessions. Losing it unlinks
 every server-synced profile, but it is not the only copy of anyone's
 soundboard: the profile data is also in each collaborator's IndexedDB, and the
 audio is in Drive. Still, back it up — WAL mode means a plain `cp` can capture
-a torn state, so use SQLite's own backup:
+a torn state, so the copy has to go through SQLite's own backup API.
 
-```sh
-kamal app exec --reuse 'sqlite3 /data/impamp.db ".backup /data/backup.db"'
-```
+**The runnable command lives in the comment block above `volumes:` in
+[`config/deploy.yml`](../config/deploy.yml)**, next to the volume it copies. It
+is deliberately not repeated here. This file used to carry its own copy, which
+ran `sqlite3` through `kamal app exec` — and the app image is `node:alpine`,
+which has no `sqlite3` binary, so that command could never have worked. The
+same command was corrected in `deploy.yml` and not here, which left the broken
+copy sitting in the file a maintainer actually opens during an incident. One
+command, one home.
 
 ## How a user turns it on
 
