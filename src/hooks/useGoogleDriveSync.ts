@@ -427,7 +427,16 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         fileId,
         profileId,
         getFreshTokenInfo(),
-        callbacks,
+        // Mirrored, exactly as `synchronizeProfile` above is. The raw
+        // `callbacks` object has no `onWarnings` at all — it is optional on
+        // `SyncStatusCallbacks` — so a warning raised while applying a hand-made
+        // resolution went nowhere: not to the panel, not to the store, and the
+        // user was told the resolution had succeeded. The mirror is what
+        // supplies that channel; passing the raw object was the whole bug.
+        mirrorToProfile(profileId, callbacks, {
+          setConflicts,
+          setConflictData,
+        }),
         handleTokenRefresh,
       );
     },
