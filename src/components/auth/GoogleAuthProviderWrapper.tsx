@@ -71,15 +71,27 @@ const GoogleAuthProviderWrapper: React.FC<GoogleAuthProviderWrapperProps> = ({
         </div>
       );
     } else {
-      // In production, maybe just log an error and don't render the provider
       console.error("Google Client ID is not configured.");
-      // Render children without the provider in production if ID is missing
-      return <>{children}</>;
     }
   }
 
+  // The provider is mounted even with no client id, deliberately.
+  //
+  // Dropping it was worse than it looked: `useGoogleLogin` throws outright
+  // without an enclosing provider, and it is called during render, so an
+  // unconfigured build did not degrade to "Drive sign-in does nothing" — it
+  // failed `next build` while prerendering /_not-found, with a stack trace
+  // naming the hook and nothing about configuration. That is why a bare
+  // `docker build .`, the command the README gives, could not produce an
+  // image at all unless someone happened to pass --build-arg.
+  //
+  // With a placeholder the tree renders, the app works, and Drive sign-in
+  // fails at the point someone clicks it — which is the honest place for a
+  // missing credential to surface.
   return (
-    <GoogleOAuthProvider clientId={clientId}>{children}</GoogleOAuthProvider>
+    <GoogleOAuthProvider clientId={clientId ?? "unconfigured.invalid"}>
+      {children}
+    </GoogleOAuthProvider>
   );
 };
 
