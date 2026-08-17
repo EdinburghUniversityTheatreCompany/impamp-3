@@ -60,6 +60,11 @@ soundboard: the profile data is also in each collaborator's IndexedDB, and the
 audio is in Drive. Still, back it up — WAL mode means a plain `cp` can capture
 a torn state, so the copy has to go through SQLite's own backup API.
 
+**If server-hosted audio is enabled, the database is only half the backup.**
+The bucket then holds the only copy of those sounds, and the two have to be
+captured and restored as a pair, in that order. See
+[Backups](wasabi-audio.md#backups) in `wasabi-audio.md`.
+
 **The runnable command lives in the comment block above `volumes:` in
 [`config/deploy.yml`](../config/deploy.yml)**, next to the volume it copies. It
 is deliberately not repeated here. This file used to carry its own copy, which

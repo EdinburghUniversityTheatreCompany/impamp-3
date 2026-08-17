@@ -113,6 +113,18 @@ ssh:
 #     sh -c 'apk add --no-cache sqlite && \
 #            sqlite3 /data/impamp.db ".backup /backup/impamp-$(date +%F).db"'
 #
+# THAT IS ONLY HALF THE BACKUP. Server-hosted audio is on below
+# (IMPAMP_S3_BUCKET), so the bucket holds the only copy of those sounds and the
+# two must be captured and restored together — rows without objects leave pads
+# pointing at nothing. Run the database copy FIRST, then mirror the bucket with
+# a command that never deletes:
+#
+#   rclone copy wasabi:impamp-audio /backup/impamp-audio --transfers 8
+#
+# The order is not arbitrary and the `copy`-not-`sync` is not a preference;
+# docs/wasabi-audio.md's "Backups" section explains why each is the only safe
+# choice, and gives the reconciliation query to check a restore.
+#
 # The container runs as uid 1000 (`node`) rather than root. A volume created
 # from this image onwards already lands owned by 1000, but a volume that
 # predates that change is still owned by root, and the app cannot write to it.

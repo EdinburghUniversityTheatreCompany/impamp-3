@@ -128,13 +128,122 @@ the admin.
 - **Backups become mandatory.** Once audio is hosted, the SQLite database is no
   longer the only thing worth backing up, and the two must be restored
   together: `audio_objects` rows without their bucket objects leave pads
-  pointing at nothing, and orphaned objects are billed but unreachable.
+  pointing at nothing, and orphaned objects are billed but unreachable. The
+  procedure is [below](#backups).
 - **The 90-day minimum** means deleting a lot of audio does not reduce the next
   bill much. Size the cap against what you expect to _accumulate_, not what is
   live at any moment.
 - **Deleting a user** cascades their references away, but the sweep that
   removes now-orphaned bucket objects runs at delete time through the API. A
   user removed directly in SQL will leave objects behind.
+
+## Backups
+
+The database and the bucket are two halves of one dataset. Backing up either
+alone produces a restore that is broken in one of two directions, so this
+section covers both and, more importantly, the order to take them in.
+
+### Why the order matters
+
+The two writes go in opposite directions. An upload puts the bytes in the
+bucket first (the presigned PUT) and records the rows second (`recordUpload`).
+A delete reverses it: `releaseReference` removes the rows, then the route
+removes the object. With the app still serving traffic, neither snapshot order
+is safe on its own:
+
+- **Bucket first, then database** — an upload landing in the gap gives the
+  restored database a row whose object the bucket copy predates. A pad pointing
+  at nothing.
+- **Database first, then bucket** — a delete landing in the gap gives the
+  restored database a row whose object the bucket copy has already lost. The
+  same broken pad, from the opposite cause.
+
+So: **snapshot the database first, then mirror the bucket with a command that
+never deletes.** That closes both hazards rather than trading one for the
+other. An upload in the gap becomes an orphaned object — billed and
+unreachable, but reclaimable and harmless to playback. A delete in the gap is
+harmless too, because the non-deleting mirror still holds the object the
+restored rows name.
+
+This works because object keys are content-addressed —
+`audio/<first two hex of hash>/<hash>.<ext>` — so a key's bytes never change. A
+mirror that only ever adds can never hold a stale version of anything, which is
+the property that makes "never delete" a safe default rather than a compromise.
+
+### Taking the backup
+
+```sh
+# 1. The database FIRST. Run it on the host: the app image is node:alpine and
+#    has no sqlite3 binary. WAL is in play, so this must go through SQLite's
+#    own backup API, not `cp`.
+docker run --rm -v impamp_data:/data -v "$PWD:/backup" alpine \
+  sh -c 'apk add --no-cache sqlite && \
+         sqlite3 /data/impamp.db ".backup /backup/impamp-$(date +%F).db"'
+
+# 2. Then the bucket. `copy`, not `sync` — copy never removes anything from
+#    the destination, which is what makes step 1 running first safe.
+rclone copy wasabi:impamp-audio /backup/impamp-audio --transfers 8 --progress
+```
+
+Take them close together and keep the pair: a database snapshot is only
+restorable alongside a bucket mirror taken after it. Naming both for the same
+date is enough.
+
+The `wasabi` remote is an ordinary rclone S3 remote. A read-only key is worth
+the five minutes here, since a backup job never needs to write:
+
+```ini
+[wasabi]
+type = s3
+provider = Wasabi
+endpoint = s3.eu-west-1.wasabisys.com
+region = eu-west-1
+access_key_id = <read-only key>
+secret_access_key = <read-only secret>
+```
+
+Worth turning on as well, in the Wasabi console, because it protects against
+the case a scheduled mirror cannot — someone deleting objects and the mirror
+faithfully running afterwards:
+
+- **Bucket versioning**, so an overwritten or deleted object is still
+  retrievable from Wasabi itself.
+- **Object lock** in compliance mode if the data justifies it. Note this
+  interacts with the 90-day minimum retention above: locked objects cannot be
+  deleted early, so they are billed for at least the lock period.
+
+### Restoring, and checking the restore
+
+Restore both halves, then reconcile before letting users back in. The check is
+worth running because it is cheap and it tells you which of the two failure
+directions you have:
+
+```sh
+# Hashes the bucket actually holds.
+rclone lsf -R --files-only wasabi:impamp-audio/audio \
+  | sed 's|.*/||; s|\..*||' | sort > /tmp/bucket-hashes
+
+# Hashes the database expects.
+sqlite3 /data/impamp.db 'SELECT hash FROM audio_objects ORDER BY hash;' \
+  | sort > /tmp/db-hashes
+
+# Rows with no object: pads that will point at nothing. This is the one that
+# needs action — restore a newer bucket mirror, or delete the rows.
+comm -13 /tmp/bucket-hashes /tmp/db-hashes
+
+# Objects with no row: billed and unreachable. Safe to leave, safe to delete.
+comm -23 /tmp/bucket-hashes /tmp/db-hashes
+```
+
+Both lists empty means the pair is consistent. If the first list is not empty,
+the bucket mirror is older than the database snapshot — which is the ordering
+mistake this section exists to prevent.
+
+The `rclone`, `sed`, `comm` and `sqlite3` pipelines above were verified against
+local fixtures, including that `rclone copy` leaves a destination-only object in
+place where `rclone sync` deletes it. The Wasabi-specific parts — the remote
+definition, versioning and object lock — are **not** verified against a live
+bucket; nobody writing this had credentials for one.
 
 ## Testing without Wasabi
 
