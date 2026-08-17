@@ -224,17 +224,47 @@ export function storageKeyForHash(
 }
 
 /**
- * Whether any stored profile still names this sound.
+ * Whether a profile *this user can reach* still names this sound.
  *
  * Deleting from a library used to drop the bucket object the moment the last
  * *reference* went, without asking whether a board still played it — so an
  * owner tidying their library could make their own live profile 404.
+ *
+ * Scoped to the holder's own profiles and the ones shared with their email
+ * address, because the unscoped version was a denial of service. profile_audio
+ * is rebuilt from whatever a writer puts in `data`, and any signed-in account
+ * may create a profile naming any hash, so a stranger could permanently freeze
+ * someone else's storage allowance and stop them deleting their own file — with
+ * no way for the victim to see who had done it, the squatting profile being
+ * invisible to them. A third party's board is not a board this caller is about
+ * to silence.
+ *
+ * Link shares are deliberately not counted: holding a link grants access to one
+ * profile, not membership of it, and there is no way to enumerate them for a
+ * user anyway (see listProfilesForUser).
  */
-export function hashIsUsedByAnyProfile(hash: string): boolean {
+export function hashIsUsedByReachableProfile(
+  hash: string,
+  userId: number,
+  email: string,
+): boolean {
   return (
     queryOne<{ one: number }>(
-      "SELECT 1 AS one FROM profile_audio WHERE hash = ? LIMIT 1",
+      `SELECT 1 AS one
+         FROM profile_audio pa
+         JOIN profiles p ON p.id = pa.profile_id
+        WHERE pa.hash = ?
+          AND (
+            p.owner_id = ?
+            OR EXISTS (
+              SELECT 1 FROM profile_shares s
+               WHERE s.profile_id = p.id AND s.email = ?
+            )
+          )
+        LIMIT 1`,
       hash,
+      userId,
+      email,
     ) !== undefined
   );
 }

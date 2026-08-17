@@ -834,6 +834,54 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(409);
   });
 
+  it("does not let a stranger's profile pin a sound you host", async () => {
+    // The guard asked whether *any* profile in the deployment names the hash,
+    // and profile_audio is rebuilt from whatever a writer puts in `data`. So
+    // naming someone else's hash in a board of your own was enough to freeze
+    // their storage allowance and stop them removing their own file — with no
+    // way for them to see who did it, since the squatting profile is invisible
+    // to them.
+    const victim = signIn(1, { approved: true });
+    const squatter = signIn(2);
+    const { hash } = await storeAudio(victim.token, "pinned", KB);
+
+    profileWith(squatter.user.id, [hash!]);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: victim.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      removed: true,
+      objectDeleted: true,
+    });
+  });
+
+  it("still refuses to delete a sound a profile shared with you is using", async () => {
+    // The guard exists so nobody silences a live board they can actually
+    // reach. A board shared with you is one of those; a stranger's is not.
+    const owner = signIn(1, { approved: true });
+    const editor = signIn(2, { approved: true });
+    const { hash } = await storeAudio(editor.token, "collaborative", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+    upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: editor.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it("re-checks the quota when the bytes behind a held hash change", async () => {
     // The presigned PUT signs only `host`, so a holder can replace the object
     // with something far larger and commit again. Re-committing a hash you
