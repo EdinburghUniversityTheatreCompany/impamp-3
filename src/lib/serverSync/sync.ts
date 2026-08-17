@@ -18,10 +18,15 @@
 import {
   getAudioFileIdsForProfile,
   getProfile,
+  hasProfileChangedSince,
   updateProfile,
   type Profile,
 } from "@/lib/db";
-import { detectProfileConflicts, type ConflictOrigin } from "@/lib/syncUtils";
+import {
+  describesSameSyncState,
+  detectProfileConflicts,
+  type ConflictOrigin,
+} from "@/lib/syncUtils";
 import {
   getSyncState,
   isReadOnlyForSync,
@@ -361,13 +366,45 @@ async function pullMergePush(
       return { status: "conflict", conflicts };
     }
 
+    // Marking audio as hosted has to reach the blob, and it touches no pad, so
+    // `hasProfileChangedSince` cannot see it. Read from `raw`, which is what
+    // this device believed before `markHostedAudio` had its say.
+    const hostedAudioIsNew = raw.audioFiles.some(
+      (file) => file.hash && hostedHashes.has(file.hash) && !file.serverHosted,
+    );
+
+    // Nothing the other side does not already know.
+    //
+    // Every push bumps the server's version, every bump publishes an SSE
+    // change, and every change triggers a sync — so a sync that pushed
+    // unconditionally closed a loop: two tabs with the same profile open
+    // pushed to each other at SSE latency for as long as both stayed open,
+    // each round a full GET, a full local read, a merge and a full PUT. Two
+    // tabs of one browser were enough, because the origin id that suppresses
+    // an echo is per tab.
+    //
+    // The comparison has to be the honest one, not `JSON.stringify` of the
+    // two blobs: the ids in them are per-device, so literally identical
+    // boards never compare equal. `describesSameSyncState` is that comparison.
+    // On a 304 there is no remote blob to compare against, and the question
+    // becomes "has anything changed here since we last synced".
+    const nothingToSend =
+      !hostedAudioIsNew &&
+      (remote
+        ? describesSameSyncState(mergedData, remote.data)
+        : !(await hasProfileChangedSince(
+            profileId,
+            localData._lastSyncTimestamp ?? 0,
+          )));
+
     mergedData._lastSyncTimestamp = Date.now();
 
-    // Two separate reasons not to push, and both must hold it back: the
-    // server refusing writes, and us choosing not to make any. Gating on the
-    // first alone let a follower keep writing to a profile it could write to
-    // — which is the one thing following promises not to do.
-    if (remoteReadOnly || following) {
+    // Three separate reasons not to push, and any of them holds it back: the
+    // server refusing writes, us choosing not to make any, and having nothing
+    // to say. Gating on the first alone let a follower keep writing to a
+    // profile it could write to — which is the one thing following promises
+    // not to do.
+    if (remoteReadOnly || following || nothingToSend) {
       warnings.push(
         ...(await updateLocalData(profileId, mergedData, localReadAt)),
       );

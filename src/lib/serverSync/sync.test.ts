@@ -11,6 +11,7 @@ const dbMocks = vi.hoisted(() => ({
   getProfile: vi.fn(),
   updateProfile: vi.fn(),
   getAudioFileIdsForProfile: vi.fn(),
+  hasProfileChangedSince: vi.fn(),
 }));
 const dataAccessMocks = vi.hoisted(() => ({
   getLocalProfileSyncData: vi.fn(),
@@ -153,6 +154,9 @@ beforeEach(() => {
   });
   driveMocks.uploadMissingAudioFiles.mockResolvedValue(undefined);
   dbMocks.getAudioFileIdsForProfile.mockResolvedValue(new Set<number>());
+  // The default is "the user has edited something since the last sync", which
+  // is the only state in which most of these tests are interesting at all.
+  dbMocks.hasProfileChangedSince.mockResolvedValue(true);
   serverAudioMocks.uploadProfileAudio.mockResolvedValue({
     hosted: [],
     warnings: [],
@@ -845,5 +849,140 @@ describe("applyServerConflictResolution", () => {
       /Someone else saved/,
     );
     expect(dataAccessMocks.updateLocalData).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The push has to stop somewhere, or two clients talk to each other forever.
+ *
+ * Every push bumps the server's version, every bump publishes an SSE change
+ * event, and every change event triggers a sync. A sync that always pushed
+ * therefore closed the loop: two tabs with the same profile open hammered each
+ * other at SSE latency for as long as both stayed open, doing a full GET, a
+ * full local read, a merge and a full PUT each round. Two tabs of the *same*
+ * browser were enough, because the origin id that suppresses a client's echo
+ * of its own write is per tab.
+ *
+ * The hard part is that "nothing changed" cannot be answered by comparing the
+ * two blobs: `audioFileIds` and every `audioFiles[].id` are IndexedDB
+ * autoincrement keys, so two devices holding identical boards hold blobs that
+ * differ on every sound.
+ */
+describe("syncServerProfile — pushing only when there is something to say", () => {
+  it("does not push when the server already holds everything the merge produced", async () => {
+    // Answered so that a push, if one happened, would still succeed — the
+    // assertion below has to fail on the push itself, not on a stray error.
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+    const identical = syncData("local pad", BEFORE_SYNC);
+    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(identical);
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("local pad", BEFORE_SYNC),
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+    expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+    // The merge still lands locally, and the version we pulled is still
+    // recorded — not pushing is not the same as not syncing.
+    expect(dataAccessMocks.updateLocalData).toHaveBeenCalled();
+    expect(dbMocks.updateProfile).toHaveBeenCalledWith(
+      PROFILE_ID,
+      expect.objectContaining({ serverVersion: 5 }),
+    );
+  });
+
+  it("does not push when only this device's audio ids differ", async () => {
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+    // The steady state between two devices: the same sound, named 50 here and
+    // 60 there, with the content hash agreeing. Compared literally these blobs
+    // differ on every pad, which is what kept the loop running.
+    const withSound = (id: number, name: string): ProfileSyncData => {
+      const data = syncData("local pad", BEFORE_SYNC);
+      data.padConfigurations[0].audioFileIds = [id];
+      (
+        data.padConfigurations[0] as { audioFileHashes?: (string | null)[] }
+      ).audioFileHashes = ["hash-A"];
+      data.audioFiles = [{ id, name, type: "audio/mpeg", hash: "hash-A" }];
+      return data;
+    };
+
+    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(
+      withSound(50, "horn.mp3"),
+    );
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: withSound(60, "horn.mp3"),
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+    expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+  });
+
+  it("still pushes when the merge really does carry something new", async () => {
+    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(
+      syncData("renamed here", AFTER_SYNC),
+    );
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: syncData("local pad", BEFORE_SYNC),
+    });
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+    expect(apiMocks.pushServerProfile).toHaveBeenCalled();
+  });
+
+  it("does not push on a 304 when nothing has changed here since the last sync", async () => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    dbMocks.hasProfileChangedSince.mockResolvedValue(false);
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+    expect(apiMocks.pushServerProfile).not.toHaveBeenCalled();
+  });
+
+  it("pushes on a 304 when audio has just been hosted, which no pad records", async () => {
+    apiMocks.fetchServerProfile.mockResolvedValue(null);
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 4 });
+    dbMocks.hasProfileChangedSince.mockResolvedValue(false);
+
+    const unhosted = syncData("local pad", BEFORE_SYNC);
+    unhosted.audioFiles = [
+      { id: 50, name: "horn.mp3", type: "audio/mpeg", hash: "hash-A" },
+    ];
+    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(unhosted);
+    dbMocks.getAudioFileIdsForProfile.mockResolvedValue(new Set([50]));
+    serverAudioMocks.uploadProfileAudio.mockResolvedValue({
+      hosted: ["hash-A"],
+      warnings: [],
+      aborted: false,
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+    // Hosting touches no pad and no page, so the "did anything change here"
+    // question cannot see it. Skipping the push would leave collaborators
+    // unable to find bytes that are sitting on the server.
+    expect(apiMocks.pushServerProfile).toHaveBeenCalled();
   });
 });

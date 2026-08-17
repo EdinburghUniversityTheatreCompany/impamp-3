@@ -794,6 +794,98 @@ export function resolveSyncedPadAudio(
   return { audioFileIds, keptLocal: false, unresolved };
 }
 
+/**
+ * A sync blob reduced to what it actually tells the *other* side.
+ *
+ * Two devices holding identical boards do not hold identical blobs, and cannot:
+ * `audioFileIds` are IndexedDB autoincrement keys, so id 3 names a different
+ * recording on every device, and the same is true of both settings maps keyed
+ * by them and of every `audioFiles[].id`. Compared literally, two blobs saying
+ * exactly the same thing look different every time.
+ *
+ * So each of those is dropped in favour of the hash-keyed twin that says the
+ * same thing in terms every device shares, audio is keyed by content hash
+ * rather than by id, and the profile is reduced to the fields the merge
+ * actually compares — the rest are this device's answers about itself and were
+ * never the remote's business.
+ *
+ * Key order is normalised too, because one side built its blob and the other
+ * parsed it back out of JSON.
+ */
+const remoteFacingView = (data: ProfileSyncData): unknown => {
+  const sortedStamps = (
+    stamps: Record<string, number> | undefined,
+    include: (key: string) => boolean,
+  ) =>
+    Object.entries(stamps ?? {})
+      .filter(([key]) => include(key))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+  const itemView = (item: Record<string, unknown>) => {
+    const supersededByTwin = (key: string) => {
+      const twin = DERIVED_HASH_TWINS[key];
+      return twin !== undefined && item[twin] !== undefined;
+    };
+    const says = (key: string) => isContentField(key) && !supersededByTwin(key);
+    return {
+      fields: Object.keys(item)
+        .filter(says)
+        .sort()
+        .map((key) => [key, item[key]] as const),
+      stamps: sortedStamps(
+        item._fieldsModified as Record<string, number> | undefined,
+        (key) => !supersededByTwin(key),
+      ),
+    };
+  };
+
+  const profile = data.profile as unknown as Record<string, unknown>;
+  return {
+    profile: {
+      fields: Object.keys(profile)
+        .filter(isComparableProfileField)
+        .sort()
+        .map((key) => [key, profile[key]] as const),
+      stamps: sortedStamps(
+        data.profile._fieldsModified,
+        isComparableProfileField,
+      ),
+    },
+    pads: [...data.padConfigurations]
+      .sort((a, b) => a.pageIndex - b.pageIndex || a.padIndex - b.padIndex)
+      .map((pad) => itemView(pad as unknown as Record<string, unknown>)),
+    pages: [...data.pageMetadata]
+      .sort((a, b) => a.pageIndex - b.pageIndex)
+      .map((page) => itemView(page as unknown as Record<string, unknown>)),
+    audio: (data.audioFiles ?? [])
+      .map((file) => ({
+        key: file.hash ?? `name:${file.name}`,
+        type: file.type,
+        driveFileId: file.driveFileId ?? null,
+        serverHosted: file.serverHosted ?? false,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
+};
+
+/**
+ * Whether two sync blobs would tell a reader the same thing.
+ *
+ * Used to decide whether a merge is worth pushing. It has to be true whenever
+ * the remote already knows everything the merge produced, and false whenever it
+ * does not — a false positive silently drops the user's edit, and a false
+ * negative is only wasted work.
+ *
+ * @param a - One blob
+ * @param b - The other
+ * @returns true when neither would teach the other anything
+ */
+export const describesSameSyncState = (
+  a: ProfileSyncData,
+  b: ProfileSyncData,
+): boolean =>
+  JSON.stringify(remoteFacingView(a)) === JSON.stringify(remoteFacingView(b));
+
 /** What the user chose for one conflicting item, or for one of its fields. */
 export type ResolutionChoice =
   "local" | "remote" | "keep" | "delete" | "accept" | "discard";
