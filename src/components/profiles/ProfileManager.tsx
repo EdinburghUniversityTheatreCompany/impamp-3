@@ -16,7 +16,6 @@ import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
-import { useUIStore } from "@/store/uiStore";
 import { useShallow } from "zustand/react/shallow";
 
 /**
@@ -126,14 +125,10 @@ export default function ProfileManager() {
     })),
   );
 
-  // Escape dismisses the manager — but only while it is the topmost thing on
-  // screen. `ProfileCard` opens modals from inside this panel, and among
-  // capture-phase listeners on `window` the earlier registration wins, which is
-  // always this one. Without the `!isModalOpen` half, Escape in a confirm
-  // dialog opened from here would close the manager out from under it and
-  // leave the dialog stranded.
-  const isModalOpen = useUIStore((s) => s.isModalOpen);
-  useEscapeToClose(isProfileManagerOpen && !isModalOpen, closeProfileManager);
+  // Escape dismisses the manager. `ProfileCard` opens modals from inside this
+  // panel, and the hook's stack is what makes that safe: a dialog opened from
+  // here keeps its own Escape, and closing it hands Escape back to this.
+  useEscapeToClose(isProfileManagerOpen, closeProfileManager);
 
   const router = useRouter();
 
