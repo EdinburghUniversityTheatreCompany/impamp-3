@@ -250,6 +250,92 @@ function disposeTrackSource(source: TrackSource): void {
 }
 
 /**
+ * Forgets a streamed track's scheduled trim-end cut.
+ *
+ * Anything that ends a track early — a stop, a fade, the rAF backstop getting
+ * there first — takes the cut over, and a timer that outlives its track would
+ * otherwise fire against a pad that has since been retriggered.
+ */
+function cancelScheduledTrimEnd(track: ActiveTrack): void {
+  if (track.trimEndTimer !== undefined) {
+    clearTimeout(track.trimEndTimer);
+    track.trimEndTimer = undefined;
+  }
+}
+
+/**
+ * Schedules the end of a streamed track's trim window on the audio clock.
+ *
+ * Buffer playback gets this for free: `source.start(when, offset, duration)`
+ * is honoured by the audio thread whatever the main thread is doing. A media
+ * element has no equivalent, and the end point used to be policed only from
+ * `playbackLoopTick` — which `requestAnimationFrame` schedules, and which a
+ * browser stops calling in a hidden tab. Since `context.ts` deliberately keeps
+ * audio running when the tab is hidden, switching windows mid-cue played the
+ * whole file: the untrimmed tail, which is normally the part that was trimmed
+ * off precisely because it should never go to air.
+ *
+ * Two mechanisms, because neither is sufficient alone. The gain ramp is what
+ * is *heard*: it is scheduled on the audio thread, so it is sample-accurate
+ * and immune to throttling. The timer is only bookkeeping — releasing the
+ * element and clearing the UI state — and a hidden tab may run it as much as a
+ * second late, by which time the track has been silent for a second anyway.
+ *
+ * Called whenever the real playback position becomes known or changes, and
+ * replaces any previous schedule rather than adding to it.
+ *
+ * @param playbackKey - The key the track holds
+ * @param track - The streamed track to cut
+ */
+function scheduleStreamingTrimEnd(
+  playbackKey: string,
+  track: ActiveTrack,
+): void {
+  cancelScheduledTrimEnd(track);
+
+  if (track.source.kind !== "media" || track.trimEnd === undefined) return;
+  // A fade has already taken over the level and the ending; leave it alone.
+  if (track.isFading) return;
+
+  const element = track.source.element;
+  const secondsLeft = track.trimEnd - element.currentTime;
+  if (!Number.isFinite(secondsLeft)) return;
+
+  const remaining = Math.max(0, secondsLeft);
+
+  try {
+    const context = getAudioContext();
+    const gain = track.gainNode.gain;
+    const cutAt = context.currentTime + remaining;
+    const rampFrom = Math.max(
+      context.currentTime,
+      cutAt - HARD_STOP_FADE_SECONDS,
+    );
+    const level = gain.value;
+
+    gain.cancelScheduledValues(context.currentTime);
+    gain.setValueAtTime(level, context.currentTime);
+    gain.setValueAtTime(level, rampFrom);
+    gain.linearRampToValueAtTime(0, cutAt);
+  } catch (error) {
+    // A level that could not be scheduled still has to end; the timer below
+    // is the part that guarantees it does.
+    console.warn(
+      `[Audio Playback] Could not schedule the trim-end ramp for key ${playbackKey}:`,
+      error,
+    );
+  }
+
+  track.trimEndTimer = setTimeout(() => {
+    track.trimEndTimer = undefined;
+    console.log(
+      `[Audio Playback] Streaming playback reached trim end for key: ${playbackKey}`,
+    );
+    cleanupTrackIfCurrent(playbackKey, track);
+  }, remaining * 1000);
+}
+
+/**
  * Removes all bookkeeping for a track and stops the monitoring loop if idle.
  *
  * Does not touch the underlying source — callers decide whether the source
@@ -270,8 +356,11 @@ function clearTrackState(playbackKey: string): void {
 function cleanupTrack(playbackKey: string): void {
   const track = activeTracks.get(playbackKey);
 
-  if (track && track.source.kind === "media") {
-    disposeMediaSource(track.source);
+  if (track) {
+    cancelScheduledTrimEnd(track);
+    if (track.source.kind === "media") {
+      disposeMediaSource(track.source);
+    }
   }
 
   clearTrackState(playbackKey);
@@ -284,6 +373,8 @@ function cleanupTrack(playbackKey: string): void {
  * released and the new track's state is left untouched.
  */
 function cleanupTrackIfCurrent(playbackKey: string, track: ActiveTrack): void {
+  cancelScheduledTrimEnd(track);
+
   if (activeTracks.get(playbackKey) === track) {
     cleanupTrack(playbackKey);
   } else {
@@ -534,9 +625,20 @@ export function playBlobStreaming(
             // Ignore — playback simply starts from the beginning
           }
         }
+
+        scheduleStreamingTrimEnd(playbackKey, track);
       },
       { once: true },
     );
+
+    // Rescheduled once playback is genuinely under way, because that is when
+    // the deadline and the playback position first agree: `play()` resolves
+    // asynchronously, so a cut measured at `loadedmetadata` starts its
+    // wall-clock countdown slightly before the audio does. Not `once` — a
+    // resume after any pause has to move the deadline with it.
+    element.addEventListener("playing", () => {
+      scheduleStreamingTrimEnd(playbackKey, track);
+    });
 
     // Handlers are guarded by track identity so a source that was replaced
     // (e.g. via "restart" behavior) can't remove its successor's state
@@ -697,6 +799,11 @@ exposeE2EHook("__impampActiveSounds", () =>
   Array.from(activeTracks.entries()).map(([key, track]) => ({
     key,
     name: track.name,
+    // Which pipeline is playing is invisible in the UI too, and the trim end
+    // is enforced completely differently by each: natively for a buffer,
+    // scheduled for a media element. A test about the second has to be able
+    // to prove it got the second.
+    sourceKind: track.source.kind,
     playbackType: track.playbackType,
     currentAudioFileId: track.currentAudioFileId,
     currentAudioIndex: track.currentAudioIndex,
@@ -719,6 +826,10 @@ export function fadeOutTrack(
 
   // If track doesn't exist or is already fading, do nothing
   if (!track || track.isFading) return false;
+
+  // The fade owns the level and the ending from here; a scheduled trim-end
+  // ramp would fight it for the same gain node.
+  cancelScheduledTrimEnd(track);
 
   try {
     const context = getAudioContext();
@@ -807,6 +918,8 @@ export function stopTrack(playbackKey: string): boolean {
 
   const track = activeTracks.get(playbackKey);
   if (!track) return false;
+
+  cancelScheduledTrimEnd(track);
 
   // Invalidate any trigger for *this pad* that is still waiting on an async
   // load. Deliberately not global: stopping one pad must not cancel another's.
@@ -992,8 +1105,12 @@ function playbackLoopTick() {
 
       elapsed = Math.max(0, element.currentTime - track.trimStart);
 
-      // Enforce the trim end manually — buffer sources handle this natively
-      // via source.start(when, offset, duration), media elements don't
+      // Backstop for the scheduled cut in `scheduleStreamingTrimEnd`. That is
+      // what actually ends a trimmed streamed track, and it is what works in a
+      // hidden tab, where this loop is not running at all. This stays for the
+      // cases the schedule cannot see — a media element that reports a
+      // position ahead of where it was seeked, say — and it costs a
+      // comparison per frame.
       if (
         track.trimEnd !== undefined &&
         element.currentTime >= track.trimEnd &&

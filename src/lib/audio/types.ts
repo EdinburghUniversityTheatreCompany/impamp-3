@@ -85,6 +85,15 @@ export interface ActiveTrack {
   duration: number;
   trimStart: number;
   trimEnd?: number;
+  /**
+   * The timer that ends a streamed track at its trim end.
+   *
+   * Only media element sources carry one. A buffer source is given its window
+   * up front via `source.start(when, offset, duration)` and needs nothing
+   * else; a media element has no equivalent, so the cut is scheduled instead
+   * of polled — see `scheduleStreamingTrimEnd`.
+   */
+  trimEndTimer?: ReturnType<typeof setTimeout>;
   padInfo: {
     profileId: number;
     pageIndex: number;
