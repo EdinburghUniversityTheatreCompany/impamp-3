@@ -16,6 +16,7 @@ const dbMocks = vi.hoisted(() => ({
 const dataAccessMocks = vi.hoisted(() => ({
   getLocalProfileSyncData: vi.fn(),
   updateLocalData: vi.fn(),
+  backfillDriveFileIdsFromRemote: vi.fn(),
 }));
 const driveMocks = vi.hoisted(() => ({
   downloadMissingAudioFiles: vi.fn(),
@@ -148,6 +149,7 @@ beforeEach(() => {
   dbMocks.getProfile.mockResolvedValue(localProfile());
   dbMocks.updateProfile.mockResolvedValue(undefined);
   dataAccessMocks.updateLocalData.mockResolvedValue([]);
+  dataAccessMocks.backfillDriveFileIdsFromRemote.mockResolvedValue(undefined);
   driveMocks.downloadMissingAudioFiles.mockResolvedValue({
     warnings: [],
     retryable: [],
@@ -467,6 +469,51 @@ describe("syncServerProfile — who may publish audio to Drive", () => {
     expect(driveMocks.uploadMissingAudioFiles).toHaveBeenCalledOnce();
   });
 
+  it("learns what the remote already has in Drive before deciding what to upload", async () => {
+    // The Drive engine backfills first and says why; the server engine uploaded
+    // at the very top of the sync, before it had fetched anything, and never
+    // called the backfill at all. A device holding the audio without a
+    // per-profile Drive id — after an .iaz restore, a duplicated profile, or a
+    // profile switched from local to server sync — therefore uploaded the whole
+    // library again and left two Drive files per sound.
+    dbMocks.getProfile.mockResolvedValue(
+      localProfile({ googleDriveFolderId: "folder-1", serverRole: "owner" }),
+    );
+    const remote = syncData("local pad", BEFORE_SYNC);
+    remote.audioFiles = [
+      {
+        id: 60,
+        name: "horn.mp3",
+        type: "audio/mpeg",
+        hash: "hash-A",
+        driveFileId: "drive-60",
+      },
+    ];
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: remote,
+    });
+
+    await syncServerProfile(PROFILE_ID, callbacks(), withDrive);
+
+    expect(dataAccessMocks.backfillDriveFileIdsFromRemote).toHaveBeenCalledWith(
+      remote.audioFiles,
+      PROFILE_ID,
+    );
+    const fetched = apiMocks.fetchServerProfile.mock.invocationCallOrder[0];
+    const backfilled =
+      dataAccessMocks.backfillDriveFileIdsFromRemote.mock
+        .invocationCallOrder[0];
+    const uploaded =
+      driveMocks.uploadMissingAudioFiles.mock.invocationCallOrder[0];
+    expect(fetched).toBeLessThan(backfilled);
+    expect(backfilled).toBeLessThan(uploaded);
+  });
+
   it("does not upload for an editor who joined by link", async () => {
     dbMocks.getProfile.mockResolvedValue(
       localProfile({
@@ -774,6 +821,7 @@ describe("applyServerConflictResolution", () => {
     vi.clearAllMocks();
     dbMocks.updateProfile.mockResolvedValue(undefined);
     dataAccessMocks.updateLocalData.mockResolvedValue([]);
+    dataAccessMocks.backfillDriveFileIdsFromRemote.mockResolvedValue(undefined);
   });
 
   it("writes on the share token when that is how we have access", async () => {

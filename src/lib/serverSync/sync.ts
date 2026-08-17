@@ -33,6 +33,7 @@ import {
   ownsDriveFolder,
 } from "@/lib/syncState";
 import {
+  backfillDriveFileIdsFromRemote,
   getLocalProfileSyncData,
   updateLocalData,
 } from "@/lib/googleDrive/dataAccess";
@@ -174,33 +175,8 @@ async function performServerSync(
       return { status: "skipped", reason: `Paused until ${resumeTime}` };
     }
 
-    // Audio must reach its host before the blob that references it does,
-    // otherwise a collaborator pulls pads pointing at files that aren't there
-    // yet. Only the owner uploads, and only when Drive is actually connected.
-    //
-    // "Only the owner" has to be checked, not assumed. A collaborator's
-    // `googleDriveFolderId` was copied out of the owner's blob, so an editor
-    // reaching this line would write into someone else's Drive folder — and
-    // `uploadMissingAudioFiles` treats per-file failures as non-fatal, so it
-    // failed silently and the sounds never arrived. Ownership is "unknown" for
-    // profiles written before `serverRole` existed; those keep the old
-    // behaviour, because assuming they are collaborators would stop real
-    // owners publishing at all.
     const warnings: string[] = [];
     const { audio, audioIsExplicit } = getSyncState(profile);
-    if (
-      audio === "googleDrive" &&
-      ownsDriveFolder(profile) &&
-      drive.tokenInfo &&
-      profile.googleDriveFolderId
-    ) {
-      await uploadMissingAudioFiles(
-        profileId,
-        drive.tokenInfo,
-        drive.onTokenRefresh,
-        profile.googleDriveFolderId,
-      );
-    }
 
     // Optional, gated server-hosted audio. Silently does nothing when the
     // deployment hosts none or the account is not approved, which is the
@@ -222,6 +198,8 @@ async function performServerSync(
     }
 
     if (!profile.serverProfileId) {
+      // Nothing to pull, so there is nothing to learn from first.
+      await publishAudioToDrive(profile, drive);
       return await adoptProfile(profileId, callbacks, hostedHashes);
     }
 
@@ -240,6 +218,48 @@ async function performServerSync(
     onStatusChange("error");
     return { status: "error", error: message };
   }
+}
+
+/**
+ * Puts this profile's audio in Drive, for the profiles whose audio lives there.
+ *
+ * Audio must reach its host before the blob that references it does, otherwise
+ * a collaborator pulls pads pointing at files that aren't there yet.
+ *
+ * "Only the owner" has to be checked, not assumed. A collaborator's
+ * `googleDriveFolderId` was copied out of the owner's blob, so an editor
+ * reaching this line would write into someone else's Drive folder — and
+ * `uploadMissingAudioFiles` treats per-file failures as non-fatal, so it failed
+ * silently and the sounds never arrived. Ownership is "unknown" for profiles
+ * written before `serverRole` existed; those keep the old behaviour, because
+ * assuming they are collaborators would stop real owners publishing at all.
+ *
+ * Call this *after* the remote blob has been read and backfilled, never before:
+ * the decision about what still needs uploading is made purely on
+ * `driveFileIds[profileId]`, so a device that holds the audio without a
+ * per-profile Drive id — after an `.iaz` restore, a duplicated profile, or a
+ * profile switched from local to server sync — would otherwise upload the whole
+ * library again and leave two Drive files per sound.
+ */
+async function publishAudioToDrive(
+  profile: Profile,
+  drive: DriveAccess,
+): Promise<void> {
+  const { audio } = getSyncState(profile);
+  if (
+    audio !== "googleDrive" ||
+    !ownsDriveFolder(profile) ||
+    !drive.tokenInfo ||
+    !profile.googleDriveFolderId
+  ) {
+    return;
+  }
+  await uploadMissingAudioFiles(
+    profile.id!,
+    drive.tokenInfo,
+    drive.onTokenRefresh,
+    profile.googleDriveFolderId,
+  );
 }
 
 /** First sync of a local profile: create it on the server as-is. */
@@ -287,6 +307,16 @@ async function pullMergePush(
     // it in.
     knownAccess: profile.serverRole,
   });
+
+  // What the remote already knows about where the audio lives, adopted before
+  // deciding what still needs uploading. The Drive engine has always done this
+  // in this order and says why; the server engine uploaded first and never
+  // backfilled at all, so it re-uploaded files the remote blob was already
+  // naming.
+  if (remote?.data.audioFiles?.length) {
+    await backfillDriveFileIdsFromRemote(remote.data.audioFiles, profileId);
+  }
+  await publishAudioToDrive(profile, drive);
 
   // 304: the server is where we left it. Local edits, if any, still need
   // pushing, so carry on with the version we already know.
