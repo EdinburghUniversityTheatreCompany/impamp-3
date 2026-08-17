@@ -293,10 +293,17 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
       });
 
       if (profileId !== undefined) {
-        syncStatusActions.patch(profileId, {
-          error: outcome.ok ? null : (outcome.error ?? null),
-          warnings: outcome.warnings,
-        });
+        if (outcome.ok && plan.fieldUpdates.syncType === "local") {
+          // Unlinked. Every field of the status — the last sync time, the
+          // conflicts, the conflict data — describes a link that no longer
+          // exists, and nothing else ever removes an entry from this map.
+          syncStatusActions.clear(profileId);
+        } else {
+          syncStatusActions.patch(profileId, {
+            error: outcome.ok ? null : (outcome.error ?? null),
+            warnings: outcome.warnings,
+          });
+        }
       }
       return outcome;
     },

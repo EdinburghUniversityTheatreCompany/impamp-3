@@ -56,8 +56,8 @@ export default function Home() {
       ? "You are following this profile — stop following it to make changes."
       : "You have view-only access to this profile.";
   });
-  const incrementEmergencySoundsVersion = useProfileStore(
-    (state) => state.incrementEmergencySoundsVersion,
+  const incrementPadConfigsVersion = useProfileStore(
+    (state) => state.incrementPadConfigsVersion,
   ); // Get the action
   const requestSync = useProfileStore((state) => state.requestSync);
   // Bumped by sync after it applies a remote change; see the bank-metadata
@@ -185,8 +185,9 @@ export default function Home() {
               ...prev,
               [bankIndex]: newIsEmergency,
             }));
-            // Increment version only if state actually changed
-            incrementEmergencySoundsVersion();
+            // Invalidate every cached copy of pad data, the keyboard's
+            // emergency set included, only if the state actually changed
+            incrementPadConfigsVersion();
             console.log(
               `Set emergency status for bank ${bankNumber} to ${newIsEmergency}, triggered emergency sounds refresh`,
             );

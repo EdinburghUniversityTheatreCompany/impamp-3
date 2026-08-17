@@ -56,9 +56,19 @@ export interface LazyModalOptions<T = unknown> extends BaseModalOptions {
  * @returns Object with modal functions
  */
 export function useModal() {
+  // Actions only, deliberately. This hook used to subscribe to `isModalOpen`
+  // as well, whether the caller wanted it or not, and it is reached from
+  // `PadGrid → usePadInteractions → useFormModal → useModal` — so opening or
+  // closing *any* modal re-rendered the grid and all 48 of its pads. That is
+  // exactly the cost `usePadInteractions` selects `openModal` and `closeModal`
+  // individually to avoid, and says so in a comment, defeated one hook down.
+  //
+  // Nothing ever read the `isModalOpen` this hook returned: `ModalRenderer`,
+  // `useKeyboardListener` and `useIsAnyOverlayOpen` all take it from the store
+  // themselves, which is what a component that genuinely re-renders on modal
+  // state should keep doing.
   const openModal = useUIStore((state) => state.openModal);
   const closeModal = useUIStore((state) => state.closeModal);
-  const isModalOpen = useUIStore((state) => state.isModalOpen);
 
   /**
    * Opens a confirmation modal with the given options
@@ -135,6 +145,5 @@ export function useModal() {
     openContentModal,
     openLazyModal,
     closeModal: close,
-    isModalOpen,
   };
 }

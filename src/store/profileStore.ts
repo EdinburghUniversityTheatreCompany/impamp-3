@@ -29,6 +29,7 @@ import { convertBankNumberToIndex } from "@/lib/bankUtils";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
+import { syncStatusActions } from "@/store/syncStatusStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 import { getSyncState } from "@/lib/syncState";
 
@@ -48,10 +49,20 @@ interface ProfileState {
   isEditMode: boolean; // Track if we're in edit mode (shift key)
   isDeleteMoveMode: boolean; // Track if we're in delete and move mode
   isLoading: boolean;
-  error: string | null;
   isProfileManagerOpen: boolean; // Track if profile manager modal is open
-  emergencySoundsVersion: number; // Track changes to emergency sounds configuration
-  padConfigsVersion: number; // Incremented after sync to trigger pad grid refresh
+  /**
+   * The single invalidation signal for every cached copy of pad data.
+   *
+   * There are three copies — the grid's, the keyboard listener's map and the
+   * emergency set — and the rule is that anything writing pad configurations
+   * or page metadata bumps this, once. The emergency set used to watch a
+   * second counter of its own, `emergencySoundsVersion`, which only the local
+   * edit paths bumped; `incrementEmergencySoundsVersion` appeared nowhere in
+   * src/lib, so a sync refreshed the grid and left Enter firing the sound the
+   * emergency bank held before the sync. Two counters for one fact is the same
+   * defect `usePadConfigurations` removed a hook-local `reloadToken` for.
+   */
+  padConfigsVersion: number;
   fadeoutDuration: number; // Duration in seconds for the fadeout effect
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
@@ -61,12 +72,10 @@ interface ProfileState {
   canEditActiveProfile: () => boolean;
   setDeleteMoveMode: (isActive: boolean) => void; // Set delete/move mode
   toggleDeleteMoveMode: () => void; // Toggle delete/move mode
-  incrementEmergencySoundsVersion: () => void; // Increment counter when emergency sounds change
-  incrementPadConfigsVersion: () => void; // Increment counter after sync to refresh pad grid
+  incrementPadConfigsVersion: () => void; // Invalidate every cached copy of pad data
   getFadeoutDuration: () => number; // Get the current fadeout duration
   setFadeoutDuration: (seconds: number) => void; // Set a new fadeout duration
   getActivePadBehavior: () => ActivePadBehavior; // Get the behavior for the active profile
-  setActivePadBehavior: (behavior: ActivePadBehavior) => Promise<void>; // Set the behavior for the active profile
   getNormalisationSettings: () => NormalisationSettings; // Get the loudness normalisation settings for the active profile
   setNormalisation: (settings: NormalisationSettings) => Promise<void>; // Set the loudness normalisation settings for the active profile
 
@@ -214,6 +223,24 @@ const _markProfilesBackedUpNow = async (
   return nowMs;
 };
 
+// Stamping the backup time is bookkeeping, not the export. Both export paths
+// used to funnel a failure here into `set({ error })`, which meant the caller
+// was told the export succeeded — correctly, the file exists — and the reason
+// the reminder was about to fire again went into a field with no readers.
+const _warnIfTimestampFails = async (
+  set: ProfileSetState,
+  profileIds: number[],
+): Promise<void> => {
+  try {
+    await _markProfilesBackedUpNow(set, profileIds);
+  } catch (updateError) {
+    console.warn(
+      "Profiles exported, but the backup timestamp could not be updated, so the backup reminder will fire again:",
+      updateError,
+    );
+  }
+};
+
 // subscribeWithSelector lets a non-React subscriber watch one slice —
 // `subscribe(selector, listener)` — instead of being woken by every mutation
 // of the store and diffing by hand. ClientSideInitializer alone held four
@@ -230,9 +257,7 @@ export const useProfileStore = create<ProfileState>()(
         isEditMode: false, // Default to not in edit mode
         isDeleteMoveMode: false, // Default to not in delete and move mode
         isLoading: true,
-        error: null,
         isProfileManagerOpen: false, // Profile manager modal is closed by default
-        emergencySoundsVersion: 0, // Initial version for emergency sounds tracking
         padConfigsVersion: 0,
         fadeoutDuration: 3, // Default fadeout duration in seconds
         syncRequestQueue: {},
@@ -246,7 +271,7 @@ export const useProfileStore = create<ProfileState>()(
         needsReauth: false,
 
         fetchProfiles: async () => {
-          set({ isLoading: true, error: null });
+          set({ isLoading: true });
           try {
             // Ensure the default profile exists before fetching
             await ensureDefaultProfile();
@@ -273,12 +298,7 @@ export const useProfileStore = create<ProfileState>()(
             }
           } catch (err) {
             console.error("Failed to fetch profiles:", err);
-            const errorMessage =
-              err instanceof Error ? err.message : "An unknown error occurred";
-            set({
-              error: `Failed to load profiles: ${errorMessage}`,
-              isLoading: false,
-            });
+            set({ isLoading: false });
           }
         },
 
@@ -293,10 +313,22 @@ export const useProfileStore = create<ProfileState>()(
             // on an editable profile would otherwise stay on across a switch
             // to one that cannot be edited, leaving its pads fully editable
             // and both banners stacked on top of each other.
+            //
+            // The bank goes back to the first one for the same class of
+            // reason. Banks 11-20 are opt-in per profile — `setCurrentPageIndex`
+            // refuses any index >= 10 the active profile has no page metadata
+            // for — and a profile switch bypassed that check entirely. Being on
+            // bank 16 in a profile that has it and switching to one that does
+            // not gave 48 empty pads with no bank tab selected, and in edit mode
+            // a drop then wrote a padConfiguration at a pageIndex with no
+            // pageMetadata: no tab is ever drawn for it, `setCurrentPageIndex`
+            // refuses to navigate to it, and it syncs in that state. Bank 1
+            // always exists, so resetting is cheap and cannot be wrong.
             set({
               activeProfileId: id,
               isEditMode: false,
               isDeleteMoveMode: false,
+              ...(previousId !== id ? { currentPageIndex: 0 } : {}),
             });
             // Pad configurations are not loaded here: `usePadConfigurations`
             // is keyed on the active profile, so switching it is the trigger.
@@ -431,21 +463,28 @@ export const useProfileStore = create<ProfileState>()(
          */
         canEditActiveProfile: () => {
           const { profiles, activeProfileId } = get();
+          // Nothing selected: there is nothing to refuse, and the write paths
+          // all bail on a null profile id anyway.
+          if (activeProfileId === null) return true;
+
           const active = profiles.find((p) => p.id === activeProfileId);
-          return active ? getSyncState(active).canEdit : true;
+          if (active) return getSyncState(active).canEdit;
+
+          // An id with no profile behind it. Almost always the initial load:
+          // `activeProfileId` is rehydrated from localStorage synchronously at
+          // store creation, while `profiles` stays empty until fetchProfiles()
+          // resolves. This used to answer "yes" for that whole window, so for
+          // the first frames after a reload on a followed or view-only profile
+          // Shift entered edit mode and a drop was accepted — with no VIEW ONLY
+          // banner, since `app/page.tsx` derives that from the same lookup and
+          // finds nothing to explain. Those are exactly the edits the next sync
+          // destroys, which is the reason this gate exists at all. "I do not
+          // know yet" has to answer no.
+          return false;
         },
 
         incrementPadConfigsVersion: () => {
           set((state) => ({ padConfigsVersion: state.padConfigsVersion + 1 }));
-        },
-
-        incrementEmergencySoundsVersion: () => {
-          console.log(
-            "Emergency sounds configuration changed, incrementing version",
-          );
-          set((state) => ({
-            emergencySoundsVersion: state.emergencySoundsVersion + 1,
-          }));
         },
 
         clearSyncRequest: (profileId: number) => {
@@ -493,11 +532,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to create profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to create profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -515,11 +549,6 @@ export const useProfileStore = create<ProfileState>()(
             }));
           } catch (error) {
             console.error(`Failed to update profile ${id}:`, error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to update profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -537,14 +566,14 @@ export const useProfileStore = create<ProfileState>()(
             set((state) => ({
               profiles: state.profiles.filter((p) => p.id !== id),
             }));
+            // The profile is gone, so its sync status is describing nothing.
+            // `syncStatusStore.byProfileId` had no route to shrinking at all —
+            // it only ever grew, for the life of the tab — and `clear` was
+            // written for exactly this and then never called.
+            syncStatusActions.clear(id);
             // Removed: await get().fetchProfiles();
           } catch (error) {
             console.error(`Failed to delete profile ${id}:`, error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to delete profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -585,11 +614,6 @@ export const useProfileStore = create<ProfileState>()(
             return results;
           } catch (error) {
             console.error("Failed to import multiple profiles:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profiles: ${errorMessage}` });
             throw error; // Re-throw for UI handling
           }
         },
@@ -639,11 +663,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -675,11 +694,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import impamp2 profile:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import impamp2 profile: ${errorMessage}` });
             throw error; // Re-throw so the UI can catch it
           }
         },
@@ -746,13 +760,11 @@ export const useProfileStore = create<ProfileState>()(
                   }
                   throw error;
                 }
-                try {
-                  await _markProfilesBackedUpNow(set, profileIds);
-                } catch (updateError) {
-                  set({
-                    error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-                  });
-                }
+                // The archive is on disk, so this is a successful export
+                // whatever happens next. A failed timestamp update only means
+                // the backup reminder will fire again, which is the safe way
+                // round; it used to be reported into a store field nobody read.
+                await _warnIfTimestampFails(set, profileIds);
                 return true;
               }
             }
@@ -769,25 +781,14 @@ export const useProfileStore = create<ProfileState>()(
               zipBlob !== null && _triggerBlobDownload(zipBlob, filename);
 
             if (success) {
-              try {
-                await _markProfilesBackedUpNow(set, profileIds);
-              } catch (updateError) {
-                set({
-                  error: `Profiles exported, but failed to update backup timestamp: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
-                });
-              }
+              await _warnIfTimestampFails(set, profileIds);
             } else {
-              set({ error: `Failed to trigger download for profile export.` });
+              console.error("Failed to trigger download for profile export.");
             }
 
             return success;
           } catch (error) {
             console.error("Failed to export profiles as ZIP:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to export profiles: ${errorMessage}` });
             throw error;
           }
         },
@@ -823,11 +824,6 @@ export const useProfileStore = create<ProfileState>()(
             return newProfileId;
           } catch (error) {
             console.error("Failed to import profile from sync data:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to connect profile: ${errorMessage}` });
             throw error;
           }
         },
@@ -852,11 +848,6 @@ export const useProfileStore = create<ProfileState>()(
             return results;
           } catch (error) {
             console.error("Failed to import profiles from ZIP:", error);
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to import profiles: ${errorMessage}` });
             throw error;
           }
         },
@@ -898,56 +889,6 @@ export const useProfileStore = create<ProfileState>()(
           return activeProfile?.normalisation ?? DEFAULT_NORMALISATION;
         },
 
-        setActivePadBehavior: async (behavior: ActivePadBehavior) => {
-          console.log(
-            `[ProfileStore] setActivePadBehavior called with behavior: ${behavior}`,
-          ); // Log received value
-          const { activeProfileId } = get();
-          if (activeProfileId === null) {
-            console.warn(
-              "Cannot set active pad behavior: No active profile selected.",
-            );
-            return;
-          }
-
-          try {
-            // Persist change to DB
-            await updateProfile(activeProfileId, {
-              activePadBehavior: behavior,
-            });
-
-            // Update state
-            set((state) => ({
-              profiles: state.profiles.map((p) =>
-                p.id === activeProfileId
-                  ? { ...p, activePadBehavior: behavior, updatedAt: new Date() }
-                  : p,
-              ),
-            }));
-            // Log the state *after* update to verify
-            const updatedProfile = get().profiles.find(
-              (p) => p.id === activeProfileId,
-            );
-            console.log(
-              `[ProfileStore] State updated for profile ${activeProfileId}. New behavior: ${updatedProfile?.activePadBehavior}`,
-            );
-          } catch (error) {
-            console.error(
-              `Failed to set activePadBehavior for profile ${activeProfileId}:`,
-              error,
-            );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({
-              error: `Failed to set active pad behavior: ${errorMessage}`,
-            });
-            // Re-throw might be useful depending on how calling code handles errors
-            // throw error;
-          }
-        },
-
         setNormalisation: async (settings: NormalisationSettings) => {
           const { activeProfileId } = get();
           if (activeProfileId === null) {
@@ -972,13 +913,14 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to set normalisation settings for profile ${activeProfileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({
-              error: `Failed to set normalisation settings: ${errorMessage}`,
-            });
+            // Said out loud, because this is the one place a write failure has
+            // no other symptom: the control simply snaps back to where it was,
+            // with the explanation previously going into a store field that
+            // had no readers. The store's other write failures either throw to
+            // a caller that alerts, or are alerted about by the pad hooks.
+            alert(
+              `Could not save the loudness settings: ${error instanceof Error ? error.message : "unknown error"}`,
+            );
           }
         },
 
@@ -998,7 +940,6 @@ export const useProfileStore = create<ProfileState>()(
             tokenExpiresAt: expiresAt,
             isGoogleSignedIn: true,
             needsReauth: false,
-            error: null, // Clear any previous auth errors
           });
         },
 
@@ -1078,11 +1019,6 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to pause sync for profile ${profileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to pause sync: ${errorMessage}` });
             throw error;
           }
         },
@@ -1106,11 +1042,6 @@ export const useProfileStore = create<ProfileState>()(
               `Failed to resume sync for profile ${profileId}:`,
               error,
             );
-            const errorMessage =
-              error instanceof Error
-                ? error.message
-                : "An unknown error occurred";
-            set({ error: `Failed to resume sync: ${errorMessage}` });
             throw error;
           }
         },

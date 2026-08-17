@@ -12,7 +12,6 @@ import { useUIStore } from "@/store/uiStore";
 import {
   PadConfiguration,
   DEFAULT_PLAYBACK_TYPE,
-  isEmergencyPage,
   upsertPadConfiguration,
 } from "@/lib/db";
 import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
@@ -45,9 +44,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
   const { currentPageIndex, padConfigs, refreshPadConfigs, hasInteractedRef } =
     params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const incrementEmergencySoundsVersion = useProfileStore(
-    (state) => state.incrementEmergencySoundsVersion,
-  );
   const requestSync = useProfileStore((state) => state.requestSync);
   // Consumed by PadGrid, so a bare subscription meant opening *any* modal
   // re-rendered the grid's whole handler tree.
@@ -133,13 +129,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
             );
           }
 
-          // Reaches the grid and the keyboard alike — they read one source.
+          // Reaches the grid, the keyboard and the emergency set alike —
+          // they all watch the one version counter.
           refreshPadConfigs();
           requestSync(activeProfileId);
-
-          if (await isEmergencyPage(activeProfileId, currentPageIndex)) {
-            incrementEmergencySoundsVersion();
-          }
         },
       });
     },
@@ -148,7 +141,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
       currentPageIndex,
       padConfigs,
       refreshPadConfigs,
-      incrementEmergencySoundsVersion,
       requestSync,
       openFormModal,
     ],
@@ -207,17 +199,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
           refreshPadConfigs();
           requestSync(activeProfileId);
           console.log(`Removed single sound from pad ${padIndex}`);
-
-          const isEmergency = await isEmergencyPage(
-            activeProfileId,
-            currentPageIndex,
-          );
-          if (isEmergency) {
-            incrementEmergencySoundsVersion();
-            console.log(
-              `Pad removed on emergency page ${currentPageIndex}, triggered emergency sounds refresh`,
-            );
-          }
         } catch (error) {
           console.error(`Failed to remove sound from pad ${padIndex}:`, error);
           alert(`Failed to remove sound "${soundName}". Please try again.`);
@@ -241,7 +222,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
       currentPageIndex,
       padConfigs,
       refreshPadConfigs,
-      incrementEmergencySoundsVersion,
       requestSync,
       openModal,
       closeModal,

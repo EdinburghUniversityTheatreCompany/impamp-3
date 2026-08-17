@@ -1,11 +1,12 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
+import { PadConfiguration } from "@/lib/db";
 import {
-  PadConfiguration,
-  PlaybackType,
-  getPadConfigurationsForProfilePage,
-  getAllPageMetadataForProfile,
-} from "@/lib/db";
+  EmergencySound,
+  hasLoadedEmergencySounds,
+  reloadEmergencySounds,
+  takeNextEmergencySound,
+} from "@/hooks/emergencySounds";
 import {
   ensureAudioContextActive,
   stopAllAudio,
@@ -28,90 +29,9 @@ import {
 } from "@/hooks/usePadConfigurations";
 import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 
-// Interface for emergency sound configuration
-interface EmergencySound {
-  profileId: number;
-  pageIndex: number;
-  padIndex: number;
-  audioFileIds: number[];
-  playbackType: PlaybackType;
-  name?: string;
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  audioGainSettings?: Record<number, number>;
-  padGainDb?: number;
-}
-
-// Global reference to track emergency sounds and current index for round-robin
-const emergencySoundsRef: { current: EmergencySound[] } = { current: [] };
-const currentEmergencyIndexRef: { current: number } = { current: 0 };
-
 // Debounce map to prevent rapid re-triggering
 const keyDebounceMap = new Map<string, boolean>();
 const DEBOUNCE_TIME_MS = 100; // Adjust as needed
-
-// Stable identity of a loaded emergency sound set, used to detect real changes
-function describeEmergencySounds(sounds: EmergencySound[]): string {
-  return sounds.map((s) => `${s.pageIndex}:${s.padIndex}`).join(",");
-}
-
-// Load all emergency sounds from emergency pages
-async function loadEmergencySounds(
-  profileId: number,
-): Promise<EmergencySound[]> {
-  if (!profileId) return [];
-
-  try {
-    // 1. Get all pages for the profile
-    const allPages = await getAllPageMetadataForProfile(profileId);
-
-    // 2. Filter to just emergency pages
-    const emergencyPages = allPages.filter((page) => page.isEmergency);
-
-    if (emergencyPages.length === 0) {
-      console.log("No emergency pages found");
-      return [];
-    }
-
-    console.log(`Found ${emergencyPages.length} emergency pages`);
-
-    // 3. Get all configured pads for these pages
-    const allEmergencySounds: EmergencySound[] = [];
-
-    for (const page of emergencyPages) {
-      const padConfigs = await getPadConfigurationsForProfilePage(
-        profileId,
-        page.pageIndex,
-      );
-
-      // Only include pads with audio files that are not disabled
-      const configuredPads = padConfigs.filter(
-        (pad) =>
-          pad.audioFileIds && pad.audioFileIds.length > 0 && !pad.isDisabled,
-      );
-
-      // Map configured pads to EmergencySound objects
-      const emergencySoundsForPage = configuredPads.map((pad) => ({
-        profileId,
-        pageIndex: page.pageIndex,
-        padIndex: pad.padIndex,
-        audioFileIds: pad.audioFileIds!,
-        playbackType: pad.playbackType,
-        name: pad.name,
-        audioTrimSettings: pad.audioTrimSettings,
-        audioGainSettings: pad.audioGainSettings,
-        padGainDb: pad.padGainDb,
-      }));
-
-      allEmergencySounds.push(...emergencySoundsForPage);
-    }
-
-    console.log(`Loaded ${allEmergencySounds.length} emergency sounds`);
-    return allEmergencySounds;
-  } catch (error) {
-    console.error("Error loading emergency sounds:", error);
-    return [];
-  }
-}
 
 // Function to play an emergency sound
 async function playEmergencySound(sound: EmergencySound): Promise<void> {
@@ -190,10 +110,10 @@ export function useKeyboardListener() {
   );
   // Get edit mode states and setters from store
   const setEditMode = useProfileStore((state) => state.setEditMode);
-  // Get emergency sounds version to detect changes
-  const emergencySoundsVersion = useProfileStore(
-    (state) => state.emergencySoundsVersion,
-  );
+  // The emergency set is a cached copy of pad data, so it is invalidated by
+  // the counter every other copy uses. It had one of its own, bumped only by
+  // the local edit paths, so a bank a sync changed never reached the Enter key.
+  const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
   const { openSearchModal, isSearchModalOpen } = useSearchContext();
@@ -226,57 +146,15 @@ export function useKeyboardListener() {
     padConfigsRef.current = actionablePadConfigs(padConfigs, isLoadingConfigs);
   }, [padConfigs, isLoadingConfigs]);
 
-  // Reference to track if we've loaded emergency sounds
-  const hasLoadedEmergencySounds = useRef(false);
-
   // Track whether edit mode was entered by holding Shift (vs. the toolbar button)
   const editModeFromShiftRef = useRef(false);
 
-  // Function to reload emergency sounds - can be called when needed
-  const reloadEmergencySounds = useCallback(async () => {
-    console.log("Reloading emergency sounds...");
-    if (activeProfileId === null) {
-      console.log("No active profile, skipping emergency sounds load");
-      emergencySoundsRef.current = [];
-      currentEmergencyIndexRef.current = 0;
-      return;
-    }
-
-    // Dropped before the await, not after it. These refs are module-global, so
-    // they survive a profile switch, and between the switch and this load
-    // resolving Enter played the *previous* profile's emergency sound. The
-    // pad-config effect already clears its map for the same reason. The old
-    // set is kept only to decide whether the round-robin cursor should reset.
-    const previousSounds = emergencySoundsRef.current;
-    emergencySoundsRef.current = [];
-
-    // Load emergency sounds
-    const sounds = await loadEmergencySounds(activeProfileId);
-    const previousIdentity = describeEmergencySounds(previousSounds);
-    emergencySoundsRef.current = sounds;
-
-    // Only restart the round-robin when the set of sounds actually changed,
-    // otherwise keep the cursor (clamped to the new length)
-    if (previousIdentity !== describeEmergencySounds(sounds)) {
-      currentEmergencyIndexRef.current = 0;
-    } else if (sounds.length > 0) {
-      currentEmergencyIndexRef.current =
-        currentEmergencyIndexRef.current % sounds.length;
-    } else {
-      currentEmergencyIndexRef.current = 0;
-    }
-
-    hasLoadedEmergencySounds.current = true;
-    console.log(`Reloaded ${sounds.length} emergency sounds`);
-  }, [activeProfileId]);
-
-  // Effect to load emergency sounds when profile changes or when emergency sounds version changes
+  // Effect to load emergency sounds when the profile changes, or when anything
+  // has written pad configurations or page metadata — locally or via sync.
   useEffect(() => {
-    console.log(
-      `Loading emergency sounds (version: ${emergencySoundsVersion})`,
-    );
-    reloadEmergencySounds();
-  }, [activeProfileId, reloadEmergencySounds, emergencySoundsVersion]);
+    console.log(`Loading emergency sounds (version: ${padConfigsVersion})`);
+    void reloadEmergencySounds(activeProfileId);
+  }, [activeProfileId, padConfigsVersion]);
 
   const handleKeyDown = useCallback(
     async (event: KeyboardEvent) => {
@@ -374,40 +252,24 @@ export function useKeyboardListener() {
           hasInteracted.current = true;
         }
 
-        if (emergencySoundsRef.current.length > 0) {
-          const index = currentEmergencyIndexRef.current;
-          const sound = emergencySoundsRef.current[index];
-          currentEmergencyIndexRef.current =
-            (index + 1) % emergencySoundsRef.current.length; // Update index
-          console.log(
-            `[KeyboardListener] Playing emergency sound ${index + 1}/${emergencySoundsRef.current.length}: Pad ${sound.padIndex}`,
-          );
-          await playEmergencySound(sound); // Await playback
-        } else {
-          console.warn(
-            "[KeyboardListener] Enter pressed but no emergency sounds loaded.",
-          );
+        let sound = takeNextEmergencySound();
 
-          // If we haven't loaded emergency sounds yet, try loading them now
-          if (!hasLoadedEmergencySounds.current) {
-            console.log("Attempting to load emergency sounds now...");
-            await reloadEmergencySounds();
-
-            // Check again after loading
-            if (emergencySoundsRef.current.length > 0) {
-              const sound = emergencySoundsRef.current[0];
-              console.log(
-                `Found ${emergencySoundsRef.current.length} emergency sounds after loading, playing first one`,
-              );
-              await playEmergencySound(sound);
-              currentEmergencyIndexRef.current = 1; // Set index to 1 for next time
-            } else {
-              console.warn(
-                "No emergency sounds found. Make sure to mark pages as emergency in settings.",
-              );
-            }
-          }
+        // Nothing armed *and* nothing has ever tried to look: load on the spot
+        // rather than making the first Enter of a session a no-op.
+        if (!sound && !hasLoadedEmergencySounds()) {
+          console.log("Attempting to load emergency sounds now...");
+          await reloadEmergencySounds(activeProfileId);
+          sound = takeNextEmergencySound();
         }
+
+        if (!sound) {
+          console.warn(
+            "[KeyboardListener] Enter pressed but no emergency sounds are loaded. Mark a bank as emergency in edit mode.",
+          );
+          return;
+        }
+
+        await playEmergencySound(sound); // Await playback
         return; // Stop further processing
       }
 
@@ -675,7 +537,6 @@ export function useKeyboardListener() {
       currentPageIndex,
       setCurrentPageIndex,
       setEditMode,
-      reloadEmergencySounds,
       openSearchModal,
       isSearchModalOpen,
       isModalOpen,

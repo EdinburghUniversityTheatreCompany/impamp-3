@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { PlaybackType } from "@/lib/db"; // Import PlaybackType for armed tracks
+import {
+  PlaybackType,
+  extractPadPlaybackSettings,
+  getPadConfigurationsForProfilePage,
+  type PadPlaybackSettings,
+} from "@/lib/db";
 import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
@@ -19,6 +24,12 @@ export interface PlaybackState {
 }
 
 // Define the state structure for an armed track in the store
+//
+// An armed cue names a *pad*, not the sounds that pad happened to hold when it
+// was armed. The playback fields below are a snapshot, kept for three jobs that
+// all need an answer at arm time: pinning the buffers in the audio cache,
+// queueing them for preload, and labelling the row in the Armed Tracks panel.
+// They are deliberately *not* what gets played — see `playArmedTrackNow`.
 export interface ArmedTrackState {
   key: string; // Unique armed track key (e.g., `armed-${profileId}-${pageIndex}-${padIndex}`)
   name: string;
@@ -82,6 +93,68 @@ function preloadArmedTrackSounds(trackInfo: ArmedTrackState): void {
         error,
       );
     });
+}
+
+/**
+ * Fire an armed cue from the pad's configuration as it stands *now*.
+ *
+ * `ArmedTrackState` carries a copy of the pad's sounds, trim and gain, and no
+ * write path ever re-synced it: only the pad editor's "disabled" branch even
+ * knew armed tracks existed. Editing a pad, swapping it, deleting its sound or
+ * receiving a sync all left the cue pointing at the pre-edit definition, so
+ * F9 played the sound the pad held minutes earlier, at the gain it had then —
+ * and if the orphan cleanup had since removed that audio file, nothing at all.
+ * Re-reading here makes the cue mean what the board shows, which is the only
+ * reading a cue list can be driven from.
+ *
+ * The read is one keyed IndexedDB range query, and the armed sounds are pinned
+ * and preloaded already, so it costs a tick rather than a decode.
+ */
+async function playArmedTrackNow(track: ArmedTrackState): Promise<void> {
+  let pad: PadPlaybackSettings;
+  try {
+    const configs = await getPadConfigurationsForProfilePage(
+      track.padInfo.profileId,
+      track.padInfo.pageIndex,
+    );
+    // A pad with no row has no sound, which `extractPadPlaybackSettings({})`
+    // states as an empty `audioFileIds` — the same answer as an emptied pad.
+    pad = extractPadPlaybackSettings(
+      configs.find((c) => c.padIndex === track.padInfo.padIndex) ?? {},
+    );
+  } catch (error) {
+    // A database that is momentarily unreadable is a different failure from a
+    // pad that has been emptied, and a cue is a deliberate act during a show.
+    // Fall back to what was armed rather than swallowing the cue.
+    console.warn(
+      `[PlaybackStore] Could not re-read the pad behind armed track "${track.name}"; playing what was armed:`,
+      error,
+    );
+    pad = extractPadPlaybackSettings(track);
+  }
+
+  if (pad.audioFileIds.length === 0) {
+    console.warn(
+      `[PlaybackStore] Armed track "${track.name}" no longer has a sound on pad ${track.padInfo.padIndex}; nothing to play.`,
+    );
+    return;
+  }
+
+  // Imported dynamically to avoid a circular dependency.
+  const { triggerPad } = await import("@/lib/audio");
+  await triggerPad(
+    {
+      ...pad,
+      padIndex: track.padInfo.padIndex,
+      // A renamed-to-nothing pad keeps the label the cue was armed under.
+      name: pad.name ?? track.name,
+    },
+    {
+      activeProfileId: track.padInfo.profileId,
+      currentPageIndex: track.padInfo.pageIndex,
+    },
+    { logPrefix: "[PlaybackStore] armed track" },
+  );
 }
 
 export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
@@ -197,25 +270,12 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
       // Disarm synchronously so a rapid second trigger cannot fire the same cue
       get().actions.removeArmedTrack(key);
 
-      // Imported dynamically to avoid a circular dependency.
-      import("@/lib/audio").then(({ triggerPad }) =>
-        triggerPad(
-          {
-            padIndex: track.padInfo.padIndex,
-            audioFileIds: track.audioFileIds,
-            playbackType: track.playbackType,
-            name: track.name,
-            audioTrimSettings: track.audioTrimSettings,
-            audioGainSettings: track.audioGainSettings,
-            padGainDb: track.padGainDb,
-          },
-          {
-            activeProfileId: track.padInfo.profileId,
-            currentPageIndex: track.padInfo.pageIndex,
-          },
-          { logPrefix: "[PlaybackStore] armed track" },
-        ),
-      );
+      void playArmedTrackNow(track).catch((error) => {
+        console.error(
+          `[PlaybackStore] Failed to play armed track "${track.name}":`,
+          error,
+        );
+      });
     },
 
     // Action to play the next armed track — FIFO, which is what F9 means.
