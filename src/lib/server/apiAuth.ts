@@ -73,3 +73,20 @@ export function requireUser(request: NextRequest): UserRow | NextResponse {
   }
   return user;
 }
+
+/**
+ * Require an admin, or answer 404.
+ *
+ * 404 rather than 403 on purpose: the existence of an admin surface is not
+ * advertised to ordinary accounts. Written once because it was written twice —
+ * every admin route repeated the same four lines, which is how two copies of a
+ * rule start to drift.
+ */
+export function requireAdmin(request: NextRequest): UserRow | NextResponse {
+  const user = requireUser(request);
+  if (user instanceof NextResponse) return user;
+  if (user.is_admin !== 1) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return user;
+}

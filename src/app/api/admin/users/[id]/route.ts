@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/server/apiAuth";
+import { requireAdmin } from "@/lib/server/apiAuth";
 import { setAudioPermissions } from "@/lib/server/users";
 import { getUserUsage } from "@/lib/server/audio";
 import {
@@ -20,11 +20,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const admin = requireUser(request);
+  const admin = requireAdmin(request);
   if (admin instanceof NextResponse) return admin;
-  if (admin.is_admin !== 1) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
 
   const hosting = resolveObjectStore();
   if (!hosting) return audioHostingDisabled();

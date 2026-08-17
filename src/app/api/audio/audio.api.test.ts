@@ -18,6 +18,7 @@ import {
   upsertEmailShare,
 } from "@/lib/server/shares";
 import { setObjectStoreForTests } from "@/lib/server/audioRequests";
+import { resetSweepScheduleForTests } from "@/lib/server/audioSweep";
 import { proofRangeFor } from "@/lib/server/proofOfPossession";
 import {
   makeApiRequest as makeRequest,
@@ -62,6 +63,7 @@ beforeEach(() => {
   getDb();
   store = createFakeObjectStore();
   setObjectStoreForTests({ store, config });
+  resetSweepScheduleForTests();
 });
 
 afterEach(() => setObjectStoreForTests(null));
@@ -1087,6 +1089,24 @@ describe("admin surface", () => {
         .filter((u: { usedBytes: number }) => u.usedBytes > 0)
         .map((u: { usedBytes: number }) => u.usedBytes),
     ).toEqual([4 * KB, 4 * KB]);
+  });
+
+  it("sweeps objects nobody committed when the admin looks at storage", async () => {
+    // upload-url mints a presigned PUT and returns. If the browser then PUTs
+    // and never commits, no audio_objects row exists — so no quota counts the
+    // bytes, the global total below cannot see them, and no API can remove
+    // them. Wasabi bills a 90-day minimum for each. Nothing swept them.
+    const admin = signIn(1, { admin: true });
+    const stale = objectKeyForHash(hashOf("abandoned", KB), "wav");
+    store.putBytes(stale, bytesFor("abandoned", KB));
+    store.setLastModified(stale, Date.now() - 6 * 60 * 60 * 1000);
+
+    const response = await adminAudio(
+      makeRequest("/api/admin/audio", { sessionToken: admin.token }),
+    );
+
+    expect((await response.json()).sweep).toMatchObject({ removed: 1 });
+    expect(store.keys()).toEqual([]);
   });
 
   it("approves a user for uploads", async () => {

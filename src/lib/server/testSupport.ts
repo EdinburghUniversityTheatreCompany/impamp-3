@@ -85,9 +85,10 @@ export function makeChunkedApiRequest(
       method: options.method ?? "PUT",
       headers,
       body,
-      // Node requires this for a streaming request body.
+      // Node requires this for a streaming request body. Not in the DOM lib's
+      // RequestInit, hence the cast.
       duplex: "half",
-    } as RequestInit & { duplex: "half" },
+    } as unknown as ConstructorParameters<typeof NextRequest>[1],
   );
 
   return { request, delivered: () => delivered };

@@ -18,6 +18,27 @@ export interface StoredObject {
   contentType: string | null;
 }
 
+/** One entry of a bucket listing. */
+export interface ListedObject {
+  key: string;
+  sizeBytes: number;
+  /** When the bucket says the object was last written, in epoch ms. */
+  lastModifiedMs: number;
+}
+
+export interface ListOptions {
+  prefix: string;
+  /** Continues a previous page. */
+  continuationToken?: string;
+  maxKeys?: number;
+}
+
+export interface ListPage {
+  objects: ListedObject[];
+  /** Non-null when the bucket has more to give. */
+  nextContinuationToken: string | null;
+}
+
 /**
  * The storage surface the rest of the app depends on. Route handlers take this
  * interface rather than the concrete client so tests can substitute a fake
@@ -47,6 +68,16 @@ export interface ObjectStore {
     length: number,
   ): Promise<Uint8Array | null>;
   remove(key: string): Promise<void>;
+  /**
+   * One page of keys under a prefix.
+   *
+   * The only reader is the sweep that removes objects a browser PUT and never
+   * committed (`audioSweep.ts`). Without it those bytes are unreachable
+   * forever: no `audio_objects` row means no quota counts them, no admin view
+   * shows them and no API can delete them, while Wasabi bills a 90-day minimum
+   * for each.
+   */
+  list(options: ListOptions): Promise<ListPage>;
 }
 
 /**
@@ -57,6 +88,55 @@ export function objectKeyForHash(hash: string, extension: string): string {
   const safeExtension = extension.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
   const suffix = safeExtension ? `.${safeExtension}` : "";
   return `audio/${hash.slice(0, 2)}/${hash}${suffix}`;
+}
+
+/** The text of the first `<name>` element in `xml`, if any. */
+function firstTag(xml: string, name: string): string | null {
+  return new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(xml)?.[1] ?? null;
+}
+
+const XML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+};
+
+function decodeXmlText(value: string): string {
+  return value.replace(/&(?:amp|lt|gt|quot|apos);/g, (m) => XML_ENTITIES[m]);
+}
+
+/**
+ * Read a ListObjectsV2 response.
+ *
+ * Hand-parsed for the same reason SigV4 is hand-rolled: this is one
+ * well-specified document with three fields worth reading, against forty
+ * transitive packages of AWS SDK. Anything unrecognised yields no entries
+ * rather than throwing — a sweep that crashes is worse than a sweep that
+ * removes nothing.
+ */
+export function parseListObjectsV2(xml: string): ListPage {
+  const objects: ListedObject[] = [];
+
+  for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+    const block = match[1];
+    const key = firstTag(block, "Key");
+    if (!key) continue;
+    objects.push({
+      key: decodeXmlText(key),
+      sizeBytes: Number(firstTag(block, "Size") ?? 0),
+      lastModifiedMs: Date.parse(firstTag(block, "LastModified") ?? ""),
+    });
+  }
+
+  const truncated = firstTag(xml, "IsTruncated") === "true";
+  return {
+    objects,
+    nextContinuationToken: truncated
+      ? (firstTag(xml, "NextContinuationToken") ?? null)
+      : null,
+  };
 }
 
 export function createObjectStore(
@@ -157,6 +237,34 @@ export function createObjectStore(
       return response.status === 200
         ? body.slice(offset, offset + length)
         : body;
+    },
+
+    async list({ prefix, continuationToken, maxKeys = 1000 }) {
+      // The bucket itself, not an object under it — so this is the one request
+      // whose signature covers a query string.
+      const url = new URL(`${config.endpoint}/${uriEncode(config.bucket)}`);
+      url.searchParams.set("list-type", "2");
+      url.searchParams.set("prefix", prefix);
+      url.searchParams.set("max-keys", String(maxKeys));
+      if (continuationToken) {
+        url.searchParams.set("continuation-token", continuationToken);
+      }
+
+      const target = url.toString();
+      const response = await fetchImpl(target, {
+        method: "GET",
+        headers: signRequestHeaders({
+          ...signing,
+          method: "GET",
+          url: target,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`LIST ${prefix} failed with ${response.status}`);
+      }
+
+      return parseListObjectsV2(await response.text());
     },
 
     async remove(key) {
