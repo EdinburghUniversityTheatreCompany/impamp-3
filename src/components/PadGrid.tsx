@@ -4,7 +4,10 @@ import React, { useRef, useMemo, useCallback } from "react";
 import Pad from "./Pad";
 import { useProfileStore } from "@/store/profileStore";
 // useUIStore removed - now using useModal hook
-import { usePadConfigurations } from "@/hooks/usePadConfigurations";
+import {
+  actionablePadConfigs,
+  usePadConfigurations,
+} from "@/hooks/usePadConfigurations";
 import { isEmergencyPage } from "@/lib/db";
 import {
   stopAllAudio,
@@ -172,6 +175,18 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   // Subscribe to the armed tracks store (each Pad subscribes to its own playback slice)
   const armedTracks = useArmedTracks();
 
+  // The pads these hooks may *act* on, which is not the same set as the pads
+  // worth drawing — see `actionablePadConfigs`.
+  //
+  // `handlePadClick` below has its own early return and so was already safe,
+  // but `handleArmTrack` is wired straight to `Pad`'s onCtrlClick and bypasses
+  // it entirely. During the read window that armed the previous bank's cue
+  // under the new bank's key, which then surfaced at F9 rather than
+  // immediately — the worst way for it to surface. Swapping is here for the
+  // same reason: it moves sounds between pad positions, and doing that from
+  // the wrong bank's map rearranges a board nobody is looking at.
+  const actionableConfigs = actionablePadConfigs(padConfigs, isLoadingConfigs);
+
   // Use custom hooks for pad functionality
   const {
     handleRemoveInteraction,
@@ -180,14 +195,14 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     handleArmTrack,
   } = usePadInteractions({
     currentPageIndex,
-    padConfigs,
+    padConfigs: actionableConfigs,
     refreshPadConfigs,
     hasInteractedRef,
   });
 
   const { handleSwapPads } = usePadSwap({
     currentPageIndex,
-    padConfigs,
+    padConfigs: actionableConfigs,
     refreshPadConfigs,
     specialPadIndices: SPECIAL_PAD_INDICES,
   });
