@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
 import { proofMatches, proofRangeFor } from "@/lib/server/proofOfPossession";
+import { storedObjectMatchesHash } from "@/lib/server/contentIntegrity";
 
 /**
  * POST /api/audio/commit — confirm an upload landed, and start charging for it.
@@ -104,6 +105,49 @@ export async function POST(request: NextRequest) {
       }
     }
     return uploadRefusal(decision);
+  }
+
+  // The bucket's key *is* the digest, so make that true rather than assume it.
+  // Deliberately after the quota decision: an object over `maxObjectBytes` is
+  // refused and deleted without ever being read, so this never hashes more
+  // than the deployment agreed to store.
+  //
+  // Skipped when we already have a row recording this exact size, which is the
+  // same "a different size means different bytes" test `canUpload` makes — so
+  // it costs one read per distinct object ever stored, not one per commit.
+  const known = getAudioObject(fields.hash);
+  if (!known || known.size_bytes !== stored.sizeBytes) {
+    if (
+      !(await storedObjectMatchesHash(
+        store,
+        key,
+        stored.sizeBytes,
+        fields.hash,
+      ))
+    ) {
+      if (!known) {
+        // Nobody is referencing these bytes, so removing them costs no one
+        // anything — and leaving them would leave bytes no quota counts, no
+        // admin view shows and no API can delete.
+        await store.remove(key).catch(() => {
+          // Best effort; the refusal is what matters to the caller.
+        });
+      } else {
+        // An object others already hold has been overwritten with something
+        // else. Deleting it would orphan their reference rows, so refuse and
+        // make it loud instead — this needs a human.
+        console.error(
+          `The bucket's copy of ${key} no longer hashes to ${fields.hash}; it has been overwritten since it was stored.`,
+        );
+      }
+      return NextResponse.json(
+        {
+          error:
+            "The uploaded bytes do not match the hash they were sent under",
+        },
+        { status: 422 },
+      );
+    }
   }
 
   recordUpload({

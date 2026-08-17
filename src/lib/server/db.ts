@@ -200,6 +200,30 @@ const MIGRATIONS: string[] = [
   -- end up in the same place.
   DROP INDEX IF EXISTS sessions_user_idx;
   `,
+
+  // 5 — who put each sound on each profile
+  `
+  -- "Could this sound legitimately be on this profile?" was answered by
+  -- re-deriving it from the *live* share table: the owner, or a current
+  -- email-share editor. That is wrong twice. A link share has
+  -- \`email IS NULL\` by the CHECK constraint in migration 1, so it never
+  -- joined, and a sound added by a link-share editor was 404 for everyone
+  -- including the owner. And reading live shares made the answer retroactive:
+  -- revoking a share took away audio the departed collaborator had already
+  -- contributed, silencing pads on the owner's own board.
+  --
+  -- A grant is a fact about the past, so it is recorded when the sound is
+  -- attached rather than recomputed later. NULL for every row that predates
+  -- this migration, and for a write by an anonymous link-share editor, who
+  -- has no account to name; those fall back to the owner and email-editor
+  -- tests exactly as before.
+  --
+  -- Deliberately no REFERENCES clause. SQLite allows one on ADD COLUMN only
+  -- with a NULL default, and the value is only ever compared against
+  -- audio_references.user_id — which cascades on user delete — so a stale id
+  -- matches nothing rather than serving the wrong person.
+  ALTER TABLE profile_audio ADD COLUMN added_by INTEGER;
+  `,
 ];
 
 let db: DatabaseSync | null = null;
@@ -256,6 +280,27 @@ export function getDb(): DatabaseSync {
 
   db = database;
   return db;
+}
+
+/**
+ * Open the database and confirm it can be written to, or throw.
+ *
+ * `getDb()` alone is not enough on its own to prove much — but it is where the
+ * file is created, the migrations run and WAL is turned on, so an unwritable
+ * volume fails there. `BEGIN IMMEDIATE` then takes the write lock, which needs
+ * the -wal and -shm files to be creatable, so a directory that is readable but
+ * not writable is caught too. That is not a hypothetical failure: the deployed
+ * `impamp_data` volume was root-owned while the container runs as uid 1000, and
+ * a human had to notice and chown it.
+ *
+ * Cheap enough for a health check: the handle is memoised, node:sqlite is
+ * synchronous and single-threaded so no other transaction can be open while
+ * this runs, and an empty transaction writes nothing.
+ */
+export function assertDatabaseUsable(): void {
+  const database = getDb();
+  database.exec("BEGIN IMMEDIATE");
+  database.exec("ROLLBACK");
 }
 
 /**

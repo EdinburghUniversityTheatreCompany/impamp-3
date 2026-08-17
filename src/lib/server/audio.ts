@@ -146,9 +146,23 @@ export function userHoldsReference(userId: number, hash: string): boolean {
  * own used to be enough to be handed that sound. The blob is the caller's
  * word; a reference row is the server's own record of who uploaded what.
  *
- * "Could have put it there" means the owner or one of the profile's editors
- * holds it. Restricting it to the owner alone would refuse an owner the
- * sounds their own collaborators added.
+ * "Could have put it there" means the owner holds it, the person recorded as
+ * having attached it to this profile holds it, or a current email-share editor
+ * holds it. Restricting it to the owner alone would refuse an owner the sounds
+ * their own collaborators added.
+ *
+ * The `profile_audio.added_by` branch is what makes the answer stable. Deriving
+ * it from the live share table alone was wrong twice: a link share has
+ * `email IS NULL` by schema constraint so it never joined — a sound added by a
+ * link-share editor was 404 for everyone including the owner — and reading live
+ * shares made the grant retroactive, so revoking a share silenced pads a
+ * departed collaborator had contributed to the owner's own board. Whether a
+ * sound could legitimately be here is a fact about the past. The email-share
+ * branch stays for rows written before that column existed.
+ *
+ * Naming a hash in a blob still buys nothing: `added_by` only helps someone who
+ * genuinely holds a reference to the sound, and a reference costs proof of
+ * possession.
  */
 export function profileMayServeHash(
   profileId: string,
@@ -162,6 +176,11 @@ export function profileMayServeHash(
         WHERE r.hash = ?
           AND (
             r.user_id = ?
+            OR r.user_id IN (
+              SELECT pa.added_by
+                FROM profile_audio pa
+               WHERE pa.profile_id = ? AND pa.hash = ? AND pa.added_by IS NOT NULL
+            )
             OR r.user_id IN (
               -- Joined on the raw column, not lower(trim(u.email)): an
               -- expression over an indexed column cannot use the index, so
@@ -177,6 +196,8 @@ export function profileMayServeHash(
         LIMIT 1`,
       hash,
       ownerId,
+      profileId,
+      hash,
       profileId,
     ) !== undefined
   );
@@ -203,17 +224,47 @@ export function storageKeyForHash(
 }
 
 /**
- * Whether any stored profile still names this sound.
+ * Whether a profile *this user can reach* still names this sound.
  *
  * Deleting from a library used to drop the bucket object the moment the last
  * *reference* went, without asking whether a board still played it — so an
  * owner tidying their library could make their own live profile 404.
+ *
+ * Scoped to the holder's own profiles and the ones shared with their email
+ * address, because the unscoped version was a denial of service. profile_audio
+ * is rebuilt from whatever a writer puts in `data`, and any signed-in account
+ * may create a profile naming any hash, so a stranger could permanently freeze
+ * someone else's storage allowance and stop them deleting their own file — with
+ * no way for the victim to see who had done it, the squatting profile being
+ * invisible to them. A third party's board is not a board this caller is about
+ * to silence.
+ *
+ * Link shares are deliberately not counted: holding a link grants access to one
+ * profile, not membership of it, and there is no way to enumerate them for a
+ * user anyway (see listProfilesForUser).
  */
-export function hashIsUsedByAnyProfile(hash: string): boolean {
+export function hashIsUsedByReachableProfile(
+  hash: string,
+  userId: number,
+  email: string,
+): boolean {
   return (
     queryOne<{ one: number }>(
-      "SELECT 1 AS one FROM profile_audio WHERE hash = ? LIMIT 1",
+      `SELECT 1 AS one
+         FROM profile_audio pa
+         JOIN profiles p ON p.id = pa.profile_id
+        WHERE pa.hash = ?
+          AND (
+            p.owner_id = ?
+            OR EXISTS (
+              SELECT 1 FROM profile_shares s
+               WHERE s.profile_id = p.id AND s.email = ?
+            )
+          )
+        LIMIT 1`,
       hash,
+      userId,
+      email,
     ) !== undefined
   );
 }

@@ -105,6 +105,23 @@ describe("migrating a populated database to user_version 3", () => {
     expect(version?.user_version).toBeGreaterThanOrEqual(3);
   });
 
+  it("adds migration 5's added_by as null on every row it backfilled", () => {
+    // The seed is at user_version 2, so this runs the whole chain to head —
+    // which is the shape of the upgrade the deployed database will take. A
+    // pre-existing row has no record of who attached the sound, and null is
+    // the honest answer: profileMayServeHash falls back to the owner and
+    // email-editor tests for those, exactly as before.
+    migrate();
+
+    const rows = queryAll<{ added_by: number | null }>(
+      "SELECT added_by FROM profile_audio",
+    );
+    closeDb();
+
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.added_by === null)).toBe(true);
+  });
+
   it("leaves the blobs themselves untouched", () => {
     migrate();
 

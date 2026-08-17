@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, getDb, queryAll } from "./db";
 import { upsertUserFromGoogle } from "./users";
 import { createProfile, updateProfile, deleteProfile } from "./profiles";
-import { hashIsUsedByAnyProfile } from "./audio";
+import { hashIsUsedByReachableProfile } from "./audio";
 
 beforeEach(() => {
   closeDb();
@@ -46,7 +46,15 @@ const blobNaming = (...hashes: string[]) => ({
   })),
 });
 
-describe("hashIsUsedByAnyProfile", () => {
+/**
+ * Bound to the profiles this caller can reach. The unscoped version let a
+ * stranger's board pin someone else's hosted audio forever — see the DELETE
+ * tests in audio.api.test.ts.
+ */
+const usedByOwner = (hash: string, user: { id: number; email: string }) =>
+  hashIsUsedByReachableProfile(hash, user.id, user.email);
+
+describe("hashIsUsedByReachableProfile", () => {
   it("finds a sound a stored profile names", () => {
     const user = owner();
     createProfile({
@@ -55,9 +63,9 @@ describe("hashIsUsedByAnyProfile", () => {
       data: blobNaming("hash-kick", "hash-snare"),
     });
 
-    expect(hashIsUsedByAnyProfile("hash-kick")).toBe(true);
-    expect(hashIsUsedByAnyProfile("hash-snare")).toBe(true);
-    expect(hashIsUsedByAnyProfile("hash-never-used")).toBe(false);
+    expect(usedByOwner("hash-kick", user)).toBe(true);
+    expect(usedByOwner("hash-snare", user)).toBe(true);
+    expect(usedByOwner("hash-never-used", user)).toBe(false);
   });
 
   it("forgets a sound the profile stops naming", () => {
@@ -77,8 +85,8 @@ describe("hashIsUsedByAnyProfile", () => {
 
     // The index is rebuilt from the blob on every write, so a removed sound
     // does not keep a bucket object alive forever.
-    expect(hashIsUsedByAnyProfile("hash-kick")).toBe(true);
-    expect(hashIsUsedByAnyProfile("hash-snare")).toBe(false);
+    expect(usedByOwner("hash-kick", user)).toBe(true);
+    expect(usedByOwner("hash-snare", user)).toBe(false);
   });
 
   it("forgets everything a deleted profile named", () => {
@@ -94,7 +102,7 @@ describe("hashIsUsedByAnyProfile", () => {
     // Relies on `PRAGMA foreign_keys = ON` plus ON DELETE CASCADE. Without the
     // pragma the rows would survive and every deleted profile would pin its
     // sounds in the bucket permanently.
-    expect(hashIsUsedByAnyProfile("hash-kick")).toBe(false);
+    expect(usedByOwner("hash-kick", user)).toBe(false);
     expect(queryAll("SELECT 1 FROM profile_audio")).toHaveLength(0);
   });
 
@@ -113,7 +121,7 @@ describe("hashIsUsedByAnyProfile", () => {
 
     deleteProfile(a.id);
 
-    expect(hashIsUsedByAnyProfile("hash-shared")).toBe(true);
+    expect(usedByOwner("hash-shared", user)).toBe(true);
   });
 
   it("indexes nothing for a blob whose shape it does not recognise", () => {

@@ -149,3 +149,107 @@ describe("remove", () => {
     await expect(store.remove("audio/aa/x.wav")).rejects.toThrow("403");
   });
 });
+
+describe("list", () => {
+  const page = (contents: string, truncated = false, next = "") => `
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListBucketResult>
+      ${contents}
+      <IsTruncated>${truncated}</IsTruncated>
+      ${next ? `<NextContinuationToken>${next}</NextContinuationToken>` : ""}
+    </ListBucketResult>`;
+
+  const entry = (key: string, size: number, modified: string) =>
+    `<Contents><Key>${key}</Key><Size>${size}</Size>` +
+    `<LastModified>${modified}</LastModified></Contents>`;
+
+  const respondXml = (xml: string) =>
+    vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(xml, { status: 200 }),
+    );
+
+  it("reads keys, sizes and modification times out of the response", async () => {
+    const store = createObjectStore(
+      config,
+      respondXml(
+        page(
+          entry(`audio/aa/${HASH}.wav`, 2048, "2026-08-17T09:00:00.000Z") +
+            entry(`audio/bb/${"b".repeat(64)}`, 10, "2026-08-16T08:00:00.000Z"),
+        ),
+      ),
+    );
+
+    const result = await store.list({ prefix: "audio/" });
+
+    expect(result.objects).toEqual([
+      {
+        key: `audio/aa/${HASH}.wav`,
+        sizeBytes: 2048,
+        lastModifiedMs: Date.parse("2026-08-17T09:00:00.000Z"),
+      },
+      {
+        key: `audio/bb/${"b".repeat(64)}`,
+        sizeBytes: 10,
+        lastModifiedMs: Date.parse("2026-08-16T08:00:00.000Z"),
+      },
+    ]);
+    expect(result.nextContinuationToken).toBeNull();
+  });
+
+  it("hands back a continuation token only when the listing is truncated", async () => {
+    const entries = entry("audio/aa/x", 1, "2026-08-17T09:00:00Z");
+
+    const truncated = createObjectStore(
+      config,
+      respondXml(page(entries, true, "T1")),
+    );
+    expect(
+      (await truncated.list({ prefix: "audio/" })).nextContinuationToken,
+    ).toBe("T1");
+
+    // A token present while IsTruncated is false would loop the sweep forever.
+    const complete = createObjectStore(
+      config,
+      respondXml(page(entries, false, "T1")),
+    );
+    expect(
+      (await complete.list({ prefix: "audio/" })).nextContinuationToken,
+    ).toBeNull();
+  });
+
+  it("signs the query it sends, and asks for a v2 listing", async () => {
+    const fetchImpl = respondXml(page(""));
+    await createObjectStore(config, fetchImpl).list({
+      prefix: "audio/",
+      continuationToken: "tok/en=",
+      maxKeys: 50,
+    });
+
+    const url = new URL(fetchImpl.mock.calls[0][0] as string);
+    expect(url.pathname).toBe("/impamp-audio");
+    expect(url.searchParams.get("list-type")).toBe("2");
+    expect(url.searchParams.get("prefix")).toBe("audio/");
+    expect(url.searchParams.get("max-keys")).toBe("50");
+    expect(url.searchParams.get("continuation-token")).toBe("tok/en=");
+
+    const headers = fetchImpl.mock.calls[0][1]?.headers as Record<
+      string,
+      string
+    >;
+    expect(headers.Authorization).toContain("AWS4-HMAC-SHA256");
+  });
+
+  it("reads an empty bucket as no objects rather than throwing", async () => {
+    const store = createObjectStore(config, respondXml(page("")));
+    expect(await store.list({ prefix: "audio/" })).toEqual({
+      objects: [],
+      nextContinuationToken: null,
+    });
+  });
+
+  it("surfaces a refused listing", async () => {
+    const store = createObjectStore(config, respond(403));
+    await expect(store.list({ prefix: "audio/" })).rejects.toThrow("403");
+  });
+});

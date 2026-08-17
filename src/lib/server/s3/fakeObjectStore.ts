@@ -13,6 +13,8 @@ export interface FakeObjectStore extends ObjectStore {
   put(key: string, sizeBytes: number, contentType?: string): void;
   /** Store real bytes, so proof-of-possession checks can be exercised. */
   putBytes(key: string, bytes: Uint8Array, contentType?: string): void;
+  /** Backdate an object, so the sweep's grace period can be exercised. */
+  setLastModified(key: string, lastModifiedMs: number): void;
   /** Every key currently stored. */
   keys(): string[];
   /** Uploads minted but never committed, in call order. */
@@ -22,6 +24,7 @@ export interface FakeObjectStore extends ObjectStore {
 export function createFakeObjectStore(): FakeObjectStore {
   const objects = new Map<string, StoredObject>();
   const bytes = new Map<string, Uint8Array>();
+  const lastModified = new Map<string, number>();
   const uploadUrls: string[] = [];
 
   return {
@@ -29,11 +32,38 @@ export function createFakeObjectStore(): FakeObjectStore {
 
     put(key, sizeBytes, contentType = "audio/wav") {
       objects.set(key, { sizeBytes, contentType });
+      lastModified.set(key, Date.now());
     },
 
     putBytes(key, content, contentType = "audio/wav") {
       objects.set(key, { sizeBytes: content.byteLength, contentType });
       bytes.set(key, content);
+      lastModified.set(key, Date.now());
+    },
+
+    setLastModified(key, ms) {
+      lastModified.set(key, ms);
+    },
+
+    async list({ prefix, continuationToken, maxKeys = 1000 }) {
+      const all = [...objects.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .sort(([a], [b]) => (a < b ? -1 : 1));
+
+      const start = continuationToken
+        ? all.findIndex(([key]) => key === continuationToken)
+        : 0;
+      const page = all.slice(start, start + maxKeys);
+      const next = all[start + maxKeys];
+
+      return {
+        objects: page.map(([key, object]) => ({
+          key,
+          sizeBytes: object.sizeBytes,
+          lastModifiedMs: lastModified.get(key) ?? Date.now(),
+        })),
+        nextContinuationToken: next ? next[0] : null,
+      };
     },
 
     async getRange(key, offset, length) {

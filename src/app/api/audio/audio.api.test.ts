@@ -12,8 +12,13 @@ import { closeDb, execute, getDb } from "@/lib/server/db";
 import { createSession } from "@/lib/server/session";
 import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createProfile } from "@/lib/server/profiles";
-import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
+import {
+  createLinkShare,
+  deleteShare,
+  upsertEmailShare,
+} from "@/lib/server/shares";
 import { setObjectStoreForTests } from "@/lib/server/audioRequests";
+import { resetSweepScheduleForTests } from "@/lib/server/audioSweep";
 import { proofRangeFor } from "@/lib/server/proofOfPossession";
 import {
   makeApiRequest as makeRequest,
@@ -31,6 +36,7 @@ import { POST as uploadUrl } from "./upload-url/route";
 import { POST as commit } from "./commit/route";
 import { DELETE as deleteAudio, GET as downloadUrl } from "./[hash]/route";
 import { GET as profileAudio } from "../profiles/[id]/audio/[hash]/route";
+import { PUT as putProfile } from "../profiles/[id]/route";
 import { GET as adminAudio } from "../admin/audio/route";
 import { PATCH as patchUser } from "../admin/users/[id]/route";
 
@@ -57,6 +63,7 @@ beforeEach(() => {
   getDb();
   store = createFakeObjectStore();
   setObjectStoreForTests({ store, config });
+  resetSweepScheduleForTests();
 });
 
 afterEach(() => setObjectStoreForTests(null));
@@ -76,10 +83,6 @@ const signIn = (n: number, { approved = false, admin = false } = {}) => {
   return { user, token: createSession(user.id) };
 };
 
-const hashOf = (label: string) =>
-  createHash("sha256").update(label).digest("hex");
-
-/** The whole happy path: ask, upload, commit. */
 /**
  * The bytes a label stands for. Deterministic, so two users "holding the same
  * file" really do hold the same bytes — which is what proof of possession is
@@ -91,6 +94,21 @@ function bytesFor(label: string, sizeBytes: number): Uint8Array {
   for (let i = 0; i < sizeBytes; i++) out[i] = seed[i % seed.length];
   return out;
 }
+
+const digestOf = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+/**
+ * The hash a file of this size is stored under.
+ *
+ * Deliberately the digest of `bytesFor(label, sizeBytes)` rather than of the
+ * label: the bucket is content-addressed, so a fixture whose "hash" is not the
+ * digest of its own bytes describes a bucket that cannot exist, and any test
+ * built on one cannot see a content-integrity bug. Which is how SV1 stayed
+ * invisible to a suite of thirty audio tests.
+ */
+const hashOf = (label: string, sizeBytes: number) =>
+  digestOf(bytesFor(label, sizeBytes));
 
 /** What a client that genuinely holds the file sends to claim a stored one. */
 function proofFor(
@@ -109,7 +127,7 @@ async function storeAudio(
   sizeBytes: number,
   name = `${label}.wav`,
 ) {
-  const hash = hashOf(label);
+  const hash = hashOf(label, sizeBytes);
   const bytes = bytesFor(label, sizeBytes);
   const askResponse = await uploadUrl(
     makeRequest("/api/audio/upload-url", {
@@ -154,7 +172,7 @@ describe("POST /api/audio/upload-url", () => {
       makeRequest("/api/audio/upload-url", {
         method: "POST",
         body: {
-          hash: hashOf("a"),
+          hash: hashOf("a", 10),
           sizeBytes: 10,
           contentType: "audio/wav",
           extension: "wav",
@@ -179,7 +197,7 @@ describe("POST /api/audio/upload-url", () => {
         method: "POST",
         sessionToken: token,
         body: {
-          hash: hashOf("a"),
+          hash: hashOf("a", KB),
           sizeBytes: KB,
           contentType: "audio/wav",
           extension: "wav",
@@ -190,7 +208,7 @@ describe("POST /api/audio/upload-url", () => {
 
     expect(response.status).toBe(200);
     expect(body.uploadUrl).toContain("upload=1");
-    expect(body.key).toBe(objectKeyForHash(hashOf("a"), "wav"));
+    expect(body.key).toBe(objectKeyForHash(hashOf("a", KB), "wav"));
     expect(body.alreadyStored).toBe(false);
   });
 
@@ -201,7 +219,7 @@ describe("POST /api/audio/upload-url", () => {
         method: "POST",
         sessionToken: token,
         body: {
-          hash: hashOf("a"),
+          hash: hashOf("a", KB),
           sizeBytes: KB,
           contentType: "text/html",
           extension: "html",
@@ -238,7 +256,7 @@ describe("POST /api/audio/upload-url", () => {
         method: "POST",
         sessionToken: second.token,
         body: {
-          hash: hashOf("shared"),
+          hash: hashOf("shared", KB),
           sizeBytes: KB,
           contentType: "audio/wav",
           extension: "wav",
@@ -255,7 +273,7 @@ describe("POST /api/audio/upload-url", () => {
 describe("POST /api/audio/commit", () => {
   it("records the size the bucket reports, not the one the client claimed", async () => {
     const { token } = signIn(1, { approved: true });
-    const hash = hashOf("liar");
+    const hash = hashOf("liar", 4 * KB);
 
     // Ask for 1 byte...
     await uploadUrl(
@@ -271,7 +289,11 @@ describe("POST /api/audio/commit", () => {
       }),
     );
     // ...then actually upload 4K.
-    store.put(objectKeyForHash(hash, "wav"), 4 * KB, "audio/wav");
+    store.putBytes(
+      objectKeyForHash(hash, "wav"),
+      bytesFor("liar", 4 * KB),
+      "audio/wav",
+    );
 
     const response = await commit(
       makeRequest("/api/audio/commit", {
@@ -293,7 +315,7 @@ describe("POST /api/audio/commit", () => {
 
   it("deletes the object and refuses when the real size blows the quota", async () => {
     const { token } = signIn(1, { approved: true });
-    const hash = hashOf("toobig");
+    const hash = hashOf("toobig", 9 * KB);
 
     await uploadUrl(
       makeRequest("/api/audio/upload-url", {
@@ -308,7 +330,11 @@ describe("POST /api/audio/commit", () => {
       }),
     );
     // 9K against a 8K per-object ceiling.
-    store.put(objectKeyForHash(hash, "wav"), 9 * KB, "audio/wav");
+    store.putBytes(
+      objectKeyForHash(hash, "wav"),
+      bytesFor("toobig", 9 * KB),
+      "audio/wav",
+    );
 
     const response = await commit(
       makeRequest("/api/audio/commit", {
@@ -340,7 +366,7 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: second.token,
         body: {
-          hash: hashOf("shared"),
+          hash: hashOf("shared", 6 * KB),
           name: "shared.wav",
           contentType: "audio/wav",
           extension: "wav",
@@ -348,7 +374,7 @@ describe("POST /api/audio/commit", () => {
           // the refusal under test is the quota one, not the proof one.
           proof: proofFor(
             bytesFor("shared", 6 * KB),
-            proofRangeFor(hashOf("shared"), 6 * KB),
+            proofRangeFor(hashOf("shared", 6 * KB), 6 * KB),
           ),
         },
       }),
@@ -356,7 +382,9 @@ describe("POST /api/audio/commit", () => {
 
     expect(response.status).toBe(413);
     // The first user's audio survives the second user's refusal.
-    expect(store.keys()).toContain(objectKeyForHash(hashOf("shared"), "wav"));
+    expect(store.keys()).toContain(
+      objectKeyForHash(hashOf("shared", 6 * KB), "wav"),
+    );
   });
 
   it("refuses someone who knows the hash but not the bytes", async () => {
@@ -376,7 +404,7 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: attacker.token,
         body: {
-          hash: hashOf("someone-elses-sound"),
+          hash: hashOf("someone-elses-sound", KB),
           sizeBytes: KB,
           contentType: "audio/wav",
           extension: "wav",
@@ -393,17 +421,105 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: attacker.token,
         body: {
-          hash: hashOf("someone-elses-sound"),
+          hash: hashOf("someone-elses-sound", KB),
           name: "mine-now.wav",
           contentType: "audio/wav",
           extension: "wav",
           // Knowing the hash is all they have.
-          proof: hashOf("a guess"),
+          proof: hashOf("a guess", KB),
         },
       }),
     );
 
     expect(response.status).toBe(403);
+  });
+
+  it("refuses a first commit whose bytes do not hash to the claimed hash", async () => {
+    // The bucket is content-addressed: the key *is* the SHA-256. Nothing
+    // enforced that. A presigned PUT signs only `host`, so the URL cannot
+    // constrain what the browser sends, and commit only HEADed the key — so an
+    // approved account could park any bytes it liked under any digest it liked.
+    const attacker = signIn(1, { approved: true });
+    const victimHash = hashOf("a-file-the-attacker-does-not-have", KB);
+
+    const askResponse = await uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: victimHash,
+          sizeBytes: KB,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+    const ask = await askResponse.json();
+    // Nothing is stored under that hash yet, so an upload URL is handed over.
+    expect(ask.alreadyStored).toBe(false);
+
+    // The browser PUTs something else entirely.
+    store.putBytes(ask.key, bytesFor("junk", KB), "audio/wav");
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: victimHash,
+          name: "poison.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    // And the bytes we refused to account for are not left in the bucket,
+    // where nothing would ever look at them again.
+    expect(store.keys()).toEqual([]);
+  });
+
+  it("leaves the real holder able to store a file someone tried to poison", async () => {
+    // The half that makes SV1 worse than a content bug: proof of possession
+    // tests a caller against *the bucket's copy*. Poison the copy and the
+    // poisoner becomes the only party who can prove possession, while everyone
+    // holding the real file is refused — a permanent denial of hosting for any
+    // hash an attacker can guess or read out of a profile blob.
+    const attacker = signIn(1, { approved: true });
+    const holder = signIn(2, { approved: true });
+    const hash = hashOf("contested", KB);
+
+    const ask = await (
+      await uploadUrl(
+        makeRequest("/api/audio/upload-url", {
+          method: "POST",
+          sessionToken: attacker.token,
+          body: {
+            hash,
+            sizeBytes: KB,
+            contentType: "audio/wav",
+            extension: "wav",
+          },
+        }),
+      )
+    ).json();
+    store.putBytes(ask.key, bytesFor("junk", KB), "audio/wav");
+    await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash,
+          name: "poison.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+    const real = await storeAudio(holder.token, "contested", KB);
+    expect(real.status).toBe(200);
   });
 
   it("refuses a claim with no proof at all", async () => {
@@ -416,7 +532,7 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: attacker.token,
         body: {
-          hash: hashOf("another-sound"),
+          hash: hashOf("another-sound", KB),
           name: "mine-now.wav",
           contentType: "audio/wav",
           extension: "wav",
@@ -437,7 +553,7 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: token,
         body: {
-          hash: hashOf("mine"),
+          hash: hashOf("mine", KB),
           name: "mine.wav",
           contentType: "audio/wav",
           extension: "wav",
@@ -455,7 +571,7 @@ describe("POST /api/audio/commit", () => {
         method: "POST",
         sessionToken: token,
         body: {
-          hash: hashOf("ghost"),
+          hash: hashOf("ghost", KB),
           name: "ghost.wav",
           contentType: "audio/wav",
           extension: "wav",
@@ -558,18 +674,20 @@ describe("DELETE /api/audio/:hash", () => {
     await storeAudio(second.token, "shared", KB);
 
     const response = await deleteAudio(
-      makeRequest(`/api/audio/${hashOf("shared")}`, {
+      makeRequest(`/api/audio/${hashOf("shared", KB)}`, {
         method: "DELETE",
         sessionToken: first.token,
       }),
-      routeParams({ hash: hashOf("shared") }),
+      routeParams({ hash: hashOf("shared", KB) }),
     );
 
     expect(await response.json()).toEqual({
       removed: true,
       objectDeleted: false,
     });
-    expect(store.keys()).toContain(objectKeyForHash(hashOf("shared"), "wav"));
+    expect(store.keys()).toContain(
+      objectKeyForHash(hashOf("shared", KB), "wav"),
+    );
   });
 
   it("404s when the caller holds no reference", async () => {
@@ -590,20 +708,35 @@ describe("DELETE /api/audio/:hash", () => {
 });
 
 describe("GET /api/profiles/:id/audio/:hash", () => {
+  const blobNaming = (hashes: string[]) => ({
+    _syncFormatVersion: 2,
+    audioFiles: hashes.map((hash, index) => ({
+      id: index,
+      name: `sound-${index}.wav`,
+      type: "audio/wav",
+      hash,
+    })),
+  });
+
   const profileWith = (ownerId: number, hashes: string[]) =>
-    createProfile({
-      ownerId,
-      name: "Show",
-      data: {
-        _syncFormatVersion: 2,
-        audioFiles: hashes.map((hash, index) => ({
-          id: index,
-          name: `sound-${index}.wav`,
-          type: "audio/wav",
-          hash,
-        })),
-      },
-    });
+    createProfile({ ownerId, name: "Show", data: blobNaming(hashes) });
+
+  /** A collaborator publishing their own edit of a profile, as the app does. */
+  const publish = (
+    profileId: string,
+    version: number,
+    hashes: string[],
+    auth: { sessionToken?: string; query?: string },
+  ) =>
+    putProfile(
+      makeRequest(`/api/profiles/${profileId}`, {
+        method: "PUT",
+        headers: { "if-match": `"${version}"` },
+        body: { name: "Show", data: blobNaming(hashes) },
+        ...auth,
+      }),
+      routeParams({ id: profileId }),
+    );
 
   it("lets an anonymous link-share holder fetch audio the profile lists", async () => {
     const owner = signIn(1, { approved: true });
@@ -620,6 +753,36 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).url).toContain("download=1");
+  });
+
+  it("answers from the profile_audio index rather than re-reading the blob", async () => {
+    // The membership question is answered by an index migration 3 added for
+    // exactly this, and which every write rebuilds inside the same transaction
+    // as the blob. The route used to SELECT * and JSON.parse up to 8 MB
+    // instead — synchronously, once per sound per collaborator per session, on
+    // the thread serving everyone else.
+    //
+    // Corrupting the blob behind the index's back is the only way to tell the
+    // two apart from outside: with the blob as the source of truth this 404s,
+    // with the index it does not.
+    const owner = signIn(1, { approved: true });
+    const { hash } = await storeAudio(owner.token, "indexed", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+
+    execute(
+      "UPDATE profiles SET data = ? WHERE id = ?",
+      "not json",
+      profile.id,
+    );
+
+    const response = await profileAudio(
+      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+        sessionToken: owner.token,
+      }),
+      routeParams({ id: profile.id, hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("refuses a hash the profile does not list, so a share is not a skeleton key", async () => {
@@ -703,6 +866,54 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(409);
   });
 
+  it("does not let a stranger's profile pin a sound you host", async () => {
+    // The guard asked whether *any* profile in the deployment names the hash,
+    // and profile_audio is rebuilt from whatever a writer puts in `data`. So
+    // naming someone else's hash in a board of your own was enough to freeze
+    // their storage allowance and stop them removing their own file — with no
+    // way for them to see who did it, since the squatting profile is invisible
+    // to them.
+    const victim = signIn(1, { approved: true });
+    const squatter = signIn(2);
+    const { hash } = await storeAudio(victim.token, "pinned", KB);
+
+    profileWith(squatter.user.id, [hash!]);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: victim.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      removed: true,
+      objectDeleted: true,
+    });
+  });
+
+  it("still refuses to delete a sound a profile shared with you is using", async () => {
+    // The guard exists so nobody silences a live board they can actually
+    // reach. A board shared with you is one of those; a stranger's is not.
+    const owner = signIn(1, { approved: true });
+    const editor = signIn(2, { approved: true });
+    const { hash } = await storeAudio(editor.token, "collaborative", KB);
+    const profile = profileWith(owner.user.id, [hash!]);
+    upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: editor.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it("re-checks the quota when the bytes behind a held hash change", async () => {
     // The presigned PUT signs only `host`, so a holder can replace the object
     // with something far larger and commit again. Re-committing a hash you
@@ -774,6 +985,73 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(200);
   });
 
+  it("serves a sound a link-share editor added, to the owner and to them", async () => {
+    // profileMayServeHash admitted the owner or a *current email-share*
+    // editor. A link share has `email IS NULL` by schema constraint, so it
+    // never joined — even though the UI mints editor links ("Can edit"). A
+    // sound a link-share editor added was therefore 404 for everyone
+    // including the profile owner, immediately and forever.
+    const owner = signIn(1, { approved: true });
+    const collaborator = signIn(2, { approved: true });
+    const profile = profileWith(owner.user.id, []);
+    const share = createLinkShare(profile.id, "editor", owner.user.id);
+
+    const { hash } = await storeAudio(collaborator.token, "their-sound", KB);
+    const published = await publish(profile.id, profile.version, [hash!], {
+      sessionToken: collaborator.token,
+      query: `token=${share.link_token}`,
+    });
+    expect(published.status).toBe(200);
+
+    // The owner, who reaches the profile by owning it, and the collaborator,
+    // who reaches it only by holding the link.
+    const reachedBy = [
+      { sessionToken: owner.token },
+      { sessionToken: collaborator.token, query: `token=${share.link_token}` },
+    ];
+    for (const auth of reachedBy) {
+      const response = await profileAudio(
+        makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, auth),
+        routeParams({ id: profile.id, hash: hash! }),
+      );
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("keeps serving a departed collaborator's sound after their share is revoked", async () => {
+    // The subquery read the *live* share table, so removing a share
+    // retroactively withdrew access to audio that collaborator had already
+    // contributed. A board that worked yesterday went silent on exactly those
+    // pads — the owner's own profile, sounds they could see listed but not
+    // play, with no error explaining it.
+    const owner = signIn(1, { approved: true });
+    const collaborator = signIn(2, { approved: true });
+    const profile = profileWith(owner.user.id, []);
+    const share = upsertEmailShare(
+      profile.id,
+      collaborator.user.email,
+      "editor",
+      owner.user.id,
+    );
+
+    const { hash } = await storeAudio(collaborator.token, "contributed", KB);
+    await publish(profile.id, profile.version, [hash!], {
+      sessionToken: collaborator.token,
+    });
+
+    const ask = () =>
+      profileAudio(
+        makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+          sessionToken: owner.token,
+        }),
+        routeParams({ id: profile.id, hash: hash! }),
+      );
+
+    expect((await ask()).status).toBe(200);
+    deleteShare(profile.id, share.id);
+    expect((await ask()).status).toBe(200);
+  });
+
   it("refuses someone with no access to the profile at all", async () => {
     const owner = signIn(1, { approved: true });
     const stranger = signIn(2);
@@ -841,6 +1119,24 @@ describe("admin surface", () => {
         .filter((u: { usedBytes: number }) => u.usedBytes > 0)
         .map((u: { usedBytes: number }) => u.usedBytes),
     ).toEqual([4 * KB, 4 * KB]);
+  });
+
+  it("sweeps objects nobody committed when the admin looks at storage", async () => {
+    // upload-url mints a presigned PUT and returns. If the browser then PUTs
+    // and never commits, no audio_objects row exists — so no quota counts the
+    // bytes, the global total below cannot see them, and no API can remove
+    // them. Wasabi bills a 90-day minimum for each. Nothing swept them.
+    const admin = signIn(1, { admin: true });
+    const stale = objectKeyForHash(hashOf("abandoned", KB), "wav");
+    store.putBytes(stale, bytesFor("abandoned", KB));
+    store.setLastModified(stale, Date.now() - 6 * 60 * 60 * 1000);
+
+    const response = await adminAudio(
+      makeRequest("/api/admin/audio", { sessionToken: admin.token }),
+    );
+
+    expect((await response.json()).sweep).toMatchObject({ removed: 1 });
+    expect(store.keys()).toEqual([]);
   });
 
   it("approves a user for uploads", async () => {
