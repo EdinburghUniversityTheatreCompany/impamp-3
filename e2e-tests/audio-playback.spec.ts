@@ -223,6 +223,29 @@ test.describe("ImpAmp3 Audio Playback", () => {
   // Shared body for the three "Active Pad Behavior" tests below: loads a sound
   // onto the first pad, plays it, clicks it again, then lets the caller assert
   // the behavior-specific outcome of that second click.
+  /**
+   * Wait until the active track's own countdown has moved on.
+   *
+   * This replaces a `waitForTimeout(200)` in front of each "it is still
+   * playing" check. A sleep there is load-bearing in disguise: the assertions
+   * after it are positive, so they resolve on their first poll, and the sleep
+   * is the entire window in which a stop caused by the second click could be
+   * seen at all.
+   *
+   * The countdown proves two things a sleep cannot. Playback is genuinely
+   * running, because a stopped track's row is removed and this times out
+   * loudly instead. And a whole second of audio has elapsed since the click —
+   * far longer than a stop takes to reach the UI, and bounded by the app's own
+   * clock rather than by how busy the machine is.
+   */
+  async function playbackHasProgressed(page: Page, fileName: string) {
+    const row = page
+      .getByTestId("active-track-item")
+      .filter({ hasText: fileName });
+    const before = await row.innerText();
+    await expect.poll(() => row.innerText()).not.toBe(before);
+  }
+
   async function testActivePadBehavior(
     page: Page,
     behavior: ActivePadBehavior,
@@ -262,7 +285,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
     );
     const fileName = "continue-test";
     await testActivePadBehavior(page, "continue", fileName, async () => {
-      await page.waitForTimeout(200); // Allow time for potential state changes
+      await playbackHasProgressed(page, fileName);
       // Assert still playing
       await expect(pad.locator(".bg-green-500")).toBeVisible();
       await expect(activeTracksPanel.getByText(fileName)).toBeVisible();
@@ -291,7 +314,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
     );
     const fileName = "restart-test";
     await testActivePadBehavior(page, "restart", fileName, async () => {
-      await page.waitForTimeout(200); // Allow time for potential state changes
+      await playbackHasProgressed(page, fileName);
       // Assert still playing (indicating restart happened)
       await expect(pad.locator(".bg-green-500")).toBeVisible();
       await expect(activeTracksPanel.getByText(fileName)).toBeVisible();

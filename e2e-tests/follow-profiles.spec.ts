@@ -28,10 +28,30 @@ async function openSyncPanel(page: Page) {
   await expect(page.getByTestId("profile-sync-panel").first()).toBeVisible();
 }
 
-/** Shift is what opens edit mode, so it is what the test presses. */
+/**
+ * Shift is what opens edit mode, so it is what the test presses.
+ *
+ * The wait afterwards is a positive consequence of the keypress having been
+ * *processed*, not a guess at how long that takes. It used to be
+ * `waitForTimeout(300)`, which was the entire window in which "the follow gate
+ * stopped blocking edit mode" could be caught — and `test-helpers.ts` says in
+ * so many words that the Shift-to-edit-mode latency is not fixed, because the
+ * keyboard listener detaches and reattaches as state changes. Under ten
+ * workers a regression that let edit mode on at 350 ms was green.
+ *
+ * Shift+? goes through the same `handleKeyDown`, reads the same
+ * `event.shiftKey`, and is handled a few lines above the Shift branch. So once
+ * the help modal is up, the Shift keydown that preceded it has certainly been
+ * handled — and if it were going to latch edit mode, it already has.
+ */
 async function tryToEnterEditMode(page: Page) {
   await page.keyboard.down("Shift");
-  await page.waitForTimeout(300);
+
+  await page.keyboard.press("?");
+  const help = page.getByTestId("custom-modal");
+  await expect(help).toContainText("ImpAmp3 Help");
+  await page.getByTestId("modal-close-button").click();
+  await expect(help).toBeHidden();
 }
 
 test.describe("following a profile", () => {
