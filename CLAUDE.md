@@ -140,9 +140,14 @@ Next.js 16, React 19, TypeScript 6, Tailwind CSS 4, Zustand 5, idb 8,
 react-dropzone 20, Playwright 1.62, ESLint 9 with eslint-config-next 16,
 Prettier 3.9.
 
-Two upgrades are deliberately held back, with the reasons and retry conditions
-in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint refuses the TS
-7 API) and ESLint 10 (eslint-plugin-react has no ESLint 10 release).
+Three upgrades are deliberately held back, with the reasons and retry
+conditions in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint
+refuses the TS 7 API), ESLint 10 (eslint-plugin-react has no ESLint 10 release)
+and file-selector 5 (react-dropzone 20 depends on `^4.1.0`, so bumping the top
+level installs a second copy and `fromEvent` stops being the one react-dropzone
+calls internally). These are exactly the three `npm outdated` reports, and
+exactly the three `.github/dependabot.yml` ignores — if you see three outdated
+packages, none of them is fair game.
 
 ### Code Style
 
