@@ -89,17 +89,3 @@ done
 ```
 
 Noticed while fixing the Node pin during the whole-repo review.
-
-## `isEmergencyPage` in `lib/db.ts` now has no callers
-
-Deleting `emergencySoundsVersion` (state review S2) removed the last four
-call sites: `usePadInteractions`, `usePadDrop`, `usePadSwap` and `PadGrid`
-each asked "is this an emergency page?" only to decide whether to bump the
-second invalidation counter, and there is one counter now. The emergency set
-itself is loaded from `getAllPageMetadataForProfile`, not this.
-
-Left in place because that review's axis was stores and hooks, and removing an
-export from `src/lib/db.ts` belongs with the dead-code sweep — which should
-also confirm nothing outside `src/` (an e2e helper, say) reaches for it.
-
-Noticed while unifying the pad-data invalidation counters.

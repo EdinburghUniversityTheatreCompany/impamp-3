@@ -1721,20 +1721,6 @@ export async function upsertPageMetadata(
   }
 }
 
-// Helper function to check if a page is marked as emergency
-export async function isEmergencyPage(
-  profileId: number,
-  pageIndex: number,
-): Promise<boolean> {
-  try {
-    const metadata = await getPageMetadata(profileId, pageIndex);
-    return metadata?.isEmergency || false;
-  } catch (error) {
-    console.error(`Error checking if page ${pageIndex} is emergency:`, error);
-    return false;
-  }
-}
-
 // Helper function to rename a page (Updated)
 export async function renamePage(
   profileId: number,
