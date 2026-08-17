@@ -67,6 +67,14 @@ Thumbs.db
 certificates
 data
 playwright-report
+# fnox.toml holds the NAME of every secret this project uses, as references
+# rather than values, so this is not a leak and multi-stage means it never
+# reached the published image anyway. It belongs here for the same reason
+# `certificates/` and `data/` do: it is a gitignored local artifact, and the
+# build context is not the place for one. Deliberately NOT added to
+# .gitleaks.toml, despite the mirroring note above — a reference file should
+# stay scanned, precisely so a real value pasted into it gets caught.
+fnox.toml
 
 # Development-only trees the runtime image has no use for.
 # `playwright.config.ts` goes with e2e-tests, not merely alongside it: it sits
