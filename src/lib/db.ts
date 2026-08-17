@@ -824,14 +824,29 @@ export async function clearAudioFileDriveIds(profileId: number): Promise<void> {
   await tx.done;
 }
 
-// Collects the unique audio file IDs referenced across a set of pad configurations.
+/**
+ * The unique audio file ids some pad in this set still names.
+ *
+ * The single answer to "what counts as referenced", because the alternative
+ * has already gone wrong: `deleteProfile` used to compute this itself and knew
+ * about the pre-V3 singular `audioFileId` while this did not, so a pad left on
+ * the old shape was "referenced" to the delete and "orphaned" to the clean-up
+ * button — which then deleted a sound that pad was still using. Such pads
+ * should not exist, but `migrateStoreV4` catches a per-record update error and
+ * continues, so a record whose rewrite failed keeps the old shape forever.
+ */
 export function collectReferencedAudioFileIds(
-  padConfigurations: Pick<PadConfiguration, "audioFileIds">[],
+  padConfigurations: (Pick<PadConfiguration, "audioFileIds"> & {
+    audioFileId?: number;
+  })[],
 ): Set<number> {
   const audioFileIds = new Set<number>();
   padConfigurations.forEach((pad) => {
     if (pad.audioFileIds && pad.audioFileIds.length > 0) {
       pad.audioFileIds.forEach((id) => audioFileIds.add(id));
+    }
+    if (typeof pad.audioFileId === "number") {
+      audioFileIds.add(pad.audioFileId);
     }
   });
   return audioFileIds;
@@ -1213,21 +1228,18 @@ export async function deleteProfile(id: number): Promise<void> {
 
     // Audio files can be shared between profiles (sync deduplicates by hash and
     // by name), so collect everything still referenced by the remaining profiles
-    // and keep those files.
-    const stillReferencedIds = new Set<number>();
+    // and keep those files. Through the shared helper, so this cannot drift
+    // from what the orphan scan and the clean-up button call referenced — it
+    // already had, over the legacy singular `audioFileId`.
+    const survivingPads: PadConfiguration[] = [];
     let refCursor = await padStore.openCursor();
     while (refCursor) {
-      const pad = refCursor.value as PadConfiguration & {
-        audioFileId?: number;
-      };
-      if (pad.profileId !== id) {
-        pad.audioFileIds?.forEach((audioId) => stillReferencedIds.add(audioId));
-        if (typeof pad.audioFileId === "number") {
-          stillReferencedIds.add(pad.audioFileId);
-        }
+      if (refCursor.value.profileId !== id) {
+        survivingPads.push(refCursor.value);
       }
       refCursor = await refCursor.continue();
     }
+    const stillReferencedIds = collectReferencedAudioFileIds(survivingPads);
 
     // Delete the audio files this profile exclusively referenced
     const deletableAudioFileIds = new Set(
