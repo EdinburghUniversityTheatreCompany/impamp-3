@@ -1030,7 +1030,11 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
       }),
     );
 
-    expect(response.status).not.toBe(200);
+    // Not `not.toBe(200)`, which every sibling in this file avoids: that
+    // accepts 400, 403, 404 and 500 equally, so the quota refusal could become
+    // an auth failure or a crash and this would stay green.
+    expect(response.status).toBe(413);
+    expect((await response.json()).reason).toBe("too_large");
   });
 
   it("refuses a hash nobody who can publish here ever uploaded", async () => {
