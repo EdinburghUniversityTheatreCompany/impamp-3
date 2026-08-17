@@ -1,62 +1,75 @@
-# State of play — 2026-08-17
+# State of play — 2026-08-17 (evening)
 
-The 15 August review and its fix pass are **done and merged** (`b29585b`). The
-plan that drove them is closed; what follows replaces it.
+Both whole-repo reviews are answered. `plans/repo-review-2026-08-17.md` is the
+report; `plans/review-2026-08-17/` holds the per-axis detail.
 
-## What happened since
+**Every 🔴 in that review is closed.** What remains is 🟡/🟢 plus a handful of
+items discovered while fixing, and four decisions that are Mick's.
 
-The fix pass was reviewed in turn, by eleven parallel reviewers over the whole
-app. Report: [`plans/repo-review-2026-08-17.md`](../plans/repo-review-2026-08-17.md),
-per-axis detail in [`plans/review-2026-08-17/`](../plans/review-2026-08-17/).
-137 findings, 24 high.
+## Gates on `main`
 
-It found four regressions the fix pass had shipped past every gate. All four are
-fixed on `main`, each with a test that fails against the commit before it:
+802 unit tests + 1 expected failure · 152 chromium e2e · line coverage 38.5%
+with a CI ratchet · typecheck, eslint, prettier, jscpd 0%, version-sync,
+action-pins, actionlint, zizmor all clean · production image builds and runs.
 
-- `11b23e9` — the preloader deadlocked on its own decode slots (🔴, silent pads)
-- `2fafc29` — Drive's transfer timeout was on the JSON, not the audio (🔴)
-- `52873ec` — keys fired the bank you had just left (🟡)
-- `fbc1806` — `main` failed `prettier --check`; the commit gate now checks the
-  same formats CI does (🟡)
+**Running e2e:** always `E2E_PORT=<free port>`. Port 3000 is often held by
+another project of Mick's, and `reuseExistingServer` does not check _what_ is
+listening — a collision reports every test failing. And never read a piped
+`tail`/`grep` as the verdict; redirect to a file and echo `$?`.
 
-`f31abfd` adds an e2e assertion that the loudness worker really does serve
-analysis in a production build — that finding (P1) was a **false positive**, and
-the assertion is what settles it either way, since the fallback is silent.
+## Open, by size of the thread
 
-## Gates on `main` at `4c84839`
+1. **Duplication tail — D2, D3, D4, D5, D6, D7, D9, D11, D13, D14, D15, D19.**
+   Verified still present: `getHashlessIndex` is two copies (`googleDrive/sync.ts`,
+   `serverAudio/transfer.ts`); Drive-token construction is spread across three
+   hooks; the pad-save sequence is open-coded at six sites; `Pad` still takes
+   both `isConfigured` and `soundCount`. This is the repo's signature failure
+   mode and the largest remaining block.
+2. **Test 🟡 tail — T19, T20, T22, T23, T25, T28, T30, T31, T32, T33.** Mostly
+   assertions that are weaker than they look, plus T31 (no e2e at all for hosted
+   audio, SSE, share revocation, trimming, admin authz) and T30 (CI is the most
+   forgiving config, so it cannot see this suite's flake class).
+3. **Sync — SY4, SY7, SY8, SY9.** SY4 matters most: audio downloaded from Drive
+   is stored under the hash the _sender_ claimed, never verified. The hosted
+   path computes a hash (`serverAudio/transfer.ts:139`); the Drive path does not.
+4. **Performance — P2, P3, P4, P5, P8.** P3 is measured: `@hello-pangea/dnd` is
+   28.3 KB gzipped of a 326.5 KB first load, for a library reachable only after
+   the pad editor opens. The fix is in `usePadInteractions` / `modalRegistry`.
+   **P6 is a correction, not a task** — the `structuredClone` fix the earlier
+   review prescribed measures 18% worse. Do not apply it.
+5. **Server — SV5, SV6, SV14.** SV6 verified still live: the Drive proxy's
+   origin gate keeps a `Referer` fallback, which is one `curl -H` away.
+6. **R6** — `/drive/open` signs you out of Google when the sign-in popup fails,
+   because the shared hook clears auth and the three copies it replaced did not.
+   Verified present; whether it is wrong is a judgement call.
 
-628 unit · 127/127 chromium e2e · lint · typecheck · build · prettier · jscpd 0 %
-· version-sync · action-pins · actionlint · zizmor — all clean, tree clean.
+## Found while fixing, not in the review
 
-## Next, in order
+- **T8 is a live product bug.** An import racing an orphan cleanup
+  deterministically leaves a pad naming a deleted audio file:
+  `importAudioSources` commits each file in its own transaction and writes pads
+  later. Recorded as an expected failure that goes red when fixed. **The fix is
+  a design choice** — grace period on recent audio, one transaction spanning the
+  import, or a lock.
+- **Tab is suppressed app-wide**, so Help, Search, the bank tabs and the profile
+  selector are keyboard-unreachable. This is C2's other half.
+- **`useSearch` hard-codes `Bank N`**, contradicting the review's own premise
+  for C9.
+- **The "N of M pads failed" import message is unreachable**: a rejected
+  IndexedDB request aborts the transaction before the message is assembled. The
+  outcome is still right; the wording is dead.
+- **Theme-colour drift**: `layout.tsx` `#000000` vs `manifest.ts` `#f2801f`.
+- **A pre-existing audio-start flake** in `activatePad`, seen once and not
+  catalogued by the review.
+- Analysing a _newly added_ sound while offline runs on the main thread — an
+  accepted cost of never caching worker scripts.
 
-Nothing is in progress. The backlog is the new review's 🔴 list, ranked there.
-Start at the top:
+## Mick's calls
 
-1. **T1** — the server-sync e2e flake is a real lost-update bug: a merge writes
-   `_fieldsModified[field] = 0` for unstamped fields, and `updateLocalData`
-   overwrites local stamps while pinning local values, so a sync erases the
-   record that this device changed something. Silent, loses user edits, no unit
-   guard. `plans/review-2026-08-17/tests.md:59`.
-2. **ST1** — a failed audio import is swallowed and reported as success.
-3. **SY2 / SY1** — hand-resolved conflicts desync ids from hashes; two clients on
-   one server profile push to each other forever.
-4. **SV1 / SV2** — uploaded bytes unverified against their hash; profile write
-   buffers the body before any size check.
-5. Then the 🟡 threads, of which the largest is that **import is one rule written
-   four times** and the legacy impamp2 path has none of the fixes and no tests.
-
-## Waiting on Mick
-
-- **Registering the service worker.** `public/sw.js` exists and is referenced by
-  nothing, so the offline-first PWA the README promises does not exist. Turning
-  it on changes caching and update semantics for every existing user of a live
-  deployment, from a file that has never run against the current build.
-- **`IMPAMP_ALLOWED_EMAILS`** on the public host — still his call on the set.
-- **L9 / L11** from the previous review: deleting ~864 KB of orphaned docs, and
-  whether to commit `fnox.toml`.
-
-## Not deployed
-
-Nothing has shipped since the previous session. The production `impamp_data`
-volume was chowned to uid 1000 then, with a verified backup taken first.
+- **`IMPAMP_ALLOWED_EMAILS`** on the public host.
+- **SV8 / SV9** — rate limiting and per-account quotas. Declined deliberately:
+  the quota numbers are the policy, and a per-IP limiter has to know which proxy
+  header to trust behind Kamal.
+- **T8's design choice**, above.
+- **Deploy.** Nothing has shipped. The production `impamp_data` volume was
+  chowned to uid 1000 in an earlier session, with a verified backup first.
