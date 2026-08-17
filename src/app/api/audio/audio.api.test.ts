@@ -592,6 +592,95 @@ describe("POST /api/audio/commit", () => {
   });
 });
 
+describe("POST /api/audio/commit — a file bigger than the proof window", () => {
+  // Every other fixture in this file is 8 KB or less, under the 64 KB proof
+  // window, so `proofRangeFor` returns `{offset: 0, length: wholeFile}` and
+  // the offset arithmetic never runs. Client and server agree there only
+  // because both compute zero. Real audio files are all on this side of the
+  // line, so an off-by-one between the offset the server names and the one it
+  // reads back would refuse every legitimate second uploader of every real
+  // file, with the suite green.
+  const BIG = 200 * KB;
+
+  beforeEach(() => {
+    setObjectStoreForTests({
+      store,
+      config: {
+        ...config,
+        maxObjectBytes: 1024 * KB,
+        globalCapBytes: 8 * 1024 * KB,
+        defaultUserQuotaBytes: 1024 * KB,
+      },
+    });
+  });
+
+  it("challenges a window from inside the file, not its header", async () => {
+    const owner = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+    expect((await storeAudio(owner.token, "big", BIG)).status).toBe(200);
+
+    const askResponse = await uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: second.token,
+        body: {
+          hash: hashOf("big", BIG),
+          sizeBytes: BIG,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+    const ask = await askResponse.json();
+
+    expect(ask.alreadyStored).toBe(true);
+    expect(ask.proofRange.length).toBe(64 * KB);
+    expect(ask.proofRange.offset).toBeGreaterThan(0);
+    expect(ask.proofRange.offset + ask.proofRange.length).toBeLessThanOrEqual(
+      BIG,
+    );
+  });
+
+  it("lets a second holder of the file claim it", async () => {
+    const owner = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+    await storeAudio(owner.token, "big", BIG);
+
+    const result = await storeAudio(second.token, "big", BIG);
+
+    expect(result.status).toBe(200);
+    expect(result.commit.usage.usedBytes).toBe(BIG);
+  });
+
+  it("refuses a proof taken from the head of the file", async () => {
+    // The one failure a fixture under 64 KB cannot distinguish from success.
+    // If the server hashed the first window rather than the one it named,
+    // this would be accepted — and every honest client would be refused.
+    const owner = signIn(1, { approved: true });
+    const attacker = signIn(2, { approved: true });
+    await storeAudio(owner.token, "big", BIG);
+
+    const response = await commit(
+      makeRequest("/api/audio/commit", {
+        method: "POST",
+        sessionToken: attacker.token,
+        body: {
+          hash: hashOf("big", BIG),
+          name: "mine-now.wav",
+          contentType: "audio/wav",
+          extension: "wav",
+          proof: proofFor(bytesFor("big", BIG), {
+            offset: 0,
+            length: 64 * KB,
+          }),
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+});
+
 describe("GET /api/audio", () => {
   it("lists what the user holds with their usage", async () => {
     const { token } = signIn(1, { approved: true });
