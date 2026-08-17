@@ -33,10 +33,12 @@ import {
 } from "@/lib/audio/loudness/overview";
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import {
+  getAllPageMetadataForProfile,
   getAudioFileMetadata,
   upsertPadConfiguration,
   type PadConfiguration,
 } from "@/lib/db";
+import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { useProfileStore } from "@/store/profileStore";
 
@@ -65,6 +67,8 @@ export default function LoudnessOverviewModalContent() {
 
   const [pads, setPads] = useState<PadConfiguration[]>([]);
   const [names, setNames] = useState<Map<number, string>>(new Map());
+  // pageIndex -> the bank's own name, for the banks that have one.
+  const [bankNames, setBankNames] = useState<Map<number, string>>(new Map());
   const [tab, setTab] = useState<"sounds" | "pads">("sounds");
   const [sortKey, setSortKey] = useState<SoundSortKey>("deviation");
   const [direction, setDirection] = useState<SortDirection>("desc");
@@ -107,9 +111,26 @@ export default function LoudnessOverviewModalContent() {
 
       setIsLoading(true);
       try {
-        const loaded = await getAllPadConfigurationsForProfile(activeProfileId);
+        // Bank names come from the same place the tabs read them, so this
+        // table calls a bank what the tab above it calls it — it used to say
+        // "Bank 3" while the tab said "3: Act 1 SFX".
+        //
+        // Fetched alongside the pads rather than after them: both feed the
+        // same memo, and setting them a render apart would paint the table
+        // once with the numbers and again with the names.
+        const [loaded, pages] = await Promise.all([
+          getAllPadConfigurationsForProfile(activeProfileId),
+          getAllPageMetadataForProfile(activeProfileId),
+        ]);
         if (cancelled) return;
         setPads(loaded);
+        setBankNames(
+          new Map(
+            pages
+              .filter((page) => !!page.name)
+              .map((page) => [page.pageIndex, page.name]),
+          ),
+        );
 
         // A full board can have hundreds of pad-sound slots but far fewer
         // distinct audio files (the same sound reused across many pads).
@@ -195,14 +216,16 @@ export default function LoudnessOverviewModalContent() {
         normalisation,
         getAnalysis: getCachedLoudness,
         getSoundName: (id) => names.get(id) ?? `Sound ${id}`,
-        getBankName: (pageIndex) => `Bank ${pageIndex + 1}`,
+        getBankName: (pageIndex) =>
+          bankNames.get(pageIndex) ??
+          `Bank ${convertIndexToBankNumber(pageIndex)}`,
       }),
     // cacheVersion is intentionally unread: getCachedLoudness reads a module
     // -level cache the linter can't see into, so bumping this counter is the
     // only way to tell the memo that a background-analysed sound needs
     // recomputing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pads, normalisation, names, cacheVersion],
+    [pads, normalisation, names, bankNames, cacheVersion],
   );
 
   // Distinct banks that actually hold a sound, in bank order — not all

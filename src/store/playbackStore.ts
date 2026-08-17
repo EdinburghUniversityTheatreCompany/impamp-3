@@ -54,6 +54,7 @@ interface PlaybackStoreState {
     armTrack: (key: string, trackInfo: ArmedTrackState) => void;
     removeArmedTrack: (key: string) => void;
     clearAllArmedTracks: () => void;
+    playArmedTrack: (key: string) => void;
     playNextArmedTrack: () => void;
   };
 }
@@ -182,39 +183,46 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
       armed.forEach((track) => track.audioFileIds.forEach(unpinAudioBuffer));
     },
 
-    // Action to play the next armed track
+    // Action to play one named armed track.
+    //
+    // The queue is addressable because the Armed Tracks panel needs it to be:
+    // every row's Play button called playNextArmedTrack(), so each one fired
+    // the *head* of the queue while its own label said `Play ${name}`. With
+    // more than one cue armed, pressing Play on the second row sent the first
+    // cue to the room and left the intended one queued.
+    playArmedTrack: (key) => {
+      const track = get().armedTracks.get(key);
+      if (!track) return;
+
+      // Disarm synchronously so a rapid second trigger cannot fire the same cue
+      get().actions.removeArmedTrack(key);
+
+      // Imported dynamically to avoid a circular dependency.
+      import("@/lib/audio").then(({ triggerPad }) =>
+        triggerPad(
+          {
+            padIndex: track.padInfo.padIndex,
+            audioFileIds: track.audioFileIds,
+            playbackType: track.playbackType,
+            name: track.name,
+            audioTrimSettings: track.audioTrimSettings,
+            audioGainSettings: track.audioGainSettings,
+            padGainDb: track.padGainDb,
+          },
+          {
+            activeProfileId: track.padInfo.profileId,
+            currentPageIndex: track.padInfo.pageIndex,
+          },
+          { logPrefix: "[PlaybackStore] armed track" },
+        ),
+      );
+    },
+
+    // Action to play the next armed track — FIFO, which is what F9 means.
     playNextArmedTrack: () => {
-      const state = get();
-      if (state.armedTracks.size === 0) return;
-
-      // Get the first armed track (we'll use FIFO order)
-      const firstKey = Array.from(state.armedTracks.keys())[0];
-      const firstTrack = state.armedTracks.get(firstKey);
-
-      if (firstTrack) {
-        // Disarm synchronously so a rapid second trigger cannot fire the same cue
-        get().actions.removeArmedTrack(firstKey);
-
-        // Imported dynamically to avoid a circular dependency.
-        import("@/lib/audio").then(({ triggerPad }) =>
-          triggerPad(
-            {
-              padIndex: firstTrack.padInfo.padIndex,
-              audioFileIds: firstTrack.audioFileIds,
-              playbackType: firstTrack.playbackType,
-              name: firstTrack.name,
-              audioTrimSettings: firstTrack.audioTrimSettings,
-              audioGainSettings: firstTrack.audioGainSettings,
-              padGainDb: firstTrack.padGainDb,
-            },
-            {
-              activeProfileId: firstTrack.padInfo.profileId,
-              currentPageIndex: firstTrack.padInfo.pageIndex,
-            },
-            { logPrefix: "[PlaybackStore] armed track" },
-          ),
-        );
-      }
+      const firstKey = Array.from(get().armedTracks.keys())[0];
+      if (firstKey === undefined) return;
+      get().actions.playArmedTrack(firstKey);
     },
   },
 }));

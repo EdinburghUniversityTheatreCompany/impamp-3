@@ -15,6 +15,7 @@ import type { TransferProgress } from "@/lib/importExport";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
+import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useShallow } from "zustand/react/shallow";
 
 /**
@@ -123,6 +124,11 @@ export default function ProfileManager() {
       clearGoogleAuthDetails: s.clearGoogleAuthDetails,
     })),
   );
+
+  // Escape dismisses the manager. `ProfileCard` opens modals from inside this
+  // panel, and the hook's stack is what makes that safe: a dialog opened from
+  // here keeps its own Escape, and closing it hands Escape back to this.
+  useEscapeToClose(isProfileManagerOpen, closeProfileManager);
 
   const router = useRouter();
 

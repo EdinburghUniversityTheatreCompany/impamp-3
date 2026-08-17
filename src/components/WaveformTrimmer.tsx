@@ -30,6 +30,7 @@ import {
   formatLufs,
 } from "@/lib/audio/loudness/format";
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
+import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useProfileStore } from "@/store/profileStore";
 
 interface WaveformTrimmerProps {
@@ -398,6 +399,22 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     previewKey,
     resolved.linear,
   ]);
+
+  // Escape backs out of the trimmer, and only the trimmer.
+  //
+  // This overlay is portalled on top of the pad-edit modal, which registers its
+  // own Escape handler — so without this, Escape here closed the entire editor
+  // and threw away the trim range along with every other unsaved change on the
+  // pad: name, playback mode, gains, sound order. Cancel was the only safe way
+  // out, and nothing said so.
+  //
+  // Mounting later is not by itself enough to win, which is why the hook keeps
+  // a stack: among capture listeners on one target the earlier registration
+  // fires first, and that is the modal underneath.
+  //
+  // `true` because this component is only rendered while it is open — the
+  // parent unmounts it to close it.
+  useEscapeToClose(true, onClose);
 
   // Save and close
   const handleSave = useCallback(() => {

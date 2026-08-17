@@ -296,6 +296,50 @@ const Pad: React.FC<PadProps> = ({
 
   const rootProps = getRootProps();
 
+  /**
+   * The pad's one activation path, shared by the pointer and the keyboard so
+   * the two cannot drift into meaning different things.
+   *
+   * `withCtrl` is the arm chord: Ctrl+Click from the mouse, Ctrl+Enter or
+   * Ctrl+Space from the keyboard.
+   */
+  const activate = React.useCallback(
+    (withCtrl: boolean) => {
+      // Ctrl arms the track
+      if (withCtrl && isConfigured && onCtrlClick && soundCount > 0) {
+        onCtrlClick();
+      }
+      // In Delete/Move mode, activating deletes the pad (but not special pads)
+      else if (
+        isDeleteMoveMode &&
+        isConfigured &&
+        onRemoveSound &&
+        !isSpecialPad
+      ) {
+        onRemoveSound();
+      }
+      // In Edit mode, activating opens the edit modal
+      else if (isEditMode) {
+        onShiftClick();
+      }
+      // In normal mode, activating plays the sound
+      else {
+        onClick();
+      }
+    },
+    [
+      isConfigured,
+      onCtrlClick,
+      soundCount,
+      isDeleteMoveMode,
+      onRemoveSound,
+      isSpecialPad,
+      isEditMode,
+      onShiftClick,
+      onClick,
+    ],
+  );
+
   return (
     // Spread dropzone props onto the root div
     <div
@@ -307,28 +351,38 @@ const Pad: React.FC<PadProps> = ({
       onClick={(e) => {
         // Prevent dropzone's default click behavior if necessary, though noClick should handle it
         e.stopPropagation();
+        activate(e.ctrlKey);
 
-        // Handle Ctrl+Click for arming tracks
-        if (e.ctrlKey && isConfigured && onCtrlClick && soundCount > 0) {
-          onCtrlClick();
-        }
-        // In Delete/Move mode, clicking deletes the pad (but not for special pads)
-        else if (
-          isDeleteMoveMode &&
-          isConfigured &&
-          onRemoveSound &&
-          !isSpecialPad
-        ) {
-          onRemoveSound();
-        }
-        // In Edit mode, clicking opens the edit modal
-        else if (isEditMode) {
-          onShiftClick();
-        }
-        // In normal mode, clicking plays the sound
-        else {
-          onClick();
-        }
+        // A pointer click must not park focus on the pad.
+        //
+        // Enter and Space are global transport controls in this app — Enter
+        // plays the emergency bank, Space is Fade Out All — and they have to
+        // mean that at every moment of a show. Leaving focus behind would make
+        // both depend on whichever pad the operator last touched, so reaching
+        // for the emergency sound after firing a cue would retrigger the cue.
+        //
+        // This is safe precisely because a div is not a <button>: pressing
+        // Enter on one does not synthesise a click, so onKeyDown below is the
+        // only keyboard route in and this line never runs for a keyboard user.
+        e.currentTarget.blur();
+      }}
+      // ARIA requires a role="button" element to activate on Enter and Space.
+      // This one announced itself as a button and did neither, so a screen
+      // reader user heard "Sound pad 3: Applause, button" and got the emergency
+      // bank when they pressed Enter.
+      //
+      // preventDefault and stopPropagation are both load-bearing: the global
+      // listener sits on `window` in the bubble phase, so stopping propagation
+      // here is what keeps a focused pad's Enter from *also* firing the
+      // emergency sound. The order matters too — a held key must be swallowed
+      // before it is ignored, or every auto-repeat would fall through to the
+      // global handler.
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.repeat) return; // Holding a pad key must not retrigger it
+        activate(e.ctrlKey);
       }}
       draggable={isDeleteMoveMode && !isSpecialPad}
       onDragStart={handleDragStart}
@@ -346,7 +400,22 @@ const Pad: React.FC<PadProps> = ({
         handleDrop(e);
       }}
       role="button"
-      tabIndex={0} // Make it focusable
+      // Focusable, but reaching it is not the intended keyboard route and a
+      // deliberate deviation from the usual advice.
+      //
+      // Every pad prints its own hotkey and the aria-label repeats it (", key
+      // q"), which is a better interaction than tabbing past 63 siblings — and
+      // it is why `useKeyboardListener` suppresses Tab outside inputs and
+      // overlays, so a stray Tab mid-show cannot walk focus off the board.
+      // Removing tabIndex would be the tidier-looking answer and the wrong one:
+      // it would make the pads unreachable by assistive tech even when focus is
+      // moved programmatically, and would leave onKeyDown above dead code.
+      //
+      // Not fixed here, because it lives in `useKeyboardListener.ts`: that Tab
+      // suppression is app-wide, so the header controls (Help, Search, the
+      // bank tabs, the profile selector) cannot be reached by keyboard either.
+      // Narrowing it is the other half of this.
+      tabIndex={0}
       // Only inert in the modes where the click would have played the pad. In
       // edit / delete-move mode the pad is still an actionable target — that is
       // how it gets re-enabled — so it must not report itself as disabled.

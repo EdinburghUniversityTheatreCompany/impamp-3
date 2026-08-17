@@ -132,18 +132,33 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // Handle result interaction - play or arm
-  const handleResultClick = (e: React.MouseEvent, result: SearchResult) => {
+  // Handle result interaction - play, or arm when Ctrl is held
+  const activateResult = (result: SearchResult, withCtrl: boolean) => {
     // Disabled pads are listed so they can be found, but neither play nor arm
     if (result.isDisabled) {
       console.log(`[SearchModal] Pad "${result.name}" is disabled, ignoring.`);
       return;
     }
-    if (e.ctrlKey) {
+    if (withCtrl) {
       handleArmSound(result);
     } else {
       handlePlaySound(result);
     }
+  };
+
+  // Ctrl+Enter arms, mirroring Ctrl+Click.
+  //
+  // A <button> already fires its onClick from Enter and Space, so the plain
+  // case needs nothing. The chord does: preventDefault is what stops the
+  // browser synthesising that click as well, which would otherwise arm the cue
+  // and then immediately play it.
+  const handleResultKeyDown = (
+    e: React.KeyboardEvent,
+    result: SearchResult,
+  ) => {
+    if (e.key !== "Enter" || !e.ctrlKey) return;
+    e.preventDefault();
+    activateResult(result, true);
   };
 
   if (!isOpen) return null;
@@ -219,10 +234,22 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2">
               {results.map((result) => (
-                <div
+                // A real <button>, not a div with a role bolted on: it brings
+                // its own tab stop and its own Enter/Space activation, and it
+                // is what makes `aria-disabled` mean anything — on the div this
+                // used to be, with no role, the attribute was inert.
+                //
+                // `aria-disabled` rather than `disabled` on purpose. Disabled
+                // pads are listed so they can still be *found*, and a truly
+                // disabled button drops out of the tab order and goes
+                // unannounced, which would hide them from the people most
+                // reliant on the search.
+                <button
+                  type="button"
                   key={`${result.pageIndex}-${result.padIndex}`}
-                  onClick={(e) => handleResultClick(e, result)}
-                  className={`bg-white dark:bg-gray-700 rounded p-3 shadow transition-colors ${
+                  onClick={(e) => activateResult(result, e.ctrlKey)}
+                  onKeyDown={(e) => handleResultKeyDown(e, result)}
+                  className={`w-full text-left bg-white dark:bg-gray-700 rounded p-3 shadow transition-colors ${
                     result.isDisabled
                       ? "opacity-60 cursor-not-allowed"
                       : "cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30"
@@ -232,10 +259,13 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                   title={
                     result.isDisabled
                       ? "This pad is disabled."
-                      : `Click to play. Ctrl+Click to arm track.`
+                      : `Click or press Enter to play. Ctrl+Click or Ctrl+Enter to arm track.`
                   }
                 >
-                  <div className="font-medium text-gray-900 dark:text-white">
+                  {/* Spans rather than divs: a <button> may only contain
+                      phrasing content, and `block` restores the layout the
+                      divs gave when this was one. */}
+                  <span className="block font-medium text-gray-900 dark:text-white">
                     <span className={result.isDisabled ? "line-through" : ""}>
                       {result.name}
                     </span>
@@ -244,17 +274,17 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                         Off
                       </span>
                     )}
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  </span>
+                  <span className="block text-sm text-gray-500 dark:text-gray-400 mt-1">
                     {result.bankName}
-                  </div>
+                  </span>
                   {result.originalFileName &&
                     result.originalFileName !== result.name && (
-                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1 italic">
+                      <span className="block text-xs text-gray-400 dark:text-gray-500 mt-1 italic">
                         {result.originalFileName}
-                      </div>
+                      </span>
                     )}
-                </div>
+                </button>
               ))}
             </div>
           )}
