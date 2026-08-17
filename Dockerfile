@@ -16,10 +16,22 @@ RUN npm ci
 # Copy application files
 COPY . .
 
-# Declare build-time arguments that Next.js needs during the build
+# Declare build-time arguments that Next.js needs during the build.
+#
+# Every NEXT_PUBLIC_* value a client component reads has to be here. Next inlines
+# them into the client bundle AT BUILD TIME, so supplying one to the running
+# container does nothing at all — the browser never sees it. The Drive Picker in
+# ProfileManager.tsx reads all three; only the client id used to be passed, so
+# the deployed image rendered <drive-picker> with app-id and developer-key both
+# undefined, while config/deploy.yml's env.clear entry for the API key looked
+# like configuration and was inert.
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG NEXT_PUBLIC_GOOGLE_API_KEY
+ARG NEXT_PUBLIC_GOOGLE_APP_ID
 # Make them available as environment variables within this build stage
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+ENV NEXT_PUBLIC_GOOGLE_API_KEY=${NEXT_PUBLIC_GOOGLE_API_KEY}
+ENV NEXT_PUBLIC_GOOGLE_APP_ID=${NEXT_PUBLIC_GOOGLE_APP_ID}
 
 # Build the application
 RUN npm run build
