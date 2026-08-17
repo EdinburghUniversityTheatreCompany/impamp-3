@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canWrite } from "@/lib/server/shares";
-import { deleteProfile, updateProfile } from "@/lib/server/profiles";
+import {
+  deleteProfile,
+  getProfileById,
+  updateProfile,
+} from "@/lib/server/profiles";
 import { publishProfileChange } from "@/lib/server/events";
 import {
   loadAuthorizedProfile,
@@ -37,15 +41,27 @@ export async function GET(
   if (meta instanceof NextResponse) return meta;
 
   const { access } = meta;
-  const etag = profileEtag(meta.profile.version, access);
+  const conditionalEtag = profileEtag(meta.profile.version, access);
 
-  if (etagMatches(request.headers.get("if-none-match"), etag)) {
-    return new NextResponse(null, { status: 304, headers: { ETag: etag } });
+  if (etagMatches(request.headers.get("if-none-match"), conditionalEtag)) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: { ETag: conditionalEtag },
+    });
   }
 
-  const loaded = loadAuthorizedProfile(request, id);
-  if (loaded instanceof NextResponse) return loaded;
-  const { profile } = loaded;
+  // The row, not a second authorisation. Resolving access again cost a
+  // full-body GET six queries where it used to take four, and — worse — made
+  // the ETag and the body two separate reads: a PUT landing between them
+  // answered `ETag: "N.owner"` on a body whose version was N+1. It self-heals,
+  // since versions only increase, but a client feeding that ETag back as
+  // If-Match (which parseVersionHeader explicitly supports) takes a needless
+  // 409. The tag below is computed from the row that is actually being sent.
+  const profile = getProfileById(id);
+  if (!profile) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  }
+  const etag = profileEtag(profile.version, access);
 
   // The stored blob is already JSON, so it is spliced into the response rather
   // than parsed into an object graph for `NextResponse.json` to serialise
