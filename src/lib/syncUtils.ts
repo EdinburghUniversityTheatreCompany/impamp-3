@@ -89,6 +89,98 @@ const DERIVED_HASH_TWINS: Readonly<Record<string, string>> = {
 
 const DERIVED_HASH_FIELDS = new Set(Object.values(DERIVED_HASH_TWINS));
 
+/**
+ * Records a merged field's modification stamp, or removes it when there is
+ * nothing to record.
+ *
+ * An unstamped field must stay unstamped. Writing an explicit `0` reads as a
+ * real answer everywhere downstream, and the merged record is written straight
+ * back over the stored one — so a `0` computed from a snapshot taken before the
+ * user's edit landed on top of the stamp that edit had just raised. The value
+ * survived; the record that this device had changed it did not. The next merge
+ * then found a field nobody here had touched and settled it silently, which is
+ * a lost update with no conflict raised.
+ *
+ * @param stamps - The merged record's `_fieldsModified`, mutated in place
+ * @param field - The field being merged
+ * @param stamp - The stamp the merge settled on; 0 means "neither side ever
+ *   stamped this"
+ */
+const stampMergedField = (
+  stamps: Record<string, number>,
+  field: string,
+  stamp: number,
+): void => {
+  if (stamp > 0) stamps[field] = stamp;
+  else delete stamps[field];
+};
+
+/** Fields that describe the record's identity rather than its content. */
+const isContentField = (key: string): boolean =>
+  !key.startsWith("_") &&
+  key !== "id" &&
+  key !== "profileId" &&
+  key !== "createdAt" &&
+  key !== "updatedAt";
+
+/**
+ * Reconciles a merged record with the record as it actually is on this device
+ * now, rather than as it was when the merge read it.
+ *
+ * A sync is not instant. It reads the local data, spends a round trip or two on
+ * the network — plus however long the audio downloads take — and only then
+ * writes the merged result back. Anything the user edited in that window is
+ * edited on a record the merge has never seen, and a plain `put` of the merged
+ * record discards it: the pad name reverts, and the `_fieldsModified` entry
+ * that would have raised a conflict next time reverts with it.
+ *
+ * Two rules, both derived from the one the merge itself uses — the later stamp
+ * wins:
+ *
+ * - stamps are combined per field, keeping the later of the two, so a merge can
+ *   never lower one;
+ * - a field the stored record stamped **after** the merge read it keeps its
+ *   stored value, because that edit is strictly newer than anything the merge
+ *   could have known about. It is then still stamped, so the next merge sees it
+ *   and can raise a conflict properly.
+ *
+ * @param merged - The record the merge produced
+ * @param stored - The record as it is in IndexedDB right now, if it exists
+ * @param localReadAt - When the merge read its local snapshot. Omit for a write
+ *   that is not merge-derived — an authoritative pull of a read-only profile
+ *   has no local edits to protect and must not keep local values.
+ * @returns A copy of `merged` with newer local edits and stamps carried across
+ */
+export const reconcileWithStoredRecord = <T extends Syncable>(
+  merged: T,
+  stored: T | undefined,
+  localReadAt?: number,
+): T => {
+  if (!stored) return merged;
+
+  const storedStamps = stored._fieldsModified ?? {};
+  const mergedStamps = merged._fieldsModified ?? {};
+  const reconciled: T = { ...merged };
+  const stamps: Record<string, number> = { ...mergedStamps };
+
+  for (const [field, storedStamp] of Object.entries(storedStamps)) {
+    if (storedStamp > (stamps[field] ?? 0)) stamps[field] = storedStamp;
+    if (
+      localReadAt !== undefined &&
+      storedStamp > localReadAt &&
+      isContentField(field) &&
+      field in stored
+    ) {
+      (reconciled as unknown as Record<string, unknown>)[field] = (
+        stored as unknown as Record<string, unknown>
+      )[field];
+    }
+  }
+
+  reconciled._fieldsModified = stamps;
+  return reconciled;
+};
+
 const compareSyncableItems = (
   localItem: Syncable,
   remoteItem: Syncable,
@@ -170,7 +262,14 @@ const compareSyncableItems = (
       mergedFieldsModified[field] = localMod;
       localWinsOverall = true;
     } else {
-      mergedFieldsModified[field] = Math.max(localMod, remoteMod);
+      // No entry at all for a field neither side has ever stamped, rather than
+      // an explicit 0 — see `stampMergedField` for what a 0 costs once this
+      // record is written back over the stored one.
+      stampMergedField(
+        mergedFieldsModified,
+        field,
+        Math.max(localMod, remoteMod),
+      );
       if (
         valuesDiffer &&
         (remoteItem._modified ?? 0) > (localItem._modified ?? 0)
@@ -468,24 +567,18 @@ export const detectProfileConflicts = async (
       // Use 'any' cast for dynamic property assignment, disabling ESLint for this line
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mergedData.profile as any)[key] = remoteVal;
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = remoteMod;
     }
-    // If local is newer or times are equal, keep local (already in mergedData)
-    // Ensure timestamp is updated if remote was newer but value was same
-    if (remoteMod > localMod && !mergedData.profile._fieldsModified?.[field]) {
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = remoteMod;
-    } else if (
-      localMod >= remoteMod &&
-      !mergedData.profile._fieldsModified?.[field]
-    ) {
-      if (!mergedData.profile._fieldsModified)
-        mergedData.profile._fieldsModified = {};
-      mergedData.profile._fieldsModified[field] = localMod;
-    }
+    // If local is newer or times are equal, keep local (already in mergedData).
+    // Either way the merged record needs the stamp that goes with the value it
+    // ended up holding: whatever the clone of local already carried, or the
+    // remote stamp that has just won. A field neither side ever stamped gets no
+    // entry — see `stampMergedField`.
+    const stamps = (mergedData.profile._fieldsModified ??= {});
+    stampMergedField(
+      stamps,
+      field,
+      stamps[field] || (remoteMod > localMod ? remoteMod : localMod),
+    );
   });
 
   if (profileConflicts.length > 0) {

@@ -17,7 +17,9 @@ import {
 } from "@/lib/db";
 import {
   ProfileSyncData,
+  reconcileWithStoredRecord,
   resolveSyncedPadAudio,
+  type Syncable,
   type SyncedPadConfiguration,
 } from "@/lib/syncUtils";
 import { base64ToBlob, remapPadSettingsOnImport } from "@/lib/importExport";
@@ -243,11 +245,17 @@ export const backfillDriveFileIdsFromRemote = async (
  * Updates the local database with data from a sync operation
  * @param profileId The profile ID to update
  * @param data The sync data to apply
+ * @param localReadAt When the merge that produced `data` read its local
+ *   snapshot. Anything the user has edited since is strictly newer than this
+ *   blob and is kept — see `reconcileWithStoredRecord`. Omit for a write that
+ *   is not merge-derived, such as an authoritative pull of a followed profile,
+ *   where the remote is meant to win outright.
  * @returns Warnings about references that could not be preserved
  */
 export const updateLocalData = async (
   profileId: number,
   data: ProfileSyncData,
+  localReadAt?: number,
 ): Promise<string[]> => {
   if (typeof window === "undefined") return [];
 
@@ -351,7 +359,13 @@ export const updateLocalData = async (
     // 1. Update Profile — preserve local-only fields that must not be overwritten by remote
     const existingLocalProfile = await profileStore.get(profileId);
     const profileWithId = {
-      ...data.profile,
+      // Against the record as it is now, not as the merge read it. A rename
+      // made while this sync was in flight is newer than anything in the blob.
+      ...(reconcileWithStoredRecord(
+        data.profile as Syncable,
+        existingLocalProfile as Syncable | undefined,
+        localReadAt,
+      ) as typeof data.profile),
       id: profileId,
       name: existingLocalProfile?.name ?? data.profile.name,
       // Where this profile syncs, where its audio lives, and what we may do
@@ -476,11 +490,18 @@ export const updateLocalData = async (
       // ran once per pad — 960 of them on a full board — inside the write
       // transaction, so it also held the store's locks for longer.
       const existingLocalPad = existingPadMap.get(key);
+      // Same reconciliation as the profile above: a pad renamed, or given a
+      // different sound, while this sync was in flight is newer than the blob.
+      const padToWrite = reconcileWithStoredRecord(
+        padToStore as Syncable,
+        existingLocalPad as Syncable | undefined,
+        localReadAt,
+      ) as typeof padToStore;
 
       if (existingLocalPad?.id) {
-        await padStore.put({ ...padToStore, id: existingLocalPad.id });
+        await padStore.put({ ...padToWrite, id: existingLocalPad.id });
       } else {
-        const { id: _remoteId, ...padToAdd } = padToStore;
+        const { id: _remoteId, ...padToAdd } = padToWrite;
         await padStore.add(padToAdd);
       }
     }
@@ -509,11 +530,17 @@ export const updateLocalData = async (
       };
       // From the map built above, for the same reason as the pads.
       const existingLocalPage = existingPageMap.get(page.pageIndex);
+      // And the same for a bank renamed mid-sync.
+      const pageToWrite = reconcileWithStoredRecord(
+        pageWithProfileId as Syncable,
+        existingLocalPage as Syncable | undefined,
+        localReadAt,
+      ) as typeof pageWithProfileId;
 
       if (existingLocalPage?.id) {
-        await pageStore.put({ ...pageWithProfileId, id: existingLocalPage.id });
+        await pageStore.put({ ...pageToWrite, id: existingLocalPage.id });
       } else {
-        const { id: _remoteId, ...pageToAdd } = pageWithProfileId;
+        const { id: _remoteId, ...pageToAdd } = pageToWrite;
         await pageStore.add(pageToAdd);
       }
     }

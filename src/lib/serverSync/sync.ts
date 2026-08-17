@@ -292,6 +292,10 @@ async function pullMergePush(
   const following = Boolean(profile.followOnly);
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    // Before the read, not after: everything from here until the write below
+    // is a window in which the user can edit a record this merge will never
+    // see, and `updateLocalData` needs to know where that window opened.
+    const localReadAt = Date.now();
     const raw = await getLocalProfileSyncData(profileId);
     if (!raw) throw new Error("Could not load local profile data.");
     const localData = markHostedAudio(raw, hostedHashes);
@@ -364,7 +368,9 @@ async function pullMergePush(
     // first alone let a follower keep writing to a profile it could write to
     // — which is the one thing following promises not to do.
     if (remoteReadOnly || following) {
-      warnings.push(...(await updateLocalData(profileId, mergedData)));
+      warnings.push(
+        ...(await updateLocalData(profileId, mergedData, localReadAt)),
+      );
       await updateProfile(profileId, {
         serverVersion: remoteVersion,
         ...accessFields(remote),
@@ -381,7 +387,9 @@ async function pullMergePush(
         shareToken,
       );
 
-      warnings.push(...(await updateLocalData(profileId, mergedData)));
+      warnings.push(
+        ...(await updateLocalData(profileId, mergedData, localReadAt)),
+      );
       await updateProfile(profileId, {
         serverVersion: pushed.version,
         ...accessFields(remote),

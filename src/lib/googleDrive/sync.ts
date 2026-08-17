@@ -748,6 +748,11 @@ const performProfileSync = async (
     }
 
     // 1c. Get Local Data (now that audio files have driveFileIds set)
+    //
+    // Before the read, not after: everything from here until the write below is
+    // a window in which the user can edit a record this merge will never see,
+    // and `updateLocalData` needs to know where that window opened.
+    const localReadAt = Date.now();
     const localData = await getLocalProfileSyncData(profileId);
     if (!localData) {
       throw new Error("Could not load local profile data.");
@@ -818,7 +823,9 @@ const performProfileSync = async (
       if (isReadOnlyForSync(localProfile)) {
         // Read-only: apply remote changes locally but never write back to Drive
         console.log(`Profile ${profileId} is read-only — skipping upload.`);
-        warnings.push(...(await updateLocalData(profileId, mergedData)));
+        warnings.push(
+          ...(await updateLocalData(profileId, mergedData, localReadAt)),
+        );
       } else {
         // 4. Upload Merged Data to Drive (Create or Update)
         const driveFileName = getProfileSyncFilename(mergedData.profile.name);
@@ -833,7 +840,9 @@ const performProfileSync = async (
         );
 
         // 5. Update Local Data with Merged Data
-        warnings.push(...(await updateLocalData(profileId, mergedData)));
+        warnings.push(
+          ...(await updateLocalData(profileId, mergedData, localReadAt)),
+        );
 
         // 6. Ensure local profile has the correct file ID
         if (uploadedFile.id !== fileId) {
