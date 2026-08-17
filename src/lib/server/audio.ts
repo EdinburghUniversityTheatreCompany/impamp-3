@@ -146,9 +146,23 @@ export function userHoldsReference(userId: number, hash: string): boolean {
  * own used to be enough to be handed that sound. The blob is the caller's
  * word; a reference row is the server's own record of who uploaded what.
  *
- * "Could have put it there" means the owner or one of the profile's editors
- * holds it. Restricting it to the owner alone would refuse an owner the
- * sounds their own collaborators added.
+ * "Could have put it there" means the owner holds it, the person recorded as
+ * having attached it to this profile holds it, or a current email-share editor
+ * holds it. Restricting it to the owner alone would refuse an owner the sounds
+ * their own collaborators added.
+ *
+ * The `profile_audio.added_by` branch is what makes the answer stable. Deriving
+ * it from the live share table alone was wrong twice: a link share has
+ * `email IS NULL` by schema constraint so it never joined — a sound added by a
+ * link-share editor was 404 for everyone including the owner — and reading live
+ * shares made the grant retroactive, so revoking a share silenced pads a
+ * departed collaborator had contributed to the owner's own board. Whether a
+ * sound could legitimately be here is a fact about the past. The email-share
+ * branch stays for rows written before that column existed.
+ *
+ * Naming a hash in a blob still buys nothing: `added_by` only helps someone who
+ * genuinely holds a reference to the sound, and a reference costs proof of
+ * possession.
  */
 export function profileMayServeHash(
   profileId: string,
@@ -162,6 +176,11 @@ export function profileMayServeHash(
         WHERE r.hash = ?
           AND (
             r.user_id = ?
+            OR r.user_id IN (
+              SELECT pa.added_by
+                FROM profile_audio pa
+               WHERE pa.profile_id = ? AND pa.hash = ? AND pa.added_by IS NOT NULL
+            )
             OR r.user_id IN (
               -- Joined on the raw column, not lower(trim(u.email)): an
               -- expression over an indexed column cannot use the index, so
@@ -177,6 +196,8 @@ export function profileMayServeHash(
         LIMIT 1`,
       hash,
       ownerId,
+      profileId,
+      hash,
       profileId,
     ) !== undefined
   );

@@ -12,7 +12,11 @@ import { closeDb, execute, getDb } from "@/lib/server/db";
 import { createSession } from "@/lib/server/session";
 import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createProfile } from "@/lib/server/profiles";
-import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
+import {
+  createLinkShare,
+  deleteShare,
+  upsertEmailShare,
+} from "@/lib/server/shares";
 import { setObjectStoreForTests } from "@/lib/server/audioRequests";
 import { proofRangeFor } from "@/lib/server/proofOfPossession";
 import {
@@ -31,6 +35,7 @@ import { POST as uploadUrl } from "./upload-url/route";
 import { POST as commit } from "./commit/route";
 import { DELETE as deleteAudio, GET as downloadUrl } from "./[hash]/route";
 import { GET as profileAudio } from "../profiles/[id]/audio/[hash]/route";
+import { PUT as putProfile } from "../profiles/[id]/route";
 import { GET as adminAudio } from "../admin/audio/route";
 import { PATCH as patchUser } from "../admin/users/[id]/route";
 
@@ -701,20 +706,35 @@ describe("DELETE /api/audio/:hash", () => {
 });
 
 describe("GET /api/profiles/:id/audio/:hash", () => {
+  const blobNaming = (hashes: string[]) => ({
+    _syncFormatVersion: 2,
+    audioFiles: hashes.map((hash, index) => ({
+      id: index,
+      name: `sound-${index}.wav`,
+      type: "audio/wav",
+      hash,
+    })),
+  });
+
   const profileWith = (ownerId: number, hashes: string[]) =>
-    createProfile({
-      ownerId,
-      name: "Show",
-      data: {
-        _syncFormatVersion: 2,
-        audioFiles: hashes.map((hash, index) => ({
-          id: index,
-          name: `sound-${index}.wav`,
-          type: "audio/wav",
-          hash,
-        })),
-      },
-    });
+    createProfile({ ownerId, name: "Show", data: blobNaming(hashes) });
+
+  /** A collaborator publishing their own edit of a profile, as the app does. */
+  const publish = (
+    profileId: string,
+    version: number,
+    hashes: string[],
+    auth: { sessionToken?: string; query?: string },
+  ) =>
+    putProfile(
+      makeRequest(`/api/profiles/${profileId}`, {
+        method: "PUT",
+        headers: { "if-match": `"${version}"` },
+        body: { name: "Show", data: blobNaming(hashes) },
+        ...auth,
+      }),
+      routeParams({ id: profileId }),
+    );
 
   it("lets an anonymous link-share holder fetch audio the profile lists", async () => {
     const owner = signIn(1, { approved: true });
@@ -883,6 +903,73 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it("serves a sound a link-share editor added, to the owner and to them", async () => {
+    // profileMayServeHash admitted the owner or a *current email-share*
+    // editor. A link share has `email IS NULL` by schema constraint, so it
+    // never joined — even though the UI mints editor links ("Can edit"). A
+    // sound a link-share editor added was therefore 404 for everyone
+    // including the profile owner, immediately and forever.
+    const owner = signIn(1, { approved: true });
+    const collaborator = signIn(2, { approved: true });
+    const profile = profileWith(owner.user.id, []);
+    const share = createLinkShare(profile.id, "editor", owner.user.id);
+
+    const { hash } = await storeAudio(collaborator.token, "their-sound", KB);
+    const published = await publish(profile.id, profile.version, [hash!], {
+      sessionToken: collaborator.token,
+      query: `token=${share.link_token}`,
+    });
+    expect(published.status).toBe(200);
+
+    // The owner, who reaches the profile by owning it, and the collaborator,
+    // who reaches it only by holding the link.
+    const reachedBy = [
+      { sessionToken: owner.token },
+      { sessionToken: collaborator.token, query: `token=${share.link_token}` },
+    ];
+    for (const auth of reachedBy) {
+      const response = await profileAudio(
+        makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, auth),
+        routeParams({ id: profile.id, hash: hash! }),
+      );
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("keeps serving a departed collaborator's sound after their share is revoked", async () => {
+    // The subquery read the *live* share table, so removing a share
+    // retroactively withdrew access to audio that collaborator had already
+    // contributed. A board that worked yesterday went silent on exactly those
+    // pads — the owner's own profile, sounds they could see listed but not
+    // play, with no error explaining it.
+    const owner = signIn(1, { approved: true });
+    const collaborator = signIn(2, { approved: true });
+    const profile = profileWith(owner.user.id, []);
+    const share = upsertEmailShare(
+      profile.id,
+      collaborator.user.email,
+      "editor",
+      owner.user.id,
+    );
+
+    const { hash } = await storeAudio(collaborator.token, "contributed", KB);
+    await publish(profile.id, profile.version, [hash!], {
+      sessionToken: collaborator.token,
+    });
+
+    const ask = () =>
+      profileAudio(
+        makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+          sessionToken: owner.token,
+        }),
+        routeParams({ id: profile.id, hash: hash! }),
+      );
+
+    expect((await ask()).status).toBe(200);
+    deleteShare(profile.id, share.id);
+    expect((await ask()).status).toBe(200);
   });
 
   it("refuses someone with no access to the profile at all", async () => {

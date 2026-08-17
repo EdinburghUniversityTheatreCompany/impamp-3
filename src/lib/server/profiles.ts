@@ -72,14 +72,43 @@ function hashesNamedBy(data: unknown): string[] {
  *
  * Called inside the same transaction as the blob write, so the index cannot
  * disagree with the blob it describes.
+ *
+ * Rows that survive the write are left alone rather than deleted and
+ * re-inserted, because `added_by` records who first put a sound on this
+ * profile and that must not drift. Re-inserting would re-attribute an
+ * editor's sound to the owner the next time the owner saved, and the owner
+ * holds no reference to it — which is precisely the 404 this column exists to
+ * stop.
+ *
+ * @param writerId - The account publishing this write, or null for an
+ *   anonymous link-share editor, who has none to record.
  */
-function reindexProfileAudio(profileId: string, data: unknown): void {
-  execute("DELETE FROM profile_audio WHERE profile_id = ?", profileId);
-  for (const hash of hashesNamedBy(data)) {
+function reindexProfileAudio(
+  profileId: string,
+  data: unknown,
+  writerId: number | null,
+): void {
+  const wanted = new Set(hashesNamedBy(data));
+
+  for (const row of queryAll<{ hash: string }>(
+    "SELECT hash FROM profile_audio WHERE profile_id = ?",
+    profileId,
+  )) {
+    if (!wanted.has(row.hash)) {
+      execute(
+        "DELETE FROM profile_audio WHERE profile_id = ? AND hash = ?",
+        profileId,
+        row.hash,
+      );
+    }
+  }
+
+  for (const hash of wanted) {
     execute(
-      "INSERT OR IGNORE INTO profile_audio (profile_id, hash) VALUES (?, ?)",
+      "INSERT OR IGNORE INTO profile_audio (profile_id, hash, added_by) VALUES (?, ?, ?)",
       profileId,
       hash,
+      writerId,
     );
   }
 }
@@ -99,7 +128,7 @@ export function createProfile(input: CreateProfileInput): ProfileRow {
       now,
       now,
     );
-    reindexProfileAudio(id, input.data);
+    reindexProfileAudio(id, input.data, input.ownerId);
 
     return getProfileById(id)!;
   });
@@ -126,6 +155,8 @@ export function updateProfile(
     data: unknown;
     expectedVersion: number;
     serialisedData?: string;
+    /** Who is publishing, so profile_audio can record it. See SV4. */
+    writerId?: number | null;
   },
 ): UpdateProfileResult {
   return transaction(() => {
@@ -148,7 +179,7 @@ export function updateProfile(
       Date.now(),
       id,
     );
-    reindexProfileAudio(id, input.data);
+    reindexProfileAudio(id, input.data, input.writerId ?? null);
 
     return { status: "ok" as const, profile: getProfileById(id)! };
   });

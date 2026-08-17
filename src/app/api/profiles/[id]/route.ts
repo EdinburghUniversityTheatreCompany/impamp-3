@@ -90,7 +90,14 @@ export async function PUT(
   const body = await parseProfileBody(request);
   if (body instanceof NextResponse) return body;
 
-  const result = updateProfile(id, { ...body, expectedVersion });
+  const result = updateProfile(id, {
+    ...body,
+    expectedVersion,
+    // Recorded against the sounds this write introduces, so the grant survives
+    // the share being revoked. Null for an anonymous link-share editor, who
+    // has no account to record.
+    writerId: loaded.user?.id ?? null,
+  });
 
   if (result.status === "not_found") {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
