@@ -100,6 +100,31 @@ describe("resolveGain", () => {
     expect(r.linear).toBe(1);
   });
 
+  it("reports a measured file as measured, whatever else it decides", () => {
+    // `filterProblemRows` in the Loudness Overview excludes unmeasured rows,
+    // so `unmeasured: true` on the measured path empties the "problems only"
+    // view for every sound. Nothing asserted the false side of this flag, and
+    // inverting it left the whole suite green — as did inverting
+    // `peakLimited`, `boostCapped`, `willClip` and `estimated` in the
+    // unmeasured branch, which is why this checks the pair rather than the
+    // one field.
+    for (const analysis of [fakeAnalysis(-27, -12), fakeAnalysis(-30, -0.1)]) {
+      const measured = resolveGain({ ...base, analysis });
+      expect(measured.unmeasured).toBe(false);
+      expect(measured.measuredLufs).not.toBeNull();
+      // Both fixtures ask for well under MAX_NORM_BOOST_DB, so the cap is
+      // genuinely not reached. `canNormalise && …` written as `||` lights a
+      // "Boost capped" badge on every normalised sound and survived otherwise.
+      expect(measured.boostCapped).toBe(false);
+    }
+
+    const unmeasured = resolveGain({ ...base, analysis: undefined });
+    expect(unmeasured.peakLimited).toBe(false);
+    expect(unmeasured.boostCapped).toBe(false);
+    expect(unmeasured.willClip).toBe(false);
+    expect(unmeasured.estimated).toBe(false);
+  });
+
   it("applies no normalisation when the file is unmeasured", () => {
     const r = resolveGain({ ...base, analysis: undefined });
     expect(r.normDb).toBe(0);

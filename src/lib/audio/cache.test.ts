@@ -81,6 +81,22 @@ describe("audio buffer cache pinning", () => {
     expect(isAudioBufferCached(1)).toBe(true);
   });
 
+  it("releases the pin after as many unpins as there were pins", () => {
+    // The sequence the two tests around this one never make between them:
+    // pin x2 then unpin x2. `count - 1` written as `count + 1` — two armed
+    // pads sharing a sound never releasing it, so the buffer becomes
+    // permanently unevictable on a cache whose whole job is bounding memory —
+    // left all of cache.test.ts green.
+    pinAudioBuffer(1);
+    pinAudioBuffer(1);
+    unpinAudioBuffer(1);
+    unpinAudioBuffer(1);
+
+    expect(isAudioBufferPinned(1)).toBe(false);
+    fillCacheToEviction();
+    expect(isAudioBufferCached(1)).toBe(false);
+  });
+
   it("makes a buffer evictable again once fully unpinned", () => {
     pinAudioBuffer(1);
     unpinAudioBuffer(1);
