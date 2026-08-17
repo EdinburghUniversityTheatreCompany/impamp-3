@@ -4,6 +4,7 @@ import type { SyncConflictData } from "@/lib/googleDrive/types";
 import {
   IDLE_SYNC_STATUS,
   mirrorToProfile,
+  selectProfileSyncStatus,
   syncStatusActions,
   useSyncStatusStore,
 } from "@/store/syncStatusStore";
@@ -94,12 +95,38 @@ describe("syncStatusStore", () => {
 
   it("hands out the same idle record every time", () => {
     // A selector that built a fresh object per call would hand React a new
-    // identity on every render and never settle.
-    const first =
-      useSyncStatusStore.getState().byProfileId.get(1) ?? IDLE_SYNC_STATUS;
-    const second =
-      useSyncStatusStore.getState().byProfileId.get(1) ?? IDLE_SYNC_STATUS;
-    expect(first).toBe(second);
+    // identity on every render and never settle. This used to write the `??`
+    // fallback out in the test rather than calling the selector, so it
+    // asserted IDLE_SYNC_STATUS === IDLE_SYNC_STATUS and the real selector was
+    // never called by this file at all.
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, 1)).toBe(
+      selectProfileSyncStatus(state, 1),
+    );
+    expect(selectProfileSyncStatus(state, 1)).toBe(IDLE_SYNC_STATUS);
+  });
+
+  it("hands out the idle record for no profile at all", () => {
+    // ProfileCard renders before a profile id exists, so this branch is on the
+    // first render of every card.
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, null)).toBe(IDLE_SYNC_STATUS);
+    expect(selectProfileSyncStatus(state, undefined)).toBe(IDLE_SYNC_STATUS);
+  });
+
+  it("hands out a stored status by reference, not a copy", () => {
+    // The stable-identity requirement is not only about the idle record: a
+    // profile that *is* syncing re-renders on every unrelated store write if
+    // its status arrives as a fresh object each time.
+    syncStatusActions.patch(1, { activity: "syncing" });
+    const state = useSyncStatusStore.getState();
+
+    expect(selectProfileSyncStatus(state, 1)).toBe(state.byProfileId.get(1));
+    expect(selectProfileSyncStatus(state, 1)).toBe(
+      selectProfileSyncStatus(state, 1),
+    );
   });
 
   it("refuses to be mutated in place", () => {

@@ -110,15 +110,29 @@ export const useSyncStatusStore = create<SyncStatusStoreState>((set) => ({
 
 export const syncStatusActions = useSyncStatusStore.getState().actions;
 
+/**
+ * A profile's live sync status, or the shared idle record if it has none.
+ *
+ * Exported separately from the hook below because what matters about it is the
+ * *identity* it returns — React 19's `useSyncExternalStore` treats a fresh
+ * object per call as "getSnapshot should be cached", which is an infinite
+ * re-render rather than a wrong value — and a hook cannot be called outside
+ * React. The unit suite runs in the node environment with no DOM, so the only
+ * way to hold this function to that property is to be able to call it.
+ */
+export const selectProfileSyncStatus = (
+  state: Pick<SyncStatusStoreState, "byProfileId">,
+  profileId: number | null | undefined,
+): ProfileSyncStatus =>
+  profileId == null
+    ? IDLE_SYNC_STATUS
+    : (state.byProfileId.get(profileId) ?? IDLE_SYNC_STATUS);
+
 /** A profile's live sync status, or the shared idle record if it has none. */
 export const useProfileSyncStatus = (
   profileId: number | null | undefined,
 ): ProfileSyncStatus =>
-  useSyncStatusStore((state) =>
-    profileId == null
-      ? IDLE_SYNC_STATUS
-      : (state.byProfileId.get(profileId) ?? IDLE_SYNC_STATUS),
-  );
+  useSyncStatusStore((state) => selectProfileSyncStatus(state, profileId));
 
 /**
  * Wrap a sync engine's callbacks so everything they report also lands in the
