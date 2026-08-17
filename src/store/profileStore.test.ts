@@ -82,6 +82,59 @@ describe("switching profile", () => {
   });
 });
 
+describe("whether the active profile may be edited", () => {
+  it("says no while the profile behind the rehydrated id is still loading", () => {
+    // `activeProfileId` comes back from localStorage synchronously at store
+    // creation; `profiles` stays empty until fetchProfiles() resolves. Answering
+    // "yes" for that window let Shift enter edit mode and a drop be accepted on
+    // a followed or view-only profile, with no banner to explain it — and those
+    // are the edits the next sync destroys.
+    useProfileStore.setState({
+      profiles: [],
+      activeProfileId: 7,
+      isLoading: true,
+    });
+
+    expect(state().canEditActiveProfile()).toBe(false);
+  });
+
+  it("says yes when no profile is selected at all", () => {
+    useProfileStore.setState({
+      profiles: [],
+      activeProfileId: null,
+      isLoading: true,
+    });
+
+    expect(state().canEditActiveProfile()).toBe(true);
+  });
+
+  it("says yes once a local profile has actually loaded", () => {
+    useProfileStore.setState({
+      profiles: [profile(7)],
+      activeProfileId: 7,
+      isLoading: false,
+    });
+
+    expect(state().canEditActiveProfile()).toBe(true);
+  });
+
+  it("says no for a followed profile", () => {
+    useProfileStore.setState({
+      profiles: [
+        profile(7, {
+          syncType: "server",
+          serverProfileId: "abc",
+          followOnly: true,
+        } as Partial<Profile>),
+      ],
+      activeProfileId: 7,
+      isLoading: false,
+    });
+
+    expect(state().canEditActiveProfile()).toBe(false);
+  });
+});
+
 describe("reporting a failed write", () => {
   const alerts: string[] = [];
   const originalAlert = globalThis.alert;

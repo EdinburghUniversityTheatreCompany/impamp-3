@@ -462,8 +462,24 @@ export const useProfileStore = create<ProfileState>()(
          */
         canEditActiveProfile: () => {
           const { profiles, activeProfileId } = get();
+          // Nothing selected: there is nothing to refuse, and the write paths
+          // all bail on a null profile id anyway.
+          if (activeProfileId === null) return true;
+
           const active = profiles.find((p) => p.id === activeProfileId);
-          return active ? getSyncState(active).canEdit : true;
+          if (active) return getSyncState(active).canEdit;
+
+          // An id with no profile behind it. Almost always the initial load:
+          // `activeProfileId` is rehydrated from localStorage synchronously at
+          // store creation, while `profiles` stays empty until fetchProfiles()
+          // resolves. This used to answer "yes" for that whole window, so for
+          // the first frames after a reload on a followed or view-only profile
+          // Shift entered edit mode and a drop was accepted — with no VIEW ONLY
+          // banner, since `app/page.tsx` derives that from the same lookup and
+          // finds nothing to explain. Those are exactly the edits the next sync
+          // destroys, which is the reason this gate exists at all. "I do not
+          // know yet" has to answer no.
+          return false;
         },
 
         incrementPadConfigsVersion: () => {
