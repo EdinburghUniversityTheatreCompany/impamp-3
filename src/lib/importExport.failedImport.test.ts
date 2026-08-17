@@ -56,6 +56,32 @@ function syncData(): ProfileSyncData {
   } as ProfileSyncData;
 }
 
+/**
+ * The same profile, but with two pads on one page and pad index. The second
+ * violates the unique profilePagePad index, so the pad importer fails — after
+ * the audio has already been written.
+ */
+function withCollidingPads(): ProfileSyncData {
+  const data = syncData();
+  const pad = data.padConfigurations![0];
+  data.padConfigurations = [pad, { ...pad, name: "Collides" }];
+  return data;
+}
+
+/** Runs an import whose audio all downloads fine, and expects it to throw. */
+async function expectImportToFail(
+  db: Awaited<ReturnType<typeof getDb>>,
+  data: ProfileSyncData,
+): Promise<void> {
+  await expect(
+    importProfileFromSyncData(
+      db,
+      data,
+      async () => new Blob(["bytes"], { type: "audio/mpeg" }),
+    ),
+  ).rejects.toThrow();
+}
+
 beforeEach(async () => {
   await clearAllStores();
 });
@@ -85,6 +111,66 @@ describe("an audio file that cannot be imported", () => {
     await expect(
       importProfileFromSyncData(db, syncData(), async () => null),
     ).rejects.toThrow(/2 of 2/);
+  });
+
+  it("leaves nothing behind when a later step fails", async () => {
+    // Audio is written at step 2 and pads at step 4, so anything that throws
+    // in between leaves audio records that `deleteProfile` cannot see — it
+    // works out what to delete from the profile's *pad configurations*, and
+    // there are none. A 2 GB restore that failed at the last step used to
+    // leave 2 GB of unreachable blobs, and retrying leaked another copy.
+    const db = await getDb();
+    await expectImportToFail(db, withCollidingPads());
+
+    expect(await db.getAll("profiles")).toHaveLength(0);
+    expect(await db.getAll("audioFiles")).toHaveLength(0);
+  });
+
+  it("leaves nothing behind when it fails before writing a single pad", async () => {
+    // Failing in the page importer is the worse version: not one pad exists,
+    // so the pad-derived cleanup deletes none of the archive's audio.
+    const db = await getDb();
+    const page = {
+      profileId: 42,
+      pageIndex: 0,
+      name: "Opening",
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    // Two banks claiming page 0: the second violates the unique profilePage
+    // index, so the page importer throws before a single pad is written.
+    const data = syncData();
+    data.pageMetadata = [page, { ...page, name: "Collides" }];
+
+    await expectImportToFail(db, data);
+
+    expect(await db.getAll("audioFiles")).toHaveLength(0);
+  });
+
+  it("keeps audio another profile's pads still name", async () => {
+    // The cleanup deletes what this import created, not everything it
+    // touched. A file that some surviving pad references has to stay.
+    const db = await getDb();
+    const keeperId = await db.add("audioFiles", {
+      name: "keeper.mp3",
+      type: "audio/mpeg",
+      blob: new Blob(["keep me"], { type: "audio/mpeg" }),
+      createdAt: new Date(0),
+    });
+    await db.add("padConfigurations", {
+      profileId: 9999,
+      pageIndex: 0,
+      padIndex: 0,
+      audioFileIds: [keeperId],
+      playbackType: "round-robin",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    await expectImportToFail(db, withCollidingPads());
+
+    expect(await db.get("audioFiles", keeperId)).toBeDefined();
   });
 
   it("says so plainly when the device has run out of storage", async () => {

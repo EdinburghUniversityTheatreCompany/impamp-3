@@ -12,6 +12,7 @@ import {
   getProfile,
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
+  deleteUnreferencedAudioFiles,
   collectReferencedAudioFileIds,
   initialSyncFields,
 } from "./db"; // Import necessary types and DB functions from db.ts
@@ -787,6 +788,10 @@ async function importProfileCore(
   link: ImportLink = {},
 ): Promise<number> {
   let profileId: number | undefined = undefined;
+  // Every audio record this import created, so the failure path can take them
+  // back out. `deleteProfile` alone cannot: it derives what to delete from the
+  // profile's pads, and audio is written two steps before those exist.
+  const createdAudioIds: number[] = [];
   const now = new Date();
   let padConfigsToImport: PadConfiguration[] = exportData.padConfigurations; // Start with potentially new format
 
@@ -854,6 +859,7 @@ async function importProfileCore(
       onAudioProgress,
       audioConcurrency,
     );
+    createdAudioIds.push(...audioIdMap.values());
     console.log(`Imported ${audioIdMap.size} audio files`);
 
     if (audioFailures.length > 0) {
@@ -924,6 +930,25 @@ async function importProfileCore(
       } catch (cleanupError) {
         console.error(
           `Failed to clean up partially imported profile ID: ${profileId}`,
+          cleanupError,
+        );
+      }
+    }
+
+    // And the audio, which the profile delete above could not reach: it
+    // decides what to remove from the profile's pads, and a failure between
+    // step 2 and step 4 means those pads were never written. Whatever the
+    // surviving pads do still name is kept, so this can never take a sound
+    // out from under another profile.
+    if (createdAudioIds.length > 0) {
+      try {
+        const removed = await deleteUnreferencedAudioFiles(createdAudioIds);
+        console.log(
+          `Cleaned up ${removed} of ${createdAudioIds.length} audio files written by the failed import.`,
+        );
+      } catch (cleanupError) {
+        console.error(
+          "Failed to clean up audio files from the failed import:",
           cleanupError,
         );
       }

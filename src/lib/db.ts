@@ -859,6 +859,68 @@ function separateOrphans(
   return { orphanedIds, referencedIds };
 }
 
+/**
+ * Drops decoded-buffer cache entries for audio whose records have gone.
+ *
+ * Dynamic import for the same reason the other callers use one: `audio/cache`
+ * reaches Web Audio, and `db.ts` is imported by code that runs on the server.
+ */
+async function clearAudioCacheEntries(ids: Iterable<number>): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  try {
+    const { clearCachedAudioBuffer } = await import("./audio/cache");
+    let cleared = 0;
+    for (const id of ids) {
+      if (clearCachedAudioBuffer(id)) cleared++;
+    }
+    return cleared;
+  } catch (error) {
+    console.warn("Failed to clear audio cache entries:", error);
+    return 0;
+  }
+}
+
+/**
+ * Deletes specific audio files, keeping any a pad still names.
+ *
+ * For cleaning up after a write that got halfway: an import creates its audio
+ * records before the pads that reference them, so a failure in between leaves
+ * files no pad has ever named. `deleteProfile` cannot reach those — it derives
+ * what to delete from the profile's pad configurations, and in that window
+ * there are none — and nothing else sweeps them without the user pressing the
+ * orphan-cleanup button. A 2 GB restore that failed at the last step used to
+ * leave 2 GB behind, and each retry left another copy.
+ *
+ * Deciding and deleting share one transaction, so nothing can start
+ * referencing a file between the two.
+ *
+ * @param candidateIds The ids this operation created
+ * @returns How many were actually deleted
+ */
+export async function deleteUnreferencedAudioFiles(
+  candidateIds: Iterable<number>,
+): Promise<number> {
+  const candidates = new Set(candidateIds);
+  if (candidates.size === 0) return 0;
+
+  const db = await getDb();
+  const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
+  const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
+  const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
+  const audioStore = tx.objectStore("audioFiles");
+
+  const deletedIds: number[] = [];
+  for (const audioFileId of candidates) {
+    if (referencedIds.has(audioFileId)) continue;
+    await audioStore.delete(audioFileId);
+    deletedIds.push(audioFileId);
+  }
+  await tx.done;
+
+  await clearAudioCacheEntries(deletedIds);
+  return deletedIds.length;
+}
+
 export async function findOrphanedAudioFiles(): Promise<{
   orphanedIds: Set<number>;
   referencedIds: Set<number>;
