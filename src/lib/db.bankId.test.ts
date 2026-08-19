@@ -12,7 +12,32 @@ const {
   upsertPadConfiguration,
   getPadConfigurationsForProfileBank,
   swapPadConfigurations,
+  getDb,
+  findMissingAudioFiles,
 } = await import("./db");
+
+// `upsertPageMetadata` still keys on the retired pageIndex-based
+// "profilePage" index (that helper is Task 5's scope, not this task's), so
+// tests here seed pageMetadata directly through the low-level store instead
+// of routing through it.
+async function addBank(
+  profileIdArg: number,
+  bankId: string,
+  pageIndex: number,
+  name: string,
+): Promise<void> {
+  const db = await getDb();
+  const now = new Date();
+  await db.add("pageMetadata", {
+    profileId: profileIdArg,
+    bankId,
+    pageIndex,
+    name,
+    isEmergency: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
 
 let profileId: number;
 
@@ -93,5 +118,43 @@ describe("pads keyed by bank identity", () => {
     const byIndex = new Map(pads.map((pad) => [pad.padIndex, pad]));
     expect(byIndex.get(0)?.name).toBe("Rain");
     expect(byIndex.get(1)?.name).toBe("Horn");
+  });
+});
+
+describe("findMissingAudioFiles across profiles that share a bankId", () => {
+  it("reports each profile's own bank name, not another profile's", async () => {
+    // Every profile migrated from the pre-bankId schema names its banks "0",
+    // "1", "2", ... (the migration assigns migrated banks the deterministic
+    // id String(pageIndex)), so two unrelated profiles both having a bank
+    // whose bankId is "0" is the normal case, not an edge case.
+    const profileA = await addProfile({ name: "Board A", syncType: "local" });
+    const profileB = await addProfile({ name: "Board B", syncType: "local" });
+
+    await addBank(profileA, "0", 0, "Bank A0");
+    await addBank(profileB, "0", 0, "Bank B0");
+
+    // Both pads reference an audio file id that was never stored, so both
+    // show up as missing.
+    await upsertPadConfiguration({
+      profileId: profileA,
+      bankId: "0",
+      padIndex: 0,
+      audioFileIds: [999],
+      playbackType: "sequential",
+    });
+    await upsertPadConfiguration({
+      profileId: profileB,
+      bankId: "0",
+      padIndex: 0,
+      audioFileIds: [999],
+      playbackType: "sequential",
+    });
+
+    const results = await findMissingAudioFiles();
+
+    const rowA = results.find((row) => row.profileId === profileA);
+    const rowB = results.find((row) => row.profileId === profileB);
+    expect(rowA?.bankName).toBe("Bank A0");
+    expect(rowB?.bankName).toBe("Bank B0");
   });
 });

@@ -1910,10 +1910,14 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
     profiles.map((p) => [p.id!, p.name]),
   );
 
-  // Build bank name map
+  // Build bank name map, keyed on profileId+bankId together: bankId alone
+  // collides across profiles, because every profile migrated from the
+  // pre-bankId schema names its banks "0", "1", "2", ... (Task 2's migration
+  // assigns migrated banks the deterministic id String(pageIndex)). Only
+  // banks created after that migration get a UUID.
   const allBanks = await db.getAll("pageMetadata");
   const bankNameMap = new Map<string, string>(
-    allBanks.map((bank) => [bank.bankId, bank.name]),
+    allBanks.map((bank) => [`${bank.profileId}:${bank.bankId}`, bank.name]),
   );
 
   const results: MissingAudioFile[] = [];
@@ -1926,7 +1930,8 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
           profileName:
             profileNameMap.get(pad.profileId) ?? `Profile ${pad.profileId}`,
           bankId: pad.bankId,
-          bankName: bankNameMap.get(pad.bankId) ?? "Bank ?",
+          bankName:
+            bankNameMap.get(`${pad.profileId}:${pad.bankId}`) ?? "Bank ?",
           padIndex: pad.padIndex,
           padName: pad.name ?? "",
           missingAudioFileId: audioFileId,
