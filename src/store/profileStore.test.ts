@@ -276,6 +276,22 @@ describe("bank selection", () => {
     expect(useProfileStore.getState().currentBankId).toBe("2");
   });
 
+  it("selects position 9 (bank 10) when given the literal bank number 10", async () => {
+    // `convertIndexToBankNumber(9)` returns the literal `10` — that is what
+    // every tab-strip click handler hands `setCurrentPageIndex` after
+    // resolving a bank id to its position. `convertBankNumberToIndex` used to
+    // recognise only `0` for bank 10 (the digit-key spelling), so a literal
+    // `10` fell through to -1 and this call was silently rejected: clicking
+    // the tenth tab left the store on whatever bank was already selected.
+    const store = useProfileStore.getState();
+    await store.loadBanks(profileId);
+
+    useProfileStore.getState().setCurrentPageIndex(10);
+
+    expect(useProfileStore.getState().currentPageIndex).toBe(9);
+    expect(useProfileStore.getState().currentBankId).toBe("9");
+  });
+
   // `reorderBanks` lands in Task 15. Turned back on there.
   it.todo(
     "keeps the view on the same bank when the order changes",
