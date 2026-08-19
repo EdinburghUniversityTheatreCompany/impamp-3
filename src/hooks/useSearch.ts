@@ -8,7 +8,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { getAudioFileMetadata, PlaybackType } from "@/lib/db";
+import {
+  getAudioFileMetadata,
+  getAllPageMetadataForProfile,
+  PlaybackType,
+} from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 
@@ -18,7 +22,9 @@ import { convertIndexToBankNumber } from "@/lib/bankUtils";
 export interface SearchResult {
   /** Profile ID the result belongs to */
   profileId: number;
-  /** Page/bank index containing the result */
+  /** Identity of the bank containing the result, used to play the pad */
+  bankId: string;
+  /** Position of the bank containing the result, used to navigate to it */
   pageIndex: number;
   /** Pad index within the page */
   padIndex: number;
@@ -87,13 +93,22 @@ export function useSearch(searchOptions: SearchOptions = {}) {
     const searchPads = async () => {
       setIsLoading(true);
       try {
-        // Get all pad configurations for the active profile
-        const allPads =
-          await getAllPadConfigurationsForProfile(activeProfileId);
+        // Get all pad configurations for the active profile, plus the bank
+        // metadata pads no longer carry a position of their own — a pad only
+        // knows its bank's identity, and the position it navigates to comes
+        // from looking that identity up.
+        const [allPads, allBanks] = await Promise.all([
+          getAllPadConfigurationsForProfile(activeProfileId),
+          getAllPageMetadataForProfile(activeProfileId),
+        ]);
         if (cancelled) return;
 
-        // Create a map to store bank names by index
-        const bankNames = new Map<number, string>();
+        const bankByBankId = new Map(
+          allBanks.map((bank) => [bank.bankId, bank]),
+        );
+
+        // Create a map to store bank names by identity
+        const bankNames = new Map<string, string>();
 
         // Filter pads with audio files and matching names
         const searchResults: SearchResult[] = [];
@@ -119,23 +134,29 @@ export function useSearch(searchOptions: SearchOptions = {}) {
           // Ensure audioFileIds exists and is not empty
           if (!pad.audioFileIds || pad.audioFileIds.length === 0) continue;
 
+          // A pad naming a bank this profile no longer has (mid-sync, or a
+          // stale read) has nowhere to navigate to; skip it rather than
+          // showing a result Enter can't reach.
+          const bank = bankByBankId.get(pad.bankId);
+          if (!bank) continue;
+
           // Try to get bank name if we haven't loaded it yet
-          if (!bankNames.has(pad.pageIndex)) {
+          if (!bankNames.has(pad.bankId)) {
             try {
               // You might need to implement a function to get bank name
               // For now, we'll use a default format
               bankNames.set(
-                pad.pageIndex,
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
+                pad.bankId,
+                `Bank ${convertIndexToBankNumber(bank.pageIndex)}`,
               );
             } catch (error) {
               console.error(
-                `Error getting bank name for index ${pad.pageIndex}:`,
+                `Error getting bank name for bank ${pad.bankId}:`,
                 error,
               );
               bankNames.set(
-                pad.pageIndex,
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
+                pad.bankId,
+                `Bank ${convertIndexToBankNumber(bank.pageIndex)}`,
               );
             }
           }
@@ -177,7 +198,8 @@ export function useSearch(searchOptions: SearchOptions = {}) {
           if (nameMatches || fileNameMatches) {
             searchResults.push({
               profileId: activeProfileId,
-              pageIndex: pad.pageIndex,
+              bankId: pad.bankId,
+              pageIndex: bank.pageIndex,
               padIndex: pad.padIndex,
               name: padName,
               audioFileIds: pad.audioFileIds,
@@ -188,8 +210,8 @@ export function useSearch(searchOptions: SearchOptions = {}) {
               isDisabled: pad.isDisabled ?? false,
               originalFileName: displayFileName,
               bankName:
-                bankNames.get(pad.pageIndex) ||
-                `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
+                bankNames.get(pad.bankId) ||
+                `Bank ${convertIndexToBankNumber(bank.pageIndex)}`,
             });
           }
         }

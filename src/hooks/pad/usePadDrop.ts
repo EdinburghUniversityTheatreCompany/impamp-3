@@ -18,12 +18,12 @@ import { loadAndDecodeAudio } from "@/lib/audio/decoder";
 /**
  * Hook that provides pad drop functionality
  *
- * @param currentPageIndex - The current page/bank index
+ * @param currentBankId - The identity of the current bank
  * @param refreshPadConfigs - Function to refresh pad configurations
  * @returns Object containing handler for dropping audio files
  */
 export function usePadDrop(
-  currentPageIndex: number,
+  currentBankId: string,
   refreshPadConfigs: () => void,
 ) {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
@@ -77,7 +77,7 @@ export function usePadDrop(
         // Create a pad configuration with the new audio file
         await upsertPadConfiguration({
           profileId: activeProfileId,
-          pageIndex: currentPageIndex,
+          bankId: currentBankId,
           padIndex: padIndex,
           audioFileIds: [audioFileId], // Single audio file in array
           playbackType: DEFAULT_PLAYBACK_TYPE,
@@ -105,7 +105,7 @@ export function usePadDrop(
         alert(`Failed to add audio file "${file.name}". Please try again.`);
       }
     },
-    [activeProfileId, currentPageIndex, refreshPadConfigs, requestSync],
+    [activeProfileId, currentBankId, refreshPadConfigs, requestSync],
   );
 
   /**

@@ -28,7 +28,7 @@ import React from "react";
 import { extractPadPlaybackSettings } from "@/lib/db";
 
 interface PadInteractionsParams {
-  currentPageIndex: number;
+  currentBankId: string;
   padConfigs: Map<number, PadConfiguration>;
   refreshPadConfigs: () => void;
   hasInteractedRef: React.RefObject<boolean>;
@@ -41,7 +41,7 @@ interface PadInteractionsParams {
  * @returns Object containing handlers for pad interactions
  */
 export function usePadInteractions(params: PadInteractionsParams) {
-  const { currentPageIndex, padConfigs, refreshPadConfigs, hasInteractedRef } =
+  const { currentBankId, padConfigs, refreshPadConfigs, hasInteractedRef } =
     params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const requestSync = useProfileStore((state) => state.requestSync);
@@ -92,7 +92,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         onSubmit: async (values) => {
           const updatedPadConfigData = {
             profileId: activeProfileId,
-            pageIndex: currentPageIndex,
+            bankId: currentBankId,
             padIndex,
             name: values.name,
             playbackType: values.playbackType,
@@ -125,7 +125,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           // blocks future triggers rather than cutting a live cue.
           if (updatedPadConfigData.isDisabled) {
             playbackStoreActions.removeArmedTrack(
-              `armed-${activeProfileId}-${currentPageIndex}-${padIndex}`,
+              `armed-${activeProfileId}-${currentBankId}-${padIndex}`,
             );
           }
 
@@ -138,7 +138,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
     },
     [
       activeProfileId,
-      currentPageIndex,
+      currentBankId,
       padConfigs,
       refreshPadConfigs,
       requestSync,
@@ -188,7 +188,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           // Update config to have empty audioFileIds and default playbackType
           await upsertPadConfiguration({
             profileId: activeProfileId,
-            pageIndex: currentPageIndex,
+            bankId: currentBankId,
             padIndex: padIndex,
             name: undefined, // Reset name to default
             audioFileIds: [], // Clear the sounds
@@ -219,7 +219,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
     },
     [
       activeProfileId,
-      currentPageIndex,
+      currentBankId,
       padConfigs,
       refreshPadConfigs,
       requestSync,
@@ -253,11 +253,11 @@ export function usePadInteractions(params: PadInteractionsParams) {
           ...extractPadPlaybackSettings(padConfig),
           padIndex: padConfig.padIndex,
         },
-        { activeProfileId, currentPageIndex },
+        { activeProfileId, currentBankId },
         { logPrefix: "[Pad Interactions]" },
       );
     },
-    [activeProfileId, currentPageIndex, hasInteractedRef],
+    [activeProfileId, currentBankId, hasInteractedRef],
   );
 
   /**
@@ -282,7 +282,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
       }
 
       // Create a unique key for this armed track
-      const armedKey = `armed-${activeProfileId}-${currentPageIndex}-${padIndex}`;
+      const armedKey = `armed-${activeProfileId}-${currentBankId}-${padIndex}`;
 
       // Add to armed tracks store
       playbackStoreActions.armTrack(armedKey, {
@@ -290,7 +290,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         name: config.name || `Pad ${padIndex + 1}`,
         padInfo: {
           profileId: activeProfileId,
-          pageIndex: currentPageIndex,
+          bankId: currentBankId,
           padIndex: padIndex,
         },
         audioFileIds: config.audioFileIds,
@@ -302,7 +302,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
 
       console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);
     },
-    [activeProfileId, currentPageIndex, padConfigs],
+    [activeProfileId, currentBankId, padConfigs],
   );
 
   return {

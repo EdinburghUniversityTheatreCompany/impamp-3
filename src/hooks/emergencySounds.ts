@@ -12,14 +12,15 @@
 
 import {
   PlaybackType,
+  PadConfiguration,
   getAllPageMetadataForProfile,
-  getPadConfigurationsForProfilePage,
+  getPadConfigurationsForProfileBank,
 } from "@/lib/db";
 
 /** One pad on an emergency bank, everything needed to fire it. */
 export interface EmergencySound {
   profileId: number;
-  pageIndex: number;
+  bankId: string;
   padIndex: number;
   audioFileIds: number[];
   playbackType: PlaybackType;
@@ -49,7 +50,7 @@ let loadToken = 0;
 
 /** Stable identity of a loaded set, used to detect a real change. */
 function describeEmergencySounds(sounds: EmergencySound[]): string {
-  return sounds.map((s) => `${s.pageIndex}:${s.padIndex}`).join(",");
+  return sounds.map((s) => `${s.bankId}:${s.padIndex}`).join(",");
 }
 
 /** Read every configured, enabled pad on every emergency bank of a profile. */
@@ -69,20 +70,20 @@ async function readEmergencySounds(
 
     const sounds: EmergencySound[] = [];
     for (const page of emergencyPages) {
-      const padConfigs = await getPadConfigurationsForProfilePage(
+      const padConfigs = await getPadConfigurationsForProfileBank(
         profileId,
-        page.pageIndex,
+        page.bankId,
       );
 
       const configuredPads = padConfigs.filter(
-        (pad) =>
+        (pad: PadConfiguration) =>
           pad.audioFileIds && pad.audioFileIds.length > 0 && !pad.isDisabled,
       );
 
       sounds.push(
-        ...configuredPads.map((pad) => ({
+        ...configuredPads.map((pad: PadConfiguration) => ({
           profileId,
-          pageIndex: page.pageIndex,
+          bankId: page.bankId,
           padIndex: pad.padIndex,
           audioFileIds: pad.audioFileIds!,
           playbackType: pad.playbackType,

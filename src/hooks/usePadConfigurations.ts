@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { getPadConfigurationsForProfilePage, PadConfiguration } from "@/lib/db"; // Assuming PadConfiguration is exported from db.ts
+import { getPadConfigurationsForProfileBank, PadConfiguration } from "@/lib/db"; // Assuming PadConfiguration is exported from db.ts
 import { useProfileStore } from "@/store/profileStore";
 
 interface UsePadConfigurationsResult {
@@ -65,14 +65,14 @@ function toConfigMap(
 }
 
 /**
- * Custom hook to fetch and manage pad configurations for a specific profile page.
+ * Custom hook to fetch and manage pad configurations for a specific profile bank.
  * @param profileId The ID of the active profile, or null if none.
- * @param pageIndex The index of the current page (bank).
+ * @param bankId The identity of the current bank, or null if none.
  * @returns An object containing the pad configurations, loading state, error state, and a refetch function.
  */
 export function usePadConfigurations(
   profileId: string | null,
-  pageIndex: number,
+  bankId: string | null,
 ): UsePadConfigurationsResult {
   const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
   const incrementPadConfigsVersion = useProfileStore(
@@ -89,20 +89,20 @@ export function usePadConfigurations(
   // store counter alone. A write path that called refetch() without also
   // bumping the counter therefore updated what you could see and not what you
   // could play. Two write paths did exactly that.
-  const requestKey = `${profileId}|${pageIndex}|${padConfigsVersion}`;
+  const requestKey = `${profileId}|${bankId}|${padConfigsVersion}`;
 
   useEffect(() => {
-    if (!profileId) return;
+    if (!profileId || !bankId) return;
 
     let cancelled = false;
     const numericProfileId = parseInt(profileId, 10);
 
     const request = Number.isNaN(numericProfileId)
       ? Promise.reject(new Error(`Invalid profileId format: ${profileId}`))
-      : getPadConfigurationsForProfilePage(numericProfileId, pageIndex);
+      : getPadConfigurationsForProfileBank(numericProfileId, bankId);
 
     request.then(
-      (configArray) => {
+      (configArray: PadConfiguration[]) => {
         if (cancelled) return;
         setResult({
           requestKey,
@@ -132,7 +132,7 @@ export function usePadConfigurations(
     return () => {
       cancelled = true;
     };
-  }, [profileId, pageIndex, requestKey]);
+  }, [profileId, bankId, requestKey]);
 
   // Deliberately the store action rather than local state: every consumer of
   // pad configurations has to hear about a refresh, not just this one.
@@ -145,13 +145,14 @@ export function usePadConfigurations(
   // newest result on hand is not the one for the request now in flight. Storing
   // it meant setting state synchronously inside the effect, one extra render
   // per fetch, purely to say something the state we already have implies.
+  const hasTarget = profileId !== null && bankId !== null;
   return useMemo(
     () => ({
-      padConfigs: profileId ? (result?.padConfigs ?? NO_CONFIGS) : NO_CONFIGS,
-      isLoading: profileId !== null && result?.requestKey !== requestKey,
-      error: profileId ? (result?.error ?? null) : null,
+      padConfigs: hasTarget ? (result?.padConfigs ?? NO_CONFIGS) : NO_CONFIGS,
+      isLoading: hasTarget && result?.requestKey !== requestKey,
+      error: hasTarget ? (result?.error ?? null) : null,
       refetch,
     }),
-    [profileId, requestKey, result, refetch],
+    [hasTarget, requestKey, result, refetch],
   );
 }

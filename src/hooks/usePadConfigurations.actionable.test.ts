@@ -11,14 +11,29 @@
  * The rule now has one name. These are the cases that distinguish "worth
  * drawing" from "safe to act on".
  */
-import { describe, it, expect } from "vitest";
+// Must be the first import: it installs `window` before `db.ts` can read it.
+import { clearAllStores } from "@/lib/testSupport/browserGlobals";
+import { beforeEach, describe, it, expect } from "vitest";
 import { actionablePadConfigs, NO_CONFIGS } from "@/hooks/usePadConfigurations";
 import type { PadConfiguration } from "@/lib/db";
+
+const {
+  addProfile,
+  upsertPadConfiguration,
+  getPadConfigurationsForProfileBank,
+} = await import("@/lib/db");
+
+let profileId: number;
+
+beforeEach(async () => {
+  await clearAllStores();
+  profileId = await addProfile({ name: "Board", syncType: "local" });
+});
 
 const pad = (padIndex: number): PadConfiguration =>
   ({
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex,
     audioFileIds: [padIndex + 100],
   }) as PadConfiguration;
@@ -52,5 +67,19 @@ describe("actionablePadConfigs", () => {
     actionablePadConfigs(bankOne, true);
     expect(bankOne.size).toBe(2);
     expect(NO_CONFIGS.size).toBe(0);
+  });
+
+  it("asks for the pads of a bank by its identity", async () => {
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "0",
+      padIndex: 0,
+      audioFileIds: [1],
+      playbackType: "sequential",
+    });
+
+    const pads = await getPadConfigurationsForProfileBank(profileId, "0");
+
+    expect(pads.map((pad) => pad.padIndex)).toContain(0);
   });
 });

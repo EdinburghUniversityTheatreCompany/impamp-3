@@ -54,7 +54,7 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     audioFileIds: sound.audioFileIds,
     playbackType: sound.playbackType,
     activeProfileId: sound.profileId,
-    currentPageIndex: sound.pageIndex, // Use the pageIndex from the sound object
+    currentBankId: sound.bankId, // Use the bank identity from the sound object
     name: sound.name,
     audioTrimSettings: sound.audioTrimSettings,
     audioGainSettings: sound.audioGainSettings,
@@ -70,7 +70,7 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
       );
       const loadingKey = generatePadLoadingKey(
         sound.profileId,
-        sound.pageIndex,
+        sound.bankId,
         sound.padIndex,
       );
       loadingStoreActions.setPadLoadingState(loadingKey, state);
@@ -81,7 +81,7 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
       );
       const loadingKey = generatePadLoadingKey(
         sound.profileId,
-        sound.pageIndex,
+        sound.bankId,
         sound.padIndex,
       );
       loadingStoreActions.clearPadLoadingState(loadingKey);
@@ -93,7 +93,7 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
       );
       const loadingKey = generatePadLoadingKey(
         sound.profileId,
-        sound.pageIndex,
+        sound.bankId,
         sound.padIndex,
       );
       loadingStoreActions.clearPadLoadingState(loadingKey);
@@ -105,6 +105,12 @@ export function useKeyboardListener() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   // Get current page index and setter from store
   const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
+  // The store does not hold bank identity yet (that lands with the bank list
+  // in a later change), so the bank's identity is derived from its position.
+  // Every bank still created before reordering exists has `bankId ===
+  // String(pageIndex)`, so this is exact today and only needs replacing once
+  // the store exposes the real identity.
+  const currentBankId = String(currentPageIndex);
   const setCurrentPageIndex = useProfileStore(
     (state) => state.setCurrentPageIndex,
   );
@@ -139,7 +145,7 @@ export function useKeyboardListener() {
   // have to be rebuilt (and the window listeners re-attached) on every change.
   const { padConfigs, isLoading: isLoadingConfigs } = usePadConfigurations(
     activeProfileId === null ? null : String(activeProfileId),
-    currentPageIndex,
+    currentBankId,
   );
   const padConfigsRef = useRef<Map<number, PadConfiguration>>(padConfigs);
   useEffect(() => {
@@ -475,7 +481,7 @@ export function useKeyboardListener() {
           audioFileIds: matchedConfig.audioFileIds,
           playbackType: matchedConfig.playbackType,
           activeProfileId: activeProfileId as number,
-          currentPageIndex: currentPageIndex,
+          currentBankId: currentBankId,
           name: matchedConfig.name,
           audioTrimSettings: matchedConfig.audioTrimSettings,
           audioGainSettings: matchedConfig.audioGainSettings,
@@ -492,7 +498,7 @@ export function useKeyboardListener() {
             if (activeProfileId === null) return;
             const loadingKey = generatePadLoadingKey(
               activeProfileId,
-              currentPageIndex,
+              currentBankId,
               matchedConfig.padIndex,
             );
             loadingStoreActions.setPadLoadingState(loadingKey, state);
@@ -504,7 +510,7 @@ export function useKeyboardListener() {
             if (activeProfileId === null) return;
             const loadingKey = generatePadLoadingKey(
               activeProfileId,
-              currentPageIndex,
+              currentBankId,
               matchedConfig.padIndex,
             );
             loadingStoreActions.clearPadLoadingState(loadingKey);
@@ -517,7 +523,7 @@ export function useKeyboardListener() {
             if (activeProfileId === null) return;
             const loadingKey = generatePadLoadingKey(
               activeProfileId,
-              currentPageIndex,
+              currentBankId,
               matchedConfig.padIndex,
             );
             loadingStoreActions.clearPadLoadingState(loadingKey);
@@ -534,7 +540,7 @@ export function useKeyboardListener() {
     },
     [
       activeProfileId,
-      currentPageIndex,
+      currentBankId,
       setCurrentPageIndex,
       setEditMode,
       openSearchModal,
