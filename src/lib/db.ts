@@ -1991,8 +1991,10 @@ export async function createBank(
  *
  * @param profileId - The profile whose banks move
  * @param orderedBankIds - The identities, in the new order. An id the
- *   profile does not hold is ignored. A bank the caller does not name keeps
- *   its relative order, after the named ones.
+ *   profile does not hold is ignored. A repeated id is placed at its first
+ *   occurrence only; later repeats are ignored. A bank the caller does not
+ *   name (including every bank, when this is empty) keeps its relative
+ *   order, after the named ones.
  */
 export async function reorderBanks(
   profileId: number,

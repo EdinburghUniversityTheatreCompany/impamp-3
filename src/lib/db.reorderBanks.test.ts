@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 const {
   addProfile,
+  createBank,
   ensureDefaultBanks,
   getAllPageMetadataForProfile,
   reorderBanks,
@@ -56,7 +57,7 @@ describe("reorderBanks", () => {
 
     await reorderBanks(profileId, ["1", "2", "0", ...before.slice(3)]);
 
-    expect((await order()).slice(0, 3)).toEqual(["1", "2", "0"]);
+    expect(await order()).toEqual(["1", "2", "0", ...before.slice(3)]);
   });
 
   it("moves a bank to the left", async () => {
@@ -64,7 +65,7 @@ describe("reorderBanks", () => {
 
     await reorderBanks(profileId, ["4", ...before.filter((id) => id !== "4")]);
 
-    expect((await order())[0]).toBe("4");
+    expect(await order()).toEqual(["4", ...before.filter((id) => id !== "4")]);
   });
 
   it("keeps the positions dense", async () => {
@@ -151,10 +152,61 @@ describe("reorderBanks", () => {
   });
 
   it("appends a bank the caller did not name", async () => {
+    const before = await order();
+
     await reorderBanks(profileId, ["9", "8"]);
 
-    const after = await order();
-    expect(after.slice(0, 2)).toEqual(["9", "8"]);
-    expect(after).toHaveLength(10);
+    // The full mapping matters here, not just the named prefix: the ten
+    // default banks' ids equal their original positions, so a comparator
+    // bug in the unnamed-tail sort (e.g. a reversal) would still leave the
+    // tail's *set* of ids and its length unchanged — only the order would be
+    // wrong, which only a full-array comparison catches.
+    expect(await order()).toEqual([
+      "9",
+      "8",
+      ...before.filter((id) => id !== "9" && id !== "8"),
+    ]);
+  });
+
+  it("keeps the first occurrence when an id repeats", async () => {
+    const before = await order();
+
+    await reorderBanks(profileId, [
+      "4",
+      "4",
+      ...before.filter((id) => id !== "4"),
+    ]);
+
+    expect(await order()).toEqual(["4", ...before.filter((id) => id !== "4")]);
+  });
+
+  it("touches nothing when handed no order", async () => {
+    const before = await getAllPageMetadataForProfile(profileId);
+    const stamps = new Map(before.map((bank) => [bank.bankId, bank._modified]));
+    const beforeOrder = await order();
+
+    await reorderBanks(profileId, []);
+
+    expect(await order()).toEqual(beforeOrder);
+    const after = await getAllPageMetadataForProfile(profileId);
+    for (const bank of after) {
+      expect(bank._modified).toBe(stamps.get(bank.bankId));
+    }
+  });
+
+  it("moves a bank by identity, not by treating its id as a position", async () => {
+    // Every default bank's id equals its own position ("0".."9"), so a
+    // lookup bug that mistakes a bankId for a numeric array index would go
+    // undetected by every case above: the two lookups agree whenever id and
+    // position happen to be the same number. `createBank` mints a real
+    // UUID — not a valid index into anything — so this is the one fixture
+    // in the file where identity and position actually diverge, and only an
+    // identity-keyed lookup can find it.
+    const guest = await createBank(profileId, "Guest Sting");
+    expect(Number.isNaN(Number(guest.bankId))).toBe(true);
+
+    await reorderBanks(profileId, [guest.bankId]);
+
+    expect((await order())[0]).toBe(guest.bankId);
   });
 });
