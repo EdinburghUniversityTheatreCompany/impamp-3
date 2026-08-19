@@ -1121,7 +1121,8 @@ export function stopTrack(baseKey: string): boolean {
 /**
  * Stops all currently playing audio tracks
  *
- * @returns Number of tracks that were stopped
+ * @returns Number of pads that had a track stopped (each may have silenced
+ * several layered instances)
  */
 export function stopAllTracks(): number {
   // One key per pad, so each pad's stop generation is bumped exactly once —
