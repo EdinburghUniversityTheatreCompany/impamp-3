@@ -6,11 +6,12 @@ import {
   type PadPlaybackSettings,
 } from "@/lib/db";
 import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
+import { baseKeyOf, layerIndexOf } from "@/lib/audio/types";
 // import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
 export interface PlaybackState {
-  key: string; // Unique playback key (e.g., `pad-${profileId}-${bankId}-${padIndex}`)
+  key: string; // Instance key: the pad's base key, plus "#n" for a layer
   name: string;
   progress: number; // 0.0 to 1.0
   remainingTime: number; // Seconds
@@ -297,9 +298,107 @@ export const useActivePlayback = () =>
 export const useArmedTracks = () =>
   usePlaybackStore((state) => state.armedTracks);
 
-// Subscribes to a single pad's playback slice, so progress updates for one track
-// only re-render that track's pad
-export const usePadPlaybackState = (playbackKey: string | null) =>
-  usePlaybackStore((state) =>
-    playbackKey ? (state.activePlayback.get(playbackKey) ?? null) : null,
-  );
+/**
+ * The newest layer of one pad, so the pad ring and the remaining time follow
+ * the sound that started last.
+ *
+ * The selector returns an object that the store already holds, so its identity
+ * is stable between frames that do not touch this pad. A selector that built a
+ * fresh object would re-render every pad on every frame.
+ */
+export const usePadPlaybackState = (baseKey: string | null) =>
+  usePlaybackStore((state) => {
+    if (!baseKey) return null;
+    let newest: PlaybackState | null = null;
+    for (const track of state.activePlayback.values()) {
+      if (baseKeyOf(track.key) !== baseKey) continue;
+      if (!newest || layerIndexOf(track.key) >= layerIndexOf(newest.key)) {
+        newest = track;
+      }
+    }
+    return newest;
+  });
+
+/**
+ * How many layers of one pad play now.
+ *
+ * A separate hook from {@link usePadPlaybackState}, and a number rather than an
+ * object, so both stay stable under Zustand 5's identity check.
+ */
+export const usePadLayerCount = (baseKey: string | null) =>
+  usePlaybackStore((state) => {
+    if (!baseKey) return 0;
+    let count = 0;
+    for (const track of state.activePlayback.values()) {
+      if (baseKeyOf(track.key) === baseKey) count += 1;
+    }
+    return count;
+  });
+
+/**
+ * Every layer of one pad, and the two answers the UI asks about it.
+ *
+ * `newest` drives the pad ring and the remaining time. `isFading` is true only
+ * when nothing on the pad still plays at full level, which is the same answer
+ * a pad with one track gave before layers existed.
+ */
+export interface PadPlaybackGroup {
+  baseKey: string;
+  name: string;
+  /** The layers, oldest first. */
+  layers: PlaybackState[];
+  newest: PlaybackState;
+  isFading: boolean;
+}
+
+/**
+ * Folds the instance-keyed playback map into one group per pad.
+ *
+ * The pad order follows the order the pads started, because a Map keeps
+ * insertion order and `setPlaybackState` rebuilds the map from `activeTracks`
+ * in the same order every frame.
+ *
+ * @param activePlayback - The store's map, keyed by instance key
+ * @returns One group per pad
+ */
+export function groupPlaybackByPad(
+  activePlayback: Map<string, PlaybackState>,
+): PadPlaybackGroup[] {
+  const byBase = new Map<string, PlaybackState[]>();
+  for (const track of activePlayback.values()) {
+    const base = baseKeyOf(track.key);
+    const layers = byBase.get(base) ?? [];
+    layers.push(track);
+    byBase.set(base, layers);
+  }
+
+  return Array.from(byBase, ([baseKey, layers]) => {
+    layers.sort((a, b) => layerIndexOf(a.key) - layerIndexOf(b.key));
+    return {
+      baseKey,
+      name: layers[0].name,
+      layers,
+      newest: layers[layers.length - 1],
+      isFading: layers.every((layer) => layer.isFading),
+    };
+  });
+}
+
+/**
+ * What the live region says about the pads that play now.
+ *
+ * A stacked pad reports its count once rather than its name three times, which
+ * is what a screen reader user needs to hear.
+ *
+ * @param groups - The output of {@link groupPlaybackByPad}
+ * @returns One sentence fragment, or an empty string when nothing plays
+ */
+export function describePlayingLayers(groups: PadPlaybackGroup[]): string {
+  return groups
+    .map((group) =>
+      group.layers.length > 1
+        ? `${group.name}, ${group.layers.length} layers`
+        : group.name,
+    )
+    .join(", ");
+}
