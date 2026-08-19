@@ -110,11 +110,39 @@ export async function migrateToV7(transaction: V7Transaction): Promise<void> {
 
   // 1. Materialise a bank row for every position that holds pads and has no
   //    row. Do this before the pads, or those pads lose their bank.
+  //
+  //    Guarded by `pad.bankId`, matching pass 3's guard, so this is
+  //    idempotent against already-migrated data. Without it, a pad whose
+  //    `pageIndex` pass 3 already stripped would read as `pageIndex ?? 0`
+  //    here and could invent a spurious "Bank 1" at position 0 on a second
+  //    run. In production the versionchange transaction is atomic, so a
+  //    real re-run always sees pre-migration data — but a direct call to
+  //    `migrateToV7` (as the migration's own test suite makes) doesn't have
+  //    that guarantee, and a migration that isn't idempotent under a direct
+  //    call is a defect in the migration, not just in how it's invoked.
+  //
+  //    A pad with neither `bankId` nor `pageIndex` cannot be placed at all —
+  //    that's corrupt data, not a shape this schema has ever produced on
+  //    purpose. Rather than defaulting it to position 0 (silently filing it
+  //    under a real bank it may have nothing to do with), it's skipped with
+  //    a warning; it ends up with no `bankId` and simply doesn't appear in
+  //    any bank, which is the honest outcome for data the migration cannot
+  //    place. Throwing here instead — aborting the whole migration over one
+  //    bad row — was the other option, but it would strand every *other*
+  //    pad in the profile too, and retrying would fail identically forever
+  //    (see the V7 block's comment in db.ts on the same boot-loop shape).
   const known = new Set(
     pages.map((page) => `${page.profileId}:${page.pageIndex}`),
   );
   for (const pad of pads) {
-    const pageIndex = pad.pageIndex ?? 0;
+    if (pad.bankId) continue;
+    if (pad.pageIndex === undefined) {
+      console.warn(
+        `V7 Migration: pad ${pad.id ?? "(no id)"} on profile ${pad.profileId} has neither bankId nor pageIndex; leaving it unmigrated.`,
+      );
+      continue;
+    }
+    const pageIndex = pad.pageIndex;
     const key = `${pad.profileId}:${pageIndex}`;
     if (known.has(key)) continue;
     known.add(key);
@@ -146,10 +174,12 @@ export async function migrateToV7(transaction: V7Transaction): Promise<void> {
   }
 
   // 3. Stamp the identity on every pad and drop its own copy of the
-  //    position.
+  //    position. A pad with no `pageIndex` was already warned about and
+  //    skipped in pass 1; nothing to stamp here either.
   for (const pad of pads) {
     if (pad.bankId) continue;
-    const bankId = migratedBankId(pad.pageIndex ?? 0);
+    if (pad.pageIndex === undefined) continue;
+    const bankId = migratedBankId(pad.pageIndex);
     const { pageIndex: _pageIndex, ...rest } = pad;
     await padStore.put({ ...rest, bankId });
   }

@@ -194,6 +194,11 @@ const isClient =
   typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
 export const DEFAULT_BACKUP_REMINDER_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 let dbPromise: Promise<IDBPDatabase<ImpAmpDBSchema>> | null = null;
+// Set inside `upgrade` when a V7 migration runs. Lets `getDb` detect a
+// failure that arrives after the versionchange transaction has already
+// committed — the one case `transaction.abort()` can't roll back, so
+// `openDB()`'s own promise resolves successfully despite it.
+let v7MigrationOutcome: Promise<void> | null = null;
 
 // Helper function to iterate and update records within an upgrade transaction
 // We need to use a generic transaction type to handle the versionchange transaction
@@ -315,6 +320,7 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
     return Promise.reject(new Error("IndexedDB is not available"));
   }
   if (!dbPromise) {
+    v7MigrationOutcome = null;
     dbPromise = openDB<ImpAmpDBSchema>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion, newVersion, transaction) {
         // Removed unused event
@@ -365,6 +371,24 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
         // V3 + V4 Migration. Any upgrade crossing version 3 also crosses version 4,
         // so the V3 pad reshape is applied inside the V4 pass over padConfigurations
         // rather than by a second, concurrent cursor over the same store.
+        //
+        // `v4Complete` resolves once all three V4 cursor passes have finished.
+        // The V7 block below is chained after it deliberately: V7 also reads
+        // and rewrites padConfigurations and pageMetadata, and IndexedDB
+        // processes requests within a transaction in placement order. Firing
+        // both in the same synchronous tick — as this used to — means V7's
+        // `getAll()` is placed right behind V4's `openCursor()` and executes
+        // before V4's cursor has updated more than (at most) its first row,
+        // so V7 snapshots pre-V4 data and then the two passes interleave
+        // writes to the same rows with no defined winner: a pad can keep its
+        // legacy `audioFileId` and never gain `audioFileIds`, or lose the
+        // `bankId` V7 just stamped on it. This is the same "two concurrent
+        // cursors over one store" hazard the comment above already fixed
+        // once for V3-inside-V4; crossing two *migrations* over the same
+        // store is that bug in a different shape. Covered by
+        // `db.v7Sequencing.test.ts`, which reproduces the loss with a
+        // v3 -> v7 upgrade.
+        let v4Complete: Promise<void> = Promise.resolve();
         if (oldVersion < 4) {
           console.log("Applying V4 migration...");
           if (!transaction) {
@@ -374,8 +398,10 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             console.error("Transaction failed during V4 migration:", err);
           });
           // Queue migrations (don't await directly in upgrade)
-          migrateStoreV4(transaction, "profiles").catch(console.error);
-          migrateStoreV4(
+          const profilesDone = migrateStoreV4(transaction, "profiles").catch(
+            console.error,
+          );
+          const padsDone = migrateStoreV4(
             transaction,
             "padConfigurations",
             oldVersion < 3,
@@ -387,7 +413,12 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
               console.error("Error aborting transaction:", abortError);
             }
           });
-          migrateStoreV4(transaction, "pageMetadata").catch(console.error);
+          const pagesDone = migrateStoreV4(transaction, "pageMetadata").catch(
+            console.error,
+          );
+          v4Complete = Promise.all([profilesDone, padsDone, pagesDone]).then(
+            () => {},
+          );
           console.log("V4 Migration queued.");
         }
         // V5 Migration: add hash index on audioFiles
@@ -427,16 +458,34 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
 
         // V7 Migration: bank identity. The cast is the one place the two
         // schema shapes meet; the migration module owns the pre-v7 shape.
+        // Sequenced after `v4Complete` — see the comment on the V4 block
+        // above for why racing the two over padConfigurations/pageMetadata
+        // loses data.
         if (oldVersion < 7) {
           console.log("Applying V7 migration: bank identity (bankId)...");
-          migrateToV7(transaction as unknown as V7Transaction).catch((err) => {
-            console.error("V7 Migration error:", err);
-            try {
-              transaction.abort();
-            } catch (abortError) {
-              console.error("Error aborting transaction:", abortError);
-            }
-          });
+          v7MigrationOutcome = v4Complete
+            .then(() => migrateToV7(transaction as unknown as V7Transaction))
+            .catch((err) => {
+              console.error("V7 Migration error:", err);
+              try {
+                transaction.abort();
+              } catch (abortError) {
+                // abort() throws when the versionchange transaction has
+                // already committed — there is nothing left to roll back.
+                // The database is now at version 7 with a partially-applied
+                // migration (some rows stamped with bankId, some not), and
+                // the next getDb() call would otherwise see oldVersion 7 and
+                // never retry. There's no automatic recovery here — that
+                // spans the app shell — so this only detects and reports;
+                // rethrowing below is what lets `getDb()` surface the
+                // failure to its caller instead of only logging it.
+                console.error(
+                  "V7 Migration: transaction already committed; the database is now at version 7 with a partially-applied migration.",
+                  abortError,
+                );
+              }
+              throw err;
+            });
         }
 
         // V1 Seeding (Default Profile)
@@ -503,6 +552,17 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
         console.error("IndexedDB terminated.");
         dbPromise = null;
       },
+    }).then(async (db) => {
+      // Normally already settled by the time the versionchange transaction
+      // completes — its requests are what keep the transaction alive. This
+      // only has to wait when a V7 migration failure arrived after the
+      // transaction had already committed; see the V7 block's comment
+      // above. Awaiting it here is what turns that failure into a rejected
+      // `getDb()` promise instead of a `console.error` nobody sees.
+      if (v7MigrationOutcome) {
+        await v7MigrationOutcome;
+      }
+      return db;
     });
   }
   return dbPromise;

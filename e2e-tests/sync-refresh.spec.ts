@@ -34,8 +34,8 @@ test.describe("Sync Refresh", () => {
           const tx = db.transaction("padConfigurations", "readonly");
           const req = tx
             .objectStore("padConfigurations")
-            .index("profilePagePad")
-            .get(IDBKeyRange.only([profileId, 0, 0]));
+            .index("profileBankPad")
+            .get(IDBKeyRange.only([profileId, "0", 0]));
           req.onsuccess = () =>
             resolve(req.result as Record<string, unknown> | undefined);
           req.onerror = () => reject(req.error);
@@ -47,7 +47,7 @@ test.describe("Sync Refresh", () => {
         const record: Record<string, unknown> = {
           ...(existing ?? {}),
           profileId,
-          pageIndex: 0,
+          bankId: "0",
           padIndex: 0,
           name: "Synced Name",
           audioFileIds: existing?.audioFileIds ?? [],

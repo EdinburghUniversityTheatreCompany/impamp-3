@@ -83,8 +83,8 @@ async function simulateSyncRenamingPad0(page: Page, newName: string) {
           const req = db
             .transaction("padConfigurations", "readonly")
             .objectStore("padConfigurations")
-            .index("profilePagePad")
-            .get(IDBKeyRange.only([profileId, 0, 0]));
+            .index("profileBankPad")
+            .get(IDBKeyRange.only([profileId, "0", 0]));
           req.onsuccess = () => resolve(req.result as Record<string, unknown>);
           req.onerror = () => reject(req.error);
         },
