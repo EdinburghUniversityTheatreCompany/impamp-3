@@ -326,6 +326,23 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
         // Removed unused event
         console.log(`Upgrading DB from version ${oldVersion} to ${newVersion}`);
 
+        // Attached once, unconditionally, so an abort always has a handler.
+        // This used to live only inside the `oldVersion < 4` block below, so
+        // a transaction abort triggered by a *later* stage — the V7
+        // migration's failure path further down is the case that matters —
+        // left `transaction.done` rejecting with nobody listening whenever
+        // oldVersion was already >= 4 (V4's block, and this catch with it,
+        // never ran). `db.v7FailureSurfacing.test.ts` reproduces exactly
+        // that gap: forcing a V7 failure on a v6 database (oldVersion = 6)
+        // used to report an "Unhandled Rejection" for this same
+        // AbortError even after `v7MigrationOutcome` itself got its own
+        // catch. `getDb()`'s rejection still carries the real failure either
+        // way — this only stops a second, redundant rejection from going
+        // unhandled.
+        transaction.done.catch((err) => {
+          console.error("Transaction failed during upgrade:", err);
+        });
+
         // V1 Stores
         if (oldVersion < 1) {
           if (!db.objectStoreNames.contains("audioFiles")) {
@@ -394,9 +411,8 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
           if (!transaction) {
             throw new Error("V4 Migration: No transaction");
           }
-          transaction.done.catch((err) => {
-            console.error("Transaction failed during V4 migration:", err);
-          });
+          // transaction.done already has a handler attached unconditionally
+          // at the top of `upgrade`, above — no need for a second one here.
           // Queue migrations (don't await directly in upgrade)
           const profilesDone = migrateStoreV4(transaction, "profiles").catch(
             console.error,
@@ -486,6 +502,17 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
               }
               throw err;
             });
+          // A silent handler attached alongside the assignment, not instead
+          // of the real one below. Promises broadcast to every handler
+          // attached to them, so this doesn't consume the rejection — it
+          // only stops it from being *unhandled*. That distinction matters
+          // on the abort-succeeds path: `openDB()` itself rejects there, so
+          // the `.then(async (db) => ...)` callback after `openDB(...)`
+          // below — the only other place `v7MigrationOutcome` is awaited —
+          // never runs, and without this catch Node reports "Uncaught (in
+          // promise)" for an error that already surfaced correctly through
+          // the rejected `getDb()` call.
+          v7MigrationOutcome.catch(() => {});
         }
 
         // V1 Seeding (Default Profile)
