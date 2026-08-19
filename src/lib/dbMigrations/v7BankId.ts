@@ -12,9 +12,15 @@
  *
  * The migration also materialises the implicit banks. Banks 1-10 used to be
  * synthesised in the page component, so a pad could sit at a position with
- * no bank row at all. Every such position gets a row first, and only then
- * does every pad get its `bankId`. A pad left without a `bankId` would
- * disappear from its bank, so this order is not optional.
+ * no bank row at all. Every such position gets a row, and every pad gets its
+ * `bankId`. All three passes below read the `pads`/`pages` snapshots taken
+ * once, at the top of `migrateToV7`, and never mutate them, so no pass
+ * observes another's writes and their relative order is immaterial. That
+ * snapshot-only reading is what must be preserved, not the order the passes
+ * happen to appear in: if a pass ever re-reads a store or mutates a
+ * snapshot row in place, the order becomes load-bearing and materialisation
+ * must run first, or a pad whose bank hasn't been created yet disappears
+ * from it.
  */
 import type { DBSchema, IDBPTransaction } from "idb";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
@@ -109,7 +115,12 @@ export async function migrateToV7(transaction: V7Transaction): Promise<void> {
   const nowMs = now.getTime();
 
   // 1. Materialise a bank row for every position that holds pads and has no
-  //    row. Do this before the pads, or those pads lose their bank.
+  //    row. This pass and passes 2/3 below all read only the `pads`/`pages`
+  //    snapshots fetched above and never mutate them, so none of the three
+  //    observes another's writes — their order relative to each other is
+  //    immaterial for that reason (see the file-level comment). It still
+  //    has to run at all, though: skip it and a pad at a position with no
+  //    row stays without a `bankId` forever.
   //
   //    Guarded by `pad.bankId`, matching pass 3's guard, so this is
   //    idempotent against already-migrated data. Without it, a pad whose
