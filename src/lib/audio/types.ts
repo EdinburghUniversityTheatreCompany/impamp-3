@@ -167,3 +167,64 @@ export function generatePlaybackKey(
 ): string {
   return `pad-${profileId}-${bankId}-${padIndex}`;
 }
+
+/**
+ * The largest number of layers one pad plays at the same time.
+ *
+ * A trigger past the cap stops the oldest layer and starts a new one, so a
+ * trigger always makes a sound. 16 is high enough for applause or a rain bed,
+ * and low enough that a stuck key cannot fill the audio graph.
+ */
+export const MAX_LAYERS_PER_PAD = 16;
+
+/**
+ * Separator between a base key and its layer number.
+ *
+ * No playback key contains this character: `generatePlaybackKey` joins the
+ * profile id, bank id and pad index with "-", and a bank id is a string
+ * identity that can itself be a UUID (and so contain hyphens). Recovering a
+ * base key from an instance key must therefore split on this separator, not
+ * on "-".
+ */
+const LAYER_SEPARATOR = "#";
+
+/**
+ * Builds the key one layer of a pad plays under.
+ *
+ * @param baseKey - The pad's own playback key
+ * @param layerIndex - The layer number, which grows and is never reused
+ * @returns The instance key
+ */
+export function makeInstanceKey(baseKey: string, layerIndex: number): string {
+  return `${baseKey}${LAYER_SEPARATOR}${layerIndex}`;
+}
+
+/**
+ * The pad an instance key belongs to.
+ *
+ * A bare base key is its own instance key, so a pad that never layers keeps
+ * exactly the key space it had before.
+ *
+ * @param key - A base key or an instance key
+ * @returns The base key
+ */
+export function baseKeyOf(key: string): string {
+  const at = key.indexOf(LAYER_SEPARATOR);
+  return at === -1 ? key : key.slice(0, at);
+}
+
+/**
+ * The layer number an instance key carries.
+ *
+ * A bare base key answers 0, so a sort by this number puts a pad's single
+ * un-layered track first.
+ *
+ * @param key - A base key or an instance key
+ * @returns The layer number
+ */
+export function layerIndexOf(key: string): number {
+  const at = key.indexOf(LAYER_SEPARATOR);
+  if (at === -1) return 0;
+  const parsed = Number.parseInt(key.slice(at + 1), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
