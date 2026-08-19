@@ -274,10 +274,12 @@ reminder on data that was never exported.
 
 Two-phase, because slots must be chosen before anything is written.
 
-1. `readArchiveManifest(blob)` opens the ZIP, reads `manifest.json` only,
-   and returns `{ kind: "profiles" }` or `{ kind: "banks", banks }`, each
-   entry `{ name, isEmergency, padCount, audioCount, sourceProfileName,
-sourceBankId }`.
+1. `readArchiveManifest(blob)` opens the ZIP and returns
+   `{ kind: "profiles" }` or `{ kind: "banks", banks }`, each entry
+   `{ name, isEmergency, padCount, audioCount, sourceProfileName, sourceBankId }`.
+   It reads `manifest.json` **and** each `banks/<n>/bank.json`, because the
+   manifest alone cannot supply `padCount`, `isEmergency` or `sourceBankId`.
+   It reads no audio entry, so the cost stays inside the metadata cap.
 2. The UI prompts, then calls `importBanksFromZip(blob, db, { profileId,
 placements })` where `placements` maps each archive folder to
    `{ kind: "add" } | { kind: "replace", bankId } | { kind: "skip" }`.
@@ -448,6 +450,12 @@ adds an instance dimension:
 - Stop generations become per **base** key.
 - `claimPlaybackKey`'s displacement warning stays for non-layer modes; it
   is asserted by `playback.race.test.ts:104` and remains correct.
+- Playback strategies stay keyed on the **base** key. Keying them per
+  instance would give every layer a fresh cursor, so a multi-sound layered
+  pad would replay its first sound forever instead of advancing.
+- `stopAudio` and `fadeOutAudio` in `controls.ts` route by the kind of key
+  they are given. A layer row in the panel passes an instance key and must
+  stop one layer; a pad row passes a base key and must stop them all.
 
 ### Cap
 
