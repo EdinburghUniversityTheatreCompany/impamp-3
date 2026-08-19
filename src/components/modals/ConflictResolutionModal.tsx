@@ -29,12 +29,12 @@ const getItemDisplayName = (conflict: ItemConflict): string => {
     case "padConfigurations": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
         PadConfiguration | undefined;
-      return `Pad Config: Page ${item?.pageIndex ?? "?"}, Pad ${item?.padIndex ?? "?"}`;
+      return `Pad Config: Bank ${item?.bankId ?? "?"}, Pad ${item?.padIndex ?? "?"}`;
     }
     case "pageMetadata": {
       const item = (conflict.localItem ?? conflict.remoteItem) as
         PageMetadata | undefined;
-      return `Page Meta: Page ${item?.pageIndex ?? "?"} (${item?.name ?? "Unnamed"})`;
+      return `Bank Meta: ${item?.bankId ?? "?"} (${item?.name ?? "Unnamed"})`;
     }
     default:
       // Ensure key is stringified if it's a number

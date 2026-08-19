@@ -89,7 +89,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         },
         {
           activeProfileId: result.profileId,
-          currentPageIndex: result.pageIndex,
+          currentBankId: result.bankId,
         },
         { logPrefix: "[SearchModal] search result" },
       );
@@ -105,7 +105,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   const handleArmSound = (result: SearchResult) => {
     try {
       // Create a unique key for this armed track
-      const armedKey = `armed-${result.profileId}-${result.pageIndex}-${result.padIndex}`;
+      const armedKey = `armed-${result.profileId}-${result.bankId}-${result.padIndex}`;
 
       // Add to armed tracks store
       playbackStoreActions.armTrack(armedKey, {
@@ -113,7 +113,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         name: result.name,
         padInfo: {
           profileId: result.profileId,
-          pageIndex: result.pageIndex,
+          bankId: result.bankId,
           padIndex: result.padIndex,
         },
         audioFileIds: result.audioFileIds,

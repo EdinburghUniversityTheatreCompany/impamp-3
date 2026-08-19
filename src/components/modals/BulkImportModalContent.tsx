@@ -28,7 +28,7 @@ interface PadAssignment {
 
 interface BulkImportModalContentProps {
   profileId: number;
-  pageIndex: number;
+  bankId: string;
   existingPadConfigs: Map<number, { name?: string; soundCount: number }>;
   onAssignmentComplete: () => void;
 }
@@ -54,7 +54,7 @@ function initialAssignments(
 
 const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
   profileId,
-  pageIndex,
+  bankId,
   existingPadConfigs,
   onAssignmentComplete,
 }) => {
@@ -322,7 +322,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
         // Create pad configuration
         await upsertPadConfiguration({
           profileId,
-          pageIndex,
+          bankId,
           padIndex: assignment.padIndex,
           audioFileIds: [audioFileId],
           playbackType: "sequential",

@@ -67,15 +67,21 @@ export default function LoudnessOverviewModalContent() {
 
   const [pads, setPads] = useState<PadConfiguration[]>([]);
   const [names, setNames] = useState<Map<number, string>>(new Map());
-  // pageIndex -> the bank's own name, for the banks that have one.
-  const [bankNames, setBankNames] = useState<Map<number, string>>(new Map());
+  // bankId -> the bank's display name (its own name, or the synthesised
+  // "Bank N" fallback), for every bank on the profile.
+  const [bankNames, setBankNames] = useState<Map<string, string>>(new Map());
+  // bankId -> its display position, kept only so the bank filter dropdown
+  // can be sorted in tab order rather than by bankId.
+  const [bankPositions, setBankPositions] = useState<Map<string, number>>(
+    new Map(),
+  );
   const [tab, setTab] = useState<"sounds" | "pads">("sounds");
   const [sortKey, setSortKey] = useState<SoundSortKey>("deviation");
   const [direction, setDirection] = useState<SortDirection>("desc");
   const [problemsOnly, setProblemsOnly] = useState(false);
-  // "all" or a pageIndex. Independent of tab/sort/gain-edit state so it
+  // "all" or a bankId. Independent of tab/sort/gain-edit state so it
   // survives all three — nothing here ever resets it.
-  const [bankFilter, setBankFilter] = useState<number | "all">("all");
+  const [bankFilter, setBankFilter] = useState<string | "all">("all");
   // Bumped whenever the loudness cache changes; not read directly, only
   // used as a memo dependency below to force `soundRows` to recompute once
   // an unmeasured sound gets measured by the background sweep.
@@ -126,10 +132,14 @@ export default function LoudnessOverviewModalContent() {
         setPads(loaded);
         setBankNames(
           new Map(
-            pages
-              .filter((page) => !!page.name)
-              .map((page) => [page.pageIndex, page.name]),
+            pages.map((page) => [
+              page.bankId,
+              page.name || `Bank ${convertIndexToBankNumber(page.pageIndex)}`,
+            ]),
           ),
+        );
+        setBankPositions(
+          new Map(pages.map((page) => [page.bankId, page.pageIndex])),
         );
 
         // A full board can have hundreds of pad-sound slots but far fewer
@@ -216,9 +226,7 @@ export default function LoudnessOverviewModalContent() {
         normalisation,
         getAnalysis: getCachedLoudness,
         getSoundName: (id) => names.get(id) ?? `Sound ${id}`,
-        getBankName: (pageIndex) =>
-          bankNames.get(pageIndex) ??
-          `Bank ${convertIndexToBankNumber(pageIndex)}`,
+        getBankName: (bankId) => bankNames.get(bankId) ?? `Bank ${bankId}`,
       }),
     // cacheVersion is intentionally unread: getCachedLoudness reads a module
     // -level cache the linter can't see into, so bumping this counter is the
@@ -232,21 +240,23 @@ export default function LoudnessOverviewModalContent() {
   // twenty pages, which would make the filter useless on a mostly-empty
   // board.
   const bankOptions = useMemo(() => {
-    const byPageIndex = new Map<number, string>();
+    const byBankId = new Map<string, string>();
     for (const row of soundRows) {
-      if (!byPageIndex.has(row.pageIndex)) {
-        byPageIndex.set(row.pageIndex, row.bankName);
+      if (!byBankId.has(row.bankId)) {
+        byBankId.set(row.bankId, row.bankName);
       }
     }
-    return [...byPageIndex.entries()].sort(([a], [b]) => a - b);
-  }, [soundRows]);
+    return [...byBankId.entries()].sort(
+      ([a], [b]) => (bankPositions.get(a) ?? 0) - (bankPositions.get(b) ?? 0),
+    );
+  }, [soundRows, bankPositions]);
 
   // Bank and "problems only" compose: both active means rows matching both.
   const bankFilteredRows = useMemo(
     () =>
       bankFilter === "all"
         ? soundRows
-        : soundRows.filter((row) => row.pageIndex === bankFilter),
+        : soundRows.filter((row) => row.bankId === bankFilter),
     [soundRows, bankFilter],
   );
 
@@ -289,17 +299,17 @@ export default function LoudnessOverviewModalContent() {
   // not wipe a newer, still-live buffer out from under the user.
   const commitSoundGain = async (
     rowKey: string,
-    pageIndex: number,
+    bankId: string,
     padIndex: number,
     audioFileId: number,
     db: number,
   ) => {
     const pad = pads.find(
-      (p) => p.pageIndex === pageIndex && p.padIndex === padIndex,
+      (p) => p.bankId === bankId && p.padIndex === padIndex,
     );
     if (!pad || activeProfileId === null) {
       console.warn(
-        `[LoudnessOverview] No pad found at ${pageIndex}-${padIndex} for sound ${audioFileId}; discarding gain edit.`,
+        `[LoudnessOverview] No pad found at ${bankId}-${padIndex} for sound ${audioFileId}; discarding gain edit.`,
       );
       setPendingGain((current) => (current?.key === rowKey ? null : current));
       return;
@@ -316,7 +326,7 @@ export default function LoudnessOverviewModalContent() {
     try {
       await upsertPadConfiguration({
         profileId: pad.profileId,
-        pageIndex: pad.pageIndex,
+        bankId: pad.bankId,
         padIndex: pad.padIndex,
         keyBinding: pad.keyBinding,
         name: pad.name,
@@ -330,7 +340,7 @@ export default function LoudnessOverviewModalContent() {
 
       setPads((current) =>
         current.map((p) =>
-          p.pageIndex === pageIndex && p.padIndex === padIndex
+          p.bankId === bankId && p.padIndex === padIndex
             ? { ...p, audioGainSettings: updatedGainSettings }
             : p,
         ),
@@ -345,7 +355,7 @@ export default function LoudnessOverviewModalContent() {
       // instead of silently disagreeing with both React state and the
       // database.
       console.warn(
-        `[LoudnessOverview] Failed to save gain for pad ${pageIndex}-${padIndex}, sound ${audioFileId}:`,
+        `[LoudnessOverview] Failed to save gain for pad ${bankId}-${padIndex}, sound ${audioFileId}:`,
         error,
       );
     } finally {
@@ -384,19 +394,15 @@ export default function LoudnessOverviewModalContent() {
             Bank
             <select
               id="loudness-bank-filter"
-              value={bankFilter === "all" ? "all" : String(bankFilter)}
-              onChange={(e) =>
-                setBankFilter(
-                  e.target.value === "all" ? "all" : Number(e.target.value),
-                )
-              }
+              value={bankFilter}
+              onChange={(e) => setBankFilter(e.target.value)}
               aria-label="Filter to one bank"
               data-testid="loudness-bank-filter"
               className="rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
             >
               <option value="all">All banks</option>
-              {bankOptions.map(([pageIndex, bankName]) => (
-                <option key={pageIndex} value={pageIndex}>
+              {bankOptions.map(([bankId, bankName]) => (
+                <option key={bankId} value={bankId}>
                   {bankName}
                 </option>
               ))}
@@ -517,7 +523,7 @@ export default function LoudnessOverviewModalContent() {
                       onCommit={(db) =>
                         void commitSoundGain(
                           row.key,
-                          row.pageIndex,
+                          row.bankId,
                           row.padIndex,
                           row.audioFileId,
                           db,

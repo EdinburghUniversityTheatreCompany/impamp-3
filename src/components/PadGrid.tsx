@@ -50,7 +50,7 @@ interface PadWithLoadingProps {
   padId: string;
   padIndex: number;
   profileId: number | null;
-  pageIndex: number;
+  bankId: string;
   config: PadConfiguration | undefined;
   soundCount: number;
   isEditMode: boolean;
@@ -69,7 +69,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
     padId,
     padIndex,
     profileId,
-    pageIndex,
+    bankId,
     config,
     soundCount,
     isEditMode,
@@ -83,7 +83,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
     handleSwapPads,
   }) => {
     // Get loading state from shared store using hook
-    const loadingState = usePadLoadingState(profileId, pageIndex, padIndex);
+    const loadingState = usePadLoadingState(profileId, bankId, padIndex);
 
     // Stable per-pad callbacks so the memoized Pad only re-renders when its own state changes
     const onClick = useCallback(
@@ -114,7 +114,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
         id={padId}
         padIndex={padIndex}
         profileId={profileId}
-        pageIndex={pageIndex}
+        bankId={bankId}
         keyBinding={config?.keyBinding}
         name={config?.name}
         isConfigured={soundCount > 0}
@@ -145,10 +145,10 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
 PadWithLoading.displayName = "PadWithLoading";
 
 interface PadGridProps {
-  currentPageIndex: number;
+  bankId: string;
 }
 
-const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
+const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
@@ -165,7 +165,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     refetch: refreshPadConfigs,
   } = usePadConfigurations(
     activeProfileId !== null ? String(activeProfileId) : null,
-    currentPageIndex,
+    bankId,
   );
 
   // Subscribe to the armed tracks store (each Pad subscribes to its own playback slice)
@@ -190,21 +190,21 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     handlePlaybackInteraction,
     handleArmTrack,
   } = usePadInteractions({
-    currentPageIndex,
+    currentBankId: bankId,
     padConfigs: actionableConfigs,
     refreshPadConfigs,
     hasInteractedRef,
   });
 
   const { handleSwapPads } = usePadSwap({
-    currentPageIndex,
+    currentBankId: bankId,
     padConfigs: actionableConfigs,
     refreshPadConfigs,
     specialPadIndices: SPECIAL_PAD_INDICES,
   });
 
   const { handleDropAudio, isDropAllowed } = usePadDrop(
-    currentPageIndex,
+    bankId,
     refreshPadConfigs,
   );
 
@@ -222,16 +222,10 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
 
     const configsArray = Array.from(padConfigs.values());
     if (configsArray.length > 0) {
-      console.log(
-        `[PadGrid Preload] Intelligent preload for page ${currentPageIndex}`,
-      );
-      preloadCurrentPageIntelligent(
-        configsArray,
-        activeProfileId,
-        currentPageIndex,
-      );
+      console.log(`[PadGrid Preload] Intelligent preload for bank ${bankId}`);
+      preloadCurrentPageIntelligent(configsArray, activeProfileId, bankId);
     }
-  }, [padConfigs, activeProfileId, currentPageIndex]);
+  }, [padConfigs, activeProfileId, bankId]);
 
   // Delete key state tracking.
   //
@@ -353,7 +347,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
       modalType: ModalType.BULK_IMPORT,
       modalProps: {
         profileId: activeProfileId,
-        pageIndex: currentPageIndex,
+        bankId,
         existingPadConfigs: existingConfigMap,
         onAssignmentComplete: () => {
           closeModal();
@@ -373,8 +367,8 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
     return Array.from({ length: TOTAL_PADS }, (_, i) => {
       const padIndex = i;
       const config = padConfigs.get(padIndex);
-      const padId = `pad-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
-      const armedKey = `armed-${activeProfileId ?? "none"}-${currentPageIndex}-${padIndex}`;
+      const padId = `pad-${activeProfileId ?? "none"}-${bankId}-${padIndex}`;
+      const armedKey = `armed-${activeProfileId ?? "none"}-${bankId}-${padIndex}`;
       const isArmed = armedTracks.has(armedKey);
       const soundCount = config?.audioFileIds?.length ?? 0;
       const isSpecialPad = SPECIAL_PAD_INDICES.includes(padIndex);
@@ -387,7 +381,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
             id={padId}
             padIndex={padIndex}
             profileId={activeProfileId}
-            pageIndex={currentPageIndex}
+            bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
             isConfigured={true} // Special pads are always "configured"
@@ -410,7 +404,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
             id={padId}
             padIndex={padIndex}
             profileId={activeProfileId}
-            pageIndex={currentPageIndex}
+            bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
             isConfigured={true} // Special pads are always "configured"
@@ -435,7 +429,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
           padId={padId}
           padIndex={padIndex}
           profileId={activeProfileId}
-          pageIndex={currentPageIndex}
+          bankId={bankId}
           config={config}
           soundCount={soundCount}
           isEditMode={isEditMode}
@@ -453,7 +447,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   }, [
     padConfigs,
     activeProfileId,
-    currentPageIndex,
+    bankId,
     armedTracks,
     isEditMode,
     isDeleteMoveMode,

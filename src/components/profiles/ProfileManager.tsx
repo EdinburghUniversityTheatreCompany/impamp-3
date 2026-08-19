@@ -510,13 +510,13 @@ export default function ProfileManager() {
     entry: MissingAudioFile,
     file: File,
   ) => {
-    const key = `${entry.profileId}-${entry.pageIndex}-${entry.padIndex}-${entry.missingAudioFileId}`;
+    const key = `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
     setReplacingIds((prev) => new Set(prev).add(key));
     try {
       const { replaceMissingAudioFile } = await import("@/lib/db");
       await replaceMissingAudioFile(
         entry.profileId,
-        entry.pageIndex,
+        entry.bankId,
         entry.padIndex,
         entry.missingAudioFileId,
         file,
@@ -1458,7 +1458,7 @@ export default function ProfileManager() {
                                 {missingScanResult
                                   .filter((e) => e.profileId === profileId)
                                   .map((entry) => {
-                                    const key = `${entry.profileId}-${entry.pageIndex}-${entry.padIndex}-${entry.missingAudioFileId}`;
+                                    const key = `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
                                     const isReplacing = replacingIds.has(key);
                                     const isReplaced = replacedIds.has(key);
                                     return (
@@ -1467,7 +1467,7 @@ export default function ProfileManager() {
                                         className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
                                       >
                                         <span className="text-gray-700 dark:text-gray-200">
-                                          Bank {entry.pageIndex + 1} &rsaquo;{" "}
+                                          Bank {entry.bankName} &rsaquo;{" "}
                                           {entry.padName
                                             ? `"${entry.padName}"`
                                             : `Pad ${entry.padIndex + 1}`}

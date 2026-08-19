@@ -12,7 +12,7 @@ interface PadProps {
   id: string; // Unique identifier for the pad element itself
   padIndex: number; // Index of the pad within its page/grid
   profileId: number | null; // ID of the current profile
-  pageIndex: number; // Index of the current page
+  bankId: string; // Identity of the current bank
   keyBinding?: string;
   name?: string;
   isConfigured: boolean; // Still useful for basic styling/remove button
@@ -59,7 +59,7 @@ const Pad: React.FC<PadProps> = ({
   soundCount, // Destructure the new prop
   audioFileIds, // Destructure for hover preloading
   profileId,
-  pageIndex,
+  bankId,
 }) => {
   // State for drag and drop operations
   const [isDragging, setIsDragging] = useState(false);
@@ -68,7 +68,7 @@ const Pad: React.FC<PadProps> = ({
   // Subscribe to this pad's own playback slice only (special pads never play)
   const playbackKey =
     profileId !== null && !isSpecialPad
-      ? generatePlaybackKey(profileId, pageIndex, padIndex)
+      ? generatePlaybackKey(profileId, bankId, padIndex)
       : null;
   const playbackState = usePadPlaybackState(playbackKey);
   const isPlaying = playbackState !== null;
@@ -118,11 +118,11 @@ const Pad: React.FC<PadProps> = ({
     ) {
       preloadOnHover(audioFileIds, {
         profileId,
-        pageIndex,
+        bankId,
         padIndex,
       });
     }
-  }, [isConfigured, isDisabled, audioFileIds, profileId, pageIndex, padIndex]);
+  }, [isConfigured, isDisabled, audioFileIds, profileId, bankId, padIndex]);
 
   // Drag and drop handlers for delete/move mode
   const handleDragStart = (e: React.DragEvent) => {

@@ -381,7 +381,7 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
 
     playBuffer(buffer, key, {
       name: `Preview: ${audioFileName}`,
-      padInfo: { profileId: 0, pageIndex: 0, padIndex: 0 },
+      padInfo: { profileId: 0, bankId: "", padIndex: 0 },
       trimStart,
       trimEnd,
       volume: resolved.linear,
