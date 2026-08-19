@@ -5,7 +5,7 @@ import type {
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
 import { migrateToV7, type V7Transaction } from "./dbMigrations/v7BankId";
-import { normaliseBankOrder } from "./bankOrder";
+import { compareBankOrder, normaliseBankOrder } from "./bankOrder";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
@@ -1979,6 +1979,56 @@ export async function createBank(
   await tx.done;
 
   return { ...content, id, createdAt: now, updatedAt: now };
+}
+
+/**
+ * Writes a new bank order.
+ *
+ * One transaction over `pageMetadata`. Position is an ordinary field, so a
+ * reorder moves no pad row and stresses no unique index. Only a bank that
+ * really changed position gets a fresh sync stamp, so the merge sees a
+ * position change rather than a mass rename.
+ *
+ * @param profileId - The profile whose banks move
+ * @param orderedBankIds - The identities, in the new order. An id the
+ *   profile does not hold is ignored. A bank the caller does not name keeps
+ *   its relative order, after the named ones.
+ */
+export async function reorderBanks(
+  profileId: number,
+  orderedBankIds: string[],
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("pageMetadata", "readwrite");
+  const store = tx.objectStore("pageMetadata");
+  const banks = await store.index("profileId").getAll(profileId);
+  const byId = new Map(banks.map((bank) => [bank.bankId, bank]));
+
+  const ordered: PageMetadata[] = [];
+  for (const bankId of orderedBankIds) {
+    const bank = byId.get(bankId);
+    if (!bank) continue;
+    byId.delete(bankId);
+    ordered.push(bank);
+  }
+  // Sorted with the shared comparator rather than renumbered, because the
+  // loop below decides what to write by the *old* position.
+  ordered.push(...[...byId.values()].sort(compareBankOrder));
+
+  const now = new Date();
+  const nowMs = now.getTime();
+  for (let position = 0; position < ordered.length; position++) {
+    const bank = ordered[position];
+    if (bank.pageIndex === position) continue;
+    await store.put({
+      ...bank,
+      pageIndex: position,
+      updatedAt: now,
+      _modified: nowMs,
+      _fieldsModified: { ...(bank._fieldsModified ?? {}), pageIndex: nowMs },
+    });
+  }
+  await tx.done;
 }
 
 // Find audio file IDs referenced by pads that no longer exist in the audioFiles store

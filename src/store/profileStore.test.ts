@@ -292,24 +292,19 @@ describe("bank selection", () => {
     expect(useProfileStore.getState().currentBankId).toBe("9");
   });
 
-  // `reorderBanks` lands in Task 15. Turned back on there.
-  it.todo(
-    "keeps the view on the same bank when the order changes",
-    async () => {
-      // @ts-expect-error -- reorderBanks does not exist until Task 15 adds it.
-      const { reorderBanks } = await import("@/lib/db");
-      const store = useProfileStore.getState();
-      await store.loadBanks(profileId);
-      useProfileStore.getState().setCurrentPageIndex(3);
+  it("keeps the view on the same bank when the order changes", async () => {
+    const { reorderBanks } = await import("@/lib/db");
+    const store = useProfileStore.getState();
+    await store.loadBanks(profileId);
+    useProfileStore.getState().setCurrentPageIndex(3);
 
-      // Move the selected bank to the front.
-      await reorderBanks(profileId, ["2", "0", "1"]);
-      await useProfileStore.getState().loadBanks(profileId);
+    // Move the selected bank to the front.
+    await reorderBanks(profileId, ["2", "0", "1"]);
+    await useProfileStore.getState().loadBanks(profileId);
 
-      expect(useProfileStore.getState().currentBankId).toBe("2");
-      expect(useProfileStore.getState().currentPageIndex).toBe(0);
-    },
-  );
+    expect(useProfileStore.getState().currentBankId).toBe("2");
+    expect(useProfileStore.getState().currentPageIndex).toBe(0);
+  });
 
   it("refuses a position that holds no bank", async () => {
     const store = useProfileStore.getState();
