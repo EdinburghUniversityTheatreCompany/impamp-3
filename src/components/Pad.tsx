@@ -5,7 +5,7 @@ import { COMMON_MIME_TYPES } from "file-selector/mime";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
 import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
-import { usePadPlaybackState } from "@/store/playbackStore";
+import { usePadPlaybackState, usePadLayerCount } from "@/store/playbackStore";
 import PadProgressBar from "./PadProgressBar"; // Import the new component
 
 interface PadProps {
@@ -71,6 +71,7 @@ const Pad: React.FC<PadProps> = ({
       ? generatePlaybackKey(profileId, bankId, padIndex)
       : null;
   const playbackState = usePadPlaybackState(playbackKey);
+  const layerCount = usePadLayerCount(playbackKey);
   const isPlaying = playbackState !== null;
   const isFading = playbackState?.isFading ?? false;
   const playProgress = playbackState?.progress ?? 0;
@@ -454,6 +455,17 @@ const Pad: React.FC<PadProps> = ({
         {name}
         {isArmed && <span className="ml-1 text-amber-500">★</span>}
       </span>
+
+      {/* Layer count, shown only when a pad stacks. The ring and the remaining
+          time already follow the newest layer; this says how many there are. */}
+      {layerCount > 1 && (
+        <span
+          className="absolute top-1 right-1 z-10 rounded bg-blue-600 px-1 text-[10px] font-bold text-white"
+          data-testid="pad-layer-count"
+        >
+          x{layerCount}
+        </span>
+      )}
 
       {/* Key Binding Display at the bottom - show default key binding if no custom binding */}
       {displayKeyBinding && !isDeleteMoveMode && (

@@ -10,10 +10,10 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { usePlaybackStore, PlaybackState } from "@/store/playbackStore";
+import { usePlaybackStore, groupPlaybackByPad } from "@/store/playbackStore";
 import { usePlaybackSettings } from "@/hooks/usePlaybackSettings";
 import PanelHeader from "./shared/PanelHeader";
-import TrackItem from "./shared/TrackItem";
+import PadTrackGroup from "./shared/PadTrackGroup";
 
 /**
  * Panel component that displays currently playing tracks
@@ -22,9 +22,9 @@ const ActiveTracksPanel: React.FC = () => {
   // Subscribe to the playback store
   const activePlaybackMap = usePlaybackStore((state) => state.activePlayback);
 
-  // Convert map to array for easier rendering and memoize it
-  const activeTracksArray = useMemo(
-    () => Array.from(activePlaybackMap.values()),
+  // Fold the instance-keyed map into one group per pad, and memoize it
+  const trackGroups = useMemo(
+    () => groupPlaybackByPad(activePlaybackMap),
     [activePlaybackMap],
   );
 
@@ -85,7 +85,7 @@ const ActiveTracksPanel: React.FC = () => {
           actions={settingsButton}
         />
 
-        {activeTracksArray.length === 0 ? (
+        {trackGroups.length === 0 ? (
           // Show "Nothing playing" when no tracks are active
           <div className="text-gray-500 dark:text-gray-400 text-center py-3">
             Nothing playing
@@ -93,16 +93,8 @@ const ActiveTracksPanel: React.FC = () => {
         ) : (
           // List of active tracks with better overflow handling for bottom panel
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[20vh] overflow-y-auto pr-1 pb-safe">
-            {activeTracksArray.map((track: PlaybackState) => (
-              <TrackItem
-                key={track.key}
-                trackKey={track.key}
-                name={track.name}
-                remainingTime={track.remainingTime}
-                progress={track.progress}
-                isFading={track.isFading}
-                isActive={true}
-              />
+            {trackGroups.map((group) => (
+              <PadTrackGroup key={group.baseKey} group={group} />
             ))}
           </div>
         )}

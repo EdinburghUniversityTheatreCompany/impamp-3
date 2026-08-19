@@ -9,7 +9,11 @@
 "use client";
 
 import React from "react";
-import { usePlaybackStore } from "@/store/playbackStore";
+import {
+  usePlaybackStore,
+  groupPlaybackByPad,
+  describePlayingLayers,
+} from "@/store/playbackStore";
 
 /** A visually hidden polite live region. */
 function LiveRegion({ testId, text }: { testId: string; text: string }) {
@@ -54,10 +58,13 @@ function LiveRegion({ testId, text }: { testId: string; text: string }) {
  * `activePlayback` on every frame, so a selector returning the map would
  * re-render this on every frame; returning a joined string means zustand's
  * `Object.is` check sees no change and nothing re-renders until a name does.
+ *
+ * A stacked pad reads as `Applause, 3 layers`. The reader hears the count
+ * once, in place of the name three times.
  */
 export default function PlaybackAnnouncer() {
   const playing = usePlaybackStore((state) =>
-    Array.from(state.activePlayback.values(), (track) => track.name).join(", "),
+    describePlayingLayers(groupPlaybackByPad(state.activePlayback)),
   );
   const armed = usePlaybackStore((state) =>
     Array.from(state.armedTracks.values(), (track) => track.name).join(", "),
