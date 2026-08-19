@@ -1511,7 +1511,7 @@ export async function upsertPadConfiguration(
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readwrite");
   const store = tx.objectStore("padConfigurations");
-  const index = store.index("profilePagePad");
+  const index = store.index("profileBankPad");
   const now = new Date();
   const nowMs = now.getTime();
   let txSettled = false;
@@ -1519,7 +1519,7 @@ export async function upsertPadConfiguration(
   try {
     const existing = await index.get([
       padConfig.profileId,
-      padConfig.pageIndex,
+      padConfig.bankId,
       padConfig.padIndex,
     ]);
     let id: number;
@@ -1611,11 +1611,11 @@ export function extractPadPlaybackSettings(
 // Key bindings are deliberately excluded: they belong to the pad position.
 type PadContent = PadPlaybackSettings;
 
-// Swap the contents of two pads on the same page in a single transaction, so a
+// Swap the contents of two pads on the same bank in a single transaction, so a
 // failure can never leave a sound assigned to neither pad.
 export async function swapPadConfigurations(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   fromPadIndex: number,
   toPadIndex: number,
 ): Promise<void> {
@@ -1624,18 +1624,18 @@ export async function swapPadConfigurations(
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readwrite");
   const store = tx.objectStore("padConfigurations");
-  const index = store.index("profilePagePad");
+  const index = store.index("profileBankPad");
   const now = new Date();
   const nowMs = now.getTime();
   let txSettled = false;
 
   try {
-    const fromExisting = await index.get([profileId, pageIndex, fromPadIndex]);
-    const toExisting = await index.get([profileId, pageIndex, toPadIndex]);
+    const fromExisting = await index.get([profileId, bankId, fromPadIndex]);
+    const toExisting = await index.get([profileId, bankId, toPadIndex]);
 
     if (!fromExisting) {
       throw new Error(
-        `Pad configuration not found for profile ${profileId}, page ${pageIndex}, pad ${fromPadIndex}`,
+        `Pad configuration not found for profile ${profileId}, bank ${bankId}, pad ${fromPadIndex}`,
       );
     }
 
@@ -1662,7 +1662,7 @@ export async function swapPadConfigurations(
         });
         return;
       }
-      const record = { profileId, pageIndex, padIndex, ...content };
+      const record = { profileId, bankId, padIndex, ...content };
       const syncFields = initialSyncFields(record, nowMs);
       await store.add({
         ...record,
@@ -1674,7 +1674,7 @@ export async function swapPadConfigurations(
       });
     };
 
-    // Existing records are updated in place, so the unique profilePagePad index
+    // Existing records are updated in place, so the unique profileBankPad index
     // is never violated and neither pad has to be emptied first.
     await writePad(toPadIndex, toExisting, fromContent);
     await writePad(fromPadIndex, fromExisting, toContent);
@@ -1682,7 +1682,7 @@ export async function swapPadConfigurations(
     await tx.done;
     txSettled = true;
     console.log(
-      `Swapped pads ${fromPadIndex} and ${toPadIndex} on page ${pageIndex} for profile ${profileId}`,
+      `Swapped pads ${fromPadIndex} and ${toPadIndex} on bank ${bankId} for profile ${profileId}`,
     );
   } catch (error) {
     console.error("Error in swapPadConfigurations:", error);
@@ -1697,18 +1697,18 @@ export async function swapPadConfigurations(
   }
 }
 
-// Get all pad configurations for a specific profile and page
-export async function getPadConfigurationsForProfilePage(
+// Get all pad configurations for a specific profile and bank
+export async function getPadConfigurationsForProfileBank(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
 ): Promise<PadConfiguration[]> {
   const db = await getDb();
   const tx = db.transaction("padConfigurations", "readonly");
   const store = tx.objectStore("padConfigurations");
-  const index = store.index("profilePagePad");
+  const index = store.index("profileBankPad");
   const range = IDBKeyRange.bound(
-    [profileId, pageIndex, -Infinity],
-    [profileId, pageIndex, Infinity],
+    [profileId, bankId, -Infinity],
+    [profileId, bankId, Infinity],
   );
   return index.getAll(range);
 }
@@ -1882,7 +1882,8 @@ export async function setPageEmergencyState(
 export interface MissingAudioFile {
   profileId: number;
   profileName: string;
-  pageIndex: number;
+  bankId: string;
+  bankName: string;
   padIndex: number;
   padName: string;
   missingAudioFileId: number;
@@ -1909,6 +1910,12 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
     profiles.map((p) => [p.id!, p.name]),
   );
 
+  // Build bank name map
+  const allBanks = await db.getAll("pageMetadata");
+  const bankNameMap = new Map<string, string>(
+    allBanks.map((bank) => [bank.bankId, bank.name]),
+  );
+
   const results: MissingAudioFile[] = [];
   for (const pad of allPads) {
     if (!pad.audioFileIds) continue;
@@ -1918,7 +1925,8 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
           profileId: pad.profileId,
           profileName:
             profileNameMap.get(pad.profileId) ?? `Profile ${pad.profileId}`,
-          pageIndex: pad.pageIndex,
+          bankId: pad.bankId,
+          bankName: bankNameMap.get(pad.bankId) ?? "Bank ?",
           padIndex: pad.padIndex,
           padName: pad.name ?? "",
           missingAudioFileId: audioFileId,
@@ -1936,7 +1944,7 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
 // Replace a missing audio file reference with a new file
 export async function replaceMissingAudioFile(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   padIndex: number,
   missingAudioFileId: number,
   file: File,
@@ -1957,13 +1965,13 @@ export async function replaceMissingAudioFile(
   const tx = db.transaction("padConfigurations", "readwrite");
   const store = tx.objectStore("padConfigurations");
   const existing = await store
-    .index("profilePagePad")
-    .get([profileId, pageIndex, padIndex]);
+    .index("profileBankPad")
+    .get([profileId, bankId, padIndex]);
 
   if (!existing) {
     await tx.done;
     throw new Error(
-      `Pad configuration not found for profile ${profileId}, page ${pageIndex}, pad ${padIndex}`,
+      `Pad configuration not found for profile ${profileId}, bank ${bankId}, pad ${padIndex}`,
     );
   }
 
@@ -1985,7 +1993,7 @@ export async function replaceMissingAudioFile(
   await tx.done;
 
   console.log(
-    `[Missing Audio] Replaced missing file ID ${missingAudioFileId} with new file ID ${newId} in pad ${padIndex} on page ${pageIndex}`,
+    `[Missing Audio] Replaced missing file ID ${missingAudioFileId} with new file ID ${newId} in pad ${padIndex} on bank ${bankId}`,
   );
 }
 
