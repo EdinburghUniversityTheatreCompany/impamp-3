@@ -57,7 +57,7 @@ function syncData(overrides: Partial<ProfileSyncData>): ProfileSyncData {
 const syncedPad = (overrides: Record<string, unknown>) => ({
   audioFileIds: [] as number[],
   profileId: PROFILE_ID,
-  pageIndex: 0,
+  bankId: "0",
   padIndex: 0,
   name: "Hit",
   playbackType: "sequential" as const,
@@ -171,7 +171,7 @@ describe("getLocalProfileSyncData — publishing both routes", () => {
     const db = await getDb();
     await db.add("padConfigurations", {
       profileId: PROFILE_ID,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 2,
       name: "Kick",
       audioFileIds: [kickId],

@@ -64,7 +64,7 @@ describe("what a remote blob is allowed to leave behind", () => {
       padConfigurations: [
         {
           profileId,
-          pageIndex: 0,
+          bankId: "0",
           padIndex: 0,
           name: "Horn",
           playbackType: "round-robin",
@@ -168,6 +168,12 @@ describe("the delete-absent pass", () => {
 
     const banks = await getAllPageMetadataForProfile(profileId);
     expect(banks.map((bank) => bank.bankId).sort()).toEqual(["0", "1"]);
+    // Survival alone is not the whole claim — "only changed position" means
+    // the position actually changed. An implementation that kept every bank
+    // but silently discarded the incoming pageIndex would still pass the
+    // assertion above.
+    expect(banks.find((bank) => bank.bankId === "0")?.pageIndex).toBe(1);
+    expect(banks.find((bank) => bank.bankId === "1")?.pageIndex).toBe(0);
   });
 
   it("deletes a bank genuinely absent from the remote, while a moved bank in the same sync survives", async () => {
@@ -222,5 +228,76 @@ describe("the delete-absent pass", () => {
 
     const banks = await getAllPageMetadataForProfile(profileId);
     expect(banks.map((bank) => bank.bankId)).toEqual(["0"]);
+    expect(banks[0]?.pageIndex).toBe(1);
+  });
+
+  it("deletes a pad genuinely absent from the remote, while the same-padIndex pad in another bank survives", async () => {
+    // The pad twin of the two bank tests above. Two banks each hold a pad at
+    // padIndex 0 — the case a key that drops bankId (or falls back to the
+    // pad's own, now-nonexistent pageIndex) cannot tell apart: both pads
+    // collapse onto the same map entry, so the upsert can overwrite one
+    // bank's pad with the other's content and the delete pass never sees a
+    // key it should delete. Bank "1"'s pad must survive; bank "0"'s must go.
+    const { updateLocalData } = await import("./dataAccess");
+    const {
+      addProfile,
+      upsertPadConfiguration,
+      getPadConfigurationsForProfileBank,
+    } = await import("@/lib/db");
+
+    const profileId = await addProfile({
+      name: "Pad trim",
+      syncType: "local",
+    });
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "0",
+      padIndex: 0,
+      name: "Kick",
+      audioFileIds: [],
+      playbackType: "sequential",
+    });
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "1",
+      padIndex: 0,
+      name: "Snare",
+      audioFileIds: [],
+      playbackType: "sequential",
+    });
+
+    await updateLocalData(profileId, {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: Date.now(),
+      profile: { name: "Pad trim", syncType: "local" } as never,
+      // Only bank "1"'s pad is named remotely — bank "0"'s pad is genuinely
+      // gone.
+      padConfigurations: [
+        {
+          profileId,
+          bankId: "1",
+          padIndex: 0,
+          name: "Snare",
+          audioFileIds: [],
+          playbackType: "sequential",
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+      ],
+      pageMetadata: [],
+      audioFiles: [],
+    });
+
+    const bankZeroPads = await getPadConfigurationsForProfileBank(
+      profileId,
+      "0",
+    );
+    const bankOnePads = await getPadConfigurationsForProfileBank(
+      profileId,
+      "1",
+    );
+    expect(bankZeroPads).toHaveLength(0);
+    expect(bankOnePads).toHaveLength(1);
+    expect(bankOnePads[0]?.name).toBe("Snare");
   });
 });
