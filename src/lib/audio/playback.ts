@@ -36,7 +36,12 @@ export function clampPlaybackGain(volume: number): number {
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
 
-// The live instance keys of each pad, in start order.
+// The live instance keys of each pad, in registration order — the order a
+// layer actually started sounding, not the order its trigger was allocated a
+// number. Under an async load path those can differ (a later trigger can
+// finish loading first), and registration order is the right one for the cap
+// below to evict by: "oldest" means the layer that has been audible longest,
+// not the layer whose number is smallest.
 //
 // A pad that never layers holds exactly one entry, and that entry is its bare
 // base key, so the single-instance path keeps the shape it always had. Written
@@ -46,7 +51,11 @@ const layersByBase = new Map<string, string[]>();
 
 // The next layer number for a pad. It grows and is never reused, so a timer or
 // an `onended` handler left over from a stopped layer can never address the
-// layer that replaced it.
+// layer that replaced it. The *entry* is never pruned either, even once a pad
+// has no live layers at all — deleting it on empty would let the very next
+// trigger reuse a number a still-in-flight timer from the previous session
+// might reference. Bounded by the number of distinct pads a session ever
+// plays, same as `keyStopGenerations` below.
 const nextLayerIndex = new Map<string, number>();
 
 function registerInstance(instanceKey: string): void {
@@ -81,17 +90,24 @@ export function getLayerKeys(baseKey: string): string[] {
  * At the cap the oldest layer stops first, so a trigger always makes a sound
  * rather than being refused.
  *
- * @param baseKey - The pad's own playback key
+ * @param playbackKey - The pad's own playback key, or any instance key of it
  * @returns The instance key the new layer must play under
  */
-export function allocateLayerKey(baseKey: string): string {
-  const live = layersByBase.get(baseKey) ?? [];
+export function allocateLayerKey(playbackKey: string): string {
+  // Every sibling here accepts a base key or any instance key of the pad; an
+  // un-normalised key would let a caller that passes an instance key (say,
+  // one it already holds from a previous layer) mint a key like
+  // "pad-1#3#1" — registered under the phantom base "pad-1#3", which
+  // `stopTrack("pad-1")` and the Active Tracks row can never reach.
+  const base = baseKeyOf(playbackKey);
+
+  const live = getLayerKeys(base);
   if (live.length >= MAX_LAYERS_PER_PAD) {
     stopInstance(live[0]);
   }
-  const index = nextLayerIndex.get(baseKey) ?? 1;
-  nextLayerIndex.set(baseKey, index + 1);
-  return makeInstanceKey(baseKey, index);
+  const index = nextLayerIndex.get(base) ?? 1;
+  nextLayerIndex.set(base, index + 1);
+  return makeInstanceKey(base, index);
 }
 
 // Incremented whenever *everything* is stopped (the panic button), so an

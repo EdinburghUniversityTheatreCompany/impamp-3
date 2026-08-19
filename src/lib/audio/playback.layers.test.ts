@@ -83,7 +83,7 @@ const {
   getStopGeneration,
   stopRequestedSince,
 } = await import("./playback");
-const { MAX_LAYERS_PER_PAD, makeInstanceKey, layerIndexOf } =
+const { MAX_LAYERS_PER_PAD, makeInstanceKey, layerIndexOf, baseKeyOf } =
   await import("./types");
 
 const buffer = { duration: 10, numberOfChannels: 2 } as unknown as AudioBuffer;
@@ -172,6 +172,15 @@ describe("stopping a layered pad", () => {
     const faded = fadeOutTrack("pad-1", 3);
 
     expect(faded).toBe(true);
+    // A fade leaves every layer's track alive (only the gain ramps down) —
+    // this is what tells a fade apart from a hard stop, which removes the
+    // track from the registry entirely. Without this, the three
+    // `fadeOutInstance(...) === false` checks below cannot tell "already
+    // fading" from "no track at all": `fadeOutInstance` returns false for
+    // both, so a `fadeOutTrack` that hard-stopped every layer instead of
+    // fading it would pass them too.
+    expect(getLayerKeys("pad-1")).toHaveLength(3);
+    expect(isTrackFading("pad-1")).toBe(true);
     // fadeOutInstance is a no-op once a track is already fading, so a false
     // return for each instance's own key proves that exact instance was
     // marked — not merely the pad's aggregate view, which could stay true
@@ -276,5 +285,31 @@ describe("the layer cap", () => {
 
     expect(second).not.toBe(first);
     expect(second).toBe(makeInstanceKey("pad-1", layerIndexOf(first) + 1));
+  });
+});
+
+describe("allocateLayerKey normalises its argument", () => {
+  it("keys a new layer to the pad's base even when passed an instance key", () => {
+    // Every sibling of allocateLayerKey (getLayerKeys, stopTrack,
+    // fadeOutTrack, isTrackPlaying, ...) accepts a base key or any instance
+    // key of the pad. A caller can plausibly hold an instance key already —
+    // e.g. its own trigger's freshly claimed key — and pass that on, so
+    // allocateLayerKey must resolve it to the pad's real base key rather
+    // than minting a layer under a phantom base like "pad-1#1".
+    const first = allocateLayerKey("pad-1");
+    play(first);
+
+    const second = allocateLayerKey(first);
+    play(second);
+
+    expect(baseKeyOf(second)).toBe("pad-1");
+    // An un-normalised allocateLayerKey would key the second layer to the
+    // phantom base baseKeyOf(first) taken as a *literal* map key — but
+    // getLayerKeys itself normalises through baseKeyOf too, so the only way
+    // to see that phantom base is to have never scoped this assertion to it
+    // in the first place: the pad's real registry containing both keys, in
+    // allocation order, is the direct evidence that allocateLayerKey wrote
+    // to "pad-1" and not to "pad-1#1".
+    expect(getLayerKeys("pad-1")).toEqual([first, second]);
   });
 });

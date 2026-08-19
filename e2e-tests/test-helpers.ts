@@ -251,7 +251,13 @@ export async function prepareAudioContext(page: Page) {
  */
 export interface ActiveSoundInfo {
   key: string;
+  /** The pad's own playback key — equal to `key` unless this is a layer. */
+  baseKey?: string;
+  /** 0 for a pad's un-layered instance, otherwise the layer's number. */
+  layerIndex?: number;
   name: string;
+  /** Which pipeline is playing: a decoded buffer or a streamed media element. */
+  sourceKind?: string;
   playbackType?: string;
   currentAudioFileId?: number;
   currentAudioIndex?: number;

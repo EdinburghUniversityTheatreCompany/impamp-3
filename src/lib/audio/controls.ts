@@ -653,8 +653,10 @@ export function fadeOutAudio(
  * Stops all currently playing audio tracks
  */
 export function stopAllAudio(): void {
+  // stopAllTracks() counts pads, not layers — one stopTrack() call per pad,
+  // each of which may have silenced several instances.
   const count = stopAllTracks();
-  console.log(`[Audio Controls] Stopped all audio tracks (${count} tracks)`);
+  console.log(`[Audio Controls] Stopped all audio (${count} pads)`);
 }
 
 /**
