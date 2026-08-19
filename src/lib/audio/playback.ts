@@ -8,7 +8,15 @@
  */
 
 import { getAudioContext } from "./context";
-import { ActiveTrack, PlayAudioParams, TrackSource } from "./types";
+import {
+  ActiveTrack,
+  MAX_LAYERS_PER_PAD,
+  PlayAudioParams,
+  TrackSource,
+  baseKeyOf,
+  layerIndexOf,
+  makeInstanceKey,
+} from "./types";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 import { MAX_GAIN } from "./loudness/constants";
@@ -27,6 +35,64 @@ export function clampPlaybackGain(volume: number): number {
 
 // Track all currently active audio tracks
 const activeTracks = new Map<string, ActiveTrack>();
+
+// The live instance keys of each pad, in start order.
+//
+// A pad that never layers holds exactly one entry, and that entry is its bare
+// base key, so the single-instance path keeps the shape it always had. Written
+// only by `claimPlaybackKey` and `clearTrackState`, which are the only two
+// places a track enters and leaves `activeTracks`, so the two cannot drift.
+const layersByBase = new Map<string, string[]>();
+
+// The next layer number for a pad. It grows and is never reused, so a timer or
+// an `onended` handler left over from a stopped layer can never address the
+// layer that replaced it.
+const nextLayerIndex = new Map<string, number>();
+
+function registerInstance(instanceKey: string): void {
+  const base = baseKeyOf(instanceKey);
+  const keys = layersByBase.get(base) ?? [];
+  if (!keys.includes(instanceKey)) keys.push(instanceKey);
+  layersByBase.set(base, keys);
+}
+
+function forgetInstance(instanceKey: string): void {
+  const base = baseKeyOf(instanceKey);
+  const keys = layersByBase.get(base);
+  if (!keys) return;
+  const at = keys.indexOf(instanceKey);
+  if (at !== -1) keys.splice(at, 1);
+  if (keys.length === 0) layersByBase.delete(base);
+}
+
+/**
+ * The live instances of one pad, oldest first.
+ *
+ * @param baseKey - A base key or any instance key of the pad
+ * @returns A copy of the instance keys, safe to iterate while they are stopped
+ */
+export function getLayerKeys(baseKey: string): string[] {
+  return [...(layersByBase.get(baseKeyOf(baseKey)) ?? [])];
+}
+
+/**
+ * Takes the next instance key for a pad, and makes room for it.
+ *
+ * At the cap the oldest layer stops first, so a trigger always makes a sound
+ * rather than being refused.
+ *
+ * @param baseKey - The pad's own playback key
+ * @returns The instance key the new layer must play under
+ */
+export function allocateLayerKey(baseKey: string): string {
+  const live = layersByBase.get(baseKey) ?? [];
+  if (live.length >= MAX_LAYERS_PER_PAD) {
+    stopInstance(live[0]);
+  }
+  const index = nextLayerIndex.get(baseKey) ?? 1;
+  nextLayerIndex.set(baseKey, index + 1);
+  return makeInstanceKey(baseKey, index);
+}
 
 // Incremented whenever *everything* is stopped (the panic button), so an
 // in-flight trigger for any pad is cancelled.
@@ -171,7 +237,9 @@ export interface StopGeneration {
 export function getStopGeneration(playbackKey: string): StopGeneration {
   return {
     global: globalStopGeneration,
-    key: keyStopGenerations.get(playbackKey) ?? 0,
+    // Per pad, not per layer: a stop aimed at the pad must reach a trigger for
+    // any of its layers that has not registered a track yet.
+    key: keyStopGenerations.get(baseKeyOf(playbackKey)) ?? 0,
   };
 }
 
@@ -344,6 +412,7 @@ function scheduleStreamingTrimEnd(
  * @param playbackKey - The unique key for the playback
  */
 function clearTrackState(playbackKey: string): void {
+  forgetInstance(playbackKey);
   activeTracks.delete(playbackKey);
   previousPlaybackState.delete(playbackKey); // Clean up change detection state
   playbackStoreActions.removeTrack(playbackKey);
@@ -406,6 +475,7 @@ function claimPlaybackKey(playbackKey: string, track: ActiveTrack): void {
   }
 
   activeTracks.set(playbackKey, track);
+  registerInstance(playbackKey);
 }
 
 /**
@@ -754,23 +824,26 @@ export function waitForStreamingPlayable(
 }
 
 /**
- * Checks if a track is currently playing
+ * Whether any instance of a pad plays now.
  *
- * @param playbackKey - The unique key for the playback
- * @returns True if the track is playing
+ * Takes a base key or an instance key, so `controls.ts`'s retrigger decision
+ * needs no change: it asks about the pad, and any live layer answers yes.
  */
 export function isTrackPlaying(playbackKey: string): boolean {
-  return activeTracks.has(playbackKey);
+  return (layersByBase.get(baseKeyOf(playbackKey))?.length ?? 0) > 0;
 }
 
 /**
- * Checks if a track is currently fading out
+ * Whether a pad is entirely on its way out.
  *
- * @param playbackKey - The unique key for the playback
- * @returns True if the track is fading
+ * True only when every live instance fades. A pad with one fading layer and one
+ * at full level is still playing, and a new trigger must treat it that way —
+ * for a pad with a single track this is the exact answer it gave before.
  */
 export function isTrackFading(playbackKey: string): boolean {
-  return activeTracks.get(playbackKey)?.isFading === true;
+  const keys = layersByBase.get(baseKeyOf(playbackKey));
+  if (!keys || keys.length === 0) return false;
+  return keys.every((key) => activeTracks.get(key)?.isFading === true);
 }
 
 /**
@@ -783,13 +856,28 @@ export function getActivePlaybackKeys(): string[] {
 }
 
 /**
- * Gets information about a specific active track
+ * The track behind a key.
  *
- * @param playbackKey - The unique key for the playback
- * @returns The active track information or null if not found
+ * An instance key answers with its own track, which is what the streaming path
+ * needs to check that it still owns the element it started. A base key answers
+ * with the newest layer, which is what the pad ring follows.
+ *
+ * The two cases are told apart by the *shape* of the key
+ * (`baseKeyOf(key) === key` iff it carries no layer suffix), not by whether
+ * `activeTracks` happens to have a direct entry for it: a pad's very first,
+ * un-layered instance is registered under its bare base key, so a presence
+ * check alone would answer with that instance forever and never see a newer
+ * layer take over.
  */
 export function getActiveTrack(playbackKey: string): ActiveTrack | null {
-  return activeTracks.get(playbackKey) || null;
+  const base = baseKeyOf(playbackKey);
+  if (playbackKey !== base) {
+    // An instance key always names its own track directly.
+    return activeTracks.get(playbackKey) ?? null;
+  }
+  const keys = layersByBase.get(base);
+  if (!keys || keys.length === 0) return null;
+  return activeTracks.get(keys[keys.length - 1]) ?? null;
 }
 
 // Which sound a multi-sound pad picked is invisible in the UI — the Active
@@ -798,6 +886,8 @@ export function getActiveTrack(playbackKey: string): ActiveTrack | null {
 exposeE2EHook("__impampActiveSounds", () =>
   Array.from(activeTracks.entries()).map(([key, track]) => ({
     key,
+    baseKey: baseKeyOf(key),
+    layerIndex: layerIndexOf(key),
     name: track.name,
     // Which pipeline is playing is invisible in the UI too, and the trim end
     // is enforced completely differently by each: natively for a buffer,
@@ -812,13 +902,13 @@ exposeE2EHook("__impampActiveSounds", () =>
 );
 
 /**
- * Initiates a fade-out for a track
+ * Initiates a fade-out for one instance
  *
  * @param playbackKey - The unique key for the playback
  * @param durationInSeconds - Duration of the fade-out in seconds
  * @returns True if fade-out was initiated successfully
  */
-export function fadeOutTrack(
+export function fadeOutInstance(
   playbackKey: string,
   durationInSeconds: number,
 ): boolean {
@@ -908,25 +998,39 @@ export function fadeOutTrack(
 }
 
 /**
- * Stops playback of a track immediately, cancelling any fade in progress
+ * Fades out every layer of a pad over the same duration.
  *
- * @param playbackKey - The unique key for the playback
- * @returns True if the track was stopped successfully
+ * @param baseKey - The pad's own playback key, or any instance key of it
+ * @param durationInSeconds - Length of the fade
+ * @returns True if at least one instance started a fade
  */
-export function stopTrack(playbackKey: string): boolean {
-  console.log(`[Audio Playback] Requesting stop for key: ${playbackKey}`);
+export function fadeOutTrack(
+  baseKey: string,
+  durationInSeconds: number,
+): boolean {
+  let faded = false;
+  for (const instanceKey of getLayerKeys(baseKey)) {
+    if (fadeOutInstance(instanceKey, durationInSeconds)) faded = true;
+  }
+  return faded;
+}
 
-  const track = activeTracks.get(playbackKey);
+/**
+ * Stops one layer immediately, and cancels any fade on it.
+ *
+ * Deliberately leaves the pad's stop generation alone: stopping one layer must
+ * not cancel a trigger that is still loading a different layer of the same pad.
+ *
+ * @param instanceKey - The exact instance to stop
+ * @returns True if there was an instance to stop
+ */
+export function stopInstance(instanceKey: string): boolean {
+  console.log(`[Audio Playback] Requesting stop for instance: ${instanceKey}`);
+
+  const track = activeTracks.get(instanceKey);
   if (!track) return false;
 
   cancelScheduledTrimEnd(track);
-
-  // Invalidate any trigger for *this pad* that is still waiting on an async
-  // load. Deliberately not global: stopping one pad must not cancel another's.
-  keyStopGenerations.set(
-    playbackKey,
-    (keyStopGenerations.get(playbackKey) ?? 0) + 1,
-  );
 
   const source = track.source;
 
@@ -959,7 +1063,7 @@ export function stopTrack(playbackKey: string): boolean {
     // Ignore errors if already stopped (e.g., due to natural end)
     if ((error as DOMException).name !== "InvalidStateError") {
       console.warn(
-        `[Audio Playback] Error stopping source for key ${playbackKey}:`,
+        `[Audio Playback] Error stopping source for instance ${instanceKey}:`,
         error,
       );
     }
@@ -968,10 +1072,34 @@ export function stopTrack(playbackKey: string): boolean {
     disposeTrackSource(source);
   }
 
-  // Remove state immediately so the track can no longer block re-triggering
-  clearTrackState(playbackKey);
+  // Remove state immediately so the layer can no longer block re-triggering
+  clearTrackState(instanceKey);
 
   return true;
+}
+
+/**
+ * Stops every layer of a pad immediately.
+ *
+ * The name and the meaning are unchanged for a pad with one sound. For a pad
+ * that layers, the Active Tracks row, the ESC key and the "stop" behaviour all
+ * mean the pad, so they all end up here.
+ *
+ * @param baseKey - The pad's own playback key, or any instance key of it
+ * @returns True if at least one instance was stopped
+ */
+export function stopTrack(baseKey: string): boolean {
+  const base = baseKeyOf(baseKey);
+
+  // Invalidate any trigger for *this pad* that still waits on an async load.
+  // Deliberately not global: stopping one pad must not cancel another's.
+  keyStopGenerations.set(base, (keyStopGenerations.get(base) ?? 0) + 1);
+
+  let stopped = false;
+  for (const instanceKey of getLayerKeys(base)) {
+    if (stopInstance(instanceKey)) stopped = true;
+  }
+  return stopped;
 }
 
 /**
@@ -980,8 +1108,9 @@ export function stopTrack(playbackKey: string): boolean {
  * @returns Number of tracks that were stopped
  */
 export function stopAllTracks(): number {
-  // Get all keys from activeTracks
-  const keys = Array.from(activeTracks.keys());
+  // One key per pad, so each pad's stop generation is bumped exactly once —
+  // `stopTrack` below already reaches every layer of the pad it names.
+  const keys = Array.from(layersByBase.keys());
 
   // Invalidate in-flight triggers for every pad, even ones with nothing
   // currently playing — a trigger that has not registered a track yet is
@@ -1016,9 +1145,9 @@ export function fadeOutAllTracks(durationInSeconds: number = 3): number {
 
   let fadedCount = 0;
   keys.forEach((key) => {
-    // Check if the track is already fading to avoid restarting the fade
-    if (!isTrackFading(key)) {
-      if (fadeOutTrack(key, durationInSeconds)) {
+    // Check if the instance is already fading to avoid restarting the fade
+    if (!activeTracks.get(key)?.isFading) {
+      if (fadeOutInstance(key, durationInSeconds)) {
         fadedCount++;
       }
     }

@@ -23,7 +23,9 @@ import {
   playBlobStreaming,
   waitForStreamingPlayable,
   stopTrack,
+  stopInstance,
   fadeOutTrack,
+  fadeOutInstance,
   stopAllTracks,
   fadeOutAllTracks,
   isTrackPlaying,
@@ -37,6 +39,7 @@ import {
   TriggerAudioArgs,
   PlayAudioParams,
   generatePlaybackKey,
+  baseKeyOf,
 } from "./types";
 import { getCachedLoudness } from "./loudness/cache";
 import { resolveGain } from "./loudness/gain";
@@ -607,19 +610,29 @@ export async function triggerAudioForPadInstant(
 }
 
 /**
- * Stops audio playback
+ * Stops what a key names: one layer for an instance key, the whole pad for a
+ * base key.
  *
- * @param playbackKey - The key identifying the playback to stop
+ * The Active Tracks panel gives a grouped row the pad's base key and each layer
+ * row its own instance key, so one rule here serves both. A base key never
+ * contains the layer separator, so the two can never be confused.
+ *
+ * @param playbackKey - A base key or an instance key
  */
 export function stopAudio(playbackKey: string): void {
   console.log(`[Audio Controls] Requesting stop for key: ${playbackKey}`);
-  stopTrack(playbackKey);
+  if (baseKeyOf(playbackKey) === playbackKey) {
+    stopTrack(playbackKey);
+  } else {
+    stopInstance(playbackKey);
+  }
 }
 
 /**
- * Fades out audio over the specified duration
+ * Fades out what a key names: one layer for an instance key, the whole pad for
+ * a base key.
  *
- * @param playbackKey - The key identifying the playback to fade out
+ * @param playbackKey - A base key or an instance key
  * @param durationInSeconds - Duration of the fade in seconds (default: 3s)
  */
 export function fadeOutAudio(
@@ -629,7 +642,11 @@ export function fadeOutAudio(
   console.log(
     `[Audio Controls] Requesting fade out over ${durationInSeconds}s for key: ${playbackKey}`,
   );
-  fadeOutTrack(playbackKey, durationInSeconds);
+  if (baseKeyOf(playbackKey) === playbackKey) {
+    fadeOutTrack(playbackKey, durationInSeconds);
+  } else {
+    fadeOutInstance(playbackKey, durationInSeconds);
+  }
 }
 
 /**
