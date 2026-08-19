@@ -147,6 +147,53 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
+  // Load the active profile's banks. Without this, `banks` in the store
+  // stays `[]` forever and every bank switch — tab clicks, number-key
+  // shortcuts, all of it — hits `setCurrentPageIndex`'s "bank not found"
+  // no-op, because that lookup is against `get().banks`. Bank 1 is no
+  // exception even though the old implementation switched to it with no DB
+  // dependency at all.
+  //
+  // `loadBanks` is a plain async write with no generation token of its own,
+  // so switching profiles fast enough to have two calls in flight could let
+  // the earlier call's `set` land after the later one and leave the wrong
+  // profile's banks on screen. `loadBanksInFlightRef` and
+  // `pendingBanksProfileIdRef` coalesce that: at most one call runs at a
+  // time, and a profile switch that arrives mid-call is remembered and
+  // re-requested — not dropped — the moment the in-flight call settles, so
+  // the store always converges on the *last* profile actually asked for.
+  const loadBanksInFlightRef = useRef(false);
+  const pendingBanksProfileIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (activeProfileId === null) return;
+
+    const runLoadBanks = async (profileId: number) => {
+      if (loadBanksInFlightRef.current) {
+        pendingBanksProfileIdRef.current = profileId;
+        return;
+      }
+      loadBanksInFlightRef.current = true;
+      try {
+        await useProfileStore.getState().loadBanks(profileId);
+      } catch (error) {
+        console.error(
+          `[ClientSideInitializer] Failed to load banks for profile ${profileId}:`,
+          error,
+        );
+      } finally {
+        loadBanksInFlightRef.current = false;
+      }
+      const next = pendingBanksProfileIdRef.current;
+      if (next !== null) {
+        pendingBanksProfileIdRef.current = null;
+        void runLoadBanks(next);
+      }
+    };
+
+    void runLoadBanks(activeProfileId);
+  }, [activeProfileId]);
+
   useEffect(() => {
     if (activeProfileId === null) return;
 
