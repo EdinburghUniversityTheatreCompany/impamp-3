@@ -155,6 +155,42 @@ describe("the diff summary sorts on identity, not position", () => {
     expect(describesSameSyncState(a, b)).toBe(true);
   });
 
+  it("still reports the same state when two bankId-less banks are listed in opposite order", () => {
+    // The pages sort's tie-break: two records that both lack a `bankId` (the
+    // shape `normaliseIncomingSyncData` deliberately leaves unmigrated) tie
+    // under `(a.bankId ?? "").localeCompare(b.bankId ?? "")` regardless of
+    // order. Array.prototype.sort is stable, so without a second key the
+    // final order follows whichever order each device happened to hold the
+    // records in — a false "these differ" for two blobs describing the same
+    // corrupt state. `pageIndex` breaks the tie the same way on both sides.
+    const orphanLow = {
+      profileId: 1,
+      pageIndex: 3,
+      name: "Orphan low",
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as PageMetadata;
+    const orphanHigh = {
+      profileId: 1,
+      pageIndex: 5,
+      name: "Orphan high",
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as PageMetadata;
+    const a = syncData([orphanHigh, orphanLow]);
+    const b = syncData([orphanLow, orphanHigh]);
+
+    expect(describesSameSyncState(a, b)).toBe(true);
+  });
+
   it("still reports the same state when two pads in one bank are listed in opposite order", () => {
     // The sort's primary key is bankId, and every pad in the same bank ties
     // on it — this is the common case, not the rare mid-reorder one above.
