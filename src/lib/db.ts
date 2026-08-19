@@ -5,6 +5,7 @@ import type {
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
 import { migrateToV7, type V7Transaction } from "./dbMigrations/v7BankId";
+import { normaliseBankOrder } from "./bankOrder";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
@@ -104,6 +105,11 @@ export type PlaybackType = "sequential" | "random" | "round-robin";
  * changed how those pads played.
  */
 export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
+
+/** The hard cap on banks per profile. Position 0-19 maps to bank 1-20. */
+export const MAX_BANKS = 20;
+/** The banks every profile starts with, so every tab has an identity. */
+export const DEFAULT_BANK_COUNT = 10;
 
 // Define the structure of pad configuration data
 export interface PadConfiguration {
@@ -1730,13 +1736,13 @@ export async function ensureDefaultProfile() {
   }
 }
 
-// Get page metadata for a specific profile and page
-export async function getPageMetadata(
+// Get one bank of a profile by its identity
+export async function getBankById(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
 ): Promise<PageMetadata | undefined> {
   const db = await getDb();
-  return db.getFromIndex("pageMetadata", "profilePage", [profileId, pageIndex]);
+  return db.getFromIndex("pageMetadata", "profileBank", [profileId, bankId]);
 }
 
 // Function to get all page metadata for a specific profile
@@ -1753,29 +1759,23 @@ export async function getAllPageMetadataForProfile(
  *
  * `name` and `isEmergency` are optional so a caller changing one does not have
  * to read and re-send the other. They used to be required, which meant
- * `renamePage` and `setPageEmergencyState` each read the record *outside* this
+ * `renameBank` and `setBankEmergencyState` each read the record *outside* this
  * transaction and wrote both fields back — so renaming a bank while toggling
  * its emergency flag reverted whichever landed first. The merge inside the
  * transaction below already does the right thing; the callers just were not
  * allowed to use it.
  */
-export async function upsertPageMetadata(
-  pageMetadata: Omit<
-    PageMetadata,
-    | "id"
-    | "name"
-    | "isEmergency"
-    | "createdAt"
-    | "updatedAt"
-    | "_created"
-    | "_modified"
-    | "_fieldsModified"
-  > & { name?: string; isEmergency?: boolean },
-): Promise<number> {
+export async function upsertPageMetadata(pageMetadata: {
+  profileId: number;
+  bankId: string;
+  pageIndex?: number;
+  name?: string;
+  isEmergency?: boolean;
+}): Promise<number> {
   const db = await getDb();
   const tx = db.transaction("pageMetadata", "readwrite");
   const store = tx.objectStore("pageMetadata");
-  const index = store.index("profilePage");
+  const index = store.index("profileBank");
   const now = new Date();
   const nowMs = now.getTime();
   let txSettled = false;
@@ -1783,7 +1783,7 @@ export async function upsertPageMetadata(
   try {
     const existing = await index.get([
       pageMetadata.profileId,
-      pageMetadata.pageIndex,
+      pageMetadata.bankId,
     ]);
     let id: number;
 
@@ -1806,9 +1806,15 @@ export async function upsertPageMetadata(
       await store.put(finalData);
       console.log(`Updated page metadata with id: ${id}`);
     } else {
-      // Add new. Defaults only matter here — an update keeps what is there.
+      // Defaults only matter here — an update keeps what is there.
+      if (pageMetadata.pageIndex === undefined) {
+        throw new Error(
+          `Cannot create bank ${pageMetadata.bankId} without a position. Use createBank or ensureDefaultBanks.`,
+        );
+      }
       const content = {
         ...pageMetadata,
+        pageIndex: pageMetadata.pageIndex,
         name:
           pageMetadata.name ??
           `Bank ${convertIndexToBankNumber(pageMetadata.pageIndex)}`,
@@ -1834,6 +1840,13 @@ export async function upsertPageMetadata(
     if (!txSettled) {
       try {
         tx.abort();
+        // The "missing position" guard above throws before any write, so
+        // this abort has nothing to roll back — it only exists to settle
+        // the transaction. Without the catch here, idb's `tx.done` (created
+        // as soon as the transaction is) rejects with an AbortError that
+        // nothing observes, and that unhandled rejection fails the run even
+        // though every assertion passed.
+        tx.done.catch(() => {});
       } catch (e) {
         console.error("Error aborting transaction:", e);
       }
@@ -1842,40 +1855,130 @@ export async function upsertPageMetadata(
   }
 }
 
-// Helper function to rename a page (Updated)
-export async function renamePage(
+// Helper function to rename a bank (Updated)
+export async function renameBank(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   newName: string,
 ): Promise<void> {
   try {
     // Only the name. Reading `isEmergency` here and writing it back is what
     // let a rename revert a concurrent emergency toggle.
-    await upsertPageMetadata({ profileId, pageIndex, name: newName });
-    console.log(`Renamed page ${pageIndex} to "${newName}"`);
+    await upsertPageMetadata({ profileId, bankId, name: newName });
+    console.log(`Renamed bank ${bankId} to "${newName}"`);
   } catch (error) {
-    console.error(`Error renaming page ${pageIndex}:`, error);
+    console.error(`Error renaming bank ${bankId}:`, error);
     throw error;
   }
 }
 
-// Helper function to set emergency state for a page (Updated)
-export async function setPageEmergencyState(
+// Helper function to set emergency state for a bank (Updated)
+export async function setBankEmergencyState(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   isEmergency: boolean,
 ): Promise<void> {
   try {
-    // Only the flag — see renamePage.
-    await upsertPageMetadata({ profileId, pageIndex, isEmergency });
-    console.log(`Set emergency state for page ${pageIndex} to ${isEmergency}`);
+    // Only the flag — see renameBank.
+    await upsertPageMetadata({ profileId, bankId, isEmergency });
+    console.log(`Set emergency state for bank ${bankId} to ${isEmergency}`);
   } catch (error) {
-    console.error(
-      `Error setting emergency state for page ${pageIndex}:`,
-      error,
-    );
+    console.error(`Error setting emergency state for bank ${bankId}:`, error);
     throw error;
   }
+}
+
+/**
+ * Makes sure a profile has its ten default banks.
+ *
+ * The ids are deterministic — `String(position)` — for the reason the v7
+ * migration gives: two devices can materialise the same default bank on
+ * their own, and a random id would give the merge two banks where there is
+ * one. No path deletes a bank, so these ten ids are stable forever.
+ *
+ * @param profileId - The profile to fill
+ * @returns Every bank of the profile, in normalised order
+ */
+export async function ensureDefaultBanks(
+  profileId: number,
+): Promise<PageMetadata[]> {
+  const db = await getDb();
+  const tx = db.transaction("pageMetadata", "readwrite");
+  const store = tx.objectStore("pageMetadata");
+  const existing = await store.index("profileId").getAll(profileId);
+  const known = new Set(existing.map((bank) => bank.bankId));
+  const now = new Date();
+  const nowMs = now.getTime();
+  const created: PageMetadata[] = [];
+
+  for (let position = 0; position < DEFAULT_BANK_COUNT; position++) {
+    const bankId = String(position);
+    if (known.has(bankId)) continue;
+    const content = {
+      profileId,
+      bankId,
+      pageIndex: position,
+      name: `Bank ${convertIndexToBankNumber(position)}`,
+      isEmergency: false,
+    };
+    const id = await store.add({
+      ...content,
+      createdAt: now,
+      updatedAt: now,
+      ...initialSyncFields(content, nowMs),
+    });
+    created.push({ ...content, id, createdAt: now, updatedAt: now });
+  }
+  await tx.done;
+
+  return normaliseBankOrder([...existing, ...created]);
+}
+
+/**
+ * Adds one bank at the first free position.
+ *
+ * @param profileId - The profile to add to
+ * @param name - The bank name
+ * @param isEmergency - Whether the bank answers the emergency key
+ * @returns The bank that was written
+ */
+export async function createBank(
+  profileId: number,
+  name: string,
+  isEmergency = false,
+): Promise<PageMetadata> {
+  const db = await getDb();
+  const tx = db.transaction("pageMetadata", "readwrite");
+  const store = tx.objectStore("pageMetadata");
+  const existing = await store.index("profileId").getAll(profileId);
+  if (existing.length >= MAX_BANKS) {
+    await tx.done;
+    throw new Error(`A profile can hold at most ${MAX_BANKS} banks.`);
+  }
+
+  const used = new Set(existing.map((bank) => bank.pageIndex));
+  let pageIndex = 0;
+  while (used.has(pageIndex)) pageIndex++;
+
+  const now = new Date();
+  // A bank created after the migration is safe with a random id: a creation
+  // is a synced event, so two devices cannot mint one for the same bank.
+  const content = {
+    profileId,
+    bankId: crypto.randomUUID(),
+    pageIndex,
+    name,
+    isEmergency,
+  };
+  const id = await store.add({
+    ...content,
+    createdAt: now,
+    updatedAt: now,
+    ...initialSyncFields(content, now.getTime()),
+  });
+  await tx.done;
+
+  return { ...content, id, createdAt: now, updatedAt: now };
 }
 
 // Find audio file IDs referenced by pads that no longer exist in the audioFiles store
@@ -2069,8 +2172,12 @@ export async function duplicateProfileLocally(
     }
 
     for (const page of await getAllPageMetadataForProfile(sourceProfileId)) {
+      // Same bankId as the source: bankId is unique per profile, not
+      // globally, so reusing it in the duplicate keeps this bank's identity
+      // distinct from the source's — it does not collide with it.
       await upsertPageMetadata({
         profileId: newProfileId,
+        bankId: page.bankId,
         pageIndex: page.pageIndex,
         name: page.name,
         isEmergency: page.isEmergency,
