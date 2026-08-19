@@ -212,11 +212,11 @@ export function useKeyboardListener() {
 
       // --- Specific Shortcut Handling ---
 
-      // Handle Ctrl+F to open search modal
-      if (event.key === "f" && event.ctrlKey) {
+      // Handle Ctrl+F — Cmd+F on a Mac — to open search modal
+      if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         console.log(
-          "[KeyboardListener] Ctrl+F detected, opening search modal.",
+          "[KeyboardListener] Search chord detected, opening search modal.",
         );
         openSearchModal();
         return;
@@ -332,7 +332,14 @@ export function useKeyboardListener() {
       const numbersRegex = /^[0-9]$/;
       if (numbersRegex.test(event.key)) {
         if (event.ctrlKey) {
-          // Ctrl+Number for banks 11-20
+          // Ctrl+Number for banks 11-20.
+          //
+          // Ctrl and not Cmd, on every platform including macOS: Cmd+1..9 is
+          // the browser's own tab switcher and is not cancellable from the
+          // page, so binding it would promise a bank and deliver a tab. Ctrl
+          // with a digit does reach the page on a Mac — unlike Ctrl+click,
+          // which the OS claims as the secondary click — so this one needs no
+          // second chord.
           event.preventDefault();
           const altBankNumber =
             event.key === "0" ? 20 : 10 + parseInt(event.key, 10);
