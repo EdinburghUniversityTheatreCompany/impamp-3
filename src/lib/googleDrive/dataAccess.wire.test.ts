@@ -169,4 +169,58 @@ describe("the delete-absent pass", () => {
     const banks = await getAllPageMetadataForProfile(profileId);
     expect(banks.map((bank) => bank.bankId).sort()).toEqual(["0", "1"]);
   });
+
+  it("deletes a bank genuinely absent from the remote, while a moved bank in the same sync survives", async () => {
+    // The case the "moved" test above cannot exercise on its own: a delete
+    // that keys on position cannot be told apart from a move by a test where
+    // every local bank is also present remotely. Mixing a real deletion with
+    // a move in the same call proves the pass tells "moved" from "gone"
+    // rather than merely never deleting.
+    const { updateLocalData } = await import("./dataAccess");
+    const { addProfile, getAllPageMetadataForProfile, upsertPageMetadata } =
+      await import("@/lib/db");
+
+    const profileId = await addProfile({
+      name: "Trimmed",
+      syncType: "local",
+    });
+    await upsertPageMetadata({
+      profileId,
+      bankId: "0",
+      pageIndex: 0,
+      name: "Stings",
+    });
+    await upsertPageMetadata({
+      profileId,
+      bankId: "1",
+      pageIndex: 1,
+      name: "Beds",
+    });
+
+    await updateLocalData(profileId, {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: Date.now(),
+      profile: { name: "Trimmed", syncType: "local" } as never,
+      padConfigurations: [],
+      pageMetadata: [
+        // Bank "0" moved to position 1, but is still named — must survive.
+        {
+          profileId,
+          bankId: "0",
+          pageIndex: 1,
+          name: "Stings",
+          isEmergency: false,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+        // Bank "1" is not named at all — the remote genuinely dropped it,
+        // so it must be deleted rather than kept because nothing collided
+        // with its old position.
+      ],
+      audioFiles: [],
+    });
+
+    const banks = await getAllPageMetadataForProfile(profileId);
+    expect(banks.map((bank) => bank.bankId)).toEqual(["0"]);
+  });
 });
