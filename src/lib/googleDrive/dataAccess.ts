@@ -411,14 +411,14 @@ export const updateLocalData = async (
     const existingPads = await padStore.index("profileId").getAll(profileId);
     const existingPadMap = new Map(
       existingPads.map((p: PadConfiguration) => [
-        `${p.pageIndex}-${p.padIndex}`,
+        `${p.bankId}-${p.padIndex}`,
         p,
       ]),
     );
     const syncedPadKeys = new Set<string>();
 
     for (const pad of data.padConfigurations) {
-      const key = `${pad.pageIndex}-${pad.padIndex}`;
+      const key = `${pad.bankId}-${pad.padIndex}`;
       syncedPadKeys.add(key);
 
       // Create a copy of the pad to modify
@@ -446,7 +446,7 @@ export const updateLocalData = async (
 
         for (const syncedId of resolved.unresolved) {
           warnings.push(
-            `Pad ${pad.pageIndex}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
+            `Pad ${pad.bankId}-${pad.padIndex}: dropped unresolved audio reference ${syncedId}`,
           );
         }
 
@@ -456,7 +456,7 @@ export const updateLocalData = async (
         // local recording, so a missing setting is the safer outcome.
         if (resolved.keptLocal) {
           warnings.push(
-            `Pad ${pad.pageIndex}-${pad.padIndex}: kept the sound already on this device, because the synced copy referenced audio that could not be fetched`,
+            `Pad ${pad.bankId}-${pad.padIndex}: kept the sound already on this device, because the synced copy referenced audio that could not be fetched`,
           );
           // Already keyed by this device's ids, so they must skip the remap —
           // running it would translate them as though they were the sender's,
@@ -527,12 +527,12 @@ export const updateLocalData = async (
     // 3. Update Page Metadata (Upsert/Delete logic)
     const existingPages = await pageStore.index("profileId").getAll(profileId);
     const existingPageMap = new Map(
-      existingPages.map((p: PageMetadata) => [p.pageIndex, p]),
+      existingPages.map((p: PageMetadata) => [p.bankId, p]),
     );
-    const syncedPageIndices = new Set<number>();
+    const syncedBankIds = new Set<string>();
 
     for (const page of data.pageMetadata) {
-      syncedPageIndices.add(page.pageIndex);
+      syncedBankIds.add(page.bankId);
       const pageWithProfileId = {
         ...page,
         profileId: profileId,
@@ -540,7 +540,7 @@ export const updateLocalData = async (
         updatedAt: toDate(page.updatedAt),
       };
       // From the map built above, for the same reason as the pads.
-      const existingLocalPage = existingPageMap.get(page.pageIndex);
+      const existingLocalPage = existingPageMap.get(page.bankId);
       // And the same for a bank renamed mid-sync.
       const pageToWrite = reconcileWithStoredRecord(
         pageWithProfileId as Syncable,
@@ -556,9 +556,10 @@ export const updateLocalData = async (
       }
     }
 
-    // Delete local pages not in synced data
-    for (const [index, existingPage] of existingPageMap) {
-      if (!syncedPageIndices.has(index) && existingPage?.id) {
+    // Delete local banks the synced data does not name. Keyed on identity,
+    // so a bank that only moved is not mistaken for a bank that was deleted.
+    for (const [bankId, existingPage] of existingPageMap) {
+      if (!syncedBankIds.has(bankId) && existingPage?.id) {
         await pageStore.delete(existingPage.id);
       }
     }

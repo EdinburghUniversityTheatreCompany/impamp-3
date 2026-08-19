@@ -83,7 +83,7 @@ function syncData(overrides: Partial<ProfileSyncData> = {}): ProfileSyncData {
 function pad(overrides: Partial<PadConfiguration> = {}): PadConfiguration {
   return {
     profileId: PROFILE_ID,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 0,
     name: "Horn",
     audioFileIds: [],
@@ -115,13 +115,13 @@ async function syncResolvableSound(padOverrides: Partial<PadConfiguration>) {
   );
 }
 
-async function readPad(pageIndex = 0, padIndex = 0) {
+async function readPad(bankId = "0", padIndex = 0) {
   const db = await getDb();
   return db
     .transaction("padConfigurations")
     .objectStore("padConfigurations")
-    .index("profilePagePad")
-    .get([PROFILE_ID, pageIndex, padIndex]);
+    .index("profileBankPad")
+    .get([PROFILE_ID, bankId, padIndex]);
 }
 
 beforeEach(async () => {

@@ -201,7 +201,7 @@ describe("a merge written back must not forget what this device just changed", (
   it("keeps a pad edit's stamp when a sync that read the old pad completes afterwards", async () => {
     await upsertPadConfiguration({
       profileId: PROFILE_ID,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 0,
       name: "Horn",
       audioFileIds: [],
@@ -215,7 +215,7 @@ describe("a merge written back must not forget what this device just changed", (
     await nextMillisecond();
     await upsertPadConfiguration({
       profileId: PROFILE_ID,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 0,
       name: "Air horn",
       audioFileIds: [],
@@ -226,8 +226,8 @@ describe("a merge written back must not forget what this device just changed", (
     const renamedPad = await db
       .transaction("padConfigurations")
       .objectStore("padConfigurations")
-      .index("profilePagePad")
-      .get([PROFILE_ID, 0, 0]);
+      .index("profileBankPad")
+      .get([PROFILE_ID, "0", 0]);
     const padRenameStamp = renamedPad?._fieldsModified?.name;
     expect(padRenameStamp).toBeGreaterThan(0);
 
@@ -242,8 +242,8 @@ describe("a merge written back must not forget what this device just changed", (
     )
       .transaction("padConfigurations")
       .objectStore("padConfigurations")
-      .index("profilePagePad")
-      .get([PROFILE_ID, 0, 0]);
+      .index("profileBankPad")
+      .get([PROFILE_ID, "0", 0]);
     // `updateLocalData` writes the merged pad wholesale, so the same
     // flattening applied here — and pads are where the audio lives.
     expect(storedPad?.name).toBe("Air horn");

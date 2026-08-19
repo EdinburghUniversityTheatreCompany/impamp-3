@@ -115,3 +115,58 @@ describe("the published sync blob", () => {
     expect(blob!.profile.name).toBe("Show board");
   });
 });
+
+describe("the delete-absent pass", () => {
+  it("keeps a bank that only changed position", async () => {
+    // The delete-absent pass used to key on position, so a bank that moved
+    // looked like a bank the remote had deleted.
+    const { updateLocalData } = await import("./dataAccess");
+    const { addProfile, getAllPageMetadataForProfile, upsertPageMetadata } =
+      await import("@/lib/db");
+
+    const profileId = await addProfile({ name: "Moved", syncType: "local" });
+    await upsertPageMetadata({
+      profileId,
+      bankId: "0",
+      pageIndex: 0,
+      name: "Stings",
+    });
+    await upsertPageMetadata({
+      profileId,
+      bankId: "1",
+      pageIndex: 1,
+      name: "Beds",
+    });
+
+    await updateLocalData(profileId, {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: Date.now(),
+      profile: { name: "Moved", syncType: "local" } as never,
+      padConfigurations: [],
+      pageMetadata: [
+        {
+          profileId,
+          bankId: "0",
+          pageIndex: 1,
+          name: "Stings",
+          isEmergency: false,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+        {
+          profileId,
+          bankId: "1",
+          pageIndex: 0,
+          name: "Beds",
+          isEmergency: false,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+      ],
+      audioFiles: [],
+    });
+
+    const banks = await getAllPageMetadataForProfile(profileId);
+    expect(banks.map((bank) => bank.bankId).sort()).toEqual(["0", "1"]);
+  });
+});
