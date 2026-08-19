@@ -307,6 +307,17 @@ export function useKeyboardListener() {
 
       // Handle Space key to fade out all audio
       if (event.key === " ") {
+        // `@hello-pangea/dnd`'s keyboard sensor lifts and drops a dragged
+        // bank tab on Space too, via a `window` keydown listener bound with
+        // `capture: true` — it runs, and calls `preventDefault()`, before
+        // this bubble-phase listener does (confirmed in
+        // node_modules/@hello-pangea/dnd/dist/dnd.cjs.js's
+        // `useKeyboardSensor`/`getDraggingBindings`). Without this check,
+        // every Space that lifted or dropped a tab also faded out whatever
+        // was playing.
+        if (event.defaultPrevented) {
+          return;
+        }
         event.preventDefault(); // Prevent default space action (e.g., scrolling)
         console.log(
           "[KeyboardListener] Space key pressed - fading out all audio playback.",
