@@ -10,6 +10,7 @@ import React from "react";
 import { FormField, TextInput, RadioGroup } from "@/components/forms";
 import type { PlaybackSettingsFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
+import type { ActivePadBehavior } from "@/lib/db";
 
 /**
  * Form component for editing playback settings
@@ -74,10 +75,7 @@ const PlaybackSettingsForm: React.FC<
           ]}
           value={values.activePadBehavior}
           onChange={(value) =>
-            updateValue(
-              "activePadBehavior",
-              value as "continue" | "stop" | "restart",
-            )
+            updateValue("activePadBehavior", value as ActivePadBehavior)
           }
           error={errors.activePadBehavior as string}
         />

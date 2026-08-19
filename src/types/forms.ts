@@ -7,7 +7,7 @@
  * @module types/forms
  */
 
-import { PlaybackType } from "@/lib/db";
+import { ActivePadBehavior, PlaybackType } from "@/lib/db";
 
 /**
  * Values for pad edit form
@@ -39,7 +39,7 @@ export interface BankFormValues extends Record<string, unknown> {
 export interface ProfileFormValues extends Record<string, unknown> {
   name: string;
   backupReminderPeriod: number;
-  activePadBehavior: "continue" | "stop" | "restart";
+  activePadBehavior: ActivePadBehavior;
 }
 
 /**
@@ -47,7 +47,7 @@ export interface ProfileFormValues extends Record<string, unknown> {
  */
 export interface PlaybackSettingsFormValues extends Record<string, unknown> {
   fadeoutDuration: number;
-  activePadBehavior: "continue" | "stop" | "restart";
+  activePadBehavior: ActivePadBehavior;
 }
 
 /**

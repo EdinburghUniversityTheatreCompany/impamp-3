@@ -93,7 +93,16 @@ export interface Profile {
   _fieldsModified?: Record<string, number>;
 }
 
-export type ActivePadBehavior = "continue" | "stop" | "restart";
+/**
+ * What a trigger does to a pad that already plays.
+ *
+ * "layer" starts one more overlapping sound, up to `MAX_LAYERS_PER_PAD`. The
+ * other three are one-in, one-out and pre-date it.
+ *
+ * Import this type. It used to be written out again in four places, and a
+ * another copy is what lets one of them fall behind the others.
+ */
+export type ActivePadBehavior = "continue" | "stop" | "restart" | "layer";
 export type PlaybackType = "sequential" | "random" | "round-robin";
 
 /**

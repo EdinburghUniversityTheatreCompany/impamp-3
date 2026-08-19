@@ -10,6 +10,7 @@ import React from "react";
 import { FormField, TextInput, Checkbox, RadioGroup } from "@/components/forms";
 import type { ProfileFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
+import type { ActivePadBehavior } from "@/lib/db";
 
 /**
  * Form component for editing profile properties
@@ -95,10 +96,7 @@ const ProfileEditForm: React.FC<FormModalRenderProps<ProfileFormValues>> = ({
           ]}
           value={values.activePadBehavior}
           onChange={(value) =>
-            updateValue(
-              "activePadBehavior",
-              value as "continue" | "stop" | "restart",
-            )
+            updateValue("activePadBehavior", value as ActivePadBehavior)
           }
           error={errors.activePadBehavior as string}
         />
