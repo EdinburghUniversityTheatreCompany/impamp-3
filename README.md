@@ -27,7 +27,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Profile Management**: Create, edit, and switch between multiple sound profiles/collections
 - **Drag-and-Drop**: Easily assign audio files to pads via drag-and-drop
 - **Keyboard Shortcuts**: Trigger sounds instantly via keyboard shortcuts (QWERTY layout keys q, w, e, r, etc.)
-- **Track Arming**: Ctrl+Click to arm tracks for later playback, press F9 to play the next armed track
+- **Track Arming**: Ctrl+Click (Cmd+Click on a Mac) to arm tracks for later playback, press F9 to play the next armed track
 - **Multi-Page Support**: Multiple pages (banks) of sounds with intuitive keyboard navigation
 - **Multi-Sound Pads**: Assign multiple sounds to a single pad with different playback modes:
   - _Sequential_: Plays sounds in order.
@@ -216,7 +216,7 @@ stuck on an old build.
    - Click the red "X" button or use Delete+click on _single-sound_ pads to remove the sound (resets name). For multi-sound pads, this action opens the editor.
    - Untick "Pad active" in the pad editor to disable a pad. It keeps its sounds and name but will not play from any trigger until you tick the box again.
 5. **Arming Tracks**:
-   - Hold Ctrl and click on a pad to arm it for later playback
+   - Hold Ctrl — Cmd on a Mac — and click on a pad to arm it for later playback
    - Armed tracks appear in the Armed Tracks panel
    - Press F9 to play the next armed track in the queue
    - You can also click the Play button on any armed track in the panel

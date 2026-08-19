@@ -91,8 +91,12 @@ IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
 ### Key Features Implementation
 
 - **Edit Mode** - Activated by Shift key, allows pad/bank editing
-- **Search System** - Ctrl+F opens search modal across all banks
-- **Track Arming** - Ctrl+Click to queue sounds, F9 to play next
+- **Search System** - Ctrl+F (Cmd+F on a Mac) opens search modal across all banks
+- **Track Arming** - Ctrl+Click to queue sounds, F9 to play next. Command counts
+  as the arm modifier everywhere Ctrl does, because macOS claims Ctrl+click as
+  the secondary click and the browser never dispatches the `click`. Read the
+  chord through `hasArmModifier` in `src/lib/platform.ts` rather than testing
+  `ctrlKey` directly, and label it with `armModifierLabel`
 - **Google Drive Sync** - Complete sync implementation in `src/lib/googleDrive/`
 - **Server Sync** - ETag/If-Match sync against the app's own backend, with SSE
   change notifications (`src/lib/serverSync/`). Audio stays in Drive by
@@ -128,7 +132,8 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 
 - Banks 1-9: keys 1-9
 - Bank 10: key 0
-- Banks 11-19: Ctrl+1 through Ctrl+9
+- Banks 11-19: Ctrl+1 through Ctrl+9 (Ctrl on every platform: Cmd+digit is the
+  browser's tab switcher and cannot be cancelled from the page)
 - Bank 20: Ctrl+0
 - ESC: Stop all sounds (panic button)
 - F9: Play next armed track

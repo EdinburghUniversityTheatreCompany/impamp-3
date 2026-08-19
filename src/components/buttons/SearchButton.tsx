@@ -10,6 +10,8 @@
 
 import React from "react";
 import { useSearchContext } from "@/components/search";
+import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
+import { armModifierLabel } from "@/lib/platform";
 
 interface SearchButtonProps {
   className?: string;
@@ -24,14 +26,16 @@ interface SearchButtonProps {
 const SearchButton: React.FC<SearchButtonProps> = ({ className = "" }) => {
   const { openSearchModal } = useSearchContext();
 
-  // The Ctrl+F shortcut is registered globally in useKeyboardListener
+  // The shortcut itself is registered globally in useKeyboardListener; this
+  // only has to name the modifier the reader's keyboard actually has.
+  const modifier = armModifierLabel(useIsApplePlatform());
 
   return (
     <button
       onClick={openSearchModal}
       className={`flex items-center justify-center p-2 w-9 h-9 rounded-full transition-colors duration-200 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 ${className}`}
       aria-label="Search sounds"
-      title="Search sounds (Ctrl+F)"
+      title={`Search sounds (${modifier}+F)`}
       data-testid="search-button"
     >
       <svg
