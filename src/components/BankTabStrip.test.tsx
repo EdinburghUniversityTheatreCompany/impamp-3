@@ -14,7 +14,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import BankTabStrip from "@/components/BankTabStrip";
+import BankTabStrip, { reorderBankIds } from "@/components/BankTabStrip";
 import type { PageMetadata } from "@/lib/db";
 
 (
@@ -168,5 +168,71 @@ describe("BankTabStrip", () => {
 
     expect(onEdit).toHaveBeenCalledWith("vault-3");
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("enables the drag handle in edit mode", () => {
+    act(() => {
+      root.render(
+        <BankTabStrip
+          banks={banks}
+          currentBankId="banner-hall"
+          isEditMode={true}
+          onSelect={vi.fn()}
+          onEdit={vi.fn()}
+          onReorder={vi.fn()}
+        />,
+      );
+    });
+
+    // `@hello-pangea/dnd` only attaches this attribute (via
+    // `dragHandleProps`) when the Draggable is enabled, so its presence is
+    // the observable proxy for `isDragDisabled={false}`.
+    expect(tabs()[0].getAttribute("data-rfd-drag-handle-draggable-id")).toBe(
+      "banner-hall",
+    );
+  });
+
+  it("disables the drag handle outside edit mode", () => {
+    act(() => {
+      root.render(
+        <BankTabStrip
+          banks={banks}
+          currentBankId="banner-hall"
+          isEditMode={false}
+          onSelect={vi.fn()}
+          onEdit={vi.fn()}
+          onReorder={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      tabs()[0].getAttribute("data-rfd-drag-handle-draggable-id"),
+    ).toBeNull();
+  });
+});
+
+describe("reorderBankIds", () => {
+  // Deliberately scrambled `pageIndex` values (7, 2, 9) that disagree with
+  // both array position and any alphabetic/numeric ordering of the ids, so
+  // an implementation that sorts by `pageIndex` (or otherwise reads
+  // position from anywhere but the array itself) produces a different,
+  // and therefore caught, answer.
+  const scrambled: PageMetadata[] = [
+    makeBank({ bankId: "zulu", pageIndex: 7, name: "Zulu" }),
+    makeBank({ bankId: "alpha", pageIndex: 2, name: "Alpha" }),
+    makeBank({ bankId: "mike", pageIndex: 9, name: "Mike" }),
+  ];
+
+  it("moves the source bank id forward to the destination position", () => {
+    expect(reorderBankIds(scrambled, 0, 2)).toEqual(["alpha", "mike", "zulu"]);
+  });
+
+  it("moves the source bank id backward to the destination position", () => {
+    expect(reorderBankIds(scrambled, 2, 0)).toEqual(["mike", "zulu", "alpha"]);
+  });
+
+  it("leaves the order unchanged when source and destination match", () => {
+    expect(reorderBankIds(scrambled, 1, 1)).toEqual(["zulu", "alpha", "mike"]);
   });
 });

@@ -25,6 +25,7 @@ import {
   renameBank,
   setBankEmergencyState,
   createBank,
+  reorderBanks,
   MAX_BANKS,
 } from "@/lib/db";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
@@ -258,8 +259,17 @@ export default function Home() {
                 isEditMode={isEditMode}
                 onSelect={handleBankSelect}
                 onEdit={handleBankEdit}
-                onReorder={() => {
-                  // Dragging arrives in Task 16; nothing to do yet.
+                onReorder={async (orderedBankIds) => {
+                  if (activeProfileId === null) return;
+                  try {
+                    await reorderBanks(activeProfileId, orderedBankIds);
+                    await loadBanks(activeProfileId);
+                    incrementPadConfigsVersion();
+                    requestSync(activeProfileId);
+                  } catch (error) {
+                    console.error("Failed to reorder the banks:", error);
+                    alert("Failed to reorder the banks. Please try again.");
+                  }
                 }}
               />
 
