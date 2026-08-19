@@ -53,7 +53,7 @@ function syncData(): ProfileSyncData {
       { id: 200, name: "horn.mp3", type: "audio/mpeg", driveFileId: "drive-1" },
       { id: 201, name: "stab.mp3", type: "audio/mpeg", driveFileId: "drive-2" },
     ],
-  } as ProfileSyncData;
+  } as unknown as ProfileSyncData;
 }
 
 /**
@@ -138,10 +138,17 @@ describe("an audio file that cannot be imported", () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
-    // Two banks claiming page 0: the second violates the unique profilePage
-    // index, so the page importer throws before a single pad is written.
+    // Two banks claiming page 0, neither carrying its own `bankId` — a
+    // pre-bankId shape, same as this file's other pageIndex-only fixtures.
+    // Both resolve to `migratedBankId(0)` = "0" in the import loop, so the
+    // second violates the unique `profileBank` index (the successor to the
+    // deleted `profilePage` index this comment used to name), and the page
+    // importer throws before a single pad is written.
     const data = syncData();
-    data.pageMetadata = [page, { ...page, name: "Collides" }];
+    data.pageMetadata = [
+      page,
+      { ...page, name: "Collides" },
+    ] as unknown as ProfileSyncData["pageMetadata"];
 
     await expectImportToFail(db, data);
 
@@ -160,7 +167,7 @@ describe("an audio file that cannot be imported", () => {
     });
     await db.add("padConfigurations", {
       profileId: 9999,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 0,
       audioFileIds: [keeperId],
       playbackType: "round-robin",

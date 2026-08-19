@@ -21,6 +21,7 @@ import { getPadIndexForKey } from "./keyboardUtils";
 import { normaliseIncomingSyncData } from "./syncUtils";
 import type { ProfileSyncData } from "./syncUtils";
 import { migratedBankId } from "./dbMigrations/v7BankId";
+import { convertIndexToBankNumber } from "./bankUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
 import { fetchWithTimeout } from "./fetchWithTimeout";
@@ -562,6 +563,74 @@ async function importAudioSources(
   return { audioIdMap, failures };
 }
 
+/**
+ * Materialises a bank row for every pad position that has pads but no
+ * matching row in `pageMetadata` — mirrors `migrateToV7` pass 1
+ * (dbMigrations/v7BankId.ts). Banks 1-10 used to be synthesised implicitly
+ * in the page component, so a v6-era export can carry pads at a position
+ * that never had a `pageMetadata` row of its own. Without this, such a pad
+ * imports into a `bankId` no bank row carries and is unreachable in the UI
+ * forever — `ensureDefaultBanks` is not a fallback for this: it is called
+ * from no production code on this branch and covers positions 0-9 only.
+ *
+ * Only reaches pads that still carry a `pageIndex`: a pad that already
+ * carries its own `bankId` with no matching bank names an identity, not a
+ * position, and there is no position here to materialise a row at.
+ *
+ * @returns `pageMetadata` unchanged when nothing needed materialising
+ *   (the common case), or a new array with the missing rows appended.
+ */
+function materialiseMissingBanks(
+  pageMetadata: PageMetadata[],
+  padConfigurations: (PadConfiguration & { pageIndex?: number })[],
+): PageMetadata[] {
+  const known = new Set(
+    pageMetadata.map((page) => page.bankId ?? migratedBankId(page.pageIndex)),
+  );
+  const materialised: PageMetadata[] = [];
+  const now = new Date();
+
+  for (const pad of padConfigurations) {
+    if (pad.bankId || pad.pageIndex === undefined) continue;
+    const bankId = migratedBankId(pad.pageIndex);
+    if (known.has(bankId)) continue;
+    known.add(bankId);
+    materialised.push({
+      profileId: 0, // Overwritten by importPageMetadata's profileId param.
+      bankId,
+      pageIndex: pad.pageIndex,
+      // The same default the upsert helper applies, so a materialised bank
+      // reads the way an auto-created one always did.
+      name: `Bank ${convertIndexToBankNumber(pad.pageIndex)}`,
+      isEmergency: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return materialised.length > 0
+    ? [...pageMetadata, ...materialised]
+    : pageMetadata;
+}
+
+/**
+ * Maps every bank about to be imported to its position, so a diagnostic for
+ * a pad that already carries `bankId` (and so has no `pageIndex` of its own)
+ * can still name the bank the way the user sees it on their board.
+ */
+function resolveBankPositions(
+  pageMetadata: PageMetadata[],
+): Map<string, number> {
+  const positions = new Map<string, number>();
+  for (const page of pageMetadata) {
+    positions.set(
+      page.bankId ?? migratedBankId(page.pageIndex),
+      page.pageIndex,
+    );
+  }
+  return positions;
+}
+
 // Helper function to import page metadata (Refactored for single transaction)
 async function importPageMetadata(
   db: IDBPDatabase<ImpAmpDBSchema>,
@@ -576,16 +645,34 @@ async function importPageMetadata(
 
   const pageTx = db.transaction("pageMetadata", "readwrite");
   const pageStore = pageTx.objectStore("pageMetadata");
-  const failures: number[] = [];
+  const failures: string[] = [];
 
   const pagePromises = pageMetadata.map((page) => {
+    // `PageMetadata.pageIndex` is typed required, which describes what this
+    // app always writes, not what a parsed archive is guaranteed to hold. A
+    // bank with no position at all cannot be placed, so it is refused with a
+    // warning rather than minting the literal string "undefined" as its id
+    // via `migratedBankId(undefined)`. `importPadConfigurations` below
+    // applies the identical refusal on the pad side.
+    const rawPageIndex = (page as { pageIndex?: number }).pageIndex;
+    if (rawPageIndex === undefined) {
+      console.warn(
+        `Bank "${page.name}" on profile ${profileId} has no pageIndex and no bankId; skipping.`,
+      );
+      failures.push(`"${page.name}" (no position could be determined)`);
+      return Promise.resolve();
+    }
+
     const content = {
       profileId,
       // An archive written before bank identity existed carries no id. Use
-      // the same deterministic rule the v7 migration uses, so an old archive
-      // imports into the identities this device already holds.
-      bankId: page.bankId ?? migratedBankId(page.pageIndex),
-      pageIndex: page.pageIndex,
+      // the same deterministic rule the v7 migration uses
+      // (`normaliseIncomingSyncData`'s `withMigratedBankId` in syncUtils.ts
+      // applies this same fallback to a sync blob; `importPadConfigurations`
+      // below applies it to a pad), so an old archive imports into the
+      // identities this device already holds.
+      bankId: page.bankId ?? migratedBankId(rawPageIndex),
+      pageIndex: rawPageIndex,
       name: page.name,
       isEmergency: page.isEmergency,
     };
@@ -598,10 +685,10 @@ async function importPageMetadata(
     };
     return pageStore.add(newMetadata).catch((err: unknown) => {
       console.error(
-        `Failed to add page metadata for pageIndex ${page.pageIndex}:`,
+        `Failed to add page metadata for pageIndex ${rawPageIndex}:`,
         err,
       );
-      failures.push(page.pageIndex);
+      failures.push(`bank ${convertIndexToBankNumber(rawPageIndex)}`);
     });
   });
 
@@ -610,7 +697,7 @@ async function importPageMetadata(
     await pageTx.done;
     if (failures.length > 0) {
       throw new Error(
-        `${failures.length} bank${failures.length === 1 ? "" : "s"} could not be imported (${failures.map((i) => i + 1).join(", ")}).`,
+        `${failures.length} bank${failures.length === 1 ? "" : "s"} could not be imported (${failures.join(", ")}).`,
       );
     }
     console.log(`Imported ${pageMetadata.length} page metadata entries.`);
@@ -685,6 +772,10 @@ async function importPadConfigurations(
   profileId: number,
   audioIdMap: Map<number, number>, // Maps original ID from export to new DB ID
   now: Date,
+  // bankId -> position, for the banks this import is about to write (see
+  // `resolveBankPositions`). Only used to name a bank in a diagnostic — a
+  // pad with its own `pageIndex` never needs the lookup.
+  bankPositions: Map<string, number>,
 ): Promise<void> {
   if (padConfigurations.length === 0) {
     console.log("No pad configurations to import.");
@@ -700,9 +791,36 @@ async function importPadConfigurations(
   const failures: string[] = [];
 
   const padPromises = padConfigurations.map((pad) => {
+    // A pad with neither an id nor a position cannot be placed at all.
+    // `withMigratedBankId` (syncUtils.ts) and `migrateToV7` pass 1
+    // (dbMigrations/v7BankId.ts) both refuse this rather than silently
+    // filing it under bank "0" — the same reasoning applies here, and
+    // `importPageMetadata` above applies the identical refusal on the bank
+    // side.
+    if (!pad.bankId && pad.pageIndex === undefined) {
+      console.warn(
+        `Pad ${pad.padIndex} on profile ${profileId} has neither bankId nor pageIndex; skipping.`,
+      );
+      failures.push(`pad ${pad.padIndex + 1} (no bank could be determined)`);
+      return Promise.resolve();
+    }
+
     // An archive written before bank identity existed carries no id on its
-    // pads either. Same rule as the bank import above and the v7 migration.
-    const bankId = pad.bankId ?? migratedBankId(pad.pageIndex ?? 0);
+    // pads either. Same rule as the bank import above
+    // (`normaliseIncomingSyncData`'s `withMigratedBankId` in syncUtils.ts
+    // applies this same fallback to a sync blob) and the v7 migration.
+    const bankId = pad.bankId ?? migratedBankId(pad.pageIndex!);
+
+    // A pad that already carries `bankId` (the common case for anything
+    // written after this branch) has no `pageIndex` of its own to name in a
+    // diagnostic — its bank's position lives on the bank row, not the pad —
+    // so look it up. Neither lookup found is only the corrupt-data case
+    // above, which never reaches here.
+    const bankPosition = pad.pageIndex ?? bankPositions.get(bankId);
+    const bankLabel =
+      bankPosition !== undefined
+        ? `bank ${convertIndexToBankNumber(bankPosition)}`
+        : `bank "${bankId}"`;
 
     // Map the array of audioFileIds
     const mappedAudioFileIds = (pad.audioFileIds || [])
@@ -714,7 +832,7 @@ async function importPadConfigurations(
       mappedAudioFileIds.length !== (pad.audioFileIds || []).length
     ) {
       console.warn(
-        `Could not map all audio IDs for pad in bank ${bankId}, padIndex ${pad.padIndex}. Original: ${pad.audioFileIds}, Mapped: ${mappedAudioFileIds}`,
+        `Could not map all audio IDs for pad in ${bankLabel}, padIndex ${pad.padIndex}. Original: ${pad.audioFileIds}, Mapped: ${mappedAudioFileIds}`,
       );
     }
 
@@ -769,10 +887,10 @@ async function importPadConfigurations(
       // the import then reported success — so a board came back missing pads
       // and said nothing, which is discovered mid-show.
       console.error(
-        `Failed to add pad configuration for bank ${bankId}, padIndex ${pad.padIndex}:`,
+        `Failed to add pad configuration for ${bankLabel}, padIndex ${pad.padIndex}:`,
         err,
       );
-      failures.push(`bank ${bankId}, pad ${pad.padIndex + 1}`);
+      failures.push(`${bankLabel}, pad ${pad.padIndex + 1}`);
     });
   });
 
@@ -906,8 +1024,16 @@ async function importProfileCore(
       );
     }
 
-    // Step 3: Import page metadata (single transaction)
-    await importPageMetadata(db, exportData.pageMetadata, profileId, now);
+    // Step 3: Import page metadata (single transaction). Materialise a row
+    // first for any pad position an old archive never gave one — a v6-era
+    // export can carry pads at a position that was only ever synthesised in
+    // the page component, exactly like `migrateToV7` pass 1 handles for a
+    // live database.
+    const pageMetadataToImport = materialiseMissingBanks(
+      exportData.pageMetadata,
+      padConfigsToImport,
+    );
+    await importPageMetadata(db, pageMetadataToImport, profileId, now);
     console.log(`Imported page metadata`);
 
     // Step 4: Import pad configurations (single transaction) - Use potentially migrated data
@@ -917,6 +1043,7 @@ async function importProfileCore(
       profileId,
       audioIdMap,
       now,
+      resolveBankPositions(pageMetadataToImport),
     );
     console.log(`Imported pad configurations`);
 
@@ -1039,6 +1166,16 @@ const DRIVE_DOWNLOAD_CONCURRENCY = 4;
  * itself. Normalising here rather than at each of those call sites closes
  * every gap at once instead of one at a time. The function is idempotent, so
  * an already-normalised blob costs one cheap no-op pass.
+ *
+ * This call is currently belt-and-suspenders rather than load-bearing on its
+ * own: `importPageMetadata` and `importPadConfigurations` below — the
+ * writers this function shares with the `.iaz`/V1/impamp2 import paths via
+ * `importProfileCore` — carry the identical `bankId ?? migratedBankId(...)`
+ * fallback themselves, so either guard alone already gets a pre-`bankId`
+ * blob to the right identity. Keep both: if a future change ever drops the
+ * fallback from those loops, this is what stops `useConnectServerProfile`
+ * and `ProfileManager`'s proxy fallback from silently reopening the gap
+ * described above.
  *
  * @param downloadAudioBlob Downloads the blob for a driveFileId (typically
  *   useGoogleDriveSync().downloadAudioFile).

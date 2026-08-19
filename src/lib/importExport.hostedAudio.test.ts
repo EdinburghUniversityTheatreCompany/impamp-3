@@ -84,7 +84,7 @@ function hostedSyncData(): ProfileSyncData {
         serverHosted: true,
       },
     ],
-  } as ProfileSyncData;
+  } as unknown as ProfileSyncData;
 }
 
 const noDriveDownload = async () => null;

@@ -16,7 +16,7 @@
 
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { exportProfilesToZip, importProfilesFromZip } =
   await import("./importExport");
@@ -271,6 +271,40 @@ describe("exporting and re-importing a .iaz archive", () => {
     expect(restored.pageMetadata[0].bankId).toBe("2");
     expect(restored.padConfigurations[0].bankId).toBe("2");
   });
+
+  it("materialises a bank row for a pad position the archive never gave one", async () => {
+    // Banks 1-10 used to be synthesised implicitly in the page component, so
+    // a v6-era export can carry pads at a position with no `pageMetadata`
+    // row of its own — here, position 4 has a pad but `pageMetadata` only
+    // names position 2. Without materialising a row for it, the position-4
+    // pad's `bankId` ("4") names no bank row at all and is unreachable in
+    // the UI forever.
+    const restored = await roundTripLegacyProfile({
+      pageMetadata: [{ pageIndex: 2, name: "Stings", isEmergency: false }],
+      padConfigurations: [
+        {
+          pageIndex: 4,
+          padIndex: 0,
+          audioFileIds: [],
+          playbackType: "sequential",
+        },
+        {
+          pageIndex: 2,
+          padIndex: 0,
+          audioFileIds: [],
+          playbackType: "sequential",
+        },
+      ],
+    });
+
+    expect(restored.padConfigurations).toHaveLength(2);
+    const bankIds = restored.pageMetadata.map((p) => p.bankId).sort();
+    expect(bankIds).toEqual(["2", "4"]);
+    // Every pad's bankId names a bank row that actually exists.
+    for (const pad of restored.padConfigurations) {
+      expect(bankIds).toContain(pad.bankId);
+    }
+  });
 });
 
 describe("importing an archive that is not what it claims", () => {
@@ -309,6 +343,78 @@ describe("importing an archive that is not what it claims", () => {
     );
     // Nothing was written before the refusal.
     expect(await db.getAll("profiles")).toHaveLength(0);
+  });
+
+  it("refuses a pad with neither bankId nor pageIndex rather than filing it under bank 0", async () => {
+    // Corrupt data, not a shape this schema has ever produced on purpose —
+    // `withMigratedBankId` (syncUtils.ts) and `migrateToV7` pass 1
+    // (dbMigrations/v7BankId.ts) both refuse to place it rather than
+    // silently defaulting it into whatever bank sits at position 0. The
+    // import must refuse the same way.
+    const db = await getDb();
+    const zip = await makeArchive({
+      "profile.json": JSON.stringify({
+        exportVersion: 2,
+        profile: { name: "Corrupt" },
+        pageMetadata: [{ pageIndex: 0, name: "Opening", isEmergency: false }],
+        padConfigurations: [{ padIndex: 0, audioFileIds: [] }],
+        audioFiles: [],
+      }),
+    });
+
+    const results = await importProfilesFromZip(zip, db);
+
+    expect(results[0].result).toBeInstanceOf(Error);
+    expect((results[0].result as Error).message).toMatch(
+      /no bank could be determined/,
+    );
+    // The whole profile was rolled back, not left with a hole in it.
+    expect(await db.getAll("profiles")).toHaveLength(0);
+  });
+
+  it("names the bank the user sees, not its raw id, in a pad diagnostic", async () => {
+    // A modern-format archive: the pad carries `bankId` directly, with no
+    // `pageIndex` of its own, so a diagnostic can only name the bank by
+    // looking its position up on the bank row. The pre-fix message read the
+    // opaque `bankId` itself — useless to someone looking at bank numbers on
+    // their board. Triggered here via the audio-id-mapping warning (a
+    // referenced audio file the archive never included), which needs no
+    // database write to fail and so isn't subject to fake-indexeddb's
+    // transaction-abort race on a genuine constraint violation.
+    const db = await getDb();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const zip = await makeArchive({
+      "profile.json": JSON.stringify({
+        exportVersion: 2,
+        profile: { name: "Modern" },
+        pageMetadata: [
+          { bankId: "abc-123", pageIndex: 5, name: "Six", isEmergency: false },
+        ],
+        padConfigurations: [
+          {
+            bankId: "abc-123",
+            padIndex: 0,
+            audioFileIds: [999], // Not in audioFiles below — nothing to map to.
+            playbackType: "sequential",
+          },
+        ],
+        audioFiles: [],
+      }),
+    });
+
+    const results = await importProfilesFromZip(zip, db);
+
+    expect(results[0].result).not.toBeInstanceOf(Error);
+    // Read before restoring: `mockRestore()` also resets `.mock.calls`.
+    const mappingWarning = warnSpy.mock.calls
+      .map((args) => String(args[0]))
+      .find((msg) => msg.includes("Could not map all audio IDs"));
+    warnSpy.mockRestore();
+
+    expect(mappingWarning).toBeDefined();
+    // Position 5 (zero-based) is bank 6 in the UI.
+    expect(mappingWarning).toMatch(/bank 6/);
+    expect(mappingWarning).not.toContain("abc-123");
   });
 
   it("still refuses an archive with neither manifest nor profile", async () => {
