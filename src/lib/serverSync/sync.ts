@@ -25,6 +25,7 @@ import {
 import {
   describesSameSyncState,
   detectProfileConflicts,
+  normaliseIncomingSyncData,
   type ConflictOrigin,
 } from "@/lib/syncUtils";
 import {
@@ -299,7 +300,7 @@ async function pullMergePush(
   const serverId = profile.serverProfileId!;
   const shareToken = profile.serverShareToken ?? null;
 
-  let remote = await fetchServerProfile(serverId, {
+  const fetched = await fetchServerProfile(serverId, {
     shareToken,
     knownVersion: profile.serverVersion,
     // What we currently believe our access to be. A profile that predates
@@ -307,6 +308,14 @@ async function pullMergePush(
     // it in.
     knownAccess: profile.serverRole,
   });
+  // Normalised once here, so the merge, the conflict modal's data, and
+  // `describesSameSyncState`'s diff summary below all see the same blob —
+  // never the raw one a legacy client at rest may still be holding. The
+  // second assignment further down (a lost push race) gets the same
+  // treatment where it happens.
+  let remote = fetched
+    ? { ...fetched, data: normaliseIncomingSyncData(fetched.data) }
+    : null;
 
   // What the remote already knows about where the audio lives, adopted before
   // deciding what still needs uploading. The Drive engine has always done this
@@ -477,7 +486,7 @@ async function pullMergePush(
         version: error.currentVersion,
         updatedAt: Date.now(),
         access: remote?.access ?? "editor",
-        data: error.currentData,
+        data: normaliseIncomingSyncData(error.currentData),
       };
       remoteReadOnly = remote.access === "viewer";
     }

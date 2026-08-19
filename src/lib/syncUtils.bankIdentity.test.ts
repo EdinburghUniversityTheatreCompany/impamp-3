@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   describesSameSyncState,
   detectProfileConflicts,
+  normaliseIncomingSyncData,
   type ProfileSyncData,
   type SyncedPadConfiguration,
 } from "./syncUtils";
@@ -253,5 +254,68 @@ describe("a remote blob written before bankId shipped", () => {
     expect(conflicts).toHaveLength(0);
     expect(mergedData.padConfigurations).toHaveLength(1);
     expect(mergedData.padConfigurations[0]?.bankId).toBe(migratedBankId(0));
+  });
+});
+
+describe("normaliseIncomingSyncData", () => {
+  it("leaves a pad with neither bankId nor pageIndex unmigrated, rather than defaulting it to bank 0", () => {
+    // migrateToV7's pass 1/3 skip exactly this shape, with a warning, rather
+    // than filing corrupt data under a real bank it may have nothing to do
+    // with. The normaliser has to make the identical call, not merely a
+    // similar one.
+    const corruptPad = {
+      profileId: 1,
+      padIndex: 0,
+      name: "Orphan",
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as SyncedPadConfiguration;
+
+    const normalised = normaliseIncomingSyncData({
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [corruptPad],
+      pageMetadata: [],
+      audioFiles: [],
+    });
+
+    expect(normalised.padConfigurations[0]?.bankId).toBeUndefined();
+  });
+
+  it("strips a pad's own pageIndex once it has been given a bankId", () => {
+    const legacyPad = {
+      profileId: 1,
+      pageIndex: 2,
+      padIndex: 0,
+      name: "Kick",
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as SyncedPadConfiguration;
+
+    const normalised = normaliseIncomingSyncData({
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [legacyPad],
+      pageMetadata: [],
+      audioFiles: [],
+    });
+
+    expect(normalised.padConfigurations[0]?.bankId).toBe(migratedBankId(2));
+    expect(
+      (normalised.padConfigurations[0] as unknown as { pageIndex?: number })
+        .pageIndex,
+    ).toBeUndefined();
   });
 });

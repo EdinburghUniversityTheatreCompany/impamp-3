@@ -15,7 +15,10 @@ import {
   getAudioFileByHash,
   ensureAudioFileHash,
 } from "@/lib/db";
-import { detectProfileConflicts } from "@/lib/syncUtils";
+import {
+  detectProfileConflicts,
+  normaliseIncomingSyncData,
+} from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import {
@@ -412,8 +415,8 @@ async function pullPublicReadOnlyProfile(
     `Pulling read-only profile ${profileId} via public proxy (file ${fileId})...`,
   );
 
-  const remoteData = await downloadPublicProfileData(fileId);
-  if (!remoteData) {
+  const rawRemoteData = await downloadPublicProfileData(fileId);
+  if (!rawRemoteData) {
     const message =
       "This shared profile is not publicly accessible. Ask the owner to " +
       'share it with "anyone with the link", or sign in with an invited ' +
@@ -422,6 +425,10 @@ async function pullPublicReadOnlyProfile(
     onStatusChange("error");
     return { status: "error", error: message };
   }
+  // There is no merge on this path — a legacy blob writes straight to
+  // IndexedDB below, so it must arrive already carrying `bankId` or its rows
+  // land invisible to the `profileBank`/`profileBankPad` indexes.
+  const remoteData = normaliseIncomingSyncData(rawRemoteData);
 
   // Fetch any audio we don't have yet through the public proxy (token = null)
   if (remoteData.audioFiles) {
@@ -726,8 +733,14 @@ const performProfileSync = async (
     }
 
     // 1. Get Remote Data (if file exists)
-    const remoteData = fileId
+    const rawRemoteData = fileId
       ? await downloadDriveFile(fileId, tokenInfo, refreshCallback)
+      : null;
+    // Normalised once here, so the merge below, the conflict modal's data,
+    // and any future reader of `remoteData` all see the same blob — never
+    // the raw one a legacy client at rest may still be holding.
+    const remoteData = rawRemoteData
+      ? normaliseIncomingSyncData(rawRemoteData)
       : null;
 
     // 1a. Backfill driveFileIds from remote JSON into local audio file records so

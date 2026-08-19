@@ -502,38 +502,103 @@ export const conflictOriginLabel = (origin: ConflictOrigin): string =>
   origin.kind === "drive" ? "Google Drive" : "the ImpAmp server";
 
 /**
- * Gives every bank and pad in an incoming blob a `bankId`, for a blob
- * written before this device's data was migrated to identity.
+ * Gives a bank or pad from an incoming blob a `bankId`, for a blob written
+ * before this device's data was migrated to identity — see
+ * `normaliseIncomingSyncData`, which calls this once per bank and once per
+ * pad.
  *
- * `PageMetadata` and `PadConfiguration` both type `bankId` as required — that
- * describes what this client always writes, not what a downloaded blob is
- * guaranteed to hold. A blob is parsed JSON, not a type-checked value, so an
- * old one simply lacks the field at runtime and TypeScript cannot see it.
+ * `PageMetadata` and `PadConfiguration` both type `bankId` as required —
+ * that describes what this client always writes, not what a downloaded blob
+ * is guaranteed to hold. A blob is parsed JSON, not a type-checked value, so
+ * an old one simply lacks the field at runtime and TypeScript cannot see it.
  * Read `item.bankId` on such a record and every one of them reads as the
- * same `undefined`, which the merge would then treat as one bank (or one pad
- * per position) shared by every profile on every device — the exact
- * cross-profile collision `bankNameMap` was fixed to avoid in `findMissingAudioFiles`.
+ * same `undefined`, which every consumer downstream — the merge, the diff
+ * summary's sort, a direct write with no merge at all — would then treat as
+ * one bank (or one pad per position) shared by every profile on every
+ * device.
  *
  * The fallback mints the identity the local migration already gave this
  * data: `migratedBankId(pageIndex)`. Using any other rule here would create
  * a second convention that has to agree with the first one by coincidence,
- * which is exactly the kind of duplicated rule that drifts. A pad's incoming
- * `pageIndex` is read from the raw object rather than the current
- * `PadConfiguration` type, because an old blob's pads still carry it even
- * though the type no longer declares it.
+ * which is exactly the kind of duplicated rule that drifts. A record's
+ * incoming `pageIndex` is read from the raw object rather than the current
+ * `PadConfiguration`/`PageMetadata` type, because an old blob's rows still
+ * carry it even though a pad's type no longer declares it.
  *
- * @param items - Banks or pads as they arrived in the blob
- * @returns A new array; every item has a `bankId`
+ * Matches `migrateToV7`'s refusal too: a record with neither `bankId` nor
+ * `pageIndex` cannot be placed. Defaulting it to bank 0 would silently file
+ * it under a real bank it may have nothing to do with, so — exactly as the
+ * migration does — it is left without a `bankId`, logged, and otherwise
+ * unchanged, rather than guessed at.
+ *
+ * @param item - A bank or pad as it arrived in the blob
+ * @param kind - Only for the log line, so a warning names what it is about
+ * @returns The item, given a `bankId` when one could be minted
  */
-const normaliseIncomingBankIds = <T extends { bankId?: string }>(
-  items: T[],
-): T[] =>
-  items.map((item) => {
-    if (item.bankId != null) return item;
-    const pageIndex =
-      (item as unknown as { pageIndex?: number }).pageIndex ?? 0;
-    return { ...item, bankId: migratedBankId(pageIndex) };
-  });
+const withMigratedBankId = <
+  T extends { bankId?: string; id?: number; profileId: number },
+>(
+  item: T,
+  kind: "bank" | "pad",
+): T => {
+  if (item.bankId != null) return item;
+  const pageIndex = (item as unknown as { pageIndex?: number }).pageIndex;
+  if (pageIndex === undefined) {
+    console.warn(
+      `Sync: incoming ${kind} ${item.id ?? "(no id)"} on profile ${item.profileId} has neither bankId nor pageIndex; leaving it unmigrated.`,
+    );
+    return item;
+  }
+  return { ...item, bankId: migratedBankId(pageIndex) };
+};
+
+/**
+ * Strips a pad's own copy of `pageIndex`, which `migrateToV7` deletes too.
+ *
+ * A pad's position is its bank's position — `PadConfiguration` has not
+ * declared `pageIndex` since the identity migration — so a legacy blob's
+ * copy surviving into `mergedData` is stale the moment it arrives. Left in
+ * place, `isContentField` counts it as content the merge has an opinion
+ * about, and `updateLocalData` would write it back into IndexedDB.
+ */
+const stripPadPageIndex = (
+  pad: SyncedPadConfiguration,
+): SyncedPadConfiguration => {
+  const raw = pad as unknown as Record<string, unknown>;
+  if (!("pageIndex" in raw)) return pad;
+  const { pageIndex: _pageIndex, ...rest } = raw;
+  return rest as unknown as SyncedPadConfiguration;
+};
+
+/**
+ * Normalises an incoming sync blob so every bank and pad that can be given a
+ * `bankId` has one, for a blob written before this device's data was
+ * migrated to identity — see `withMigratedBankId`.
+ *
+ * Call this exactly once, at the point a blob arrives from the network, so
+ * one normalised blob flows onward and no consumer downstream — the merge,
+ * `describesSameSyncState`'s diff summary, or a read-only pull that writes
+ * straight to IndexedDB with no merge at all — can receive the raw one.
+ * Putting the fix inside the merge alone was tried and was not enough:
+ * `describesSameSyncState` compares a merge's *output* against the raw
+ * remote blob, which never passes through the merge, and a read-only pull
+ * never calls the merge either.
+ *
+ * @param data - The blob as it arrived, `bankId` absent or present
+ * @returns A new blob; every bank/pad that could be given a `bankId` has one,
+ *   and no pad carries its own `pageIndex`
+ */
+export const normaliseIncomingSyncData = (
+  data: ProfileSyncData,
+): ProfileSyncData => ({
+  ...data,
+  pageMetadata: (data.pageMetadata ?? []).map((page) =>
+    withMigratedBankId(page, "bank"),
+  ),
+  padConfigurations: (data.padConfigurations ?? []).map((pad) =>
+    stripPadPageIndex(withMigratedBankId(pad, "pad")),
+  ),
+});
 
 /**
  * Detects conflicts between local and remote sync data for a single profile.
@@ -562,16 +627,15 @@ export const detectProfileConflicts = async (
     return { conflicts, requiresManualResolution, mergedData };
   }
 
-  // A blob at rest can predate this device's local migration to bank
-  // identity — see `normaliseIncomingBankIds`. Both callers of this function
-  // (`googleDrive/sync.ts`, `serverSync/sync.ts`) hand the downloaded blob
-  // straight in, so this is the one place both paths get the fix.
-  const remotePageMetadata = normaliseIncomingBankIds(
-    remoteData.pageMetadata ?? [],
-  );
-  const remotePadConfigurations = normaliseIncomingBankIds(
-    remoteData.padConfigurations ?? [],
-  );
+  // Defensive belt, not the fix itself: every caller is now expected to hand
+  // in an already-normalised blob (see `normaliseIncomingSyncData`), but
+  // normalising again here is idempotent and cheap, and this function is
+  // reachable from a test or a future caller that forgets to. Calling the
+  // same function rather than a second implementation is what keeps this
+  // from becoming a duplicated rule.
+  const normalisedRemoteData = normaliseIncomingSyncData(remoteData);
+  const remotePageMetadata = normalisedRemoteData.pageMetadata;
+  const remotePadConfigurations = normalisedRemoteData.padConfigurations;
 
   // --- 1. Compare Profile Metadata ---
   const profileConflicts: FieldConflict[] = [];

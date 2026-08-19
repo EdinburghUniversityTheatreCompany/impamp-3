@@ -1034,3 +1034,71 @@ describe("syncServerProfile — pushing only when there is something to say", ()
     expect(apiMocks.pushServerProfile).toHaveBeenCalled();
   });
 });
+
+describe("syncServerProfile — a legacy remote blob mixed with a modern local one", () => {
+  it("does not crash on a pageIndex-only remote blob with two pads", async () => {
+    // The genuinely wild combination this branch's deploy makes possible: a
+    // local profile already migrated to bankId, syncing against a blob still
+    // sitting on the server from before this branch shipped. `pageMetaKeyExtractor`
+    // and `padConfigKeyExtractor` are not the only readers of `bankId` —
+    // `describesSameSyncState`'s diff summary sorts on it too, and used to
+    // read the raw, un-normalised remote blob. Two pads are required: with
+    // fewer than two, `Array.prototype.sort` never calls the comparator that
+    // crashes.
+    apiMocks.pushServerProfile.mockResolvedValue({ version: 6 });
+    dataAccessMocks.getLocalProfileSyncData.mockResolvedValue(
+      syncData("local pad", BEFORE_SYNC),
+    );
+
+    const legacyPad = (padIndex: number, name: string) => ({
+      id: padIndex + 1,
+      profileId: PROFILE_ID,
+      pageIndex: 0,
+      padIndex,
+      name,
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      // Created after this device's last sync, so a pad this device has
+      // never seen merges in silently rather than raising a genuine
+      // remote_only conflict — the crash under test is unrelated to normal
+      // conflict handling, and a conflict here would mask it.
+      _created: AFTER_SYNC,
+      _modified: BEFORE_SYNC,
+      _fieldsModified: {},
+    });
+    const legacyBlob = {
+      _syncFormatVersion: 1,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: {
+        id: PROFILE_ID,
+        name: "Panto",
+        syncType: "server",
+        lastBackedUpAt: 0,
+        backupReminderPeriod: 0,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        _created: 0,
+        _modified: BEFORE_SYNC,
+        _fieldsModified: {},
+      },
+      padConfigurations: [legacyPad(0, "Kick"), legacyPad(1, "Snare")],
+      pageMetadata: [],
+      audioFiles: [],
+    } as unknown as ProfileSyncData;
+
+    apiMocks.fetchServerProfile.mockResolvedValue({
+      id: SERVER_ID,
+      name: "Panto",
+      version: 5,
+      updatedAt: 0,
+      access: "editor",
+      data: legacyBlob,
+    });
+
+    const result = await syncServerProfile(PROFILE_ID, callbacks());
+
+    expect(result.status).toBe("success");
+  });
+});
