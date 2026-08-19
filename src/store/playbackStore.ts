@@ -2,7 +2,7 @@ import { create } from "zustand";
 import {
   PlaybackType,
   extractPadPlaybackSettings,
-  getPadConfigurationsForProfilePage,
+  getPadConfigurationsForProfileBank,
   type PadPlaybackSettings,
 } from "@/lib/db";
 import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
@@ -10,7 +10,7 @@ import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
 
 // Define the state structure for a single playing track in the store
 export interface PlaybackState {
-  key: string; // Unique playback key (e.g., `pad-${profileId}-${pageIndex}-${padIndex}`)
+  key: string; // Unique playback key (e.g., `pad-${profileId}-${bankId}-${padIndex}`)
   name: string;
   progress: number; // 0.0 to 1.0
   remainingTime: number; // Seconds
@@ -18,7 +18,7 @@ export interface PlaybackState {
   isFading: boolean;
   padInfo: {
     profileId: number;
-    pageIndex: number;
+    bankId: string;
     padIndex: number;
   };
 }
@@ -31,11 +31,11 @@ export interface PlaybackState {
 // queueing them for preload, and labelling the row in the Armed Tracks panel.
 // They are deliberately *not* what gets played — see `playArmedTrackNow`.
 export interface ArmedTrackState {
-  key: string; // Unique armed track key (e.g., `armed-${profileId}-${pageIndex}-${padIndex}`)
+  key: string; // Unique armed track key (e.g., `armed-${profileId}-${bankId}-${padIndex}`)
   name: string;
   padInfo: {
     profileId: number;
-    pageIndex: number;
+    bankId: string;
     padIndex: number;
   };
   audioFileIds: number[];
@@ -83,7 +83,7 @@ function preloadArmedTrackSounds(trackInfo: ArmedTrackState): void {
     .then(({ preloadArmedTrack }) => {
       preloadArmedTrack(trackInfo.audioFileIds, {
         profileId: trackInfo.padInfo.profileId,
-        pageIndex: trackInfo.padInfo.pageIndex,
+        bankId: trackInfo.padInfo.bankId,
         padIndex: trackInfo.padInfo.padIndex,
       });
     })
@@ -113,9 +113,9 @@ function preloadArmedTrackSounds(trackInfo: ArmedTrackState): void {
 async function playArmedTrackNow(track: ArmedTrackState): Promise<void> {
   let pad: PadPlaybackSettings;
   try {
-    const configs = await getPadConfigurationsForProfilePage(
+    const configs = await getPadConfigurationsForProfileBank(
       track.padInfo.profileId,
-      track.padInfo.pageIndex,
+      track.padInfo.bankId,
     );
     // A pad with no row has no sound, which `extractPadPlaybackSettings({})`
     // states as an empty `audioFileIds` — the same answer as an emptied pad.
@@ -151,7 +151,7 @@ async function playArmedTrackNow(track: ArmedTrackState): Promise<void> {
     },
     {
       activeProfileId: track.padInfo.profileId,
-      currentPageIndex: track.padInfo.pageIndex,
+      currentPageIndex: track.padInfo.bankId,
     },
     { logPrefix: "[PlaybackStore] armed track" },
   );

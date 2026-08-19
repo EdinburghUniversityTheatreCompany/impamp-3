@@ -22,7 +22,7 @@ const PROBLEM_DEVIATION_DB = 3;
 
 export interface SoundRow {
   key: string;
-  pageIndex: number;
+  bankId: string;
   padIndex: number;
   bankName: string;
   padName: string;
@@ -42,7 +42,7 @@ export interface SoundRow {
 
 export interface PadRow {
   key: string;
-  pageIndex: number;
+  bankId: string;
   padIndex: number;
   bankName: string;
   padName: string;
@@ -57,7 +57,7 @@ export interface BuildRowsOptions {
   normalisation: NormalisationSettings;
   getAnalysis: (audioFileId: number) => LoudnessAnalysis | undefined;
   getSoundName: (audioFileId: number) => string;
-  getBankName: (pageIndex: number) => string;
+  getBankName: (bankId: string) => string;
 }
 
 export function buildSoundRows(
@@ -77,10 +77,10 @@ export function buildSoundRows(
         // Index, not just audioFileId — a pad can legitimately hold the same
         // sound twice (it plays twice as often under round-robin), and a key
         // keyed only on audioFileId would collide for the duplicate.
-        key: `${pad.pageIndex}-${pad.padIndex}-${index}-${audioFileId}`,
-        pageIndex: pad.pageIndex,
+        key: `${pad.bankId}-${pad.padIndex}-${index}-${audioFileId}`,
+        bankId: pad.bankId,
         padIndex: pad.padIndex,
-        bankName: options.getBankName(pad.pageIndex),
+        bankName: options.getBankName(pad.bankId),
         padName: pad.name ?? `Pad ${pad.padIndex + 1}`,
         audioFileId,
         soundName: options.getSoundName(audioFileId),
@@ -108,7 +108,7 @@ export function buildPadRows(soundRows: SoundRow[]): PadRow[] {
   const byPad = new Map<string, SoundRow[]>();
 
   for (const row of soundRows) {
-    const key = `${row.pageIndex}-${row.padIndex}`;
+    const key = `${row.bankId}-${row.padIndex}`;
     const existing = byPad.get(key);
     if (existing) existing.push(row);
     else byPad.set(key, [row]);
@@ -123,7 +123,7 @@ export function buildPadRows(soundRows: SoundRow[]): PadRow[] {
 
     padRows.push({
       key,
-      pageIndex: rows[0].pageIndex,
+      bankId: rows[0].bankId,
       padIndex: rows[0].padIndex,
       bankName: rows[0].bankName,
       padName: rows[0].padName,
@@ -158,7 +158,10 @@ function sortValue(
 ): number | string | null {
   switch (key) {
     case "bank":
-      return row.pageIndex * 1000 + row.padIndex;
+      // Composite so the primary sort is on bank identity and the pad index
+      // only breaks ties within a bank. Zero-padded so a longer padIndex
+      // never sorts before a shorter one lexicographically.
+      return `${row.bankId}-${String(row.padIndex).padStart(8, "0")}`;
     case "soundName":
       return row.soundName.toLowerCase();
     case "measured":

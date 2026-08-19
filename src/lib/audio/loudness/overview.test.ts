@@ -15,7 +15,7 @@ function pad(overrides: Partial<PadConfiguration> = {}): PadConfiguration {
   return {
     profileId: 1,
     padIndex: 0,
-    pageIndex: 0,
+    bankId: "0",
     audioFileIds: [10],
     playbackType: "round-robin",
     createdAt: new Date(0),
@@ -34,7 +34,7 @@ const options = {
 function row(overrides: Partial<SoundRow>): SoundRow {
   return {
     key: "0-0-10",
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 0,
     bankName: "Bank 1",
     padName: "Pad",
@@ -132,12 +132,20 @@ describe("sortRows", () => {
     expect(sortRows(rows, "soundName", "asc", -16)[0].soundName).toBe("apple");
   });
 
-  it("sorts by bank/pad position", () => {
+  it("sorts by bank identity first, and by pad index within a bank", () => {
+    // Bank ids that are not numerically ordered like a position would be:
+    // if the sort were still keying off a numeric page position, this would
+    // not exercise the string comparison at all.
     const rows = [
-      row({ key: "later", pageIndex: 2, padIndex: 0 }),
-      row({ key: "earlier", pageIndex: 0, padIndex: 3 }),
+      row({ key: "z-bank", bankId: "zzz", padIndex: 0 }),
+      // Listed pad-9-before-pad-1 on purpose: a sort that keyed on bank
+      // identity alone would leave a stable sort's input order untouched
+      // for two rows on the same bank, masking a missing secondary sort.
+      row({ key: "a-bank-pad9", bankId: "aaa", padIndex: 9 }),
+      row({ key: "a-bank-pad1", bankId: "aaa", padIndex: 1 }),
     ];
-    expect(sortRows(rows, "bank", "asc", -16)[0].key).toBe("earlier");
+    const sorted = sortRows(rows, "bank", "asc", -16).map((r) => r.key);
+    expect(sorted).toEqual(["a-bank-pad1", "a-bank-pad9", "z-bank"]);
   });
 
   it("sorts by measured loudness", () => {
@@ -250,25 +258,25 @@ describe("buildPadRows", () => {
     const rows = [
       row({
         key: "a",
-        pageIndex: 0,
+        bankId: "alpha",
         padIndex: 0,
         gain: { ...row({}).gain, finalLufs: -20 },
       }),
       row({
         key: "b",
-        pageIndex: 1,
+        bankId: "beta",
         padIndex: 0,
         gain: { ...row({}).gain, finalLufs: -16 },
       }),
     ];
     const padRows = buildPadRows(rows);
     expect(padRows).toHaveLength(2);
-    const bank0 = padRows.find((p) => p.pageIndex === 0)!;
-    const bank1 = padRows.find((p) => p.pageIndex === 1)!;
-    expect(bank0.spreadDb).toBeCloseTo(0, 1);
-    expect(bank1.spreadDb).toBeCloseTo(0, 1);
-    expect(bank0.minLufs).toBeCloseTo(-20, 1);
-    expect(bank1.minLufs).toBeCloseTo(-16, 1);
+    const bankAlpha = padRows.find((p) => p.bankId === "alpha")!;
+    const bankBeta = padRows.find((p) => p.bankId === "beta")!;
+    expect(bankAlpha.spreadDb).toBeCloseTo(0, 1);
+    expect(bankBeta.spreadDb).toBeCloseTo(0, 1);
+    expect(bankAlpha.minLufs).toBeCloseTo(-20, 1);
+    expect(bankBeta.minLufs).toBeCloseTo(-16, 1);
   });
 });
 

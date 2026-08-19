@@ -96,7 +96,7 @@ export interface ActiveTrack {
   trimEndTimer?: ReturnType<typeof setTimeout>;
   padInfo: {
     profileId: number;
-    pageIndex: number;
+    bankId: string;
     padIndex: number;
   };
   isFading: boolean;
@@ -137,7 +137,7 @@ export interface PlayAudioParams {
   name: string;
   padInfo: {
     profileId: number;
-    pageIndex: number;
+    bankId: string;
     padIndex: number;
   };
   volume?: number;
@@ -156,14 +156,14 @@ export interface PlayAudioParams {
  * Helper for generating playback keys in a consistent format
  *
  * @param profileId - Profile ID
- * @param pageIndex - Page/bank index
+ * @param bankId - Bank identity
  * @param padIndex - Pad index
  * @returns Formatted playback key string
  */
 export function generatePlaybackKey(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   padIndex: number,
 ): string {
-  return `pad-${profileId}-${pageIndex}-${padIndex}`;
+  return `pad-${profileId}-${bankId}-${padIndex}`;
 }

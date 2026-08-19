@@ -34,7 +34,7 @@ describe("preloading an armed track", () => {
   it("decodes every sound of the armed pad into the cache", async () => {
     audioPreloader.preloadArmedTrack([11, 12], {
       profileId: 1,
-      pageIndex: 2,
+      bankId: "2",
       padIndex: 3,
     });
 
@@ -48,7 +48,7 @@ describe("preloading an armed track", () => {
   it("loads armed sounds at the highest priority", async () => {
     audioPreloader.preloadArmedTrack([21], {
       profileId: 1,
-      pageIndex: 2,
+      bankId: "2",
       padIndex: 3,
     });
 
@@ -64,7 +64,7 @@ describe("preloading an armed track", () => {
   it("skips sounds that are already decoded", async () => {
     audioPreloader.preloadArmedTrack([31], {
       profileId: 1,
-      pageIndex: 2,
+      bankId: "2",
       padIndex: 3,
     });
     await vi.waitFor(() => expect(isAudioBufferCached(31)).toBe(true));
@@ -73,7 +73,7 @@ describe("preloading an armed track", () => {
     // Re-arming the same pad must not re-decode what is already in memory
     audioPreloader.preloadArmedTrack([31], {
       profileId: 1,
-      pageIndex: 2,
+      bankId: "2",
       padIndex: 3,
     });
 

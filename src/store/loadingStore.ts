@@ -12,7 +12,7 @@ import { LoadingState } from "@/lib/audio/decoder";
 
 interface LoadingStoreState {
   // Map pad keys to their loading states
-  // Key format: "pad-{profileId}-{pageIndex}-{padIndex}"
+  // Key format: "pad-{profileId}-{bankId}-{padIndex}"
   padLoadingStates: Map<string, LoadingState>;
   actions: {
     setPadLoadingState: (key: string, state: LoadingState | null) => void;
@@ -54,21 +54,21 @@ export const loadingStoreActions = useLoadingStore.getState().actions;
 // Helper function to generate pad loading key
 export function generatePadLoadingKey(
   profileId: number,
-  pageIndex: number,
+  bankId: string,
   padIndex: number,
 ): string {
-  return `pad-${profileId}-${pageIndex}-${padIndex}`;
+  return `pad-${profileId}-${bankId}-${padIndex}`;
 }
 
 // Selector hook for a specific pad's loading state
 export const usePadLoadingState = (
   profileId: number | null,
-  pageIndex: number,
+  bankId: string,
   padIndex: number,
 ) => {
   return useLoadingStore((state) => {
     if (profileId === null) return null;
-    const key = generatePadLoadingKey(profileId, pageIndex, padIndex);
+    const key = generatePadLoadingKey(profileId, bankId, padIndex);
     return state.padLoadingStates.get(key) || null;
   });
 };

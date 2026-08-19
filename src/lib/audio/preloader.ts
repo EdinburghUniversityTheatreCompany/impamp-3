@@ -27,7 +27,7 @@ interface PreloadTask {
   priority: PreloadPriority;
   requestedAt: number;
   profileId: number;
-  pageIndex: number;
+  bankId: string;
   padIndex: number;
   attempts: number;
   maxAttempts: number;
@@ -65,7 +65,7 @@ class AudioPreloader {
   public preloadFiles(
     audioFileIds: number[],
     priority: PreloadPriority,
-    context: { profileId: number; pageIndex: number; padIndex?: number },
+    context: { profileId: number; bankId: string; padIndex?: number },
   ): void {
     const now = Date.now();
 
@@ -85,7 +85,7 @@ class AudioPreloader {
       priority,
       requestedAt: now,
       profileId: context.profileId,
-      pageIndex: context.pageIndex,
+      bankId: context.bankId,
       padIndex: context.padIndex || -1,
       attempts: 0,
       maxAttempts: priority === PreloadPriority.IMMEDIATE ? 3 : 1, // Retry important files
@@ -117,7 +117,7 @@ class AudioPreloader {
   public preloadCurrentPage(
     padConfigs: PadConfiguration[],
     profileId: number,
-    pageIndex: number,
+    bankId: string,
   ): void {
     const allIds = padConfigs.flatMap((config) => config.audioFileIds || []);
     const uniqueIds = [...new Set(allIds)].filter(Boolean);
@@ -125,7 +125,7 @@ class AudioPreloader {
     if (uniqueIds.length > 0) {
       this.preloadFiles(uniqueIds, PreloadPriority.IMMEDIATE, {
         profileId,
-        pageIndex,
+        bankId,
       });
     }
   }
@@ -135,7 +135,7 @@ class AudioPreloader {
    */
   public preloadOnHover(
     audioFileIds: number[],
-    context: { profileId: number; pageIndex: number; padIndex: number },
+    context: { profileId: number; bankId: string; padIndex: number },
   ): void {
     // Only preload if files aren't cached and user seems to be hovering intentionally
     const uncachedIds = audioFileIds.filter((id) => !isAudioBufferCached(id));
@@ -159,7 +159,7 @@ class AudioPreloader {
    */
   public preloadArmedTrack(
     audioFileIds: number[],
-    context: { profileId: number; pageIndex: number; padIndex: number },
+    context: { profileId: number; bankId: string; padIndex: number },
   ): void {
     const uniqueIds = [...new Set(audioFileIds)].filter(Boolean);
 
@@ -207,7 +207,7 @@ class AudioPreloader {
     if (recentIds.length > 0) {
       this.preloadFiles(recentIds, PreloadPriority.HIGH, {
         profileId,
-        pageIndex: -1,
+        bankId: "",
       });
     }
 
@@ -215,7 +215,7 @@ class AudioPreloader {
     if (otherIds.length > 0) {
       this.preloadFiles(otherIds, PreloadPriority.LOW, {
         profileId,
-        pageIndex: -1,
+        bankId: "",
       });
     }
   }

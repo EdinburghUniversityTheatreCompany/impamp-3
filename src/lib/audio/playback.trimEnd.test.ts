@@ -143,7 +143,7 @@ function stream(key: string, trim: { trimStart?: number; trimEnd?: number }) {
     name: key,
     volume: 1,
     ...trim,
-    padInfo: { profileId: 1, pageIndex: 0, padIndex: 0 },
+    padInfo: { profileId: 1, bankId: "0", padIndex: 0 },
     multiSoundState: {
       playbackType: "sequential",
       allAudioFileIds: [1],

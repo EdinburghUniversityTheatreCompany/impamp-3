@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   triggerPad: vi.fn(),
   pinAudioBuffer: vi.fn(),
   unpinAudioBuffer: vi.fn(),
-  getPadConfigurationsForProfilePage: vi.fn(),
+  getPadConfigurationsForProfileBank: vi.fn(),
 }));
 
 vi.mock("@/lib/audio", () => ({ triggerPad: mocks.triggerPad }));
@@ -17,7 +17,7 @@ vi.mock("@/lib/audio/cache", () => ({
 }));
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
-  getPadConfigurationsForProfilePage: mocks.getPadConfigurationsForProfilePage,
+  getPadConfigurationsForProfileBank: mocks.getPadConfigurationsForProfileBank,
 }));
 
 import {
@@ -33,7 +33,7 @@ const ARMED_KEY = "armed-1-0-3";
 const ARMED_AS_SNAPSHOT: ArmedTrackState = {
   key: ARMED_KEY,
   name: "Doorbell",
-  padInfo: { profileId: 1, pageIndex: 0, padIndex: 3 },
+  padInfo: { profileId: 1, bankId: "0", padIndex: 3 },
   audioFileIds: [10],
   playbackType: "sequential",
   audioTrimSettings: { 10: { trimStart: 0, trimEnd: 1 } },
@@ -46,7 +46,7 @@ function padOnDisk(
 ): PadConfiguration {
   return {
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 3,
     name: "Doorbell",
     audioFileIds: [10],
@@ -65,7 +65,7 @@ describe("armed cues play the pad as it is now", () => {
   beforeEach(() => {
     playbackStoreActions.clearAllArmedTracks();
     vi.clearAllMocks();
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([padOnDisk()]);
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([padOnDisk()]);
   });
 
   it("plays the sound the pad holds now, not the one it held when armed", async () => {
@@ -73,7 +73,7 @@ describe("armed cues play the pad as it is now", () => {
     // path ever re-synced it. Editing the pad after arming it left F9 firing
     // the pre-edit sound, at the pre-edit gain.
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
       padOnDisk({
         name: "Thunder",
         audioFileIds: [20],
@@ -99,13 +99,13 @@ describe("armed cues play the pad as it is now", () => {
     });
     expect(mocks.triggerPad.mock.calls[0][1]).toEqual({
       activeProfileId: 1,
-      currentPageIndex: 0,
+      currentPageIndex: "0",
     });
   });
 
   it("fires nothing once the pad's sound has been removed", async () => {
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
       padOnDisk({ audioFileIds: [], name: undefined }),
     ]);
 
@@ -117,7 +117,7 @@ describe("armed cues play the pad as it is now", () => {
 
   it("fires nothing when the pad has gone from the bank entirely", async () => {
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([]);
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([]);
 
     playbackStoreActions.playNextArmedTrack();
     await settle();
@@ -127,7 +127,7 @@ describe("armed cues play the pad as it is now", () => {
 
   it("carries the disabled flag through, so a pad disabled after arming stays silent", async () => {
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
       padOnDisk({ isDisabled: true }),
     ]);
 
@@ -144,7 +144,7 @@ describe("armed cues play the pad as it is now", () => {
     // unreadable should not silence it — that is a different failure from the
     // pad having been emptied.
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
-    mocks.getPadConfigurationsForProfilePage.mockRejectedValue(
+    mocks.getPadConfigurationsForProfileBank.mockRejectedValue(
       new Error("IndexedDB is unavailable"),
     );
 
@@ -163,14 +163,48 @@ describe("armed cues play the pad as it is now", () => {
     playbackStoreActions.armTrack("armed-1-2-7", {
       ...ARMED_AS_SNAPSHOT,
       key: "armed-1-2-7",
-      padInfo: { profileId: 1, pageIndex: 2, padIndex: 7 },
+      padInfo: { profileId: 1, bankId: "2", padIndex: 7 },
     });
 
     playbackStoreActions.playArmedTrack("armed-1-2-7");
     await settle();
 
-    expect(mocks.getPadConfigurationsForProfilePage).toHaveBeenCalledWith(1, 2);
+    expect(mocks.getPadConfigurationsForProfileBank).toHaveBeenCalledWith(
+      1,
+      "2",
+    );
     // The head of the queue is untouched by playing a later cue.
     expect(usePlaybackStore.getState().armedTracks.has(ARMED_KEY)).toBe(true);
+  });
+
+  it("keys an armed cue on the bank, not on the position", async () => {
+    // A bank id that is not a number proves the key holds identity, not
+    // position. Build the key rather than write it out: a bare literal here
+    // reads to gitleaks as a generic API key.
+    const bankId = "stings";
+    const key = `armed-1-${bankId}-3`;
+
+    playbackStoreActions.armTrack(key, {
+      key,
+      name: "Horn",
+      padInfo: { profileId: 1, bankId, padIndex: 3 },
+      audioFileIds: [11],
+      playbackType: "sequential",
+    });
+
+    // The identity survives the round trip through the store...
+    expect(
+      usePlaybackStore.getState().armedTracks.get(key)?.padInfo.bankId,
+    ).toBe("stings");
+
+    // ...and firing the cue looks the pad up by that same bank id, not by a
+    // numeric position, so a bank reorder cannot orphan an armed cue.
+    playbackStoreActions.playArmedTrack(key);
+    await settle();
+
+    expect(mocks.getPadConfigurationsForProfileBank).toHaveBeenCalledWith(
+      1,
+      "stings",
+    );
   });
 });

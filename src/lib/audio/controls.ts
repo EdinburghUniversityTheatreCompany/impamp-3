@@ -435,7 +435,7 @@ export async function triggerAudioForPadInstant(
         name: name || `Pad ${padIndex + 1}`,
         padInfo: {
           profileId: activeProfileId,
-          pageIndex: currentPageIndex,
+          bankId: currentPageIndex,
           padIndex,
         },
         volume: resolvedGain.linear,
@@ -691,14 +691,14 @@ export async function ensureAudioContextActive(): Promise<void> {
  *
  * @param padConfigs - Array of pad configurations for the current page
  * @param profileId - ID of the active profile
- * @param pageIndex - Index of the current page
+ * @param bankId - Identity of the current bank
  */
 export function preloadCurrentPageIntelligent(
   padConfigs: PadConfiguration[],
   profileId: number,
-  pageIndex: number,
+  bankId: string,
 ): void {
-  audioPreloader.preloadCurrentPage(padConfigs, profileId, pageIndex);
+  audioPreloader.preloadCurrentPage(padConfigs, profileId, bankId);
 }
 
 /**
@@ -709,7 +709,7 @@ export function preloadCurrentPageIntelligent(
  */
 export function preloadOnHover(
   audioFileIds: number[],
-  context: { profileId: number; pageIndex: number; padIndex: number },
+  context: { profileId: number; bankId: string; padIndex: number },
 ): void {
   audioPreloader.preloadOnHover(audioFileIds, context);
 }
@@ -723,7 +723,7 @@ export function preloadOnHover(
  */
 export function preloadArmedTrack(
   audioFileIds: number[],
-  context: { profileId: number; pageIndex: number; padIndex: number },
+  context: { profileId: number; bankId: string; padIndex: number },
 ): void {
   audioPreloader.preloadArmedTrack(audioFileIds, context);
 }
