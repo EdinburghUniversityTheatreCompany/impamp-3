@@ -4,12 +4,13 @@ import type {
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
+import { migrateToV7, type V7Transaction } from "./dbMigrations/v7BankId";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 
 const DB_NAME = "impamp3DB";
-const DB_VERSION = 6; // DB version for per-profile driveFileIds map
+const DB_VERSION = 7; // DB version for bank identity (bankId)
 
 // Define the structure of audio file data
 export interface AudioFile {
@@ -108,8 +109,14 @@ export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
 export interface PadConfiguration {
   id?: number;
   profileId: number;
+  /**
+   * The bank this pad belongs to. Replaces `pageIndex`, which was both the
+   * bank's identity and its position; a reorder has to change one without
+   * the other. A pad's position is its bank's position, so a second copy
+   * here would be a duplicated rule that drifts.
+   */
+  bankId: string;
   padIndex: number;
-  pageIndex: number;
   keyBinding?: string;
   name?: string;
   audioFileIds: number[];
@@ -141,6 +148,9 @@ export interface PadConfiguration {
 export interface PageMetadata {
   id?: number;
   profileId: number;
+  /** Immutable identity. Every key that names this bank uses it. */
+  bankId: string;
+  /** Position only: the tab order and the keyboard shortcut. */
   pageIndex: number;
   name: string;
   isEmergency: boolean;
@@ -163,12 +173,20 @@ export interface ImpAmpDBSchema extends DBSchema {
   padConfigurations: {
     key: number;
     value: PadConfiguration;
-    indexes: { profileId: number; profilePagePad: [number, number, number] };
+    indexes: {
+      profileId: number;
+      profileBankPad: [number, string, number];
+    };
   };
   pageMetadata: {
     key: number;
     value: PageMetadata;
-    indexes: { profileId: number; profilePage: [number, number] };
+    // No index on [profileId, pageIndex]: two banks may share a position for
+    // a moment during a merge, and a unique index would refuse the write.
+    indexes: {
+      profileId: number;
+      profileBank: [number, string];
+    };
   };
 }
 
@@ -323,9 +341,11 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
             });
             store.createIndex("profileId", "profileId");
             store.createIndex(
-              "profilePagePad",
-              ["profileId", "pageIndex", "padIndex"],
-              { unique: true },
+              "profileBankPad",
+              ["profileId", "bankId", "padIndex"],
+              {
+                unique: true,
+              },
             );
           }
         }
@@ -337,7 +357,7 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
               autoIncrement: true,
             });
             store.createIndex("profileId", "profileId");
-            store.createIndex("profilePage", ["profileId", "pageIndex"], {
+            store.createIndex("profileBank", ["profileId", "bankId"], {
               unique: true,
             });
           }
@@ -403,6 +423,20 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
               return cursor.continue().then(iterate);
             })
             .catch((err) => console.error("V6 Migration error:", err));
+        }
+
+        // V7 Migration: bank identity. The cast is the one place the two
+        // schema shapes meet; the migration module owns the pre-v7 shape.
+        if (oldVersion < 7) {
+          console.log("Applying V7 migration: bank identity (bankId)...");
+          migrateToV7(transaction as unknown as V7Transaction).catch((err) => {
+            console.error("V7 Migration error:", err);
+            try {
+              transaction.abort();
+            } catch (abortError) {
+              console.error("Error aborting transaction:", abortError);
+            }
+          });
         }
 
         // V1 Seeding (Default Profile)
