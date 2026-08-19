@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
+import { armModifierLabel } from "@/lib/platform";
 import buildInfo from "@/generated/build-info.json";
 
 // Define the tab interface
@@ -12,6 +14,11 @@ interface HelpTab {
 
 const HelpModalContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>("keyboard");
+
+  // The arm chord is Ctrl on Windows and Linux and Command on a Mac, so the
+  // help has to name whichever one the reader actually has. The bank chords
+  // below stay Ctrl on every platform — see `useKeyboardListener`.
+  const modifier = armModifierLabel(useIsApplePlatform());
 
   // Define the tabs and their content
   const tabs: HelpTab[] = [
@@ -113,13 +120,13 @@ const HelpModalContent: React.FC = () => {
               </li>
               <li>
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
-                  Ctrl
+                  {modifier}
                 </kbd>{" "}
                 + Click on pad: Arm a track to be played later with F9
               </li>
               <li>
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
-                  Ctrl+F
+                  {modifier}+F
                 </kbd>
                 : Open search modal to find sounds across all banks
               </li>
@@ -142,14 +149,14 @@ const HelpModalContent: React.FC = () => {
               <li>
                 Hold{" "}
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
-                  Ctrl
+                  {modifier}
                 </kbd>{" "}
                 and click on a pad to arm it for later playback
               </li>
               <li>
                 You can also arm tracks from search results with{" "}
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
-                  Ctrl
+                  {modifier}
                 </kbd>{" "}
                 + Click
               </li>

@@ -90,7 +90,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
       () => handlePadClick(padIndex),
       [handlePadClick, padIndex],
     );
-    const onCtrlClick = useCallback(
+    const onArm = useCallback(
       () => handleArmTrack(padIndex),
       [handleArmTrack, padIndex],
     );
@@ -130,7 +130,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
         loadingError={loadingState?.error}
         onClick={onClick}
         onShiftClick={onClick} // Shift click also goes through handlePadClick
-        onCtrlClick={onCtrlClick} // Ctrl+Click arms the track
+        onArm={onArm} // Ctrl+Click, or Cmd+Click on a Mac, arms the track
         onDropAudio={onDropAudio}
         onRemoveSound={
           // Enable remove interaction if sounds exist
@@ -175,7 +175,7 @@ const PadGrid: React.FC<PadGridProps> = ({ currentPageIndex }) => {
   // worth drawing — see `actionablePadConfigs`.
   //
   // `handlePadClick` below has its own early return and so was already safe,
-  // but `handleArmTrack` is wired straight to `Pad`'s onCtrlClick and bypasses
+  // but `handleArmTrack` is wired straight to `Pad`'s onArm and bypasses
   // it entirely. During the read window that armed the previous bank's cue
   // under the new bank's key, which then surfaced at F9 rather than
   // immediately — the worst way for it to surface. Swapping is here for the
