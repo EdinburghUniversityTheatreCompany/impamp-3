@@ -201,8 +201,19 @@ describe("the diff summary sorts on identity, not position", () => {
       _modified: 0,
       _fieldsModified: {},
     } as unknown as SyncedPadConfiguration;
-    const a = syncData([corruptBank, bank("a", 0, "A")], [corruptPad]);
-    const b = syncData([bank("a", 0, "A"), corruptBank], [corruptPad]);
+    // Two elements on both sides: Array.prototype.sort never calls the
+    // comparator on a single-element array, so a one-pad array would let an
+    // unguarded `a.bankId.localeCompare(b.bankId)` sail through untested —
+    // this branch's recurring "fixture that cannot exhibit the failure"
+    // shape.
+    const a = syncData(
+      [corruptBank, bank("a", 0, "A")],
+      [corruptPad, pad("a", 0, "Kick")],
+    );
+    const b = syncData(
+      [bank("a", 0, "A"), corruptBank],
+      [pad("a", 0, "Kick"), corruptPad],
+    );
 
     expect(() => describesSameSyncState(a, b)).not.toThrow();
   });
