@@ -103,14 +103,15 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
 
 export function useKeyboardListener() {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  // Get current page index and setter from store
-  const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
-  // The store does not hold bank identity yet (that lands with the bank list
-  // in a later change), so the bank's identity is derived from its position.
-  // Every bank still created before reordering exists has `bankId ===
-  // String(pageIndex)`, so this is exact today and only needs replacing once
-  // the store exposes the real identity.
-  const currentBankId = String(currentPageIndex);
+  // The identity of the bank on screen, straight from the store. This used to
+  // be derived as `String(currentPageIndex)` — exact only for a migrated
+  // bank, whose id is its position by construction. A bank created after the
+  // migration (or one that arrived from a JSON import or a sync carrying an
+  // explicit, non-positional `bankId` — both accepted today) has a
+  // `crypto.randomUUID()` id, so that bridge either matched nothing (every
+  // keyboard shortcut silently dead on that bank) or matched a *different*
+  // migrated bank still holding that numeric id (firing the wrong pads).
+  const currentBankId = useProfileStore((state) => state.currentBankId);
   const setCurrentPageIndex = useProfileStore(
     (state) => state.setCurrentPageIndex,
   );
@@ -363,6 +364,11 @@ export function useKeyboardListener() {
       }
 
       // --- Start of Pad Activation Logic ---
+
+      // Nothing to act on until the store has resolved the bank on screen.
+      if (currentBankId === null) {
+        return;
+      }
 
       // Ignore if modifier keys are pressed (allow Shift for default keys, but handled above for edit mode)
       // Ctrl/Meta/Alt should prevent pad activation here.
