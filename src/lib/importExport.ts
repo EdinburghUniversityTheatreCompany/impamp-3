@@ -19,6 +19,7 @@ import {
 import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
 import type { ProfileSyncData } from "./syncUtils";
+import { migratedBankId } from "./dbMigrations/v7BankId";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
 import { fetchWithTimeout } from "./fetchWithTimeout";
@@ -579,6 +580,10 @@ async function importPageMetadata(
   const pagePromises = pageMetadata.map((page) => {
     const content = {
       profileId,
+      // An archive written before bank identity existed carries no id. Use
+      // the same deterministic rule the v7 migration uses, so an old archive
+      // imports into the identities this device already holds.
+      bankId: page.bankId ?? migratedBankId(page.pageIndex),
       pageIndex: page.pageIndex,
       name: page.name,
       isEmergency: page.isEmergency,
@@ -673,7 +678,9 @@ export function remapPadSettingsOnMerge<T>(
 // Helper function to import pad configurations (Refactored for single transaction)
 async function importPadConfigurations(
   db: IDBPDatabase<ImpAmpDBSchema>,
-  padConfigurations: PadConfiguration[], // Expects array with new structure
+  // An archive written before bank identity existed still carries `pageIndex`
+  // on each pad even though `PadConfiguration` no longer declares it.
+  padConfigurations: (PadConfiguration & { pageIndex?: number })[],
   profileId: number,
   audioIdMap: Map<number, number>, // Maps original ID from export to new DB ID
   now: Date,
@@ -692,6 +699,10 @@ async function importPadConfigurations(
   const failures: string[] = [];
 
   const padPromises = padConfigurations.map((pad) => {
+    // An archive written before bank identity existed carries no id on its
+    // pads either. Same rule as the bank import above and the v7 migration.
+    const bankId = pad.bankId ?? migratedBankId(pad.pageIndex ?? 0);
+
     // Map the array of audioFileIds
     const mappedAudioFileIds = (pad.audioFileIds || [])
       .map((originalId) => audioIdMap.get(originalId))
@@ -702,7 +713,7 @@ async function importPadConfigurations(
       mappedAudioFileIds.length !== (pad.audioFileIds || []).length
     ) {
       console.warn(
-        `Could not map all audio IDs for pad at pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}. Original: ${pad.audioFileIds}, Mapped: ${mappedAudioFileIds}`,
+        `Could not map all audio IDs for pad in bank ${bankId}, padIndex ${pad.padIndex}. Original: ${pad.audioFileIds}, Mapped: ${mappedAudioFileIds}`,
       );
     }
 
@@ -723,7 +734,7 @@ async function importPadConfigurations(
     const content = {
       profileId,
       padIndex: pad.padIndex,
-      pageIndex: pad.pageIndex,
+      bankId,
       keyBinding: pad.keyBinding,
       name: pad.name,
       audioFileIds: mappedAudioFileIds, // Use the mapped array
@@ -757,10 +768,10 @@ async function importPadConfigurations(
       // the import then reported success — so a board came back missing pads
       // and said nothing, which is discovered mid-show.
       console.error(
-        `Failed to add pad configuration for pageIndex ${pad.pageIndex}, padIndex ${pad.padIndex}:`,
+        `Failed to add pad configuration for bank ${bankId}, padIndex ${pad.padIndex}:`,
         err,
       );
-      failures.push(`bank ${pad.pageIndex + 1}, pad ${pad.padIndex + 1}`);
+      failures.push(`bank ${bankId}, pad ${pad.padIndex + 1}`);
     });
   });
 
@@ -816,11 +827,12 @@ async function importProfileCore(
   const now = new Date();
   let padConfigsToImport: PadConfiguration[] = exportData.padConfigurations; // Start with potentially new format
 
-  // Define a type for the old format for cleaner casting
+  // Define a type for the old format for cleaner casting. V1 predates bank
+  // identity entirely, so it carries `pageIndex` rather than `bankId`.
   type OldPadConfigFormat = Omit<
     PadConfiguration,
-    "audioFileIds" | "playbackType"
-  > & { audioFileId?: number };
+    "audioFileIds" | "playbackType" | "bankId"
+  > & { audioFileId?: number; pageIndex: number };
 
   try {
     // --- Backward Compatibility Check ---
@@ -835,7 +847,7 @@ async function importProfileCore(
       );
       // Use the defined type for mapping and casting
       padConfigsToImport = (
-        exportData.padConfigurations as OldPadConfigFormat[]
+        exportData.padConfigurations as unknown as OldPadConfigFormat[]
       ).map((oldPad): PadConfiguration => {
         const audioFileIds: number[] = [];
         if (
@@ -848,7 +860,7 @@ async function importProfileCore(
         const migratedPad: PadConfiguration = {
           id: oldPad.id, // Keep original ID if present (though it's usually omitted in export)
           profileId: oldPad.profileId, // Will be overwritten later
-          pageIndex: oldPad.pageIndex,
+          bankId: migratedBankId(oldPad.pageIndex),
           padIndex: oldPad.padIndex,
           keyBinding: oldPad.keyBinding,
           name: oldPad.name,
@@ -1265,6 +1277,7 @@ export async function importImpamp2Profile(
 
     pageMetadata.push({
       profileId: 0,
+      bankId: migratedBankId(pageIndex),
       pageIndex,
       name: pageData.name || `Page ${pageIndex + 1}`,
       isEmergency: false,
@@ -1300,7 +1313,7 @@ export async function importImpamp2Profile(
 
       padConfigurations.push({
         profileId: 0,
-        pageIndex,
+        bankId: migratedBankId(pageIndex),
         padIndex,
         keyBinding: key,
         name: padData.name || padData.filename || `Pad ${padIndex}`,

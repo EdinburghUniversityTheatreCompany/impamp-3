@@ -44,7 +44,7 @@ async function seedProfile(name: string, soundName: string) {
 
   await upsertPadConfiguration({
     profileId,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 3,
     keyBinding: "q",
     name: soundName,
@@ -56,6 +56,7 @@ async function seedProfile(name: string, soundName: string) {
 
   await upsertPageMetadata({
     profileId,
+    bankId: "0",
     pageIndex: 0,
     name: "Opening",
     isEmergency: true,
@@ -87,6 +88,55 @@ async function roundTrip(profileId: number) {
   );
 
   return { db, archive, results, imported, pads };
+}
+
+/**
+ * Builds a `profile.json`-shaped archive whose banks and pads carry
+ * `pageIndex` and no `bankId` at all — genuinely what an archive written
+ * before bank identity existed looks like, not a modern record that happens
+ * to already have one — and imports it. A fixture that already carried
+ * `bankId` could not tell whether the migration fallback ran or was dropped.
+ */
+async function roundTripLegacyProfile(data: {
+  pageMetadata: Array<{
+    pageIndex: number;
+    name: string;
+    isEmergency: boolean;
+  }>;
+  padConfigurations: Array<{
+    pageIndex: number;
+    padIndex: number;
+    audioFileIds: number[];
+    playbackType: string;
+  }>;
+}) {
+  const db = await getDb();
+  const zip = await makeArchive({
+    "profile.json": JSON.stringify({
+      exportVersion: 2,
+      exportDate: new Date(0).toISOString(),
+      profile: { name: "Legacy profile", syncType: "local" },
+      padConfigurations: data.padConfigurations,
+      pageMetadata: data.pageMetadata,
+      audioFiles: [],
+    }),
+  });
+
+  await importProfilesFromZip(zip, db);
+
+  const imported = (await db.getAll("profiles"))[0];
+  const pageMetadata = await db.getAllFromIndex(
+    "pageMetadata",
+    "profileId",
+    imported.id!,
+  );
+  const padConfigurations = await db.getAllFromIndex(
+    "padConfigurations",
+    "profileId",
+    imported.id!,
+  );
+
+  return { pageMetadata, padConfigurations };
 }
 
 describe("exporting and re-importing a .iaz archive", () => {
@@ -201,6 +251,25 @@ describe("exporting and re-importing a .iaz archive", () => {
     expect(results).toHaveLength(2);
     expect(results.every((r) => !(r.result instanceof Error))).toBe(true);
     expect(await db.getAll("profiles")).toHaveLength(4);
+  });
+
+  it("gives an archive with no bankId the deterministic migrated id", async () => {
+    // A file exported before bank identity existed. The import must reach
+    // the same ids the v7 migration would, or the same board arrives twice.
+    const restored = await roundTripLegacyProfile({
+      pageMetadata: [{ pageIndex: 2, name: "Stings", isEmergency: false }],
+      padConfigurations: [
+        {
+          pageIndex: 2,
+          padIndex: 0,
+          audioFileIds: [],
+          playbackType: "sequential",
+        },
+      ],
+    });
+
+    expect(restored.pageMetadata[0].bankId).toBe("2");
+    expect(restored.padConfigurations[0].bankId).toBe("2");
   });
 });
 
