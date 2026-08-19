@@ -143,3 +143,44 @@ test.describe("the macOS arm chord", () => {
     await expect(page.locator("text=Nothing playing")).toBeVisible();
   });
 });
+
+/**
+ * The help has to name the key the reader actually has, or a Mac user reads
+ * "Ctrl" and tries the one chord that cannot work.
+ *
+ * The platform is faked at the only two places `isApplePlatform` looks, so
+ * this runs on the Linux CI browser and still exercises the real code path —
+ * including the hydration question, since a mismatch would surface as a
+ * console error rather than a wrong label.
+ */
+test.describe("the arm chord's label", () => {
+  test("says Ctrl on a PC", async ({ page }) => {
+    await gotoApp(page);
+    await page.locator('[data-testid="help-button"]').click();
+
+    await expect(
+      page.getByText("+ Click on pad: Arm a track to be played later with F9"),
+    ).toBeVisible();
+    await expect(page.locator("kbd", { hasText: "Ctrl+F" })).toBeVisible();
+    await expect(page.locator("kbd", { hasText: "⌘" })).toHaveCount(0);
+  });
+
+  test("says ⌘ on a Mac", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "userAgentData", {
+        get: () => ({ platform: "macOS" }),
+      });
+      Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+    });
+
+    await gotoApp(page);
+    await page.locator('[data-testid="help-button"]').click();
+
+    // Three places name it: the pad chord, the search chord and the arming
+    // section's two mentions.
+    await expect(page.locator("kbd", { hasText: "⌘" })).not.toHaveCount(0);
+    await expect(page.locator("kbd", { hasText: "⌘+F" })).toBeVisible();
+    // The bank chords are Ctrl on every platform and must not have moved.
+    await expect(page.locator("kbd", { hasText: "Ctrl+1" })).toBeVisible();
+  });
+});
