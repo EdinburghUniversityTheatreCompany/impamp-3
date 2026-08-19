@@ -180,11 +180,14 @@ export const MAX_LAYERS_PER_PAD = 16;
 /**
  * Separator between a base key and its layer number.
  *
- * No playback key contains this character: `generatePlaybackKey` joins the
- * profile id, bank id and pad index with "-", and a bank id is a string
- * identity that can itself be a UUID (and so contain hyphens). Recovering a
- * base key from an instance key must therefore split on this separator, not
- * on "-".
+ * `generatePlaybackKey` joins the profile id, bank id and pad index with
+ * "-", and a bank id is a string identity that can itself contain almost
+ * anything: it can be a UUID (so it can contain hyphens), and one imported
+ * from an archive arrives with no character-set validation at all
+ * (`importExport.ts` passes `page.bankId` / `pad.bankId` straight through
+ * from parsed JSON). So a bank id can contain this separator too, and
+ * recovering a base key from an instance key can't just split on the first
+ * one of these — see `splitInstanceKey` below for how it copes with that.
  */
 const LAYER_SEPARATOR = "#";
 
@@ -200,6 +203,37 @@ export function makeInstanceKey(baseKey: string, layerIndex: number): string {
 }
 
 /**
+ * Splits a key into the base key and layer number an instance key encodes,
+ * or `null` when the key carries no instance suffix.
+ *
+ * `makeInstanceKey` always appends the separator last, so its layer number is
+ * always the tail after the *rightmost* separator in the string — splitting
+ * on the first one, like an earlier version of this function did, mis-splits
+ * as soon as a bank id contains the separator itself. The tail is also
+ * required to be all digits before it's trusted as a layer number, so a bank
+ * id that merely contains the separator (followed by anything other than a
+ * bare number) still round-trips as a base key with no instance.
+ *
+ * That is total and correct for any bank id except one that makes the whole
+ * key end in `#<digits>` with nothing after — a bank id ending in the
+ * separator immediately followed only by digits, and nothing else, right at
+ * the end of the string. `generatePlaybackKey` always appends `-${padIndex}`
+ * after the bank id, so that shape can't arise from a key this module built;
+ * it is a residual risk only for a string built some other way.
+ *
+ * @param key - A base key or an instance key
+ * @returns The split, or `null` if `key` is a bare base key
+ */
+function splitInstanceKey(key: string): { base: string; layer: number } | null {
+  const at = key.lastIndexOf(LAYER_SEPARATOR);
+  if (at === -1) return null;
+  const suffix = key.slice(at + 1);
+  if (!/^\d+$/.test(suffix)) return null;
+  const layer = Number.parseInt(suffix, 10);
+  return Number.isFinite(layer) ? { base: key.slice(0, at), layer } : null;
+}
+
+/**
  * The pad an instance key belongs to.
  *
  * A bare base key is its own instance key, so a pad that never layers keeps
@@ -209,8 +243,7 @@ export function makeInstanceKey(baseKey: string, layerIndex: number): string {
  * @returns The base key
  */
 export function baseKeyOf(key: string): string {
-  const at = key.indexOf(LAYER_SEPARATOR);
-  return at === -1 ? key : key.slice(0, at);
+  return splitInstanceKey(key)?.base ?? key;
 }
 
 /**
@@ -223,8 +256,5 @@ export function baseKeyOf(key: string): string {
  * @returns The layer number
  */
 export function layerIndexOf(key: string): number {
-  const at = key.indexOf(LAYER_SEPARATOR);
-  if (at === -1) return 0;
-  const parsed = Number.parseInt(key.slice(at + 1), 10);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return splitInstanceKey(key)?.layer ?? 0;
 }

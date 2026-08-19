@@ -60,8 +60,32 @@ describe("instance keys", () => {
     ]);
   });
 
-  it("splits at the first separator only", () => {
-    expect(baseKeyOf("pad-1-0-3#4#5")).toBe("pad-1-0-3");
+  it("splits at the last separator, not the first, when a key nests two of them", () => {
+    // The layer number `makeInstanceKey` appends is always the rightmost
+    // one, so the split has to look from the right, not the left.
+    expect(baseKeyOf("pad-1-0-3#4#5")).toBe("pad-1-0-3#4");
+    expect(layerIndexOf("pad-1-0-3#4#5")).toBe(5);
+  });
+
+  it("still round-trips when an imported bank id itself contains '#'", () => {
+    // `importExport.ts` passes an imported page's or pad's `bankId` straight
+    // through with no character-set validation, so a bank id containing "#"
+    // is a real input, not a hypothetical one. As long as that "#" isn't
+    // immediately followed by nothing but digits to the end of the key, the
+    // last "#" in the string is still the one `makeInstanceKey` appended.
+    const weirdBase = generatePlaybackKey(1, "weird#bank", 3);
+    const instance = makeInstanceKey(weirdBase, 2);
+    expect(instance).toBe("pad-1-weird#bank-3#2");
+    expect(baseKeyOf(instance)).toBe(weirdBase);
+    expect(layerIndexOf(instance)).toBe(2);
+  });
+
+  it("falls back to treating the whole string as a base key when the tail after '#' isn't a plain number", () => {
+    // A bank id can contain "#" followed by non-digits, which must not be
+    // mistaken for an instance suffix.
+    const base = generatePlaybackKey(4, "odd#tag", 1);
+    expect(baseKeyOf(base)).toBe(base);
+    expect(layerIndexOf(base)).toBe(0);
   });
 
   it("splits on the layer separator, not on hyphens, when the bank id is a UUID", () => {
