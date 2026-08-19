@@ -19,7 +19,8 @@ const {
   duplicateProfileLocally,
   addProfile,
   upsertPadConfiguration,
-  getPadConfigurationsForProfilePage,
+  upsertPageMetadata,
+  getPadConfigurationsForProfileBank,
   getProfile,
 } = await import("./db");
 
@@ -36,9 +37,20 @@ beforeEach(async () => {
     backupReminderPeriod: 12_345,
   });
 
+  // A bank the source's pad belongs to, so the duplicate has an identity to
+  // carry across — without this, `getAllPageMetadataForProfile` returns
+  // nothing for either profile and the bank-identity test below could never
+  // observe a regression.
+  await upsertPageMetadata({
+    profileId: sourceProfileId,
+    bankId: "0",
+    pageIndex: 0,
+    name: "Bank 1",
+  });
+
   await upsertPadConfiguration({
     profileId: sourceProfileId,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 3,
     keyBinding: "q",
     name: "Horn",
@@ -54,7 +66,7 @@ beforeEach(async () => {
 
 async function duplicatedPad() {
   const newId = await duplicateProfileLocally(sourceProfileId, "Copy");
-  const pads = await getPadConfigurationsForProfilePage(newId, 0);
+  const pads = await getPadConfigurationsForProfileBank(newId, "0");
   return { newId, pad: pads.find((p) => p.padIndex === 3) };
 }
 
@@ -104,5 +116,14 @@ describe("duplicating a profile", () => {
 
     expect(copy?.syncType).toBe("local");
     expect(copy?.name).toBe("Copy");
+  });
+
+  it("copies the bank identities, so the tab order survives", async () => {
+    const { newId } = await duplicatedPad();
+    const { getAllPageMetadataForProfile } = await import("./db");
+
+    const banks = await getAllPageMetadataForProfile(newId);
+
+    expect(banks.map((bank) => bank.bankId)).toContain("0");
   });
 });

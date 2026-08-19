@@ -2149,6 +2149,21 @@ export async function duplicateProfileLocally(
   // half-copied profile sitting in the list looking complete. There is no
   // transaction spanning all of it, so undo it by hand instead.
   try {
+    // The bank rows go first, so every pad already has a bank to belong to
+    // by the time it is written.
+    for (const bank of await getAllPageMetadataForProfile(sourceProfileId)) {
+      // The copy keeps the source's identities. The two profiles never
+      // merge with each other, so a shared id is safe, and it keeps the
+      // copy's tab order the same as the original's.
+      await upsertPageMetadata({
+        profileId: newProfileId,
+        bankId: bank.bankId,
+        pageIndex: bank.pageIndex,
+        name: bank.name,
+        isEmergency: bank.isEmergency,
+      });
+    }
+
     const pads = await db
       .transaction("padConfigurations")
       .store.index("profileId")
@@ -2156,7 +2171,7 @@ export async function duplicateProfileLocally(
     for (const pad of pads) {
       await upsertPadConfiguration({
         profileId: newProfileId,
-        pageIndex: pad.pageIndex,
+        bankId: pad.bankId,
         padIndex: pad.padIndex,
         // The key binding belongs to the pad position, not to its contents,
         // but a duplicate keeps the whole layout, so it comes along.
@@ -2168,19 +2183,6 @@ export async function duplicateProfileLocally(
         // references the same audio rows, so the ids the settings are keyed by
         // still mean the same sounds.
         ...extractPadPlaybackSettings(pad),
-      });
-    }
-
-    for (const page of await getAllPageMetadataForProfile(sourceProfileId)) {
-      // Same bankId as the source: bankId is unique per profile, not
-      // globally, so reusing it in the duplicate keeps this bank's identity
-      // distinct from the source's — it does not collide with it.
-      await upsertPageMetadata({
-        profileId: newProfileId,
-        bankId: page.bankId,
-        pageIndex: page.pageIndex,
-        name: page.name,
-        isEmergency: page.isEmergency,
       });
     }
   } catch (error) {
