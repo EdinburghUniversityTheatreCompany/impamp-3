@@ -98,7 +98,7 @@ function syncData(padName: string, modifiedAt: number): ProfileSyncData {
       {
         id: 1,
         profileId: PROFILE_ID,
-        pageIndex: 0,
+        bankId: "0",
         padIndex: 0,
         name: padName,
         audioFileIds: [],

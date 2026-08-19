@@ -5,6 +5,7 @@ import {
   ensureAudioFileHash,
 } from "./db"; // Import main data types
 import { remapPadSettingsOnMerge } from "./importExport";
+import { migratedBankId } from "./dbMigrations/v7BankId";
 import type { WireProfile } from "./profileWire";
 
 // Type guard to check if an object has sync fields
@@ -501,6 +502,40 @@ export const conflictOriginLabel = (origin: ConflictOrigin): string =>
   origin.kind === "drive" ? "Google Drive" : "the ImpAmp server";
 
 /**
+ * Gives every bank and pad in an incoming blob a `bankId`, for a blob
+ * written before this device's data was migrated to identity.
+ *
+ * `PageMetadata` and `PadConfiguration` both type `bankId` as required — that
+ * describes what this client always writes, not what a downloaded blob is
+ * guaranteed to hold. A blob is parsed JSON, not a type-checked value, so an
+ * old one simply lacks the field at runtime and TypeScript cannot see it.
+ * Read `item.bankId` on such a record and every one of them reads as the
+ * same `undefined`, which the merge would then treat as one bank (or one pad
+ * per position) shared by every profile on every device — the exact
+ * cross-profile collision `bankNameMap` was fixed to avoid in `findMissingAudioFiles`.
+ *
+ * The fallback mints the identity the local migration already gave this
+ * data: `migratedBankId(pageIndex)`. Using any other rule here would create
+ * a second convention that has to agree with the first one by coincidence,
+ * which is exactly the kind of duplicated rule that drifts. A pad's incoming
+ * `pageIndex` is read from the raw object rather than the current
+ * `PadConfiguration` type, because an old blob's pads still carry it even
+ * though the type no longer declares it.
+ *
+ * @param items - Banks or pads as they arrived in the blob
+ * @returns A new array; every item has a `bankId`
+ */
+const normaliseIncomingBankIds = <T extends { bankId?: string }>(
+  items: T[],
+): T[] =>
+  items.map((item) => {
+    if (item.bankId != null) return item;
+    const pageIndex =
+      (item as unknown as { pageIndex?: number }).pageIndex ?? 0;
+    return { ...item, bankId: migratedBankId(pageIndex) };
+  });
+
+/**
  * Detects conflicts between local and remote sync data for a single profile.
  * @param localData Local version of ProfileSyncData.
  * @param remoteData Remote version of ProfileSyncData.
@@ -526,6 +561,17 @@ export const detectProfileConflicts = async (
     console.log("No remote data found, using local data as is.");
     return { conflicts, requiresManualResolution, mergedData };
   }
+
+  // A blob at rest can predate this device's local migration to bank
+  // identity — see `normaliseIncomingBankIds`. Both callers of this function
+  // (`googleDrive/sync.ts`, `serverSync/sync.ts`) hand the downloaded blob
+  // straight in, so this is the one place both paths get the fix.
+  const remotePageMetadata = normaliseIncomingBankIds(
+    remoteData.pageMetadata ?? [],
+  );
+  const remotePadConfigurations = normaliseIncomingBankIds(
+    remoteData.padConfigurations ?? [],
+  );
 
   // --- 1. Compare Profile Metadata ---
   const profileConflicts: FieldConflict[] = [];
@@ -608,7 +654,7 @@ export const detectProfileConflicts = async (
   const padConfigResult = compareSyncableArrays(
     // Let type inference work
     localData.padConfigurations,
-    remoteData.padConfigurations ?? [],
+    remotePadConfigurations,
     padConfigKeyExtractor, // No cast needed
     "padConfigurations",
     localLastSync,
@@ -625,7 +671,7 @@ export const detectProfileConflicts = async (
   const pageMetaResult = compareSyncableArrays(
     // Let type inference work
     localData.pageMetadata,
-    remoteData.pageMetadata ?? [],
+    remotePageMetadata,
     pageMetaKeyExtractor, // No cast needed
     "pageMetadata",
     localLastSync,

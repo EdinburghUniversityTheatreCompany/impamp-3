@@ -11,8 +11,10 @@ import {
   describesSameSyncState,
   detectProfileConflicts,
   type ProfileSyncData,
+  type SyncedPadConfiguration,
 } from "./syncUtils";
 import { normaliseBankOrder } from "./bankOrder";
+import { migratedBankId } from "./dbMigrations/v7BankId";
 import type { PageMetadata } from "./db";
 
 const LAST_SYNC = 1_000;
@@ -49,14 +51,37 @@ function bank(
   };
 }
 
-function syncData(banks: PageMetadata[]): ProfileSyncData {
+function syncData(
+  banks: PageMetadata[],
+  pads: SyncedPadConfiguration[] = [],
+): ProfileSyncData {
   return {
     _syncFormatVersion: 2,
     _lastSyncTimestamp: LAST_SYNC,
     profile: { ...baseProfile },
-    padConfigurations: [],
+    padConfigurations: pads,
     pageMetadata: banks,
     audioFiles: [],
+  };
+}
+
+function pad(
+  bankId: string,
+  padIndex: number,
+  name: string,
+): SyncedPadConfiguration {
+  return {
+    profileId: 1,
+    bankId,
+    padIndex,
+    name,
+    audioFileIds: [],
+    playbackType: "sequential",
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    _created: 0,
+    _modified: 0,
+    _fieldsModified: {},
   };
 }
 
@@ -127,5 +152,106 @@ describe("the diff summary sorts on identity, not position", () => {
     const b = syncData([bank("b", 0, "B"), bank("a", 0, "A")]);
 
     expect(describesSameSyncState(a, b)).toBe(true);
+  });
+
+  it("still reports the same state when two pads in one bank are listed in opposite order", () => {
+    // The sort's primary key is bankId, and every pad in the same bank ties
+    // on it — this is the common case, not the rare mid-reorder one above.
+    // Without the padIndex tie-break, array order (which differs per device)
+    // decides the JSON order, and a false "these differ" feeds
+    // `serverSync/sync.ts`'s `nothingToSend` check straight into a push loop.
+    const a = syncData(
+      [bank("a", 0, "A")],
+      [pad("a", 0, "Kick"), pad("a", 1, "Snare")],
+    );
+    const b = syncData(
+      [bank("a", 0, "A")],
+      [pad("a", 1, "Snare"), pad("a", 0, "Kick")],
+    );
+
+    expect(describesSameSyncState(a, b)).toBe(true);
+  });
+});
+
+describe("a remote blob written before bankId shipped", () => {
+  it("lands banks on the identities the local migration already minted, instead of one conflict per bank", async () => {
+    // Local has already been through the v7 migration: its bankIds are
+    // deterministic, `migratedBankId(pageIndex)`. The remote blob predates
+    // `bankId` entirely — built as raw JSON, the way a blob actually
+    // downloaded from before this branch shipped would arrive, and cast
+    // rather than typed, since TypeScript cannot see what an old client left
+    // out of a value that only exists as parsed JSON.
+    const local = syncData([
+      bank(migratedBankId(0), 0, "Stings"),
+      bank(migratedBankId(1), 1, "Beds"),
+    ]);
+    const legacyBank = (pageIndex: number, name: string) => ({
+      profileId: 1,
+      pageIndex,
+      name,
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    });
+    const remote = {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [],
+      pageMetadata: [legacyBank(0, "Stings"), legacyBank(1, "Beds")],
+      audioFiles: [],
+    } as unknown as ProfileSyncData;
+
+    const { conflicts, mergedData } = await detectProfileConflicts(
+      local,
+      remote,
+    );
+
+    expect(conflicts).toHaveLength(0);
+    const merged = new Map(
+      mergedData.pageMetadata.map((page) => [page.bankId, page]),
+    );
+    expect(merged.size).toBe(2);
+    expect(merged.get(migratedBankId(0))?.name).toBe("Stings");
+    expect(merged.get(migratedBankId(1))?.name).toBe("Beds");
+  });
+
+  it("lands pads on the same identities too, keyed by bankId-padIndex", async () => {
+    // No banks on either side, to isolate the pad path from the bank path
+    // already covered above.
+    const local = syncData([], [pad(migratedBankId(0), 0, "Kick")]);
+    const legacyPad = (pageIndex: number, padIndex: number, name: string) => ({
+      profileId: 1,
+      pageIndex,
+      padIndex,
+      name,
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    });
+    const remote = {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [legacyPad(0, 0, "Kick")],
+      pageMetadata: [],
+      audioFiles: [],
+    } as unknown as ProfileSyncData;
+
+    const { conflicts, mergedData } = await detectProfileConflicts(
+      local,
+      remote,
+    );
+
+    expect(conflicts).toHaveLength(0);
+    expect(mergedData.padConfigurations).toHaveLength(1);
+    expect(mergedData.padConfigurations[0]?.bankId).toBe(migratedBankId(0));
   });
 });
