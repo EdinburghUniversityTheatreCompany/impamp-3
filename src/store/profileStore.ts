@@ -12,6 +12,8 @@ import {
   ActivePadBehavior,
   DEFAULT_NORMALISATION,
   NormalisationSettings,
+  PageMetadata,
+  MAX_BANKS,
 } from "@/lib/db";
 // Import/export utilities will be loaded dynamically to reduce bundle size
 // Types are imported separately for type checking
@@ -26,6 +28,7 @@ import type {
 } from "../lib/importExport";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
+import { positionOfBank } from "@/lib/bankOrder";
 
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
@@ -45,7 +48,11 @@ export interface GoogleUserInfo {
 interface ProfileState {
   profiles: Profile[];
   activeProfileId: number | null;
+  /** The active profile's banks, normalised: the array index is the position. */
+  banks: PageMetadata[];
   currentPageIndex: number; // Track the current bank/page (internal index 0-19)
+  /** The identity of the bank on screen, or null before banks have loaded. */
+  currentBankId: string | null;
   isEditMode: boolean; // Track if we're in edit mode (shift key)
   isDeleteMoveMode: boolean; // Track if we're in delete and move mode
   isLoading: boolean;
@@ -66,6 +73,8 @@ interface ProfileState {
   fadeoutDuration: number; // Duration in seconds for the fadeout effect
   fetchProfiles: () => Promise<void>;
   setActiveProfileId: (id: number | null) => void;
+  /** Loads the profile's banks and re-resolves the current bank against them. */
+  loadBanks: (profileId: number) => Promise<void>;
   setCurrentPageIndex: (bankNumber: number) => void; // Changed param name to bankNumber for clarity
   setEditMode: (isActive: boolean) => void; // Set edit mode
   /** False when the active profile is followed, or the remote refuses writes. */
@@ -188,10 +197,6 @@ const _buildExportFilename = (
   return `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.${extension}`;
 };
 
-// Monotonic token for bank switches, so a slow metadata lookup can never
-// overwrite a bank the user selected afterwards.
-let pageIndexRequestToken = 0;
-
 type ProfileSetState = (
   partial:
     Partial<ProfileState> | ((state: ProfileState) => Partial<ProfileState>),
@@ -253,7 +258,9 @@ export const useProfileStore = create<ProfileState>()(
         // Store definition starts here
         profiles: [],
         activeProfileId: null,
+        banks: [],
         currentPageIndex: 0, // Default to first bank (displayed as bank 1)
+        currentBankId: null,
         isEditMode: false, // Default to not in edit mode
         isDeleteMoveMode: false, // Default to not in delete and move mode
         isLoading: true,
@@ -302,6 +309,24 @@ export const useProfileStore = create<ProfileState>()(
           }
         },
 
+        loadBanks: async (profileId: number) => {
+          const { ensureDefaultBanks } = await import("@/lib/db");
+          const banks = await ensureDefaultBanks(profileId);
+          set((state) => {
+            // Follow the same bank across a reorder, rather than the slot
+            // number. The user is looking at a bank, not at a position.
+            const held = state.currentBankId
+              ? positionOfBank(banks, state.currentBankId)
+              : -1;
+            const position = held >= 0 ? held : 0;
+            return {
+              banks,
+              currentPageIndex: position,
+              currentBankId: banks[position]?.bankId ?? null,
+            };
+          });
+        },
+
         setActiveProfileId: (id: number | null) => {
           console.log(`Attempting to set active profile ID to: ${id}`);
           const profileExists = get().profiles.some(
@@ -314,21 +339,16 @@ export const useProfileStore = create<ProfileState>()(
             // to one that cannot be edited, leaving its pads fully editable
             // and both banners stacked on top of each other.
             //
-            // The bank goes back to the first one for the same class of
-            // reason. Banks 11-20 are opt-in per profile — `setCurrentPageIndex`
-            // refuses any index >= 10 the active profile has no page metadata
-            // for — and a profile switch bypassed that check entirely. Being on
-            // bank 16 in a profile that has it and switching to one that does
-            // not gave 48 empty pads with no bank tab selected, and in edit mode
-            // a drop then wrote a padConfiguration at a pageIndex with no
-            // pageMetadata: no tab is ever drawn for it, `setCurrentPageIndex`
-            // refuses to navigate to it, and it syncs in that state. Bank 1
-            // always exists, so resetting is cheap and cannot be wrong.
+            // The bank list and bank selection reset for the same class of
+            // reason: a profile has its own banks, so the previous profile's
+            // list and position mean nothing here. `loadBanks` refills them.
             set({
               activeProfileId: id,
               isEditMode: false,
               isDeleteMoveMode: false,
-              ...(previousId !== id ? { currentPageIndex: 0 } : {}),
+              ...(previousId !== id
+                ? { currentPageIndex: 0, banks: [], currentBankId: null }
+                : {}),
             });
             // Pad configurations are not loaded here: `usePadConfigurations`
             // is keyed on the active profile, so switching it is the trigger.
@@ -348,70 +368,24 @@ export const useProfileStore = create<ProfileState>()(
         },
 
         setCurrentPageIndex: (bankNumber: number) => {
-          // Convert bank number to internal index using the imported utility function
           const index = convertBankNumberToIndex(bankNumber);
-
-          // First check if index is within valid bounds (0-19 for 20 banks)
-          if (index < 0 || index >= 20) {
+          if (index < 0 || index >= MAX_BANKS) {
             console.warn(
               `Invalid bank number: ${bankNumber}. Must be 1-9, 0 (for bank 10), or 11-20.`,
             );
-            return; // Don't change the bank selection
-          }
-
-          // Fetch page metadata for the current profile to check if the bank exists
-          const activeProfileId = get().activeProfileId;
-          if (activeProfileId === null) {
-            console.warn("Cannot switch bank, no active profile.");
             return;
           }
-
-          const requestToken = ++pageIndexRequestToken;
-
-          // Banks 0-9 (UI 1-10) always exist conceptually, so switch immediately
-          // without waiting on a metadata lookup.
-          if (index <= 9) {
-            console.log(
-              `Switching to bank ${bankNumber} (internal index: ${index})`,
+          // The banks are already in memory, so no database read can arrive
+          // late and overwrite a later choice. That is why the request token
+          // this used to need is gone.
+          const bank = get().banks[index];
+          if (!bank) {
+            console.warn(
+              `Bank ${bankNumber} does not exist for this profile. Bank selection unchanged.`,
             );
-            set({ currentPageIndex: index });
             return;
           }
-
-          // Use an IIFE to handle the async operation within the synchronous function signature
-          (async () => {
-            try {
-              const { getAllPageMetadataForProfile } = await import("@/lib/db"); // Dynamic import
-              const metadata =
-                await getAllPageMetadataForProfile(activeProfileId);
-
-              // A newer bank switch has been requested in the meantime
-              if (requestToken !== pageIndexRequestToken) return;
-
-              const existingIndices = new Set(metadata.map((m) => m.pageIndex));
-
-              if (existingIndices.has(index)) {
-                console.log(
-                  `Switching to bank ${bankNumber} (internal index: ${index})`,
-                );
-                set({ currentPageIndex: index });
-              } else {
-                console.warn(
-                  `Bank ${bankNumber} (internal index: ${index}) does not exist for profile ${activeProfileId}. Current bank selection maintained.`,
-                );
-                // Don't change the current index - maintain the current bank selection
-              }
-            } catch (error) {
-              console.error(
-                `Error fetching page metadata while switching bank:`,
-                error,
-              );
-              // We can't verify the bank exists, so keep the current selection
-              console.warn(
-                `Could not verify existence of bank ${bankNumber} due to error. Current bank selection maintained.`,
-              );
-            }
-          })();
+          set({ currentPageIndex: index, currentBankId: bank.bankId });
         },
 
         setEditMode: (isActive: boolean) => {

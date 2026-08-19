@@ -1,3 +1,5 @@
+// Must be the first import: it installs `window` before `db.ts` can read it.
+import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "@/store/profileStore";
 import { syncStatusActions, useSyncStatusStore } from "@/store/syncStatusStore";
@@ -245,5 +247,60 @@ describe("reporting a failed write", () => {
       enabled: true,
       targetLufs: -18,
     });
+  });
+});
+
+describe("bank selection", () => {
+  let profileId: number;
+
+  beforeEach(async () => {
+    await clearAllStores();
+    const { addProfile } = await import("@/lib/db");
+    profileId = await addProfile({ name: "Board", syncType: "local" });
+    useProfileStore.setState({
+      profiles: [profile(profileId)],
+      activeProfileId: profileId,
+      banks: [],
+      currentBankId: null,
+      currentPageIndex: 0,
+    });
+  });
+
+  it("selects by position and reports the identity", async () => {
+    const store = useProfileStore.getState();
+    await store.loadBanks(profileId);
+
+    useProfileStore.getState().setCurrentPageIndex(3);
+
+    expect(useProfileStore.getState().currentPageIndex).toBe(2);
+    expect(useProfileStore.getState().currentBankId).toBe("2");
+  });
+
+  // `reorderBanks` lands in Task 15. Turned back on there.
+  it.todo(
+    "keeps the view on the same bank when the order changes",
+    async () => {
+      // @ts-expect-error -- reorderBanks does not exist until Task 15 adds it.
+      const { reorderBanks } = await import("@/lib/db");
+      const store = useProfileStore.getState();
+      await store.loadBanks(profileId);
+      useProfileStore.getState().setCurrentPageIndex(3);
+
+      // Move the selected bank to the front.
+      await reorderBanks(profileId, ["2", "0", "1"]);
+      await useProfileStore.getState().loadBanks(profileId);
+
+      expect(useProfileStore.getState().currentBankId).toBe("2");
+      expect(useProfileStore.getState().currentPageIndex).toBe(0);
+    },
+  );
+
+  it("refuses a position that holds no bank", async () => {
+    const store = useProfileStore.getState();
+    await store.loadBanks(profileId);
+
+    useProfileStore.getState().setCurrentPageIndex(15);
+
+    expect(useProfileStore.getState().currentBankId).toBe("0");
   });
 });
