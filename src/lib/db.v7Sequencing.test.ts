@@ -6,15 +6,24 @@
  * the V7 block issued its `getAll()` in the same synchronous tick as V4's
  * `openCursor()` calls; IndexedDB processes requests in placement order, so
  * V7 snapshotted pre-V4 data and then interleaved writes with V4's cursor
- * with no defined winner. Any database sitting at `oldVersion < 4` (which
- * includes a real, if rare, version-3 database) lost pad data upgrading
- * straight to v7: some pads never got `bankId` and vanished from their
- * bank, and — for a genuinely pre-V3 database — some never got their
- * `audioFileId` converted to `audioFileIds` and lost their sound.
+ * with no defined winner. Any database sitting at `oldVersion < 4` lost pad
+ * data upgrading straight to v7: some pads never got `bankId` and vanished
+ * from their bank, and — for a genuinely pre-V3 database — some never got
+ * their `audioFileId` converted to `audioFileIds` and lost their sound.
  *
- * This seeds a raw, unmigrated version-3 database by hand — not through
+ * This seeds a raw, unmigrated **version-2** database by hand — not through
  * `getDb()`, which always opens at the current `DB_VERSION` — and then lets
- * the real `getDb()` run its actual v3 -> v7 upgrade path.
+ * the real `getDb()` run its actual v2 -> v7 upgrade path. Version 2, not 3:
+ * `migrateStoreV4` only runs the `audioFileId` -> `audioFileIds` reshape when
+ * `oldVersion < 3` (see `src/lib/db.ts`'s `migrateV3Shape` parameter), which
+ * is the "V3 pad reshape" comment there — it fires for a device that hasn't
+ * *reached* version 3 yet, not one already sitting at it. A database seeded
+ * directly at version 3 already carries the modern `audioFileIds` shape by
+ * definition, so that reshape is a no-op for it regardless of any race, and
+ * the audio-loss half of this regression is unreachable from there. Seeding
+ * at version 2 is what makes it genuine: `oldVersion < 3` is true, the
+ * reshape actually runs, and its output becomes something the V4/V7 race can
+ * actually corrupt.
  */
 import "@/lib/testSupport/browserGlobals";
 import { describe, expect, it } from "vitest";
@@ -23,9 +32,9 @@ import { openDB } from "idb";
 const DB_NAME = "impamp3DB";
 const PROFILE_ID = 1;
 
-/** The shape a real device's database had at version 3, built by hand. */
-async function seedV3Database(): Promise<void> {
-  const seedDb = await openDB(DB_NAME, 3, {
+/** The shape a real device's database had at version 2, built by hand. */
+async function seedPreV3Database(): Promise<void> {
+  const seedDb = await openDB(DB_NAME, 2, {
     upgrade(db) {
       db.createObjectStore("profiles", {
         keyPath: "id",
@@ -79,11 +88,16 @@ async function seedV3Database(): Promise<void> {
 
   for (const pageIndex of [0, 5]) {
     for (let padIndex = 0; padIndex < 3; padIndex++) {
+      // The legacy pre-V3 shape: a singular `audioFileId`, not the array.
+      // Seeding at version 2 (see the file docstring) is what makes this
+      // actually exercise `migrateV3Shape`'s conversion — seeding
+      // `audioFileIds` directly, or seeding at version 3, would leave that
+      // conversion a no-op and the audio-loss half of the race unreachable.
       await padStore.add({
         profileId: PROFILE_ID,
         pageIndex,
         padIndex,
-        audioFileIds: [1],
+        audioFileId: 1,
         playbackType: "sequential",
         createdAt: now,
         updatedAt: now,
@@ -95,9 +109,9 @@ async function seedV3Database(): Promise<void> {
   seedDb.close();
 }
 
-describe("upgrading a v3 database straight to v7", () => {
+describe("upgrading a pre-v3 (v2) database straight to v7", () => {
   it("leaves every pad with both audioFileIds and bankId, with no data loss", async () => {
-    await seedV3Database();
+    await seedPreV3Database();
 
     const { getDb } = await import("@/lib/db");
     const db = await getDb();
