@@ -962,11 +962,13 @@ const remoteFacingView = (data: ProfileSyncData): unknown => {
     },
     pads: [...data.padConfigurations]
       .sort(
-        (a, b) => a.bankId.localeCompare(b.bankId) || a.padIndex - b.padIndex,
+        (a, b) =>
+          (a.bankId ?? "").localeCompare(b.bankId ?? "") ||
+          a.padIndex - b.padIndex,
       )
       .map((pad) => itemView(pad as unknown as Record<string, unknown>)),
     pages: [...data.pageMetadata]
-      .sort((a, b) => a.bankId.localeCompare(b.bankId))
+      .sort((a, b) => (a.bankId ?? "").localeCompare(b.bankId ?? ""))
       .map((page) => itemView(page as unknown as Record<string, unknown>)),
     audio: (data.audioFiles ?? [])
       .map((file) => ({

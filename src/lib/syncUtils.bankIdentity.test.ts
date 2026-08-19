@@ -172,6 +172,40 @@ describe("the diff summary sorts on identity, not position", () => {
 
     expect(describesSameSyncState(a, b)).toBe(true);
   });
+
+  it("does not throw when a record has neither bankId nor pageIndex", () => {
+    // normaliseIncomingSyncData deliberately leaves a record with neither
+    // field unmigrated (see the describe block below) rather than guessing
+    // bank 0 — so the same corrupt-or-hand-edited shape that migrateToV7
+    // skips can reach this sort with `bankId` still undefined. An unguarded
+    // `a.bankId.localeCompare(b.bankId)` throws a TypeError on it.
+    const corruptBank = {
+      profileId: 1,
+      name: "Orphan",
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as PageMetadata;
+    const corruptPad = {
+      profileId: 1,
+      padIndex: 0,
+      name: "Orphan pad",
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    } as unknown as SyncedPadConfiguration;
+    const a = syncData([corruptBank, bank("a", 0, "A")], [corruptPad]);
+    const b = syncData([bank("a", 0, "A"), corruptBank], [corruptPad]);
+
+    expect(() => describesSameSyncState(a, b)).not.toThrow();
+  });
 });
 
 describe("a remote blob written before bankId shipped", () => {

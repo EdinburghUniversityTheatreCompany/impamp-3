@@ -13,6 +13,7 @@ import {
 import { checkAndRefreshAuth } from "./auth";
 import { getProfileFolderName } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { normaliseIncomingSyncData } from "@/lib/syncUtils";
 
 /**
  * Escapes a value for safe interpolation into a Drive API query string.
@@ -686,7 +687,9 @@ export const downloadDriveFile = async (
       refreshCallback,
     );
 
-    return data;
+    // Repair a pre-bankId blob here, at the parse-and-return point, so no
+    // consumer downstream ever sees a record without one.
+    return data ? normaliseIncomingSyncData(data) : data;
   } catch (err) {
     if (err instanceof Error && err.message.includes("404")) {
       return null; // File not found
@@ -1160,7 +1163,9 @@ export const downloadPublicProfileData = async (
     if (!response.ok) return null;
     const data = (await response.json()) as ProfileSyncData;
     if (data?._syncFormatVersion !== 1 || !data.profile) return null;
-    return data;
+    // Repair a pre-bankId blob here, at the parse-and-return point, so no
+    // consumer downstream ever sees a record without one.
+    return normaliseIncomingSyncData(data);
   } catch (err) {
     console.warn(`Public profile proxy failed for file ${fileId}:`, err);
     return null;
