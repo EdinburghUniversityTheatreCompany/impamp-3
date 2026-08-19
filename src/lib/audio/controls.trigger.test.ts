@@ -113,7 +113,7 @@ async function triggerWithFallback() {
     audioFileIds: [BROKEN, GOOD],
     playbackType: "sequential",
     activeProfileId: 1,
-    currentPageIndex: 0,
+    currentBankId: "0",
     name: "Pad",
     // Deliberately different per sound, so it is obvious which was used.
     audioGainSettings: { [BROKEN]: -12, [GOOD]: 0 },
@@ -179,7 +179,7 @@ describe("falling back to another sound on a pad", () => {
 function loadingStateFor(padIndex: number) {
   return useLoadingStore
     .getState()
-    .padLoadingStates.get(generatePadLoadingKey(1, 0, padIndex));
+    .padLoadingStates.get(generatePadLoadingKey(1, "0", padIndex));
 }
 
 /** Triggers a pad whose decode reports a loading state before it resolves. */
@@ -192,7 +192,7 @@ async function triggerReportingProgress(): Promise<number> {
       playbackType: "sequential",
       name: "Pad",
     },
-    { activeProfileId: 1, currentPageIndex: 0 },
+    { activeProfileId: 1, currentBankId: "0" },
   );
   return padIndex;
 }

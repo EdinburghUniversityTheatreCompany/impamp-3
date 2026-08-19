@@ -3,13 +3,13 @@ import type { PadConfiguration, PageMetadata } from "@/lib/db";
 
 const mocks = vi.hoisted(() => ({
   getAllPageMetadataForProfile: vi.fn(),
-  getPadConfigurationsForProfilePage: vi.fn(),
+  getPadConfigurationsForProfileBank: vi.fn(),
 }));
 
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
   getAllPageMetadataForProfile: mocks.getAllPageMetadataForProfile,
-  getPadConfigurationsForProfilePage: mocks.getPadConfigurationsForProfilePage,
+  getPadConfigurationsForProfileBank: mocks.getPadConfigurationsForProfileBank,
 }));
 
 type EmergencySoundsModule = typeof import("@/hooks/emergencySounds");
@@ -22,9 +22,19 @@ async function freshModule(): Promise<EmergencySoundsModule> {
   return import("@/hooks/emergencySounds");
 }
 
-function page(profileId: number, pageIndex: number): PageMetadata {
+// Deliberately not `String(pageIndex)`: a migrated bank's bankId happens to
+// equal its position as a string, so a fixture built that way cannot tell
+// identity-keyed code from position-keyed code apart. This prefix breaks that
+// coincidence, so a regression that read `page.pageIndex` where it should
+// read `page.bankId` shows up as a wrong bank rather than passing by luck.
+function page(
+  profileId: number,
+  pageIndex: number,
+  bankId = `bank-${pageIndex}`,
+): PageMetadata {
   return {
     profileId,
+    bankId,
     pageIndex,
     name: `Bank ${pageIndex + 1}`,
     isEmergency: true,
@@ -33,10 +43,10 @@ function page(profileId: number, pageIndex: number): PageMetadata {
   } as PageMetadata;
 }
 
-function pad(pageIndex: number, padIndex: number): PadConfiguration {
+function pad(bankId: string, padIndex: number): PadConfiguration {
   return {
     profileId: 0,
-    pageIndex,
+    bankId,
     padIndex,
     audioFileIds: [padIndex + 1],
     playbackType: "sequential",
@@ -48,10 +58,9 @@ function pad(pageIndex: number, padIndex: number): PadConfiguration {
 describe("emergency sound loading", () => {
   beforeEach(() => {
     mocks.getAllPageMetadataForProfile.mockReset();
-    mocks.getPadConfigurationsForProfilePage.mockReset();
-    mocks.getPadConfigurationsForProfilePage.mockImplementation(
-      (_profileId: number, pageIndex: number) =>
-        Promise.resolve([pad(pageIndex, pageIndex)]),
+    mocks.getPadConfigurationsForProfileBank.mockReset();
+    mocks.getPadConfigurationsForProfileBank.mockImplementation(
+      (_profileId: number, bankId: string) => Promise.resolve([pad(bankId, 0)]),
     );
   });
 
@@ -115,10 +124,10 @@ describe("emergency sound loading", () => {
 
   it("skips disabled and empty pads", async () => {
     mocks.getAllPageMetadataForProfile.mockResolvedValue([page(1, 0)]);
-    mocks.getPadConfigurationsForProfilePage.mockResolvedValue([
-      { ...pad(0, 0), isDisabled: true },
-      { ...pad(0, 1), audioFileIds: [] },
-      pad(0, 2),
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
+      { ...pad("bank-0", 0), isDisabled: true },
+      { ...pad("bank-0", 1), audioFileIds: [] },
+      pad("bank-0", 2),
     ]);
 
     const { reloadEmergencySounds, takeNextEmergencySound } =
@@ -138,9 +147,9 @@ describe("emergency sound loading", () => {
       await freshModule();
     await reloadEmergencySounds(1);
 
-    expect(takeNextEmergencySound()?.pageIndex).toBe(0);
-    expect(takeNextEmergencySound()?.pageIndex).toBe(1);
-    expect(takeNextEmergencySound()?.pageIndex).toBe(0);
+    expect(takeNextEmergencySound()?.bankId).toBe("bank-0");
+    expect(takeNextEmergencySound()?.bankId).toBe("bank-1");
+    expect(takeNextEmergencySound()?.bankId).toBe("bank-0");
   });
 
   it("keeps the cursor when a reload finds the same pads", async () => {
@@ -156,7 +165,7 @@ describe("emergency sound loading", () => {
 
     await reloadEmergencySounds(1);
 
-    expect(takeNextEmergencySound()?.pageIndex).toBe(1);
+    expect(takeNextEmergencySound()?.bankId).toBe("bank-1");
   });
 
   it("restarts the cursor when the set of pads actually changes", async () => {
@@ -177,7 +186,7 @@ describe("emergency sound loading", () => {
     ]);
     await reloadEmergencySounds(1);
 
-    expect(takeNextEmergencySound()?.pageIndex).toBe(0);
+    expect(takeNextEmergencySound()?.bankId).toBe("bank-0");
   });
 
   it("reports nothing to fire before anything has been loaded", async () => {

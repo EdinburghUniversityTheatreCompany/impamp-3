@@ -99,7 +99,7 @@ describe("armed cues play the pad as it is now", () => {
     });
     expect(mocks.triggerPad.mock.calls[0][1]).toEqual({
       activeProfileId: 1,
-      currentPageIndex: "0",
+      currentBankId: "0",
     });
   });
 

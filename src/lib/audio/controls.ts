@@ -275,7 +275,7 @@ export async function triggerAudioForPadInstant(
     audioFileIds,
     playbackType,
     activeProfileId,
-    currentPageIndex,
+    currentBankId,
     name,
     audioTrimSettings,
     audioGainSettings,
@@ -313,7 +313,7 @@ export async function triggerAudioForPadInstant(
   // Generate a unique key for this pad's playback
   const playbackKey = generatePlaybackKey(
     activeProfileId,
-    currentPageIndex,
+    currentBankId,
     padIndex,
   );
   // A fading track is on its way out, so it must not block a new trigger
@@ -435,7 +435,7 @@ export async function triggerAudioForPadInstant(
         name: name || `Pad ${padIndex + 1}`,
         padInfo: {
           profileId: activeProfileId,
-          bankId: currentPageIndex,
+          bankId: currentBankId,
           padIndex,
         },
         volume: resolvedGain.linear,

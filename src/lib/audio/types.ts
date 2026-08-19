@@ -116,7 +116,7 @@ export interface TriggerAudioArgs {
   audioFileIds: number[];
   playbackType: PlaybackType;
   activeProfileId: number;
-  currentPageIndex: number;
+  currentBankId: string;
   name?: string;
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   /** Per-sound manual gain in dB, keyed by audio file ID. */

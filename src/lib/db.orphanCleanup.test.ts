@@ -20,7 +20,7 @@ const {
   findOrphanedAudioFiles,
   cleanupOrphanedAudioFiles,
   getAudioFile,
-  getPadConfigurationsForProfilePage,
+  getPadConfigurationsForProfileBank,
 } = await import("./db");
 
 let profileId: number;
@@ -51,7 +51,7 @@ describe("orphaned audio cleanup", () => {
     const kept = await soundNamed("in-use.wav");
     await upsertPadConfiguration({
       profileId,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 0,
       audioFileIds: [kept],
       playbackType: "sequential",
@@ -78,14 +78,14 @@ describe("orphaned audio cleanup", () => {
       cleanupOrphanedAudioFiles(),
       upsertPadConfiguration({
         profileId,
-        pageIndex: 0,
+        bankId: "0",
         padIndex: 1,
         audioFileIds: [arriving],
         playbackType: "sequential",
       }),
     ]);
 
-    const pads = await getPadConfigurationsForProfilePage(profileId, 0);
+    const pads = await getPadConfigurationsForProfileBank(profileId, "0");
     return {
       arriving,
       cleanup,
@@ -144,7 +144,7 @@ describe("orphaned audio cleanup", () => {
     const kept = await soundNamed("kept.wav");
     await upsertPadConfiguration({
       profileId,
-      pageIndex: 0,
+      bankId: "0",
       padIndex: 0,
       audioFileIds: [kept],
       playbackType: "sequential",

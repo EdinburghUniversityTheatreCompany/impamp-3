@@ -151,7 +151,7 @@ async function playArmedTrackNow(track: ArmedTrackState): Promise<void> {
     },
     {
       activeProfileId: track.padInfo.profileId,
-      currentPageIndex: track.padInfo.bankId,
+      currentBankId: track.padInfo.bankId,
     },
     { logPrefix: "[PlaybackStore] armed track" },
   );

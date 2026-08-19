@@ -6,7 +6,7 @@ function pad(overrides: Partial<PadConfiguration> = {}): PadConfiguration {
   return {
     profileId: 1,
     padIndex: 0,
-    pageIndex: 0,
+    bankId: "0",
     audioFileIds: [10, 11],
     playbackType: "round-robin",
     createdAt: new Date(0),

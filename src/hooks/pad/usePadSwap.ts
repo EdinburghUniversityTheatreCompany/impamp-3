@@ -11,7 +11,7 @@ import { useProfileStore } from "@/store/profileStore";
 import { PadConfiguration, swapPadConfigurations } from "@/lib/db";
 
 interface PadSwapParams {
-  currentPageIndex: number;
+  currentBankId: string;
   padConfigs: Map<number, PadConfiguration>;
   refreshPadConfigs: () => void;
   specialPadIndices: number[];
@@ -24,7 +24,7 @@ interface PadSwapParams {
  * @returns Object containing handler for swapping pads
  */
 export function usePadSwap(params: PadSwapParams) {
-  const { currentPageIndex, padConfigs, refreshPadConfigs, specialPadIndices } =
+  const { currentBankId, padConfigs, refreshPadConfigs, specialPadIndices } =
     params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
   const requestSync = useProfileStore((state) => state.requestSync);
@@ -68,7 +68,7 @@ export function usePadSwap(params: PadSwapParams) {
         // never end up assigned to neither pad
         await swapPadConfigurations(
           activeProfileId,
-          currentPageIndex,
+          currentBankId,
           fromIndex,
           toIndex,
         );
@@ -88,7 +88,7 @@ export function usePadSwap(params: PadSwapParams) {
     },
     [
       activeProfileId,
-      currentPageIndex,
+      currentBankId,
       padConfigs,
       refreshPadConfigs,
       specialPadIndices,

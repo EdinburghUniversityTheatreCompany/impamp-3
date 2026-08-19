@@ -36,7 +36,7 @@ export interface TriggerablePad {
 /** Where the pad lives, which is what the loading key is built from. */
 export interface TriggerContext {
   activeProfileId: number;
-  currentPageIndex: number;
+  currentBankId: string;
 }
 
 export interface TriggerPadOptions {
@@ -73,12 +73,12 @@ export async function triggerPad(
   context: TriggerContext,
   options: TriggerPadOptions = {},
 ): Promise<void> {
-  const { activeProfileId, currentPageIndex } = context;
+  const { activeProfileId, currentBankId } = context;
   const { logPrefix = "[Trigger]" } = options;
 
   const loadingKey = generatePadLoadingKey(
     activeProfileId,
-    currentPageIndex,
+    currentBankId,
     pad.padIndex,
   );
   const clearLoading = () =>
@@ -90,7 +90,7 @@ export async function triggerPad(
       audioFileIds: pad.audioFileIds,
       playbackType: pad.playbackType,
       activeProfileId,
-      currentPageIndex,
+      currentBankId,
       name: pad.name,
       audioTrimSettings: pad.audioTrimSettings,
       audioGainSettings: pad.audioGainSettings,
