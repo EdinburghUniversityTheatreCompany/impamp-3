@@ -18,6 +18,7 @@ import {
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
+import { normaliseIncomingSyncData } from "./syncUtils";
 import type { ProfileSyncData } from "./syncUtils";
 import { migratedBankId } from "./dbMigrations/v7BankId";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
@@ -1027,17 +1028,31 @@ const DRIVE_DOWNLOAD_CONCURRENCY = 4;
  * The caller links the imported profile to Drive (file/folder IDs,
  * read-only flag) using the returned profile ID.
  *
+ * Normalises the incoming blob (`normaliseIncomingSyncData`) before doing
+ * anything else with it. Most callers already arrive normalised —
+ * `googleDrive/api.ts`'s `downloadDriveFile`/`downloadPublicProfileData` and
+ * `serverSync/sync.ts`'s pull and 409 re-merge all do it upstream — but this
+ * is the one function every "connect to a remote profile" path funnels
+ * through, present and future, including a couple that skip that layer
+ * today: `useConnectServerProfile` calls `fetchServerProfile` directly, and
+ * `ProfileManager`'s public-share fallback fetches `/api/drive/public-file`
+ * itself. Normalising here rather than at each of those call sites closes
+ * every gap at once instead of one at a time. The function is idempotent, so
+ * an already-normalised blob costs one cheap no-op pass.
+ *
  * @param downloadAudioBlob Downloads the blob for a driveFileId (typically
  *   useGoogleDriveSync().downloadAudioFile).
  */
 export async function importProfileFromSyncData(
   db: IDBPDatabase<ImpAmpDBSchema>,
-  syncData: ProfileSyncData,
+  rawSyncData: ProfileSyncData,
   downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
   onProgress?: (progress: ImportAudioProgress) => void,
   link: ImportLink = {},
   downloadHostedBlob?: HostedAudioDownloader,
 ): Promise<number> {
+  const syncData = normaliseIncomingSyncData(rawSyncData);
+
   // Strip fields the import must not carry over (a fresh id is assigned and
   // lastBackedUpAt is stamped by the import itself).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

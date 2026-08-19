@@ -128,3 +128,71 @@ describe("an imported pad", () => {
     expect(fields).not.toHaveProperty("audioFileHashes");
   });
 });
+
+describe("importing a pre-bankId sync blob directly", () => {
+  // `importProfileFromSyncData` is reachable with a blob nothing upstream
+  // has normalised — `useConnectServerProfile` calls `fetchServerProfile`
+  // directly, and `ProfileManager`'s public-share proxy fetches
+  // `/api/drive/public-file` itself, neither going through
+  // `googleDrive/api.ts` or `serverSync/sync.ts`'s normalisation. This
+  // fixture is genuinely pre-bankId — pageIndex only, no bankId anywhere —
+  // exactly what either of those raw paths would hand this function.
+  it("still gives the bank and its pad the deterministic migrated id", async () => {
+    const db = await getDb();
+    const legacyData = {
+      _syncFormatVersion: 2,
+      profile: {
+        id: 9,
+        name: "Legacy donor",
+        syncType: "server" as const,
+        activePadBehavior: "stop" as const,
+        backupReminderPeriod: 4321,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+      pageMetadata: [
+        {
+          profileId: 9,
+          pageIndex: 3,
+          name: "Stings",
+          isEmergency: false,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+      ],
+      padConfigurations: [
+        {
+          profileId: 9,
+          pageIndex: 3,
+          padIndex: 0,
+          name: "Horn",
+          playbackType: "round-robin",
+          audioFileIds: [],
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+      ],
+      audioFiles: [],
+    } as unknown as ProfileSyncData;
+
+    const profileId = await importProfileFromSyncData(
+      db,
+      legacyData,
+      async () => null,
+    );
+
+    const pages = await db.getAllFromIndex(
+      "pageMetadata",
+      "profileId",
+      profileId,
+    );
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+
+    expect(pages[0].bankId).toBe("3");
+    expect(pads[0].bankId).toBe("3");
+  });
+});
