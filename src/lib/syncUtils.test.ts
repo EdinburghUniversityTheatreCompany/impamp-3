@@ -236,7 +236,7 @@ describe("detectProfileConflicts — audio references survive an id collision", 
     modified = LAST_SYNC,
   ) => ({
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex,
     audioFileIds,
     audioFileHashes,
@@ -317,7 +317,7 @@ describe("detectProfileConflicts — audio references survive an id collision", 
 describe("detectProfileConflicts — a new local item survives", () => {
   const newPad = (created: number) => ({
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 4,
     name: "Just made",
     audioFileIds: [],

@@ -55,7 +55,7 @@ function pad(
 ): SyncedPadConfiguration {
   return {
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 0,
     name: "Horn",
     playbackType: "sequential",
@@ -195,5 +195,101 @@ describe("applyConflictResolutions — hash-keyed twins follow the side the user
     // user made rather than a mismatch the merge invented.
     expect(pad.audioGainSettings).toEqual({ 50: 3 });
     expect(pad.audioGainSettingsByHash).toEqual({ "hash-local": 3 });
+  });
+});
+
+/**
+ * Every conflict in the suite above starts with an empty `padConfigurations`
+ * array — every pad in play is the one conflicting pad, held back from the
+ * automatic merge. That leaves `applyConflictResolutions`'s own pad map keyed
+ * only by whatever `seedFromLocal` produces, and never exercises the map as
+ * it is actually built: from pads the automatic merge already accepted.
+ *
+ * Two pads sharing a `padIndex` but not a `bankId` is exactly the shape that
+ * would collide if that map were still keyed on position — a bug the rest of
+ * this file cannot see, because it never gives the map a second pad to
+ * collide with.
+ */
+describe("applyConflictResolutions — pads that share a padIndex across two banks do not collide", () => {
+  it("keeps both already-merged pads when neither is in conflict", () => {
+    const settledPad = (bankId: string, name: string) => ({
+      profileId: 1,
+      bankId,
+      padIndex: 0,
+      name,
+      audioFileIds: [],
+      playbackType: "sequential" as const,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    });
+
+    // Both pads already passed the automatic merge untouched — this is the
+    // map `applyConflictResolutions` actually builds from in production,
+    // never exercised by the field-conflict cases above because those start
+    // with an empty `padConfigurations` array.
+    const merged = {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [
+        settledPad("bank-a", "Kept A"),
+        settledPad("bank-b", "Kept B"),
+      ],
+      pageMetadata: [],
+      audioFiles: [],
+    } as ProfileSyncData;
+
+    const resolved = applyConflictResolutions(merged, [], {}, RESOLVED_AT);
+
+    const byBankId = new Map(
+      resolved.padConfigurations.map((p) => [p.bankId, p]),
+    );
+    expect(resolved.padConfigurations).toHaveLength(2);
+    expect(byBankId.get("bank-a")?.name).toBe("Kept A");
+    expect(byBankId.get("bank-b")?.name).toBe("Kept B");
+  });
+});
+
+/**
+ * Same gap, same fix, for banks: `applyConflictResolutions` builds a second
+ * map from `pageMetadata`, and no test above ever gives it two
+ * already-merged banks to tell apart.
+ */
+describe("applyConflictResolutions — banks that share a position do not collide", () => {
+  it("keeps both already-merged banks when neither is in conflict", () => {
+    const settledBank = (bankId: string, name: string) => ({
+      profileId: 1,
+      bankId,
+      pageIndex: 0,
+      name,
+      isEmergency: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      _created: 0,
+      _modified: 0,
+      _fieldsModified: {},
+    });
+
+    // Both banks landed on the same `pageIndex` mid-reorder, and both
+    // already passed the automatic merge untouched — exactly the case
+    // `bankId` exists to keep apart.
+    const merged = {
+      _syncFormatVersion: 2,
+      _lastSyncTimestamp: LAST_SYNC,
+      profile: { ...baseProfile },
+      padConfigurations: [],
+      pageMetadata: [settledBank("a", "Kept A"), settledBank("b", "Kept B")],
+      audioFiles: [],
+    } as ProfileSyncData;
+
+    const resolved = applyConflictResolutions(merged, [], {}, RESOLVED_AT);
+
+    const byBankId = new Map(resolved.pageMetadata.map((p) => [p.bankId, p]));
+    expect(resolved.pageMetadata).toHaveLength(2);
+    expect(byBankId.get("a")?.name).toBe("Kept A");
+    expect(byBankId.get("b")?.name).toBe("Kept B");
   });
 });

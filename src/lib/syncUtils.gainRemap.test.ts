@@ -49,7 +49,7 @@ describe("detectProfileConflicts — audio-file-keyed pad settings on merge", ()
       padConfigurations: [
         {
           profileId: 1,
-          pageIndex: 0,
+          bankId: "0",
           padIndex: 0,
           name: "Horn",
           audioFileIds: [200, 201],

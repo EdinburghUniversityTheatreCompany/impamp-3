@@ -1,0 +1,131 @@
+/**
+ * The merge keys on identity, so a rename made on one device and a reorder
+ * made on another do not fight.
+ *
+ * With position as the key, the rename landed on whichever bank now sat at
+ * that position — silently, with no conflict raised. That is the whole
+ * reason `bankId` exists.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  describesSameSyncState,
+  detectProfileConflicts,
+  type ProfileSyncData,
+} from "./syncUtils";
+import { normaliseBankOrder } from "./bankOrder";
+import type { PageMetadata } from "./db";
+
+const LAST_SYNC = 1_000;
+const RENAMED_AT = 2_000;
+const MOVED_AT = 2_500;
+
+const baseProfile = {
+  id: 1,
+  name: "Test profile",
+  syncType: "googleDrive" as const,
+  lastBackedUpAt: 0,
+  backupReminderPeriod: 0,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
+function bank(
+  bankId: string,
+  pageIndex: number,
+  name: string,
+  fieldsModified: Record<string, number> = {},
+): PageMetadata {
+  return {
+    profileId: 1,
+    bankId,
+    pageIndex,
+    name,
+    isEmergency: false,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    _created: 0,
+    _modified: Math.max(0, ...Object.values(fieldsModified)),
+    _fieldsModified: fieldsModified,
+  };
+}
+
+function syncData(banks: PageMetadata[]): ProfileSyncData {
+  return {
+    _syncFormatVersion: 2,
+    _lastSyncTimestamp: LAST_SYNC,
+    profile: { ...baseProfile },
+    padConfigurations: [],
+    pageMetadata: banks,
+    audioFiles: [],
+  };
+}
+
+describe("a rename and a reorder made on two devices", () => {
+  it("leaves the rename on the bank it was made on", async () => {
+    // This device renamed bank "a" and left it at position 0.
+    const local = syncData([
+      bank("a", 0, "Stings", { name: RENAMED_AT }),
+      bank("b", 1, "Bank 2"),
+    ]);
+    // The other device moved bank "b" to position 0 and never renamed.
+    const remote = syncData([
+      bank("a", 1, "Bank 1", { pageIndex: MOVED_AT }),
+      bank("b", 0, "Bank 2", { pageIndex: MOVED_AT }),
+    ]);
+
+    const { mergedData, conflicts } = await detectProfileConflicts(
+      local,
+      remote,
+    );
+    const merged = new Map(
+      mergedData.pageMetadata.map((page) => [page.bankId, page]),
+    );
+
+    expect(conflicts).toHaveLength(0);
+    // The rename stayed with "a", and the move stayed with the positions.
+    expect(merged.get("a")?.name).toBe("Stings");
+    expect(merged.get("a")?.pageIndex).toBe(1);
+    expect(merged.get("b")?.pageIndex).toBe(0);
+  });
+
+  it("does not treat a moved bank as a new bank", async () => {
+    const local = syncData([bank("a", 0, "Stings"), bank("b", 1, "Beds")]);
+    const remote = syncData([bank("a", 1, "Stings"), bank("b", 0, "Beds")]);
+
+    const { mergedData } = await detectProfileConflicts(local, remote);
+
+    expect(mergedData.pageMetadata).toHaveLength(2);
+  });
+});
+
+describe("order normalisation across two devices", () => {
+  it("resolves duplicate and gappy positions to one dense order", () => {
+    // Both devices hold the same rows, in whatever order they read them.
+    const deviceA = [bank("a", 2, "A"), bank("b", 2, "B"), bank("c", 7, "C")];
+    const deviceB = [bank("c", 7, "C"), bank("b", 2, "B"), bank("a", 2, "A")];
+
+    const orderA = normaliseBankOrder(deviceA).map((page) => page.bankId);
+    const orderB = normaliseBankOrder(deviceB).map((page) => page.bankId);
+
+    expect(orderA).toEqual(["a", "b", "c"]);
+    expect(orderB).toEqual(orderA);
+    expect(normaliseBankOrder(deviceA).map((page) => page.pageIndex)).toEqual([
+      0, 1, 2,
+    ]);
+  });
+});
+
+describe("the diff summary sorts on identity, not position", () => {
+  it("still reports the same state when two banks tie on an unnormalised position", () => {
+    // Mid-reorder, both devices can legitimately hold two banks at the same
+    // pageIndex (see bankOrder.ts). Sorting the diff summary by pageIndex
+    // would break that tie by array order, which differs depending on how
+    // each device happened to read its rows — a false "these differ",
+    // costing a needless push. Sorting by bankId breaks the tie the same way
+    // on both devices.
+    const a = syncData([bank("a", 0, "A"), bank("b", 0, "B")]);
+    const b = syncData([bank("b", 0, "B"), bank("a", 0, "A")]);
+
+    expect(describesSameSyncState(a, b)).toBe(true);
+  });
+});

@@ -64,7 +64,7 @@ function pad({
 }) {
   return {
     profileId: 1,
-    pageIndex: 0,
+    bankId: "0",
     padIndex: 0,
     name: "Pad",
     playbackType: "round-robin" as const,

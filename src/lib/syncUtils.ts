@@ -50,7 +50,7 @@ export interface FieldConflict {
 
 export interface ItemConflict {
   storeName: "profiles" | "padConfigurations" | "pageMetadata";
-  key: string | number; // Unique key (profile ID, pageIndex-padIndex, pageIndex)
+  key: string | number; // Unique key (profile ID, bankId-padIndex, bankId)
   id?: number; // Original DB ID if available
   type: "field_conflict" | "local_only" | "remote_only";
   localItem?: Syncable | null;
@@ -604,7 +604,7 @@ export const detectProfileConflicts = async (
 
   // --- 2. Compare Pad Configurations ---
   const padConfigKeyExtractor = (item: PadConfiguration) =>
-    `${item.pageIndex}-${item.padIndex}`;
+    `${item.bankId}-${item.padIndex}`;
   const padConfigResult = compareSyncableArrays(
     // Let type inference work
     localData.padConfigurations,
@@ -621,8 +621,7 @@ export const detectProfileConflicts = async (
   }
 
   // --- 3. Compare Page Metadata ---
-  const pageMetaKeyExtractor = (item: PageMetadata) =>
-    item.pageIndex.toString();
+  const pageMetaKeyExtractor = (item: PageMetadata) => item.bankId;
   const pageMetaResult = compareSyncableArrays(
     // Let type inference work
     localData.pageMetadata,
@@ -852,10 +851,12 @@ const remoteFacingView = (data: ProfileSyncData): unknown => {
       ),
     },
     pads: [...data.padConfigurations]
-      .sort((a, b) => a.pageIndex - b.pageIndex || a.padIndex - b.padIndex)
+      .sort(
+        (a, b) => a.bankId.localeCompare(b.bankId) || a.padIndex - b.padIndex,
+      )
       .map((pad) => itemView(pad as unknown as Record<string, unknown>)),
     pages: [...data.pageMetadata]
-      .sort((a, b) => a.pageIndex - b.pageIndex)
+      .sort((a, b) => a.bankId.localeCompare(b.bankId))
       .map((page) => itemView(page as unknown as Record<string, unknown>)),
     audio: (data.audioFiles ?? [])
       .map((file) => ({
@@ -932,10 +933,10 @@ export const applyConflictResolutions = (
   const resolved = deepClone(merged);
 
   const resolvedPadConfigs = new Map(
-    resolved.padConfigurations.map((p) => [`${p.pageIndex}-${p.padIndex}`, p]),
+    resolved.padConfigurations.map((p) => [`${p.bankId}-${p.padIndex}`, p]),
   );
   const resolvedPageMeta = new Map(
-    resolved.pageMetadata.map((p) => [p.pageIndex.toString(), p]),
+    resolved.pageMetadata.map((p) => [p.bankId, p]),
   );
 
   conflicts.forEach((conflict) => {
