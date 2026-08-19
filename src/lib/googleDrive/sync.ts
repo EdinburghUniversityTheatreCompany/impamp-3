@@ -15,10 +15,7 @@ import {
   getAudioFileByHash,
   ensureAudioFileHash,
 } from "@/lib/db";
-import {
-  detectProfileConflicts,
-  normaliseIncomingSyncData,
-} from "@/lib/syncUtils";
+import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
 import {
@@ -428,7 +425,9 @@ async function pullPublicReadOnlyProfile(
   // There is no merge on this path — a legacy blob writes straight to
   // IndexedDB below, so it must arrive already carrying `bankId` or its rows
   // land invisible to the `profileBank`/`profileBankPad` indexes.
-  const remoteData = normaliseIncomingSyncData(rawRemoteData);
+  // `downloadPublicProfileData` (api.ts) normalises before returning, so
+  // `rawRemoteData` already satisfies that here — no second call needed.
+  const remoteData = rawRemoteData;
 
   // Fetch any audio we don't have yet through the public proxy (token = null)
   if (remoteData.audioFiles) {
@@ -736,12 +735,12 @@ const performProfileSync = async (
     const rawRemoteData = fileId
       ? await downloadDriveFile(fileId, tokenInfo, refreshCallback)
       : null;
-    // Normalised once here, so the merge below, the conflict modal's data,
-    // and any future reader of `remoteData` all see the same blob — never
-    // the raw one a legacy client at rest may still be holding.
-    const remoteData = rawRemoteData
-      ? normaliseIncomingSyncData(rawRemoteData)
-      : null;
+    // `downloadDriveFile` (api.ts) normalises before returning, so the merge
+    // below, the conflict modal's data, and any future reader of
+    // `remoteData` all see the same already-normalised blob — never the raw
+    // one a legacy client at rest may still be holding. No second call
+    // needed here.
+    const remoteData = rawRemoteData;
 
     // 1a. Backfill driveFileIds from remote JSON into local audio file records so
     //     that uploadMissingAudioFiles skips files already on Drive without needing

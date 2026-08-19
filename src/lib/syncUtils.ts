@@ -578,9 +578,15 @@ const stripPadPageIndex = (
  * Call this exactly once, at the point a blob arrives from the network, so
  * one normalised blob flows onward and no consumer downstream — the merge,
  * `describesSameSyncState`'s diff summary, or a read-only pull that writes
- * straight to IndexedDB with no merge at all — can receive the raw one.
- * Putting the fix inside the merge alone was tried and was not enough:
- * `describesSameSyncState` compares a merge's *output* against the raw
+ * straight to IndexedDB with no merge at all — can receive the raw one. That
+ * point is `googleDrive/api.ts`'s two parse-and-return functions,
+ * `downloadDriveFile` and `downloadPublicProfileData` — the lowest layer with
+ * a test harness — so `googleDrive/sync.ts`'s pull sites receive an
+ * already-normalised blob and do not call this again. `detectProfileConflicts`
+ * below still does, defensively: it is reachable from a test or a future
+ * caller that is not `sync.ts`, and this function is idempotent and cheap to
+ * call twice. Putting the fix inside the merge *alone* was tried and was not
+ * enough: `describesSameSyncState` compares a merge's *output* against the raw
  * remote blob, which never passes through the merge, and a read-only pull
  * never calls the merge either.
  *
