@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react"; // Removed useRef
+import React, { useEffect, useCallback } from "react"; // Removed useRef, useState
 import dynamic from "next/dynamic";
 import PadGrid from "@/components/PadGrid";
+import BankTabStrip from "@/components/BankTabStrip";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import ArmedTracksPanel from "@/components/ArmedTracksPanel";
 import PlaybackAnnouncer from "@/components/PlaybackAnnouncer";
@@ -21,13 +22,13 @@ import EditBankForm from "@/components/modals/EditBankForm";
 import type { BankFormValues, FormErrors } from "@/types/forms";
 import PromptModalContent from "@/components/modals/PromptModalContent";
 import {
-  renamePage,
-  setPageEmergencyState,
-  upsertPageMetadata,
-  getAllPageMetadataForProfile,
-  PageMetadata,
+  renameBank,
+  setBankEmergencyState,
+  createBank,
+  MAX_BANKS,
 } from "@/lib/db";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
+import { positionOfBank } from "@/lib/bankOrder";
 import BackupReminderNotification from "@/components/BackupReminderNotification"; // Import the new component
 
 // Pre-load ProfileSelector component to avoid remounting during bank switches
@@ -44,7 +45,6 @@ const ProfileSelector = dynamic(
 export default function Home() {
   // Get state and utility functions from profile store
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const currentPageIndex = useProfileStore((state) => state.currentPageIndex);
   const isEditMode = useProfileStore((state) => state.isEditMode);
   const isDeleteMoveMode = useProfileStore((state) => state.isDeleteMoveMode);
   const readOnlyReason = useProfileStore((state) => {
@@ -72,80 +72,32 @@ export default function Home() {
     return <ProfileSelector />;
   }, []); // Empty dependency array ensures this doesn't change when banks switch
 
-  // State for bank metadata
-  const [bankNames, setBankNames] = useState<{ [key: number]: string }>({});
-  const [emergencyBanks, setEmergencyBanks] = useState<{
-    [key: number]: boolean;
-  }>({});
+  // Bank metadata, keyed by identity rather than position.
+  const banks = useProfileStore((state) => state.banks);
+  const currentBankId = useProfileStore((state) => state.currentBankId);
+  const loadBanks = useProfileStore((state) => state.loadBanks);
 
-  // Load bank metadata when active profile or current page changes
+  // `padConfigsVersion` is deliberately present: it is the counter sync
+  // bumps after it applies a remote change, and without it a bank renamed by
+  // a collaborator never appeared until the profile was switched.
   useEffect(() => {
     if (activeProfileId === null) return;
-
-    // Load metadata for all banks
-    const loadBankMetadata = async () => {
-      const newBankNames: { [key: number]: string } = {};
-      const newEmergencyBanks: { [key: number]: boolean } = {};
-
-      try {
-        // Get all existing page metadata for this profile
-        const allMetadata = await getAllPageMetadataForProfile(activeProfileId);
-
-        // Process all existing metadata
-        allMetadata.forEach((metadata: PageMetadata) => {
-          newBankNames[metadata.pageIndex] = metadata.name;
-          newEmergencyBanks[metadata.pageIndex] = metadata.isEmergency;
-        });
-
-        // Ensure we have defaults for banks 1-10 if they don't exist
-        // These correspond to internal indices 0-9
-        for (let i = 0; i <= 9; i++) {
-          if (!newBankNames.hasOwnProperty(i)) {
-            const bankNumber = convertIndexToBankNumber(i);
-            newBankNames[i] = `Bank ${bankNumber}`;
-            newEmergencyBanks[i] = false;
-          }
-        }
-      } catch (error) {
-        console.error(`Error loading bank metadata:`, error);
-        // Set defaults for banks 1-10 (indices 0-9) in case of error
-        for (let i = 0; i <= 9; i++) {
-          const bankNumber = convertIndexToBankNumber(i);
-          newBankNames[i] = `Bank ${bankNumber}`;
-          newEmergencyBanks[i] = false;
-        }
-      }
-
-      setBankNames(newBankNames);
-      setEmergencyBanks(newEmergencyBanks);
-    };
-
-    loadBankMetadata();
-    // `currentPageIndex` is deliberately absent: this reads *all* the profile's
-    // metadata in one go and never looked at the current bank, so having it
-    // here re-read the whole pageMetadata store on every 1-9/0 press for no
-    // change in result.
-    //
-    // `padConfigsVersion` is deliberately present: it is the counter sync
-    // bumps after applying a remote change, and without it a bank renamed by a
-    // collaborator never appeared until the profile was switched. The local
-    // edit paths patch this state by hand, which is why nobody noticed.
-  }, [activeProfileId, padConfigsVersion]);
+    void loadBanks(activeProfileId);
+  }, [activeProfileId, padConfigsVersion, loadBanks]);
 
   // Get form modal hook
   const { openFormModal } = useFormModal();
 
-  // Handle bank click with shift key in edit mode
-  const handleBankClick = (bankIndex: number, isShiftClick: boolean) => {
-    if (!isEditMode || !isShiftClick || activeProfileId === null) {
-      // Regular bank switch (handled by the button's onClick)
-      return;
-    }
+  // Handle a bank tab click while in edit mode: open the rename/emergency dialog.
+  const handleBankEdit = (bankId: string) => {
+    if (activeProfileId === null) return;
+    const bank = banks.find((b) => b.bankId === bankId);
+    if (!bank) return;
 
-    // In edit mode with shift pressed, show dialog to rename and set emergency flag
-    const bankNumber = convertIndexToBankNumber(bankIndex);
-    const currentName = bankNames[bankIndex] || `Bank ${bankNumber}`;
-    const currentIsEmergency = emergencyBanks[bankIndex] || false;
+    const position = positionOfBank(banks, bankId);
+    const bankNumber = convertIndexToBankNumber(position);
+    const currentName = bank.name;
+    const currentIsEmergency = bank.isEmergency;
 
     // Open form modal with current values
     openFormModal<BankFormValues>({
@@ -169,28 +121,29 @@ export default function Home() {
         try {
           // Update name if changed
           if (finalName !== currentName) {
-            await renamePage(activeProfileId, bankIndex, finalName);
-            setBankNames((prev) => ({ ...prev, [bankIndex]: finalName }));
+            await renameBank(activeProfileId, bankId, finalName);
             console.log(`Renamed bank ${bankNumber} to "${finalName}"`);
           }
 
           // Update emergency state if changed
           if (newIsEmergency !== currentIsEmergency) {
-            await setPageEmergencyState(
+            await setBankEmergencyState(
               activeProfileId,
-              bankIndex,
+              bankId,
               newIsEmergency,
             );
-            setEmergencyBanks((prev) => ({
-              ...prev,
-              [bankIndex]: newIsEmergency,
-            }));
             // Invalidate every cached copy of pad data, the keyboard's
             // emergency set included, only if the state actually changed
             incrementPadConfigsVersion();
             console.log(
               `Set emergency status for bank ${bankNumber} to ${newIsEmergency}, triggered emergency sounds refresh`,
             );
+          }
+          if (
+            finalName !== currentName ||
+            newIsEmergency !== currentIsEmergency
+          ) {
+            await loadBanks(activeProfileId);
           }
           requestSync(activeProfileId);
         } catch (error) {
@@ -202,6 +155,15 @@ export default function Home() {
       confirmText: "Save Changes",
       size: "sm",
     });
+  };
+
+  // Handle a bank tab click outside edit mode: switch to that bank.
+  const handleBankSelect = (bankId: string) => {
+    const position = positionOfBank(banks, bankId);
+    if (position < 0) return;
+    useProfileStore
+      .getState()
+      .setCurrentPageIndex(convertIndexToBankNumber(position));
   };
 
   return (
@@ -290,84 +252,31 @@ export default function Home() {
           <div className="mb-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center">
               {/* Bank Selector Tabs - show all available banks */}
-              <div
-                className="flex flex-1 space-x-1 overflow-x-auto pb-1"
-                role="tablist"
-              >
-                {Object.keys(bankNames).map((bankKey) => {
-                  const index = parseInt(bankKey, 10);
-                  const bankNumber = convertIndexToBankNumber(index);
-                  return (
-                    <button
-                      key={index}
-                      data-bank-index={index}
-                      role="tab"
-                      aria-selected={index === currentPageIndex}
-                      onClick={() => {
-                        // Rely solely on isEditMode from the store
-                        if (isEditMode) {
-                          handleBankClick(index, true);
-                        } else {
-                          // Convert bank number back to the format expected by setCurrentPageIndex
-                          // Bank 10 should be passed as 0, banks 1-9 as 1-9, banks 11-20 as 11-20
-                          const uiBankNumber =
-                            bankNumber === 10 ? 0 : bankNumber;
-                          useProfileStore
-                            .getState()
-                            .setCurrentPageIndex(uiBankNumber);
-                        }
-                      }}
-                      className={`relative px-4 py-2 rounded-t-lg flex items-center text-sm font-medium transition-colors
-                      ${
-                        index === currentPageIndex
-                          ? "bg-blue-500 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                      } 
-                      ${isEditMode ? "border-t-2 border-x-2 border-dashed border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20" : ""}
-                      ${emergencyBanks[index] ? "ring-1 ring-red-500" : ""}`}
-                      aria-label={`${isEditMode ? "Edit" : "Switch to"} bank ${bankNumber}`}
-                      title={
-                        isEditMode
-                          ? `${bankNames[index] || `Bank ${bankNumber}`}${emergencyBanks[index] ? " (Emergency)" : ""}\nShift+click to rename`
-                          : bankNames[index] || `Bank ${bankNumber}`
-                      }
-                    >
-                      <span>
-                        {bankNumber}: {bankNames[index] || `Bank ${bankNumber}`}
-                      </span>
-                      {emergencyBanks[index] && (
-                        <span
-                          className="ml-2 w-3 h-3 bg-red-500 rounded-full"
-                          title="Emergency bank"
-                        ></span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+              <BankTabStrip
+                banks={banks}
+                currentBankId={currentBankId}
+                isEditMode={isEditMode}
+                onSelect={handleBankSelect}
+                onEdit={handleBankEdit}
+                onReorder={() => {
+                  // Dragging arrives in Task 16; nothing to do yet.
+                }}
+              />
 
               {/* Add Bank Button (only shown in edit mode) */}
               {isEditMode && (
                 <button
+                  disabled={banks.length >= MAX_BANKS}
                   onClick={() => {
-                    // Find the next available bank number
-                    // Get all current bank indices and find the next available index
-                    const usedIndices = Object.keys(bankNames).map((k) =>
-                      parseInt(k, 10),
-                    );
-                    let nextIndex = 10; // Start at index 10 (bank 11) for new banks
-
-                    // Find the first unused index starting from 10
-                    while (usedIndices.includes(nextIndex)) {
-                      nextIndex++;
-                    }
-                    if (nextIndex >= 20) {
-                      alert("Maximum number of banks reached (20)");
+                    if (banks.length >= MAX_BANKS) {
+                      alert(`Maximum number of banks reached (${MAX_BANKS})`);
                       return;
                     }
 
-                    // Get the bank number for display
-                    const nextBankNumber = convertIndexToBankNumber(nextIndex);
+                    // The bank about to be created lands at the next free
+                    // position, which — since nothing ever deletes a bank —
+                    // is simply one past the current count.
+                    const nextBankNumber = banks.length + 1;
 
                     // Variable to hold the new bank name
                     let modalDataValue = `Bank ${nextBankNumber}`;
@@ -392,31 +301,27 @@ export default function Home() {
 
                         if (activeProfileId !== null) {
                           try {
-                            await upsertPageMetadata({
-                              profileId: activeProfileId,
-                              pageIndex: nextIndex,
-                              name: finalBankName,
-                              isEmergency: false,
-                            });
-
-                            // Update local state
-                            setBankNames((prev) => ({
-                              ...prev,
-                              [nextIndex]: finalBankName,
-                            }));
-                            setEmergencyBanks((prev) => ({
-                              // Also ensure emergency state is set
-                              ...prev,
-                              [nextIndex]: false,
-                            }));
+                            const newBank = await createBank(
+                              activeProfileId,
+                              finalBankName,
+                            );
+                            await loadBanks(activeProfileId);
 
                             // Switch to the new bank
-                            useProfileStore
-                              .getState()
-                              .setCurrentPageIndex(nextBankNumber);
+                            const position = positionOfBank(
+                              useProfileStore.getState().banks,
+                              newBank.bankId,
+                            );
+                            if (position >= 0) {
+                              useProfileStore
+                                .getState()
+                                .setCurrentPageIndex(
+                                  convertIndexToBankNumber(position),
+                                );
+                            }
 
                             console.log(
-                              `Created new bank ${nextBankNumber} (index ${nextIndex}): ${finalBankName}`,
+                              `Created new bank "${finalBankName}" (id ${newBank.bankId})`,
                             );
                           } catch (error) {
                             console.error(`Failed to create new bank:`, error);
@@ -439,7 +344,7 @@ export default function Home() {
                       },
                     });
                   }}
-                  className="ml-2 px-3 py-2 rounded flex items-center justify-center text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                  className="ml-2 px-3 py-2 rounded flex items-center justify-center text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Add new bank"
                   title="Add new bank"
                 >
@@ -449,8 +354,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Pass the current page index to PadGrid */}
-          <PadGrid currentPageIndex={currentPageIndex} />
+          {/* Pass the current bank's identity to PadGrid */}
+          <PadGrid bankId={currentBankId ?? ""} />
         </div>
       </div>
 
