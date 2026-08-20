@@ -8,6 +8,7 @@
 
 import React from "react";
 import { FormField, TextInput, Checkbox, RadioGroup } from "@/components/forms";
+import { activePadBehaviorOptions } from "@/components/forms/activePadBehaviorOptions";
 import type { ProfileFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
 import type { ActivePadBehavior } from "@/lib/db";
@@ -77,28 +78,14 @@ const ProfileEditForm: React.FC<FormModalRenderProps<ProfileFormValues>> = ({
         <RadioGroup
           id="activePadBehavior"
           name="activePadBehavior"
-          options={[
-            {
-              value: "continue",
-              label: "Continue Playing",
-              description: "The sound will continue playing uninterrupted.",
-            },
-            {
-              value: "stop",
-              label: "Stop Sound",
-              description: "The sound will stop immediately.",
-            },
-            {
-              value: "restart",
-              label: "Restart Sound",
-              description: "The sound will restart from the beginning.",
-            },
-          ]}
+          options={activePadBehaviorOptions}
           value={values.activePadBehavior}
           onChange={(value) =>
             updateValue("activePadBehavior", value as ActivePadBehavior)
           }
           error={errors.activePadBehavior as string}
+          data-testid="profile-active-behavior-group"
+          optionTestIdPrefix="profile-active-behavior"
         />
       </FormField>
 

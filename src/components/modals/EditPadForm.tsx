@@ -21,11 +21,20 @@ import {
   OnDragEndResponder,
 } from "@hello-pangea/dnd";
 import { Checkbox, FormField, RadioGroup } from "@/components/forms";
+import {
+  FOLLOW_PROFILE,
+  padActivePadBehaviorOptions,
+} from "@/components/forms/activePadBehaviorOptions";
 import { TextInput } from "@/components/forms";
 import GainControl from "@/components/GainControl";
 import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
-import { getAudioFile, addAudioFile, PlaybackType } from "@/lib/db";
+import {
+  getAudioFile,
+  addAudioFile,
+  type ActivePadBehavior,
+  PlaybackType,
+} from "@/lib/db";
 import { DEFAULT_PAD_NAME } from "@/lib/constants";
 
 const WaveformTrimmer = lazy(() => import("@/components/WaveformTrimmer"));
@@ -282,6 +291,34 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           horizontal
           data-testid="edit-pad-playback-mode-group"
           optionTestIdPrefix="edit-pad-playback-mode"
+        />
+      </FormField>
+
+      {/* Behaviour when this pad is triggered while it is already playing */}
+      <FormField
+        id="activePadBehavior"
+        label="When already playing"
+        error={errors.activePadBehavior as string}
+      >
+        <RadioGroup
+          id="activePadBehavior"
+          name="activePadBehavior"
+          options={padActivePadBehaviorOptions}
+          // `undefined` has no radio of its own, so it shows as the
+          // "follow the profile" option — and goes back out as `undefined`
+          // below, never as the profile's current answer.
+          value={values.activePadBehavior ?? FOLLOW_PROFILE}
+          onChange={(value) =>
+            updateValue(
+              "activePadBehavior",
+              value === FOLLOW_PROFILE
+                ? undefined
+                : (value as ActivePadBehavior),
+            )
+          }
+          error={errors.activePadBehavior as string}
+          data-testid="edit-pad-active-behavior-group"
+          optionTestIdPrefix="edit-pad-active-behavior"
         />
       </FormField>
 
