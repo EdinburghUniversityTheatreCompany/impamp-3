@@ -164,3 +164,20 @@ that activates `results[0]`, with the chord deciding play versus arm, and a
 visible hint in the results header saying so.
 
 Noticed while making the arm chord reachable on macOS.
+
+## `RadioGroup`'s `aria-labelledby` points at an id nothing renders
+
+`RadioGroup` sets `aria-labelledby={`${id}-label`}` on its `role="radiogroup"`
+container, but nothing in the codebase renders an element with that id. Its
+three callers all wrap it in a `FormField`, which renders
+`<label htmlFor={id}>` — no id of its own — so the `htmlFor` also points at a
+non-element (the radios are `${id}-continue`, `${id}-stop`, and so on). The net
+effect is a radio group with no accessible name and a label that clicks
+nowhere, in the profile editor, Playback Settings and now the pad editor.
+
+The fix is small and belongs in the two shared components rather than in each
+form: give `FormField`'s label `id={`${id}-label`}`, and drop or repoint the
+`htmlFor` since there is no single control for it to address.
+
+Noticed while adding the Layer option to the three activePadBehavior radio
+groups (Task 9 of the layered-retrigger plan).
