@@ -103,6 +103,24 @@ export interface Profile {
  * another copy is what lets one of them fall behind the others.
  */
 export type ActivePadBehavior = "continue" | "stop" | "restart" | "layer";
+
+/**
+ * What a trigger must do to this pad, given the profile's default.
+ *
+ * One rule in one place. Every trigger path asks this rather than reading the
+ * pad and the profile itself, so a path that forgets the override cannot exist.
+ *
+ * @param pad - The pad, or anything that carries its override
+ * @param profileDefault - What the active profile says
+ * @returns The behaviour to apply
+ */
+export function resolveActivePadBehavior(
+  pad: { activePadBehavior?: ActivePadBehavior },
+  profileDefault: ActivePadBehavior,
+): ActivePadBehavior {
+  return pad.activePadBehavior ?? profileDefault;
+}
+
 export type PlaybackType = "sequential" | "random" | "round-robin";
 
 /**
@@ -151,6 +169,12 @@ export interface PadConfiguration {
    * enabled, so records written before this field existed need no migration.
    */
   isDisabled?: boolean;
+  /**
+   * Overrides the profile's `activePadBehavior` for this pad alone. Undefined
+   * means follow the profile, so records written before this field existed need
+   * no migration.
+   */
+  activePadBehavior?: ActivePadBehavior;
   createdAt: Date;
   updatedAt: Date;
   // Sync Timestamps
@@ -1605,6 +1629,7 @@ export type PadPlaybackSettings = Pick<
   | "padGainDb"
   | "playbackType"
   | "isDisabled"
+  | "activePadBehavior"
   | "name"
 >;
 
@@ -1618,6 +1643,11 @@ export function extractPadPlaybackSettings(
     padGainDb: pad.padGainDb,
     playbackType: pad.playbackType ?? DEFAULT_PLAYBACK_TYPE,
     isDisabled: pad.isDisabled ?? false,
+    // Deliberately not defaulted: undefined *is* the value that means "follow
+    // the profile", and `resolveActivePadBehavior` is the only place that rule
+    // is applied. Defaulting here would freeze the profile's setting at the
+    // moment a pad was copied.
+    activePadBehavior: pad.activePadBehavior,
     name: pad.name,
   };
 }
