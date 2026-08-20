@@ -105,3 +105,47 @@ prefix and render `{entry.bankName}` alone, since the name already carries it
 when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
+
+## `triggerPad` could spread its argument instead of re-listing every field
+
+`TriggerablePad` (`src/lib/audio/triggerPad.ts`) declares eight pad fields, and
+`triggerPad` copies all eight into `triggerAudioForPadInstant` one at a time.
+Every one of those names is in `TriggerAudioArgs` too, so the whole enumeration
+could be `{ ...pad, activeProfileId, currentBankId, ...callbacks }` with no
+change in behaviour — the callbacks are added after, so they still win, and a
+key `TriggerAudioArgs` does not declare is simply ignored by the destructuring
+downstream.
+
+The enumeration is not merely redundant, it is the failure mode: both
+production callers build their argument by spreading
+`extractPadPlaybackSettings(pad)` into a `TriggerablePad` literal, and
+TypeScript exempts spread-in properties from excess-property checking. So a new
+pad field is dropped in silence twice over — once by the interface not
+declaring it, once by the copy not listing it — with no compiler error at
+either point. That is exactly what happened to `activePadBehavior` and it is
+the same shape as CLAUDE.md's `audioGainSettings`-in-five-places note.
+
+Not done as part of Task 7 of the layered-retrigger plan because that plan
+explicitly instructed adding the field to both places, and quietly changing the
+mechanism instead would have been a deviation the reviewer could not see. The
+same argument applies one level up to `SearchResult`, `EmergencySound` and
+`ArmedTrackState`, all of which are hand-built projections of a pad that could
+embed `PadPlaybackSettings` instead of restating it.
+
+Noticed while threading `activePadBehavior` through every trigger path.
+
+## The coverage ratchet in `vitest.config.ts` is now far below the real number
+
+The thresholds are 33 / 28 / 27 / 33 and the comment records the run they were
+set from as "34.28 / 29.89 / 28.47 / 34.77". A full `npm run test:coverage` on
+the layered-retrigger branch after Task 7 reports **47.81 / 40.62 / 44.14 /
+48.56** — roughly fourteen points of headroom on statements and lines. The gate
+can no longer notice a whole untested module landing, which is the thing it
+exists for.
+
+Deliberately not raised in Task 7: the number will move again with the rest of
+that branch, and a threshold bump is a branch-level decision rather than one
+task's. Worth doing once the branch is complete, per CLAUDE.md's "raise them
+deliberately when a run comes in comfortably above".
+
+Noticed while running the coverage gate at the end of Task 7.
