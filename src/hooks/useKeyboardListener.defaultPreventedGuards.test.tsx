@@ -1,22 +1,27 @@
 // @vitest-environment jsdom
 /**
+ * A key something upstream already claimed is not this hook's to act on.
+ *
  * `@hello-pangea/dnd`'s keyboard sensor drives a bank-tab drag from a
  * `window` keydown listener bound with `capture: true`
- * (`getDraggingBindings`, bound at dnd.cjs.js:5320-5323). Two of the keys it
- * claims mid-drag are keys this hook also owns globally, and it calls
- * `event.preventDefault()` on both before handing the event on:
+ * (`getDraggingBindings`, bound at dnd.cjs.js:5320-5323). Three of the keys
+ * it claims mid-drag are keys this hook also owns globally, and it calls
+ * `event.preventDefault()` on all three before handing the event on:
  *
  *   - Escape cancels the drag (dnd.cjs.js:5227-5231) — and used to *also*
  *     hit the panic button, hard-stopping every sound in the room.
  *   - Space drops the tab (dnd.cjs.js:5232-5236) — and used to *also* fade
  *     out whatever was playing.
+ *   - Enter falls through to `preventStandardKeyEvents`, whose `preventedKeys`
+ *     is exactly `{enter, tab}` (dnd.cjs.js:4957-4965) — and used to *also*
+ *     fire an emergency cue.
  *
  * This hook's listener is bubble-phase, so the library's capture-phase one
- * always runs first; both branches now bail on `event.defaultPrevented`.
- * The cases below simulate that capture-phase `preventDefault()` with a real
- * capture listener rather than mounting dnd itself, because the guard reads
- * nothing but the flag — which is precisely what makes it robust to dnd
- * being anywhere else on the page.
+ * always runs first. One guard above the Tab branch now covers every global
+ * shortcut below it. The cases here simulate that capture-phase
+ * `preventDefault()` with a real capture listener rather than mounting dnd
+ * itself, because the guard reads nothing but the flag — which is precisely
+ * what makes it robust to dnd being anywhere else on the page.
  */
 import "fake-indexeddb/auto";
 import { act } from "react";
@@ -32,13 +37,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   fadeOutAllAudio: vi.fn(),
   stopAllAudio: vi.fn(),
+  triggerAudioForPadInstant: vi.fn(),
 }));
 
 vi.mock("@/lib/audio", () => ({
   ensureAudioContextActive: vi.fn(),
   stopAllAudio: mocks.stopAllAudio,
   fadeOutAllAudio: mocks.fadeOutAllAudio,
-  triggerAudioForPadInstant: vi.fn(),
+  triggerAudioForPadInstant: mocks.triggerAudioForPadInstant,
 }));
 
 // Both specifiers resolve to the same file (the barrel re-exports it), but
@@ -49,6 +55,22 @@ const searchContextStub = () => ({
   openSearchModal: vi.fn(),
   closeSearchModal: vi.fn(),
 });
+// The Enter branch only reaches `triggerAudioForPadInstant` when the
+// emergency set has something in it, and the real loader wants a populated
+// IndexedDB. One armed cue is all this needs to observe.
+vi.mock("@/hooks/emergencySounds", () => ({
+  hasLoadedEmergencySounds: () => true,
+  reloadEmergencySounds: vi.fn(async () => {}),
+  takeNextEmergencySound: () => ({
+    profileId: 1,
+    bankId: "bank-1",
+    padIndex: 0,
+    audioFileIds: [1],
+    playbackType: "sequential",
+    name: "Emergency cue",
+  }),
+}));
+
 vi.mock("@/components/search", () => ({
   useSearchContext: searchContextStub,
 }));
@@ -69,6 +91,7 @@ let root: Root;
 beforeEach(() => {
   mocks.fadeOutAllAudio.mockClear();
   mocks.stopAllAudio.mockClear();
+  mocks.triggerAudioForPadInstant.mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -103,7 +126,10 @@ async function press(
   }
 
   try {
-    act(() => {
+    // `await act(async …)` rather than the sync form: the Enter branch awaits
+    // its way to `triggerAudioForPadInstant`, so a sync dispatch would assert
+    // before the call it is looking for had happened.
+    await act(async () => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
       );
@@ -130,6 +156,12 @@ const claimedShortcuts = [
     key: " ",
     effect: "fades out all audio",
     action: mocks.fadeOutAllAudio,
+  },
+  {
+    label: "Enter",
+    key: "Enter",
+    effect: "fires an emergency cue",
+    action: mocks.triggerAudioForPadInstant,
   },
 ];
 

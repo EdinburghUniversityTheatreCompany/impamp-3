@@ -211,6 +211,43 @@ export function useKeyboardListener() {
         return;
       }
 
+      // If something upstream already claimed this key, it is not ours.
+      //
+      // Every shortcut below this line is a *global* one: it fires on a key
+      // no matter what has focus, on the assumption that nothing else wanted
+      // it. `defaultPrevented` is how the DOM says that assumption is wrong —
+      // some handler nearer the target already acted on this keypress — so
+      // acting on it again runs two commands off one press.
+      //
+      // The instance that forced this: `@hello-pangea/dnd`'s keyboard sensor
+      // drives a bank-tab drag from a `window` keydown listener bound with
+      // `{capture: true}` (`getDraggingBindings`, bound at
+      // node_modules/@hello-pangea/dnd/dist/dnd.cjs.js:5320-5323). It runs —
+      // and calls `preventDefault()` — before this bubble-phase listener, on
+      // Escape to cancel (:5227-5231), Space to drop (:5232-5236) and Enter
+      // via `preventStandardKeyEvents` (:4957-4965). All three were live
+      // bugs: dragging a bank tab and pressing Escape hit the panic button
+      // and hard-stopped every sound in the room, Space faded everything out,
+      // and Enter fired an emergency cue.
+      //
+      // One guard rather than one per branch, deliberately. Three copies of
+      // the same rule is how this repo's regressions are usually shaped, and
+      // two of these three were already missed once. Placed here rather than
+      // at the top of the handler because the two early-outs above are what
+      // make it safe: Ctrl+S must stay live behind an overlay, and anything
+      // typed into an INPUT/TEXTAREA/contentEditable has already returned, so
+      // a form control preventDefaulting its own Enter can never reach this
+      // and suppress a pad letter or a bank digit.
+      //
+      // It covers Tab and Ctrl+F too, which is wider than the three known
+      // cases and intentional. For Tab the outcome is identical either way —
+      // that branch only calls `preventDefault()` and returns, and the guard
+      // fires only when the default was already prevented — and dnd never
+      // claims "f".
+      if (event.defaultPrevented) {
+        return;
+      }
+
       // Prevent default browser tabbing behavior outside of inputs and modals
       if (event.key === "Tab") {
         event.preventDefault();
@@ -297,16 +334,6 @@ export function useKeyboardListener() {
 
       // Handle Escape key as "panic button" to stop all audio
       if (event.key === "Escape") {
-        // The same capture-phase `window` listener that claims Space claims
-        // Escape: `getDraggingBindings` cancels a keyboard drag on Escape and
-        // calls `preventDefault()` first (dnd.cjs.js:5227-5231, bound on
-        // `window` with `capture: true` at :5320-5323). Without this check,
-        // Escaping out of a bank-tab drag also hard-stopped every sound in
-        // the room — the same bug as the Space one below, on the branch
-        // where it costs the most.
-        if (event.defaultPrevented) {
-          return;
-        }
         event.preventDefault();
         console.log(
           "[KeyboardListener] Escape key pressed - stopping all audio playback.",
@@ -317,17 +344,6 @@ export function useKeyboardListener() {
 
       // Handle Space key to fade out all audio
       if (event.key === " ") {
-        // `@hello-pangea/dnd`'s keyboard sensor lifts and drops a dragged
-        // bank tab on Space too, via a `window` keydown listener bound with
-        // `capture: true` — it runs, and calls `preventDefault()`, before
-        // this bubble-phase listener does (confirmed in
-        // node_modules/@hello-pangea/dnd/dist/dnd.cjs.js's
-        // `useKeyboardSensor`/`getDraggingBindings`). Without this check,
-        // every Space that lifted or dropped a tab also faded out whatever
-        // was playing.
-        if (event.defaultPrevented) {
-          return;
-        }
         event.preventDefault(); // Prevent default space action (e.g., scrolling)
         console.log(
           "[KeyboardListener] Space key pressed - fading out all audio playback.",
