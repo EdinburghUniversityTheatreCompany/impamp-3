@@ -91,6 +91,27 @@ export default function BankTabStrip({
                   draggableId={bank.bankId}
                   index={position}
                   isDragDisabled={!canDrag}
+                  // Without this the tabs cannot be dragged AT ALL — by any
+                  // sensor, in any browser. `@hello-pangea/dnd` refuses to
+                  // start a drag whose source event happened inside an
+                  // interactive element, and its `interactiveTagNames` list
+                  // (dnd.cjs.js:5605) contains 'button', which is what a bank
+                  // tab is. `tryStart` then returns null at dnd.cjs.js:5793,
+                  // before claiming the lock and before calling
+                  // preventDefault, so the gesture silently does nothing and
+                  // the key falls through to the app's global handler —
+                  // which is why Space still faded out all audio even with
+                  // the defaultPrevented guard in place. All three sensors
+                  // pass a sourceEvent (mouse :5110, keyboard :5304, touch
+                  // :5484), so all three were equally dead.
+                  //
+                  // The prop turns that blocking off for these tabs
+                  // (dnd.cjs.js:6628 maps it to canDragInteractiveElements).
+                  // Safe here because the tab has no interactive content of
+                  // its own to swallow: it IS the handle. Covered by
+                  // e2e-tests/bank-reorder.spec.ts, which is the only place
+                  // the real sensor can run — jsdom cannot measure a drag.
+                  disableInteractiveElementBlocking
                 >
                   {(provided) => (
                     <button
