@@ -50,6 +50,22 @@ interface TrackItemProps {
   isActive?: boolean;
 
   /**
+   * An optional control rendered in the row's normal flow, immediately before
+   * the remaining-time readout.
+   *
+   * This exists so a caller can add something to the row without overlaying
+   * it. `PadTrackGroup`'s layer count used to be absolutely positioned over
+   * the row, which put it straight on top of the last two digits of the
+   * remaining time — the one number an operator most needs, on exactly the
+   * kind of pad (a stacked one) where they most need it. A flow slot cannot
+   * collide at a different font size, in dark mode, or at another width.
+   *
+   * Anything interactive placed here must call `stopPropagation()`, because
+   * the row itself is clickable and stops the track.
+   */
+  badge?: React.ReactNode;
+
+  /**
    * Callback for when the play button is clicked (for armed tracks)
    */
   onPlay?: () => void;
@@ -70,6 +86,7 @@ const TrackItem: React.FC<TrackItemProps> = ({
   progress = 0,
   isFading = false,
   isActive = false,
+  badge,
   onPlay,
   onRemove,
 }) => {
@@ -154,6 +171,9 @@ const TrackItem: React.FC<TrackItemProps> = ({
           />
         )}
       </div>
+
+      {/* Caller-supplied control, in flow so it cannot cover the time */}
+      {badge}
 
       {/* Time display (for active tracks) */}
       {isActive && remainingTime !== undefined && (

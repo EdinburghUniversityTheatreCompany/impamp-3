@@ -12,10 +12,20 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeInstanceKey } from "@/lib/audio/types";
 import type { PadPlaybackGroup, PlaybackState } from "@/store/playbackStore";
 import PadTrackGroup from "./PadTrackGroup";
+
+// The count button lives inside the clickable group row, and that row stops
+// the pad. Spying on `stopAudio` is the only way to tell "the click was
+// contained" from "the click stopped every layer" — the DOM looks the same
+// either way, because the store is not driving this render.
+const { stopAudio } = vi.hoisted(() => ({ stopAudio: vi.fn() }));
+vi.mock("@/lib/audio", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/audio")>()),
+  stopAudio,
+}));
 
 (
   globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -48,6 +58,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  stopAudio.mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -128,12 +139,13 @@ describe("PadTrackGroup with several layers", () => {
   });
 
   it("stops the click from bubbling past the count button", () => {
-    // `TrackItem` (the group row) is a sibling of the count button in the
-    // DOM, not an ancestor, so a click on the button was never going to
-    // reach TrackItem's own onClick by bubbling through it — that path is
-    // structurally closed regardless of this test. What `stopPropagation`
-    // actually guards is bubbling *past* the button, to whatever wraps this
-    // component (a card, a list row, a future click-to-select container).
+    // The count button now sits *inside* the group row (TrackItem's `badge`
+    // slot), so `stopPropagation` guards two things at once: TrackItem's own
+    // onClick, which stops the pad — covered by the "does not stop the pad"
+    // test below — and bubbling past this component entirely, to whatever
+    // wraps it (a card, a list row, a future click-to-select container),
+    // which is what this test covers. While the button was a sibling of the
+    // row rather than a descendant, only the second was reachable at all.
     // A first draft of this test attached its listener directly to the node
     // passed to `createRoot`. React delegates its own event handling to that
     // exact node, so a descendant's `stopPropagation()` — which stops the
@@ -180,6 +192,85 @@ describe("PadTrackGroup with several layers", () => {
     act(() => {
       outerRoot.unmount();
     });
+  });
+
+  it("shows the count and the whole remaining time side by side, in flow", () => {
+    // The regression this guards: the count used to be positioned
+    // `absolute … right-12` over the row, which put it on top of the
+    // remaining time — "0:59" rendered as "0:" with the badge covering the
+    // last two digits. Confirmed in Chromium against a production build; the
+    // badge's box started 18px inside the time readout's right edge.
+    //
+    // jsdom has no layout, so an overlap cannot be measured here. What can be
+    // pinned down is the arrangement that made the overlap possible, and the
+    // three facts that rule it out: the count is a child of the row (so it
+    // takes part in the row's flex flow rather than floating over it), it is
+    // not taken out of flow by positioning, and the row still carries the
+    // complete time. Put the `absolute` back and this fails on the second.
+    const group = groupOf(
+      layer("pad-1-0-3", { remainingTime: 59 }),
+      layer(makeInstanceKey("pad-1-0-3", 1), { remainingTime: 59 }),
+      layer(makeInstanceKey("pad-1-0-3", 2), { remainingTime: 59 }),
+    );
+    act(() => {
+      root.render(<PadTrackGroup group={group} />);
+    });
+
+    const groupRow = container.querySelector<HTMLElement>(
+      '[data-testid="active-track-item"]',
+    )!;
+    const countButton = container.querySelector<HTMLElement>(
+      '[data-testid="active-track-layer-count"]',
+    )!;
+
+    expect(groupRow.contains(countButton)).toBe(true);
+    expect(countButton.className).not.toMatch(
+      /\b(absolute|fixed|-?translate-)/,
+    );
+    // Nothing between the count and the row may establish a containing block
+    // for a would-be overlay either.
+    for (
+      let node: HTMLElement | null = countButton;
+      node && node !== groupRow.parentElement;
+      node = node.parentElement
+    ) {
+      expect(node.className).not.toMatch(/\brelative\b/);
+    }
+
+    // The full readout, not a prefix of it, and next to the count rather
+    // than under it.
+    expect(groupRow.textContent).toContain("x3");
+    expect(groupRow.textContent).toContain("0:59");
+    const timeCell = Array.from(groupRow.querySelectorAll("div")).find(
+      (d) => d.textContent === "0:59",
+    );
+    expect(timeCell).toBeDefined();
+    expect(timeCell!.contains(countButton)).toBe(false);
+    expect(countButton.contains(timeCell!)).toBe(false);
+  });
+
+  it("does not stop the pad when the count is pressed", () => {
+    // The count sits inside the row, and the row's own click handler stops
+    // the pad. Expanding a group to look at it must never silence it.
+    const group = groupOf(
+      layer("pad-1-0-3"),
+      layer(makeInstanceKey("pad-1-0-3", 1)),
+    );
+    act(() => {
+      root.render(<PadTrackGroup group={group} />);
+    });
+
+    const countButton = container.querySelector(
+      '[data-testid="active-track-layer-count"]',
+    )!;
+    click(countButton);
+    expect(countButton.getAttribute("aria-expanded")).toBe("true");
+    expect(stopAudio).not.toHaveBeenCalled();
+
+    // ...while clicking the row itself still does stop the pad, so the
+    // assertion above is about containment and not about a dead spy.
+    click(container.querySelector('[data-testid="active-track-item"]')!);
+    expect(stopAudio).toHaveBeenCalledWith("pad-1-0-3");
   });
 
   it("labels each layer row and follows the newest layer's time on the group row", () => {
