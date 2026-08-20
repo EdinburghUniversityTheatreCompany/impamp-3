@@ -158,6 +158,60 @@ describe("armed cues play the pad as it is now", () => {
     });
   });
 
+  it("carries the pad's activePadBehavior override through the re-read", async () => {
+    // The cue fires the pad as it is *now*, so an override set after arming
+    // must reach the trigger. This goes through `extractPadPlaybackSettings`
+    // and then a spread into `TriggerablePad`, which TypeScript exempts from
+    // excess-property checking — so nothing but this assertion would notice
+    // the field being dropped in between.
+    playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
+      padOnDisk({ activePadBehavior: "layer" }),
+    ]);
+
+    playbackStoreActions.playNextArmedTrack();
+    await settle();
+
+    expect(mocks.triggerPad.mock.calls[0][0]).toMatchObject({
+      activePadBehavior: "layer",
+    });
+  });
+
+  it("carries the armed snapshot's override when the pad cannot be re-read", async () => {
+    // The fallback plays `ArmedTrackState` itself, so the snapshot has to have
+    // been armed *with* the override — a field the arm sites hand-build into
+    // the object and that `ArmedTrackState` has to declare for them to.
+    playbackStoreActions.armTrack(ARMED_KEY, {
+      ...ARMED_AS_SNAPSHOT,
+      activePadBehavior: "layer",
+    });
+    mocks.getPadConfigurationsForProfileBank.mockRejectedValue(
+      new Error("IndexedDB is unavailable"),
+    );
+
+    playbackStoreActions.playNextArmedTrack();
+    await settle();
+
+    expect(mocks.triggerPad.mock.calls[0][0]).toMatchObject({
+      activePadBehavior: "layer",
+    });
+  });
+
+  it("leaves a pad with no override following the profile", async () => {
+    // Undefined is the value that means "follow the profile". A default
+    // introduced anywhere on this path would freeze the profile's setting onto
+    // the cue at the moment it fired.
+    playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
+
+    playbackStoreActions.playNextArmedTrack();
+    await settle();
+
+    expect(mocks.triggerPad.mock.calls[0][0]).toHaveProperty(
+      "activePadBehavior",
+      undefined,
+    );
+  });
+
   it("reads the cue's own pad when several are armed", async () => {
     playbackStoreActions.armTrack(ARMED_KEY, ARMED_AS_SNAPSHOT);
     playbackStoreActions.armTrack("armed-1-2-7", {

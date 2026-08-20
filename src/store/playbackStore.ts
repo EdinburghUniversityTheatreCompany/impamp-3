@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  type ActivePadBehavior,
   PlaybackType,
   extractPadPlaybackSettings,
   getPadConfigurationsForProfileBank,
@@ -44,6 +45,13 @@ export interface ArmedTrackState {
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   audioGainSettings?: Record<number, number>;
   padGainDb?: number;
+  /**
+   * The pad's own activePadBehavior override, as it stood at arm time. Carried
+   * for the same reason as the fields above: `playArmedTrackNow` falls back to
+   * this snapshot when the pad cannot be re-read, and that fallback runs it
+   * through `extractPadPlaybackSettings`, which reads this key.
+   */
+  activePadBehavior?: ActivePadBehavior;
 }
 
 // Define the store's state and actions

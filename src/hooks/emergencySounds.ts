@@ -11,6 +11,7 @@
  */
 
 import {
+  ActivePadBehavior,
   PlaybackType,
   PadConfiguration,
   getAllPageMetadataForProfile,
@@ -28,6 +29,8 @@ export interface EmergencySound {
   audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
   audioGainSettings?: Record<number, number>;
   padGainDb?: number;
+  /** The pad's own override of the profile's activePadBehavior, if it has one */
+  activePadBehavior?: ActivePadBehavior;
 }
 
 let emergencySounds: EmergencySound[] = [];
@@ -91,6 +94,7 @@ async function readEmergencySounds(
           audioTrimSettings: pad.audioTrimSettings,
           audioGainSettings: pad.audioGainSettings,
           padGainDb: pad.padGainDb,
+          activePadBehavior: pad.activePadBehavior,
         })),
       );
     }

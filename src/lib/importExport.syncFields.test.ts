@@ -48,6 +48,7 @@ function syncData(): ProfileSyncData {
         padIndex: 0,
         name: "Horn",
         playbackType: "round-robin",
+        activePadBehavior: "layer",
         audioFileIds: [],
         audioFileHashes: [],
         createdAt: new Date(0),
@@ -122,10 +123,25 @@ describe("an imported pad", () => {
     // disabled flag to a remote that happened to have one.
     expect(fields).toHaveProperty("isDisabled");
     expect(fields).toHaveProperty("padGainDb");
+    expect(fields).toHaveProperty("activePadBehavior");
 
     // Wire-only: derived on the way out and destructured off on the way in,
     // so a stamp for one describes a field that is not there.
     expect(fields).not.toHaveProperty("audioFileHashes");
+  });
+
+  it("keeps the pad's own activePadBehavior override", async () => {
+    // The stamp above says the merge may vote on the field; this says the
+    // value it would vote with actually arrived. `importPadConfigurations`
+    // builds the stored record field by field, so the two can come apart.
+    const { db, profileId } = await importIt();
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+
+    expect(pads[0].activePadBehavior).toBe("layer");
   });
 });
 

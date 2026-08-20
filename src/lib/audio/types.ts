@@ -7,7 +7,7 @@
  * @module lib/audio/types
  */
 
-import { PlaybackType } from "../db";
+import { ActivePadBehavior, PlaybackType } from "../db";
 
 /**
  * Playback strategy interface for implementing different audio selection strategies
@@ -128,6 +128,11 @@ export interface TriggerAudioArgs {
    * passes this through so the guard lives in one place.
    */
   isDisabled?: boolean;
+  /**
+   * This pad's own override of the profile's activePadBehavior. Undefined means
+   * follow the profile.
+   */
+  activePadBehavior?: ActivePadBehavior;
 }
 
 /**

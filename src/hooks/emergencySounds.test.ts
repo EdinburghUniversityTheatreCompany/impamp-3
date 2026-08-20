@@ -197,3 +197,52 @@ describe("emergency sound loading", () => {
     expect(takeNextEmergencySound()).toBeUndefined();
   });
 });
+
+/**
+ * `EmergencySound` is a hand-built projection of `PadConfiguration` — it names
+ * its eight fields explicitly rather than going through
+ * `extractPadPlaybackSettings` — and `playEmergencySound` then copies those
+ * same fields into a trigger call a second time. Enter is a trigger path like
+ * any other, so a pad's own `activePadBehavior` override has to survive both
+ * copies, and neither produces a compiler error when it forgets one.
+ * `useKeyboardListener.test.tsx` covers the second copy.
+ */
+describe("what an emergency sound carries off its pad", () => {
+  beforeEach(() => {
+    mocks.getAllPageMetadataForProfile.mockReset();
+    mocks.getPadConfigurationsForProfileBank.mockReset();
+    mocks.getAllPageMetadataForProfile.mockResolvedValue([page(1, 0)]);
+  });
+
+  it("carries the pad's activePadBehavior override", async () => {
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
+      { ...pad("bank-0", 0), padGainDb: -3, activePadBehavior: "layer" },
+    ]);
+
+    const { reloadEmergencySounds, takeNextEmergencySound } =
+      await freshModule();
+    await reloadEmergencySounds(1);
+
+    expect(takeNextEmergencySound()).toMatchObject({
+      activePadBehavior: "layer",
+      // Beside it so a pass cannot mean "the projection copied nothing" —
+      // this one has been carried since before the override existed.
+      padGainDb: -3,
+    });
+  });
+
+  it("leaves a pad with no override following the profile", async () => {
+    mocks.getPadConfigurationsForProfileBank.mockResolvedValue([
+      pad("bank-0", 0),
+    ]);
+
+    const { reloadEmergencySounds, takeNextEmergencySound } =
+      await freshModule();
+    await reloadEmergencySounds(1);
+
+    expect(takeNextEmergencySound()).toHaveProperty(
+      "activePadBehavior",
+      undefined,
+    );
+  });
+});

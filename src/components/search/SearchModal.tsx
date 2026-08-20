@@ -86,6 +86,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
           audioTrimSettings: result.audioTrimSettings,
           audioGainSettings: result.audioGainSettings,
           padGainDb: result.padGainDb,
+          activePadBehavior: result.activePadBehavior,
         },
         {
           activeProfileId: result.profileId,
@@ -121,6 +122,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
         audioTrimSettings: result.audioTrimSettings,
         audioGainSettings: result.audioGainSettings,
         padGainDb: result.padGainDb,
+        activePadBehavior: result.activePadBehavior,
       });
 
       console.log(`Armed track from search: ${result.name}`);

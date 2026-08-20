@@ -336,6 +336,12 @@ export default function LoudnessOverviewModalContent() {
         padGainDb: pad.padGainDb,
         playbackType: pad.playbackType,
         isDisabled: pad.isDisabled,
+        // `activePadBehavior` is deliberately absent. This enumerates almost
+        // the whole record, so it reads as an authoritative rewrite, but it is
+        // a partial upsert: `upsertPadConfiguration` merges
+        // `{...existing, ...padConfig}`, so an omitted key is preserved and an
+        // explicitly-undefined one is erased. Nudging a gain must not erase a
+        // pad's retrigger override. Do not "complete" this list.
       });
 
       setPads((current) =>

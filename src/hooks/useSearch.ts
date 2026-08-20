@@ -11,6 +11,7 @@ import { useProfileStore } from "@/store/profileStore";
 import {
   getAudioFileMetadata,
   getAllPageMetadataForProfile,
+  ActivePadBehavior,
   PlaybackType,
 } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
@@ -42,6 +43,8 @@ export interface SearchResult {
   padGainDb?: number;
   /** Whether the pad is disabled and so cannot be played or armed */
   isDisabled: boolean;
+  /** The pad's own override of the profile's activePadBehavior, if it has one */
+  activePadBehavior?: ActivePadBehavior;
   /** Original filename of the first audio file */
   originalFileName: string;
   /** Display name of the bank containing this pad */
@@ -208,6 +211,7 @@ export function useSearch(searchOptions: SearchOptions = {}) {
               audioGainSettings: pad.audioGainSettings,
               padGainDb: pad.padGainDb,
               isDisabled: pad.isDisabled ?? false,
+              activePadBehavior: pad.activePadBehavior,
               originalFileName: displayFileName,
               bankName:
                 bankNames.get(pad.bankId) ||

@@ -862,6 +862,10 @@ async function importPadConfigurations(
       padGainDb: pad.padGainDb, // Whole-pad gain isn't keyed by audio file ID
       playbackType: pad.playbackType || DEFAULT_PLAYBACK_TYPE,
       isDisabled: pad.isDisabled ?? false, // Absent in exports predating the flag
+      // Undefined means "follow the profile", and stays undefined. Defaulting
+      // it here would freeze the exporting profile's setting onto every
+      // imported pad.
+      activePadBehavior: pad.activePadBehavior,
     };
     const newPadData: Omit<PadConfiguration, "id"> = {
       ...content,

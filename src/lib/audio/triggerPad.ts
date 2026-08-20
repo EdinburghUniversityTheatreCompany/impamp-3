@@ -19,7 +19,7 @@ import {
   loadingStoreActions,
 } from "@/store/loadingStore";
 import type { LoadingState } from "./decoder";
-import type { PlaybackType } from "@/lib/db";
+import type { ActivePadBehavior, PlaybackType } from "@/lib/db";
 
 /** Everything about the pad that decides what is played and how loudly. */
 export interface TriggerablePad {
@@ -31,6 +31,16 @@ export interface TriggerablePad {
   audioGainSettings?: Record<number, number>;
   padGainDb?: number;
   isDisabled?: boolean;
+  /**
+   * The pad's own override of the profile's activePadBehavior. Undefined means
+   * follow the profile — see `resolveActivePadBehavior`.
+   *
+   * Every field on this interface is hand-enumerated into the call below, and
+   * both call sites build the object by spreading `extractPadPlaybackSettings`
+   * — which TypeScript exempts from excess-property checking. So a field
+   * missing from *either* place is dropped in silence, with no compiler error.
+   */
+  activePadBehavior?: ActivePadBehavior;
 }
 
 /** Where the pad lives, which is what the loading key is built from. */
@@ -96,6 +106,7 @@ export async function triggerPad(
       audioGainSettings: pad.audioGainSettings,
       padGainDb: pad.padGainDb,
       isDisabled: pad.isDisabled,
+      activePadBehavior: pad.activePadBehavior,
       onInstantFeedback: options.onInstantFeedback,
       onLoadingStateChange: (state: LoadingState) => {
         loadingStoreActions.setPadLoadingState(loadingKey, state);

@@ -237,6 +237,43 @@ describe("exporting and re-importing a .iaz archive", () => {
     expect(pages[0]._fieldsModified?.name).toBeGreaterThan(0);
   });
 
+  it("carries a pad's own activePadBehavior override out and back", async () => {
+    // The override is the pad's answer to "what happens when I hit this pad
+    // while it is already playing", and it is written by hand into the pad
+    // record the import builds — `importPadConfigurations` enumerates its
+    // fields rather than spreading, so a field it forgets is dropped with no
+    // compiler error. The export half spreads whole pad rows, so this case
+    // covers both halves at once: it goes red if either stops carrying it.
+    const { profileId, audioFileId } = await seedProfile("Layered", "clap");
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "0",
+      padIndex: 3,
+      audioFileIds: [audioFileId],
+      playbackType: "sequential",
+      activePadBehavior: "layer",
+    });
+
+    const { pads } = await roundTrip(profileId);
+
+    expect(pads).toHaveLength(1);
+    expect(pads[0].activePadBehavior).toBe("layer");
+    // And it is a field the merge can be asked about, not just a value on the
+    // record. An absent `_fieldsModified` entry is a losing vote, which is how
+    // an imported pad lost its own disabled flag to a remote that had one.
+    expect(pads[0]._fieldsModified?.activePadBehavior).toBeGreaterThan(0);
+  });
+
+  it("leaves a pad with no override following the profile", async () => {
+    // Undefined is not "missing", it is the value that means "follow the
+    // profile". Defaulting it on import would freeze the exporting profile's
+    // setting onto every pad in the archive.
+    const { profileId } = await seedProfile("Plain", "snare");
+    const { pads } = await roundTrip(profileId);
+
+    expect(pads[0].activePadBehavior).toBeUndefined();
+  });
+
   it("round-trips several profiles in one archive", async () => {
     const db = await getDb();
     const a = await seedProfile("First", "one");

@@ -59,6 +59,7 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     audioTrimSettings: sound.audioTrimSettings,
     audioGainSettings: sound.audioGainSettings,
     padGainDb: sound.padGainDb,
+    activePadBehavior: sound.activePadBehavior,
     onInstantFeedback: () => {
       console.log(
         `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
@@ -492,6 +493,7 @@ export function useKeyboardListener() {
           audioTrimSettings: matchedConfig.audioTrimSettings,
           audioGainSettings: matchedConfig.audioGainSettings,
           padGainDb: matchedConfig.padGainDb,
+          activePadBehavior: matchedConfig.activePadBehavior,
           onInstantFeedback: () => {
             console.log(
               `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,

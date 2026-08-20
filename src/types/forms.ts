@@ -23,6 +23,11 @@ export interface PadFormValues extends Record<string, unknown> {
   padGainDb: number | undefined;
   /** When true, the pad is configured but will not play from any trigger */
   isDisabled: boolean;
+  /**
+   * The pad's own override. Undefined means the pad follows the profile, which
+   * is what the "Use profile default" option writes back.
+   */
+  activePadBehavior?: ActivePadBehavior;
 }
 
 /**

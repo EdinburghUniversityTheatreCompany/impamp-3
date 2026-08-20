@@ -76,6 +76,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           audioGainSettings: padConfig?.audioGainSettings,
           padGainDb: padConfig?.padGainDb,
           isDisabled: padConfig?.isDisabled ?? false,
+          activePadBehavior: padConfig?.activePadBehavior,
         },
         renderForm: (props) =>
           React.createElement(EditPadModalContent, {
@@ -101,6 +102,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
             audioGainSettings: values.audioGainSettings,
             padGainDb: values.padGainDb,
             isDisabled: values.isDisabled,
+            activePadBehavior: values.activePadBehavior,
             keyBinding: padConfig?.keyBinding, // Preserve original keybinding
           };
 
@@ -194,6 +196,11 @@ export function usePadInteractions(params: PadInteractionsParams) {
             audioFileIds: [], // Clear the sounds
             playbackType: DEFAULT_PLAYBACK_TYPE, // Reset playback type
             isDisabled: false, // An emptied pad should not stay marked "Off"
+            // Explicitly undefined, not omitted: `upsertPadConfiguration`
+            // merges `{...existing, ...padConfig}`, so omitting the key would
+            // leave the old override on a pad that no longer has the sound it
+            // was chosen for. Same reasoning as the two resets above.
+            activePadBehavior: undefined,
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
           refreshPadConfigs();
@@ -298,6 +305,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
         audioTrimSettings: config.audioTrimSettings,
         audioGainSettings: config.audioGainSettings,
         padGainDb: config.padGainDb,
+        activePadBehavior: config.activePadBehavior,
       });
 
       console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);
