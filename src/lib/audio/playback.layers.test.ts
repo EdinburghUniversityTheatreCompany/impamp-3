@@ -1,72 +1,27 @@
 /**
  * Layers in the playback engine.
  *
- * The fake AudioContext is the one `playback.race.test.ts` uses: the only Web
- * Audio the playback module touches is `getAudioContext`, so a fake that
- * records `stop()` calls is enough to prove a source was silenced rather than
- * dropped from a map.
+ * Runs against the shared Web Audio fake (`@/lib/testSupport/fakeWebAudio`),
+ * the same one `playback.race.test.ts` uses: the only Web Audio the playback
+ * module touches is `getAudioContext`, so a fake whose sources record their
+ * `stop()` calls is enough to prove a source was silenced rather than dropped
+ * from a map.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-class FakeAudioParam {
-  value = 1;
-  setValueAtTime() {
-    return this;
-  }
-  cancelScheduledValues() {
-    return this;
-  }
-  linearRampToValueAtTime() {
-    return this;
-  }
-}
-
-class FakeGainNode {
-  gain = new FakeAudioParam();
-  connect() {}
-  disconnect() {}
-}
-
-class FakeBufferSource {
-  buffer: unknown = null;
-  onended: (() => void) | null = null;
-  startCalls = 0;
-  stopCalls: number[] = [];
-  connect() {}
-  disconnect() {}
-  start() {
-    this.startCalls++;
-  }
-  stop(when = 0) {
-    this.stopCalls.push(when);
-  }
-  get stopped() {
-    return this.stopCalls.length > 0;
-  }
-}
-
-const createdSources: FakeBufferSource[] = [];
-
-const fakeContext = {
-  currentTime: 0,
-  state: "running" as const,
-  destination: {},
-  createBufferSource() {
-    const source = new FakeBufferSource();
-    createdSources.push(source);
-    return source;
-  },
-  createGain() {
-    return new FakeGainNode();
-  },
-};
+import {
+  createdSources,
+  fakeAudioBuffer,
+  fakeAudioContext,
+  fakePlayParams,
+  resetFakeWebAudio,
+  stubAnimationFrame,
+} from "@/lib/testSupport/fakeWebAudio";
 
 vi.mock("./context", () => ({
-  getAudioContext: () => fakeContext,
+  getAudioContext: () => fakeAudioContext,
 }));
 
-globalThis.requestAnimationFrame = (() => 1) as typeof requestAnimationFrame;
-globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
+stubAnimationFrame();
 
 const {
   playBuffer,
@@ -86,19 +41,8 @@ const {
 const { MAX_LAYERS_PER_PAD, makeInstanceKey, layerIndexOf, baseKeyOf } =
   await import("./types");
 
-const buffer = { duration: 10, numberOfChannels: 2 } as unknown as AudioBuffer;
-
 function play(key: string) {
-  return playBuffer(buffer, key, {
-    name: key,
-    volume: 1,
-    multiSoundState: {
-      playbackType: "sequential",
-      allAudioFileIds: [1],
-      currentAudioFileId: 1,
-      currentAudioIndex: 0,
-    },
-  } as Parameters<typeof playBuffer>[2]);
+  return playBuffer(fakeAudioBuffer, key, fakePlayParams(key));
 }
 
 /** Starts one more layer of a pad and returns the instance key it took. */
@@ -110,7 +54,7 @@ function playLayer(baseKey: string) {
 
 beforeEach(() => {
   stopAllTracks();
-  createdSources.length = 0;
+  resetFakeWebAudio();
 });
 
 describe("two triggers on a pad set to layer", () => {

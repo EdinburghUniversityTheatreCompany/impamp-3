@@ -23,6 +23,7 @@
  * a shock.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockAudioStack } from "@/lib/testSupport/audioStackMocks";
 import type { LoadingState } from "./decoder";
 
 const decoderMocks = vi.hoisted(() => ({
@@ -57,33 +58,10 @@ const loudnessMocks = vi.hoisted(() => ({
 vi.mock("./decoder", () => decoderMocks);
 vi.mock("./playback", () => playbackMocks);
 vi.mock("./loudness/cache", () => loudnessMocks);
-vi.mock("./cache", () => ({
-  getCachedAudioBuffer: vi.fn(() => null),
-  clearCachedAudioBuffer: vi.fn(),
-}));
-vi.mock("./context", () => ({
-  resumeAudioContext: vi.fn(),
-  getAudioContext: vi.fn(() => ({ state: "running", currentTime: 0 })),
-}));
-// Spread the real module: `controls` reads `resolveActivePadBehavior` from
-// here as well as `getAudioFile`, and a mock listing only the latter leaves
-// the resolver undefined — which fails as a broken behaviour switch rather
-// than as the broken mock it is.
-vi.mock("../db", async () => {
-  const actual = await vi.importActual<typeof import("../db")>("../db");
-  return { ...actual, getAudioFile: vi.fn(async () => null) };
-});
-vi.mock("./preloader", () => ({
-  audioPreloader: { trackPlayedFile: vi.fn() },
-}));
-vi.mock("@/store/profileStore", () => ({
-  useProfileStore: {
-    getState: () => ({
-      getActivePadBehavior: () => "continue",
-      getNormalisationSettings: () => ({ enabled: false, targetLufs: -23 }),
-    }),
-  },
-}));
+// The cache, the context, the database, the preloader and the profile store,
+// stubbed the same way `controls.layer.test.ts` stubs them. This suite never
+// varies the profile behaviour, so it takes the default of "continue".
+mockAudioStack();
 
 const { triggerAudioForPadInstant } = await import("./controls");
 const { triggerPad } = await import("./triggerPad");

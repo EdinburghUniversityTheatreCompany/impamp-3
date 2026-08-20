@@ -5,71 +5,25 @@
  * trigger for the same pad, or a stop of a different pad. They are unit-testable
  * because the only Web Audio the playback module touches is `getAudioContext`,
  * so a fake context that records `stop()` calls is enough to observe whether a
- * source was really silenced or merely forgotten about.
+ * source was really silenced or merely forgotten about. That fake is shared
+ * with `playback.layers.test.ts`; see `@/lib/testSupport/fakeWebAudio`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-class FakeAudioParam {
-  value = 1;
-  setValueAtTime() {
-    return this;
-  }
-  cancelScheduledValues() {
-    return this;
-  }
-  linearRampToValueAtTime() {
-    return this;
-  }
-}
-
-class FakeGainNode {
-  gain = new FakeAudioParam();
-  connect() {}
-  disconnect() {}
-}
-
-class FakeBufferSource {
-  buffer: unknown = null;
-  onended: (() => void) | null = null;
-  startCalls = 0;
-  stopCalls: number[] = [];
-  connect() {}
-  disconnect() {}
-  start() {
-    this.startCalls++;
-  }
-  stop(when = 0) {
-    this.stopCalls.push(when);
-  }
-  /** True once anything has asked this source to stop. */
-  get stopped() {
-    return this.stopCalls.length > 0;
-  }
-}
-
-const createdSources: FakeBufferSource[] = [];
-
-const fakeContext = {
-  currentTime: 0,
-  state: "running" as const,
-  destination: {},
-  createBufferSource() {
-    const source = new FakeBufferSource();
-    createdSources.push(source);
-    return source;
-  },
-  createGain() {
-    return new FakeGainNode();
-  },
-};
+import {
+  createdSources,
+  fakeAudioBuffer,
+  fakeAudioContext,
+  fakePlayParams,
+  resetFakeWebAudio,
+  stubAnimationFrame,
+} from "@/lib/testSupport/fakeWebAudio";
 
 vi.mock("./context", () => ({
-  getAudioContext: () => fakeContext,
+  getAudioContext: () => fakeAudioContext,
 }));
 
 // The rAF progress loop is irrelevant here; keep it from throwing in node.
-globalThis.requestAnimationFrame = (() => 1) as typeof requestAnimationFrame;
-globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
+stubAnimationFrame();
 
 const {
   playBuffer,
@@ -80,24 +34,13 @@ const {
   isTrackPlaying,
 } = await import("./playback");
 
-const buffer = { duration: 10, numberOfChannels: 2 } as unknown as AudioBuffer;
-
 function play(key: string) {
-  return playBuffer(buffer, key, {
-    name: key,
-    volume: 1,
-    multiSoundState: {
-      playbackType: "sequential",
-      allAudioFileIds: [1],
-      currentAudioFileId: 1,
-      currentAudioIndex: 0,
-    },
-  } as Parameters<typeof playBuffer>[2]);
+  return playBuffer(fakeAudioBuffer, key, fakePlayParams(key));
 }
 
 beforeEach(() => {
   stopAllTracks();
-  createdSources.length = 0;
+  resetFakeWebAudio();
 });
 
 describe("a second trigger for a pad that is already playing", () => {

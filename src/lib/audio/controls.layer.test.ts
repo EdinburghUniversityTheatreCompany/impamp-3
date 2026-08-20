@@ -11,6 +11,7 @@
  * against the real engine and asserts on the live instances it leaves behind.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockAudioStack } from "@/lib/testSupport/audioStackMocks";
 import type { ActivePadBehavior } from "@/lib/db";
 
 // Only what `controls` imports from the decoder: the instant path this file
@@ -59,33 +60,14 @@ const profileBehavior = vi.hoisted(() => ({ value: "continue" }));
 // level, so the real one answers undefined and `resolveGain` falls through.
 vi.mock("./decoder", () => decoderMocks);
 vi.mock("./playback", () => playbackMocks);
-vi.mock("./cache", () => ({
-  getCachedAudioBuffer: vi.fn(() => null),
-  clearCachedAudioBuffer: vi.fn(),
-}));
-vi.mock("./context", () => ({
-  resumeAudioContext: vi.fn(),
-  getAudioContext: vi.fn(() => ({ state: "running", currentTime: 0 })),
-}));
-// Spread the real module: `controls` imports `resolveActivePadBehavior` from
-// here as well as `getAudioFile`, and a mock that lists only the latter makes
-// the resolver `undefined` — which reads as a broken behaviour switch rather
-// than as a broken mock.
-vi.mock("../db", async () => {
-  const actual = await vi.importActual<typeof import("../db")>("../db");
-  return { ...actual, ...dbMocks };
+// The cache, the context, the database, the preloader and the profile store.
+// `profileBehavior` is read on every call, so a test can change the profile's
+// answer between triggers; `dbMocks` is overlaid so this suite keeps a handle
+// on `getAudioFile` and can drive it per test.
+mockAudioStack({
+  activePadBehavior: () => profileBehavior.value as ActivePadBehavior,
+  db: dbMocks,
 });
-vi.mock("./preloader", () => ({
-  audioPreloader: { trackPlayedFile: vi.fn() },
-}));
-vi.mock("@/store/profileStore", () => ({
-  useProfileStore: {
-    getState: () => ({
-      getActivePadBehavior: () => profileBehavior.value,
-      getNormalisationSettings: () => ({ enabled: false, targetLufs: -23 }),
-    }),
-  },
-}));
 
 const { triggerAudioForPadInstant } = await import("./controls");
 const { getStrategy } = await import("./strategies");
