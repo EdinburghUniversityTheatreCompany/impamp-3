@@ -14,6 +14,7 @@ import {
   deleteUnreferencedAudioFiles,
   collectReferencedAudioFileIds,
   computeBlobHash,
+  findAudioFileIdByHashIn,
   initialSyncFields,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
@@ -411,6 +412,15 @@ interface AudioImportFailure {
 interface AudioImportOutcome {
   /** Original export id → the id the local store assigned. */
   audioIdMap: Map<number, number>;
+  /**
+   * Only the rows this import created.
+   *
+   * The rollback deletes from this list, so a row that was merely reused
+   * stays. `audioIdMap.values()` used to fill that role, and once reuse exists
+   * it names rows that were here before the import and that nothing but a
+   * pad — possibly none at all — is keeping.
+   */
+  createdIds: number[];
   failures: AudioImportFailure[];
 }
 
@@ -462,6 +472,26 @@ export interface ImportAudioProgress {
   totalBytes: number;
 }
 
+/**
+ * The id of a row that already holds these bytes, in its own transaction.
+ *
+ * Separate from the write transaction on purpose: this runs *before* the blob
+ * is materialised, so the answer decides whether the archive entry is
+ * extracted or the Drive file downloaded at all.
+ */
+async function findExistingAudioId(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  hash: string,
+): Promise<number | undefined> {
+  const tx = db.transaction("audioFiles", "readonly");
+  const id = await findAudioFileIdByHashIn(
+    tx.objectStore("audioFiles").index("hash"),
+    hash,
+  );
+  await tx.done;
+  return id;
+}
+
 // Imports audio files with bounded memory: each file is materialized,
 // written in a short transaction, then released — memory stays bounded by
 // `concurrency` files at once rather than the whole export.
@@ -479,6 +509,7 @@ async function importAudioSources(
   concurrency = 1,
 ): Promise<AudioImportOutcome> {
   const audioIdMap = new Map<number, number>();
+  const createdIds: number[] = [];
   const failures: AudioImportFailure[] = [];
   const totalBytes = audioSources.reduce((sum, s) => sum + (s.size ?? 0), 0);
   let processedBytes = 0;
@@ -493,31 +524,61 @@ async function importAudioSources(
     reportBytes: boolean,
   ): Promise<void> => {
     try {
-      const blob = await source.getBlob(
-        reportBytes
-          ? (bytesDone) => {
-              onProgress?.({
-                fileName: source.name,
-                processedFiles: completedFiles,
-                totalFiles: audioSources.length,
-                processedBytes: processedBytes + bytesDone,
-                totalBytes,
-              });
-            }
-          : undefined,
-      );
-      const audioTx = db.transaction("audioFiles", "readwrite");
-      const newAudioId = await audioTx.objectStore("audioFiles").add({
-        blob,
-        name: source.name,
-        type: source.type,
-        createdAt: now,
-        loudness: deserialiseLoudness(source.loudness) ?? undefined,
-        hash: source.hash,
-        serverHosted: source.serverHosted,
-      });
-      await audioTx.done;
-      audioIdMap.set(source.originalId, newAudioId);
+      // A hash the source already carries lets the reuse check run before the
+      // bytes are read. Archive refs and sync refs both carry one, so a sound
+      // the library already holds costs no extraction and no download — which
+      // is the whole reason a supplied hash is trusted rather than verified.
+      const knownId = source.hash
+        ? await findExistingAudioId(db, source.hash)
+        : undefined;
+
+      if (knownId !== undefined) {
+        audioIdMap.set(source.originalId, knownId);
+      } else {
+        const blob = await source.getBlob(
+          reportBytes
+            ? (bytesDone) => {
+                onProgress?.({
+                  fileName: source.name,
+                  processedFiles: completedFiles,
+                  totalFiles: audioSources.length,
+                  processedBytes: processedBytes + bytesDone,
+                  totalBytes,
+                });
+              }
+            : undefined,
+        );
+        // `||` rather than `??`: an empty string is a missing hash, not a key
+        // to store rows under. Same rule as `addOrReuseAudioFile`.
+        const hash = source.hash || (await computeBlobHash(blob));
+        const audioTx = db.transaction("audioFiles", "readwrite");
+        const store = audioTx.objectStore("audioFiles");
+        // Asked a second time inside the write transaction, because the blob
+        // read above is a window in which another source could land the same
+        // bytes — sync imports run four downloads at a time. Deciding and
+        // writing in one transaction closes it.
+        const raced = await findAudioFileIdByHashIn(store.index("hash"), hash);
+        let newAudioId: number;
+        if (raced === undefined) {
+          newAudioId = await store.add({
+            blob,
+            name: source.name,
+            type: source.type,
+            createdAt: now,
+            loudness: deserialiseLoudness(source.loudness) ?? undefined,
+            // Always the resolved hash, never `source.hash` — a source that
+            // arrived without one used to produce a row invisible to this
+            // very index, so nothing could ever reuse it.
+            hash,
+            serverHosted: source.serverHosted,
+          });
+          createdIds.push(newAudioId);
+        } else {
+          newAudioId = raced;
+        }
+        await audioTx.done;
+        audioIdMap.set(source.originalId, newAudioId);
+      }
     } catch (error) {
       // Collected rather than swallowed, for the same reason the pad and page
       // importers collect theirs: the failed id never reaches `audioIdMap`, so
@@ -559,8 +620,10 @@ async function importAudioSources(
     await Promise.all(workers);
   }
 
-  console.log(`Completed audio file import, mapped ${audioIdMap.size} files`);
-  return { audioIdMap, failures };
+  console.log(
+    `Completed audio file import, mapped ${audioIdMap.size} files (${createdIds.length} new)`,
+  );
+  return { audioIdMap, createdIds, failures };
 }
 
 /**
@@ -1008,14 +1071,22 @@ async function importProfileCore(
     console.log(`Created imported profile with ID ${profileId}`);
 
     // Step 2: Import audio files (one short transaction per file)
-    const { audioIdMap, failures: audioFailures } = await importAudioSources(
+    const {
+      audioIdMap,
+      createdIds,
+      failures: audioFailures,
+    } = await importAudioSources(
       db,
       audioSources,
       now,
       onAudioProgress,
       audioConcurrency,
     );
-    createdAudioIds.push(...audioIdMap.values());
+    // Only what this import wrote. `audioIdMap.values()` used to fill this,
+    // and now that a value can be a row the import merely reused, that would
+    // hand the rollback bytes another profile — or nothing at all — is
+    // keeping, and delete them irrecoverably.
+    createdAudioIds.push(...createdIds);
     console.log(`Imported ${audioIdMap.size} audio files`);
 
     if (audioFailures.length > 0) {
