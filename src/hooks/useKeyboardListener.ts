@@ -212,38 +212,22 @@ export function useKeyboardListener() {
       }
 
       // If something upstream already claimed this key, it is not ours.
+      // Every shortcut below fires regardless of focus, on the assumption
+      // that nothing nearer the target wanted the key; `defaultPrevented` is
+      // the DOM saying otherwise, and acting anyway runs two commands off one
+      // press.
       //
-      // Every shortcut below this line is a *global* one: it fires on a key
-      // no matter what has focus, on the assumption that nothing else wanted
-      // it. `defaultPrevented` is how the DOM says that assumption is wrong —
-      // some handler nearer the target already acted on this keypress — so
-      // acting on it again runs two commands off one press.
+      // `@hello-pangea/dnd` drives a bank-tab drag from a `window` keydown
+      // listener bound with `{capture: true}`, so it preventDefaults before
+      // this bubble-phase one: Escape to cancel, Space to drop, Enter via
+      // `preventStandardKeyEvents` (dnd.cjs.js:4957, :5227, :5320). Each was
+      // a live bug — Escape mid-drag hit the panic button and hard-stopped
+      // every sound in the room.
       //
-      // The instance that forced this: `@hello-pangea/dnd`'s keyboard sensor
-      // drives a bank-tab drag from a `window` keydown listener bound with
-      // `{capture: true}` (`getDraggingBindings`, bound at
-      // node_modules/@hello-pangea/dnd/dist/dnd.cjs.js:5320-5323). It runs —
-      // and calls `preventDefault()` — before this bubble-phase listener, on
-      // Escape to cancel (:5227-5231), Space to drop (:5232-5236) and Enter
-      // via `preventStandardKeyEvents` (:4957-4965). All three were live
-      // bugs: dragging a bank tab and pressing Escape hit the panic button
-      // and hard-stopped every sound in the room, Space faded everything out,
-      // and Enter fired an emergency cue.
-      //
-      // One guard rather than one per branch, deliberately. Three copies of
-      // the same rule is how this repo's regressions are usually shaped, and
-      // two of these three were already missed once. Placed here rather than
-      // at the top of the handler because the two early-outs above are what
-      // make it safe: Ctrl+S must stay live behind an overlay, and anything
-      // typed into an INPUT/TEXTAREA/contentEditable has already returned, so
-      // a form control preventDefaulting its own Enter can never reach this
-      // and suppress a pad letter or a bank digit.
-      //
-      // It covers Tab and Ctrl+F too, which is wider than the three known
-      // cases and intentional. For Tab the outcome is identical either way —
-      // that branch only calls `preventDefault()` and returns, and the guard
-      // fires only when the default was already prevented — and dnd never
-      // claims "f".
+      // Below the early-outs rather than at the top of the handler, because
+      // Ctrl+S must stay live behind an overlay. Covering Tab and Ctrl+F as
+      // well is deliberate and inert: dnd never claims "f", and the Tab
+      // branch only preventDefaults a key whose default is already prevented.
       if (event.defaultPrevented) {
         return;
       }

@@ -2,26 +2,18 @@
 /**
  * A key something upstream already claimed is not this hook's to act on.
  *
- * `@hello-pangea/dnd`'s keyboard sensor drives a bank-tab drag from a
- * `window` keydown listener bound with `capture: true`
- * (`getDraggingBindings`, bound at dnd.cjs.js:5320-5323). Three of the keys
- * it claims mid-drag are keys this hook also owns globally, and it calls
- * `event.preventDefault()` on all three before handing the event on:
+ * `@hello-pangea/dnd` claims three keys mid-drag that this hook also owns
+ * globally, preventDefault-ing each before handing it on: Escape to cancel
+ * (dnd.cjs.js:5227), Space to drop (:5232) and Enter via
+ * `preventStandardKeyEvents` (:4957). All three were live bugs. See the guard
+ * in useKeyboardListener.ts for why one guard covers them all.
  *
- *   - Escape cancels the drag (dnd.cjs.js:5227-5231) — and used to *also*
- *     hit the panic button, hard-stopping every sound in the room.
- *   - Space drops the tab (dnd.cjs.js:5232-5236) — and used to *also* fade
- *     out whatever was playing.
- *   - Enter falls through to `preventStandardKeyEvents`, whose `preventedKeys`
- *     is exactly `{enter, tab}` (dnd.cjs.js:4957-4965) — and used to *also*
- *     fire an emergency cue.
- *
- * This hook's listener is bubble-phase, so the library's capture-phase one
- * always runs first. One guard above the Tab branch now covers every global
- * shortcut below it. The cases here simulate that capture-phase
- * `preventDefault()` with a real capture listener rather than mounting dnd
- * itself, because the guard reads nothing but the flag — which is precisely
- * what makes it robust to dnd being anywhere else on the page.
+ * These cases simulate the capture-phase `preventDefault()` with a capture
+ * listener rather than mounting dnd. That covers this hook's half only: it
+ * cannot tell whether dnd really claims the key, and in fact it did not —
+ * the tabs were undraggable until `disableInteractiveElementBlocking` landed,
+ * so the guard was unreachable while these tests passed. Only
+ * e2e-tests/bank-reorder.spec.ts can catch that.
  */
 import "fake-indexeddb/auto";
 import { act } from "react";
