@@ -149,3 +149,18 @@ task's. Worth doing once the branch is complete, per CLAUDE.md's "raise them
 deliberately when a run comes in comfortably above".
 
 Noticed while running the coverage gate at the end of Task 7.
+
+## The search modal's arm chord needs the result focused, not the input
+
+`SearchModal` reads the arm chord in `handleResultKeyDown`, which hangs off the
+result `<button>`. The input keeps focus after typing, so the keyboard route to
+arming is: type, Tab past whatever lies between, _then_ Ctrl/Cmd+Enter. Plain
+Enter in the input does nothing either — there is no "activate the first
+result" handler at all.
+
+An operator's fastest path from Ctrl+F to an armed cue would be to type and
+press Ctrl+Enter without moving focus. That wants an `onKeyDown` on the input
+that activates `results[0]`, with the chord deciding play versus arm, and a
+visible hint in the results header saying so.
+
+Noticed while making the arm chord reachable on macOS.

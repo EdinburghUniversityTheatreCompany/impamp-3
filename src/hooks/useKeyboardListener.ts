@@ -212,6 +212,27 @@ export function useKeyboardListener() {
         return;
       }
 
+      // If something upstream already claimed this key, it is not ours.
+      // Every shortcut below fires regardless of focus, on the assumption
+      // that nothing nearer the target wanted the key; `defaultPrevented` is
+      // the DOM saying otherwise, and acting anyway runs two commands off one
+      // press.
+      //
+      // `@hello-pangea/dnd` drives a bank-tab drag from a `window` keydown
+      // listener bound with `{capture: true}`, so it preventDefaults before
+      // this bubble-phase one: Escape to cancel, Space to drop, Enter via
+      // `preventStandardKeyEvents` (dnd.cjs.js:4957, :5227, :5320). Each was
+      // a live bug — Escape mid-drag hit the panic button and hard-stopped
+      // every sound in the room.
+      //
+      // Below the early-outs rather than at the top of the handler, because
+      // Ctrl+S must stay live behind an overlay. Covering Tab and Ctrl+F as
+      // well is deliberate and inert: dnd never claims "f", and the Tab
+      // branch only preventDefaults a key whose default is already prevented.
+      if (event.defaultPrevented) {
+        return;
+      }
+
       // Prevent default browser tabbing behavior outside of inputs and modals
       if (event.key === "Tab") {
         event.preventDefault();
@@ -220,11 +241,11 @@ export function useKeyboardListener() {
 
       // --- Specific Shortcut Handling ---
 
-      // Handle Ctrl+F to open search modal
-      if (event.key === "f" && event.ctrlKey) {
+      // Handle Ctrl+F — Cmd+F on a Mac — to open search modal
+      if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         console.log(
-          "[KeyboardListener] Ctrl+F detected, opening search modal.",
+          "[KeyboardListener] Search chord detected, opening search modal.",
         );
         openSearchModal();
         return;
@@ -340,7 +361,14 @@ export function useKeyboardListener() {
       const numbersRegex = /^[0-9]$/;
       if (numbersRegex.test(event.key)) {
         if (event.ctrlKey) {
-          // Ctrl+Number for banks 11-20
+          // Ctrl+Number for banks 11-20.
+          //
+          // Ctrl and not Cmd, on every platform including macOS: Cmd+1..9 is
+          // the browser's own tab switcher and is not cancellable from the
+          // page, so binding it would promise a bank and deliver a tab. Ctrl
+          // with a digit does reach the page on a Mac — unlike Ctrl+click,
+          // which the OS claims as the secondary click — so this one needs no
+          // second chord.
           event.preventDefault();
           const altBankNumber =
             event.key === "0" ? 20 : 10 + parseInt(event.key, 10);

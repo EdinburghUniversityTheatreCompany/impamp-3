@@ -20,7 +20,9 @@
  * happen to appear in: if a pass ever re-reads a store or mutates a
  * snapshot row in place, the order becomes load-bearing and materialisation
  * must run first, or a pad whose bank hasn't been created yet disappears
- * from it.
+ * from it. The fourth step is the exception that proves the rule: it reads
+ * the stores back *after* all three have run, writes nothing, and only
+ * checks — see `verifyV7Invariants`.
  */
 import type { DBSchema, IDBPTransaction } from "idb";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
@@ -193,5 +195,119 @@ export async function migrateToV7(transaction: V7Transaction): Promise<void> {
     const bankId = migratedBankId(pad.pageIndex);
     const { pageIndex: _pageIndex, ...rest } = pad;
     await padStore.put({ ...rest, bankId });
+  }
+
+  // 4. Check that the three passes did what they promised, and refuse to
+  //    commit if they didn't. Unlike them, this reads the stores *again*,
+  //    after the writes. That doesn't contradict the file-level comment's
+  //    snapshot-only rule: that rule exists so no pass observes another's
+  //    writes and their order stays immaterial, and this runs after all
+  //    three and writes nothing itself, so there is no order left for it to
+  //    make load-bearing. Reading the post-migration state is the entire
+  //    point — a snapshot taken before the writes cannot tell you what was
+  //    written.
+  verifyV7Invariants(
+    { pads, pages },
+    { pads: await padStore.getAll(), pages: await pageStore.getAll() },
+  );
+}
+
+/**
+ * The post-migration invariant check.
+ *
+ * This migration rewrites every pad row and every bank row on every user's
+ * device, and there is no server-side correction for a bad one. Throwing
+ * here is safe, and that is the whole reason the check is worth having:
+ * `migrateToV7` runs inside the `versionchange` transaction, so a throw
+ * aborts it — every write above is rolled back, the database stays at
+ * version 6 with the user's data intact, and `getDb()` rejects rather than
+ * handing back a half-migrated board (see the V7 block in `db.ts`). Failing
+ * loudly and reversibly beats shipping pads that silently belong to no bank.
+ *
+ * It is not defending against a known bug — both real upgrade paths were
+ * verified in a browser — but against a future edit to the three passes.
+ * Each check is a single linear scan, because it runs once on every user's
+ * device.
+ *
+ * Only data-loss-shaped failures are checked. Notably it does *not* assert
+ * that no pad still carries `pageIndex`: pass 3 leaves that field alone on a
+ * row that already had a `bankId`, so a mixed-shape row would trip such a
+ * check while having lost nothing at all. Aborting a user's migration over a
+ * leftover field is a worse outcome than the field.
+ */
+function verifyV7Invariants(
+  before: { pads: V7Pad[]; pages: V7Page[] },
+  after: { pads: V7Pad[]; pages: V7Page[] },
+): void {
+  const fail = (detail: string): never => {
+    throw new Error(
+      `V7 Migration: post-migration invariant failed - ${detail} Aborting the versionchange transaction; the database stays at version 6 with its data intact.`,
+    );
+  };
+
+  // 1. No pad was lost. `put` is keyed by the row's own id, so the count can
+  //    only move if a pass deletes or duplicates one.
+  if (after.pads.length !== before.pads.length) {
+    fail(
+      `pad rows changed in number - ${before.pads.length} before, ${after.pads.length} after.`,
+    );
+  }
+
+  // 2. No bank row was lost either. The migration only adds and stamps, so
+  //    this can drop but never legitimately.
+  if (after.pages.length < before.pages.length) {
+    fail(
+      `bank rows were lost - ${before.pages.length} before, ${after.pages.length} after.`,
+    );
+  }
+
+  // 3. Every placeable pad got a `bankId`. A pad with neither `bankId` nor
+  //    `pageIndex` cannot be placed and was deliberately skipped with a
+  //    warning (see pass 1); it is *expected* to end up without one and must
+  //    not trip this, or a single corrupt row would abort the migration for
+  //    every other pad the user owns. Truthiness, not `!== undefined`, so
+  //    the condition matches the guard the passes themselves use.
+  const placeable = before.pads.filter(
+    (pad) => pad.bankId || pad.pageIndex !== undefined,
+  ).length;
+  const stamped = after.pads.filter((pad) => pad.bankId).length;
+  if (stamped !== placeable) {
+    const skipped = before.pads.length - placeable;
+    fail(
+      `${stamped} of ${after.pads.length} pads carry a bankId, but ${placeable} should (the other ${skipped} had neither bankId nor pageIndex and were skipped on purpose).`,
+    );
+  }
+
+  // 4. Every bank row has an identity, including one no pad points at — an
+  //    orphan check alone would never look at those.
+  const identities = new Set<string>();
+  for (const page of after.pages) {
+    if (!page.bankId) {
+      fail(
+        `bank row ${page.id ?? "(no id)"} on profile ${page.profileId} at position ${page.pageIndex} has no bankId, out of ${after.pages.length} bank rows.`,
+      );
+    }
+    // 5. No two bank rows share `(profileId, bankId)`. The `profileBank`
+    //    index is unique, so IndexedDB refuses this first today; the check
+    //    is here for the edit that changes or drops that index.
+    const identity = `${page.profileId}:${page.bankId}`;
+    if (identities.has(identity)) {
+      fail(
+        `two bank rows share the identity (profile ${page.profileId}, bankId "${page.bankId}") - ${after.pages.length} bank rows carry only ${new Set(after.pages.map((row) => `${row.profileId}:${row.bankId}`)).size} distinct identities.`,
+      );
+    }
+    identities.add(identity);
+  }
+
+  // 6. No orphan pads: every stamped pad's `(profileId, bankId)` resolves to
+  //    a bank row that exists.
+  const orphans = after.pads.filter(
+    (pad) => pad.bankId && !identities.has(`${pad.profileId}:${pad.bankId}`),
+  );
+  if (orphans.length > 0) {
+    const first = orphans[0];
+    fail(
+      `${orphans.length} of ${after.pads.length} pads name a bank that does not exist, e.g. pad ${first.id ?? "(no id)"} on profile ${first.profileId} names bankId "${first.bankId}".`,
+    );
   }
 }

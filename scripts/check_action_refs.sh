@@ -10,7 +10,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 fail=0
-refs=$(rg --no-filename -o 'uses: *[^ ]+' .github/workflows/*.yml 2>/dev/null | sed 's/uses: *//')
+# grep, not rg: GitHub's ubuntu runner has no ripgrep, and `set -e` turned the
+# resulting 127 into an exit before this script had checked anything — so the
+# job that was meant to verify the pins was green-by-absence for as long as it
+# took anyone to look, and the jscpd and large-file steps after it never ran
+# at all.
+refs=$(grep -rhoE 'uses: *[^ ]+' .github/workflows/*.yml 2>/dev/null | sed 's/uses: *//')
 
 # 1. Everything third-party must be a 40-character SHA, not a tag.
 while read -r ref; do

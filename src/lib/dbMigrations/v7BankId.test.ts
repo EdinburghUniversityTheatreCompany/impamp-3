@@ -12,6 +12,12 @@
  * guard — a stripped pad's fallback position happens to already have a row
  * when there's only one profile), and a pad with no `pageIndex` at all
  * (corrupt data pass 1 and pass 3 both explicitly refuse to place).
+ *
+ * The second `describe` covers pass 4, the post-migration invariant check.
+ * Those tests can't reach their failure states by seeding data — the passes
+ * are correct, which is the point — so they sabotage one store operation
+ * each and assert the migration refuses to commit, with a message that says
+ * which invariant failed and with what numbers.
  */
 
 // Must be the first import: it installs fake-indexeddb before `idb` opens
@@ -259,5 +265,241 @@ describe("the v7 bank identity migration", () => {
     expect(new Set([...a, ...b]).size).toBe(a.length);
     deviceA.close();
     deviceB.close();
+  });
+});
+
+/**
+ * The subset of an object store `migrateToV7` actually touches. The
+ * sabotage harness below stands in for a real store, so it has to offer
+ * exactly this much and no more.
+ */
+interface WritableStore {
+  readonly indexNames: DOMStringList;
+  createIndex(
+    name: string,
+    keyPath: string | string[],
+    options?: IDBIndexParameters,
+  ): unknown;
+  deleteIndex(name: string): void;
+  add(value: Row): Promise<unknown>;
+  put(value: Row): Promise<unknown>;
+  delete(key: number): Promise<void>;
+  getAll(): Promise<Row[]>;
+}
+
+type Row = Record<string, unknown>;
+
+interface StoreSabotage {
+  /**
+   * Rewrites the record a `put` is about to write. Returning `null` deletes
+   * the row instead, which is how a pad gets lost.
+   */
+  put?: (record: Row) => Row | null;
+  /**
+   * Rewrites what a `getAll()` returns. `call` is 1-based: call 1 is the
+   * snapshot at the top of the migration, call 2 is pass 4 reading the
+   * stores back. Doctoring call 2 only is what lets a test show pass 4
+   * rejecting a state the real stores refuse to hold (see the duplicate
+   * identity test).
+   */
+  getAll?: (rows: Row[], call: number) => Row[];
+}
+
+type Sabotage = Partial<
+  Record<"padConfigurations" | "pageMetadata", StoreSabotage>
+>;
+
+/** Wraps a versionchange transaction so one store operation misbehaves. */
+function sabotageTransaction(
+  transaction: { objectStore(name: string): unknown },
+  sabotage: Sabotage,
+): V7Transaction {
+  const wrapped = new Map<string, WritableStore>();
+  const target = {
+    objectStore(name: string): WritableStore {
+      const cached = wrapped.get(name);
+      // Cached because the `getAll` call counter has to survive across the
+      // migration's two reads of the same store handle.
+      if (cached) return cached;
+      const real = transaction.objectStore(name) as unknown as WritableStore;
+      const hooks = sabotage[name as keyof Sabotage] ?? {};
+      let getAllCalls = 0;
+      const store: WritableStore = {
+        get indexNames() {
+          return real.indexNames;
+        },
+        createIndex: (indexName, keyPath, options) =>
+          real.createIndex(indexName, keyPath, options),
+        deleteIndex: (indexName) => real.deleteIndex(indexName),
+        add: (value) => real.add(value),
+        delete: (key) => real.delete(key),
+        put: async (value) => {
+          const replacement = hooks.put ? hooks.put(value) : value;
+          if (replacement === null) return real.delete(value.id as number);
+          return real.put(replacement);
+        },
+        getAll: async () => {
+          getAllCalls += 1;
+          const rows = await real.getAll();
+          return hooks.getAll ? hooks.getAll(rows, getAllCalls) : rows;
+        },
+      };
+      wrapped.set(name, store);
+      return store;
+    },
+  };
+  return target as unknown as V7Transaction;
+}
+
+/**
+ * Runs the migration over a freshly seeded database with one store
+ * operation sabotaged, and returns the error it refused to commit with.
+ */
+async function migrateSabotaged(sabotage: Sabotage): Promise<Error> {
+  const name = await seedV6(nextName());
+  let migrationDone: Promise<void> | undefined;
+  const db = await openDB(name, 7, {
+    upgrade(_database, _oldVersion, _newVersion, transaction) {
+      migrationDone = migrateToV7(
+        sabotageTransaction(
+          transaction as unknown as { objectStore(store: string): unknown },
+          sabotage,
+        ),
+      );
+      // The same no-op handler `db.ts` attaches beside `v7MigrationOutcome`,
+      // and for the same reason: the migration rejects during `upgrade`,
+      // which is before `openDB()` resolves and the `await` below can
+      // attach. Without this the run reports an unhandled rejection for an
+      // error the test goes on to assert on. A promise broadcasts to every
+      // handler, so this doesn't consume it.
+      migrationDone.catch(() => {});
+    },
+  });
+  let thrown: unknown;
+  try {
+    await migrationDone;
+  } catch (error) {
+    thrown = error;
+  }
+  db.close();
+  if (!(thrown instanceof Error)) {
+    throw new Error(
+      "the migration was expected to reject and did not; the invariant check did not fire",
+    );
+  }
+  return thrown;
+}
+
+describe("the v7 migration's post-migration invariant check", () => {
+  // Every seeded profile carries the unplaceable "Ghost" pad, so each of
+  // these also demonstrates that the skipped row is not what tripped the
+  // check.
+  it("refuses to commit if a pad row was lost", async () => {
+    const error = await migrateSabotaged({
+      padConfigurations: { put: (pad) => (pad.name === "Rain" ? null : pad) },
+    });
+
+    expect(error.message).toContain(
+      "pad rows changed in number - 4 before, 3 after.",
+    );
+    // Every message ends with why throwing is the safe move here.
+    expect(error.message).toContain("stays at version 6 with its data intact");
+  });
+
+  it("refuses to commit if a placeable pad got no bankId", async () => {
+    const error = await migrateSabotaged({
+      padConfigurations: {
+        put: (pad) => {
+          if (pad.name !== "Rain") return pad;
+          const { bankId: _dropped, ...rest } = pad;
+          return rest;
+        },
+      },
+    });
+
+    // Three of the four seeded pads are placeable; the fourth is Ghost,
+    // and the message has to say so rather than counting it as a loss.
+    expect(error.message).toContain(
+      "2 of 4 pads carry a bankId, but 3 should (the other 1 had neither bankId nor pageIndex and were skipped on purpose).",
+    );
+  });
+
+  it("refuses to commit if a pad names a bank that does not exist", async () => {
+    const error = await migrateSabotaged({
+      padConfigurations: {
+        put: (pad) => (pad.name === "Rain" ? { ...pad, bankId: "97" } : pad),
+      },
+    });
+
+    expect(error.message).toContain(
+      "1 of 4 pads name a bank that does not exist",
+    );
+    expect(error.message).toContain('names bankId "97".');
+  });
+
+  it("refuses to commit if two bank rows share an identity", async () => {
+    // Doctoring pass 4's read, not the stores: the `profileBank` index is
+    // unique, so a real duplicate is refused by IndexedDB long before pass
+    // 4 sees it. This check exists for the edit that changes that index,
+    // and this is the only way to show it working.
+    const error = await migrateSabotaged({
+      pageMetadata: {
+        getAll: (rows, call) => (call === 2 ? [...rows, { ...rows[0] }] : rows),
+      },
+    });
+
+    expect(error.message).toContain(
+      'two bank rows share the identity (profile 1, bankId "0") - 4 bank rows carry only 3 distinct identities.',
+    );
+  });
+
+  it("refuses to commit if a bank row has no identity at all", async () => {
+    const error = await migrateSabotaged({
+      pageMetadata: {
+        getAll: (rows, call) => {
+          if (call !== 2) return rows;
+          const [first, ...rest] = rows;
+          const { bankId: _dropped, ...stripped } = first;
+          return [stripped, ...rest];
+        },
+      },
+    });
+
+    expect(error.message).toContain("on profile 1 at position 0 has no bankId");
+    expect(error.message).toContain("out of 3 bank rows.");
+  });
+
+  it("refuses to commit if a bank row was lost", async () => {
+    const error = await migrateSabotaged({
+      pageMetadata: { getAll: (rows, call) => (call === 2 ? [] : rows) },
+    });
+
+    expect(error.message).toContain("bank rows were lost - 1 before, 0 after.");
+  });
+
+  it("does not fire on the happy path, unplaceable pad and all", async () => {
+    const db = await migrate(await seedV6(nextName()), 7);
+
+    // The check passed, so the seeded profiles migrated in full: the three
+    // placeable pads are stamped and every one of them resolves to a bank
+    // row that exists. One corrupt row aborting all of that is exactly what
+    // pass 1's skip-with-a-warning decision refuses to do.
+    const pads = await db.getAll("padConfigurations");
+    const pages = await db.getAll("pageMetadata");
+    const identities = new Set(
+      pages.map((page) => `${page.profileId}:${page.bankId}`),
+    );
+
+    expect(pads).toHaveLength(4);
+    const placed = pads.filter((pad) => pad.bankId);
+    expect(placed.map((pad) => pad.name).sort()).toEqual([
+      "Horn",
+      "Rain",
+      "Wind",
+    ]);
+    for (const pad of placed) {
+      expect(identities).toContain(`${pad.profileId}:${pad.bankId}`);
+    }
+    db.close();
   });
 });

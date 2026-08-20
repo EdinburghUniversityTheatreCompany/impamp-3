@@ -57,15 +57,22 @@ export default defineConfig({
         "src/lib/server/s3/fakeObjectStore.ts",
       ],
       reporter: ["text-summary", "html"],
-      // Today's run is 34.28 / 29.89 / 28.47 / 34.77. The gap below it is
-      // deliberate but small: enough that an ordinary refactor moving a few
-      // uncovered lines around does not fail the build, not enough for a whole
-      // untested module to land unnoticed.
+      // Two back-to-back runs measured 45.51 / 38.80 / 40.81 / 46.17 and
+      // 45.80 / 38.85 / 40.91 / 46.45. The floor sits under the *lower* of the
+      // two: the numbers move by about a third of a point between runs, so a
+      // ratchet set against a single run's figure would fail the next one. The
+      // gap below that is deliberate but small — enough that an ordinary
+      // refactor moving a few uncovered lines around does not fail the build,
+      // not enough for a whole untested module to land unnoticed.
+      //
+      // The previous floor of 33 / 28 / 27 / 33 was set against a 34.28 run and
+      // had been left ten points behind by the bank-identity work, which put
+      // most of `db.ts` under test.
       thresholds: {
-        statements: 33,
-        branches: 28,
-        functions: 27,
-        lines: 33,
+        statements: 44,
+        branches: 37,
+        functions: 39,
+        lines: 44,
       },
     },
   },

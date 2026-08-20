@@ -74,12 +74,15 @@ See `docs/server-sync.md`.
 
 ### Database Layer
 
-IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
+IndexedDB abstraction in `src/lib/db.ts` with four object stores:
 
 - `profiles` - Profile metadata and settings
-- `padConfigurations` - Pad assignments, audio file references, playback modes
+- `padConfigurations` - Pad assignments, audio file references, playback
+  modes. A pad names its bank by `bankId` and carries no position of its own,
+  because a pad's position is its bank's
 - `audioFiles` - Binary audio data storage
-- `pageMetadata` - Bank names and emergency status
+- `pageMetadata` - One row per bank: `bankId` is its identity, `pageIndex` is
+  its position, plus the name and the emergency flag
 
 ### Component Architecture
 
@@ -90,9 +93,14 @@ IndexedDB abstraction in `src/lib/db.ts` with three main object stores:
 
 ### Key Features Implementation
 
-- **Edit Mode** - Activated by Shift key, allows pad/bank editing
-- **Search System** - Ctrl+F opens search modal across all banks
-- **Track Arming** - Ctrl+Click to queue sounds, F9 to play next
+- **Edit Mode** - Activated by Shift key, allows pad/bank editing and
+  dragging the bank tabs into a new order (`BankTabStrip.tsx`)
+- **Search System** - Ctrl+F (Cmd+F on a Mac) opens search modal across all banks
+- **Track Arming** - Ctrl+Click to queue sounds, F9 to play next. Command counts
+  as the arm modifier everywhere Ctrl does, because macOS claims Ctrl+click as
+  the secondary click and the browser never dispatches the `click`. Read the
+  chord through `hasArmModifier` in `src/lib/platform.ts` rather than testing
+  `ctrlKey` directly, and label it with `armModifierLabel`
 - **Google Drive Sync** - Complete sync implementation in `src/lib/googleDrive/`
 - **Server Sync** - ETag/If-Match sync against the app's own backend, with SSE
   change notifications (`src/lib/serverSync/`). Audio stays in Drive by
@@ -128,11 +136,17 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 
 - Banks 1-9: keys 1-9
 - Bank 10: key 0
-- Banks 11-19: Ctrl+1 through Ctrl+9
+- Banks 11-19: Ctrl+1 through Ctrl+9 (Ctrl on every platform: Cmd+digit is the
+  browser's tab switcher and cannot be cancelled from the page)
 - Bank 20: Ctrl+0
 - ESC: Stop all sounds (panic button)
 - F9: Play next armed track
 - Shift: Enter edit mode
+
+A digit names a **position**, not a bank. `setCurrentPageIndex` indexes into
+`profileStore.banks` — already in display order, see `src/lib/bankOrder.ts` —
+and stores the `bankId` it finds there, so after a reorder `3` selects
+whichever bank sits third.
 
 ### Docker Deployment
 
@@ -182,6 +196,19 @@ packages, none of them is fair game.
   between tests rather than swapping the database — which means autoIncrement
   ids keep climbing, and assertions must key off an id the store handed back
   rather than a literal. See `src/lib/googleDrive/dataAccess.gain.test.ts`
+- Banks make position and identity look interchangeable in a fixture. A
+  migrated bank and a default bank both have `bankId === String(pageIndex)`,
+  so identity-keyed and position-keyed code behave **identically** on any
+  fixture built from `ensureDefaultBanks`. Swapping `byId.get(bankId)` for
+  `banks[Number(bankId)]` — the exact conflation the `bankId` field exists to
+  end — once left all 28 tests of the owning suite green. A test that means
+  to check identity needs a bank whose id is a UUID at a position that is not
+  its index
+- jsdom cannot run `@hello-pangea/dnd`'s sensors, so a unit test of a drag
+  can only mock the library and assert that props were passed. That passed
+  for three review rounds while the bank-tab drag did not work in a browser
+  at all. Anything that depends on the library actually doing something needs
+  a real browser: `e2e-tests/bank-reorder.spec.ts` is the regression test
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
@@ -211,6 +238,11 @@ packages, none of them is fair game.
 - Profiles can be linked to Google Drive for sync
 - Export updates `lastBackedUpAt` timestamp
 - Backup reminder system based on configurable intervals
+- Materialising the ten default banks is housekeeping, not a user edit.
+  `hasProfileChangedSince` filters those rows out with
+  `isUntouchedDefaultBank`; without it every user is nagged to back up a
+  profile they never touched, the first time they open the app after
+  upgrading
 
 ## Important Implementation Notes
 
@@ -252,6 +284,29 @@ packages, none of them is fair game.
   hunting for, or it silently attaches to the wrong sounds
 - Gain resolution at trigger time is synchronous on purpose. The analysis cache
   is warmed on profile activation so the playback path never awaits a DB read
+- A bank's identity is `bankId` and its position is `pageIndex`. Every
+  database key, sync key, playback key and loading key uses `bankId`; only the
+  tab order and the keyboard shortcut use `pageIndex`. A bank migrated from DB
+  v6 takes `bankId = String(pageIndex)`, and so do the ten default banks
+  `ensureDefaultBanks` writes — a **requirement, not a convenience**: both run
+  per device against that device's own IndexedDB, so a random id would fork
+  across a user's devices and sync would read one bank as several. A bank
+  created afterwards is itself a synced event, so it gets
+  `crypto.randomUUID()`. The order is normalised on read by
+  `src/lib/bankOrder.ts` — sort by `(pageIndex, bankId)`, renumber densely
+  from 0 — because `pageIndex` is an ordinary last-write-wins field and a
+  merge can legitimately leave two banks on one position
+- The bank tabs are `<button>`s, and `@hello-pangea/dnd` refuses any drag
+  whose source event sits inside an interactive element — its
+  `interactiveTagNames` includes `'button'` — so the `Draggable` in
+  `BankTabStrip.tsx` must keep `disableInteractiveElementBlocking`. Without it
+  no sensor starts a drag at all, and because dnd then never claims the key,
+  Space, Escape and Enter reach the global handler and fade out all audio, hit
+  the panic button, or fire an emergency cue. That is also why
+  `useKeyboardListener` returns early on `event.defaultPrevented`: a global
+  shortcut must not act on a key something nearer the target already claimed.
+  Keep that a single guard — the same rule written three times is this repo's
+  characteristic regression
 
 ## Pinned Versions
 

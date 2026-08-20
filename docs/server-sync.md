@@ -127,6 +127,32 @@ Two further properties are worth spelling out:
   through the ETag path, so there is one code path for reading a profile and
   no way for an event to deliver stale bytes.
 
+### Banks: identity and position
+
+A bank's identity is its `bankId`. Its `pageIndex` is only where it sits in
+the tab strip, and is an ordinary per-field value like its name. **The merge
+keys on identity** — `bankId` for a bank, `` `${bankId}-${padIndex}` `` for a
+pad (`syncUtils.ts`). So moving a bank is one field changing on one row,
+rather than every pad in it changing which bank it belongs to — and two
+people who reorder differently converge without raising a conflict on a
+single pad.
+
+Because `pageIndex` is last-write-wins like anything else, a merge can
+legitimately leave two banks on the same position, or leave a gap. Nothing
+repairs the stored rows. The order is normalised **on read**, by sorting on
+`(pageIndex, bankId)` and renumbering densely from 0 (`src/lib/bankOrder.ts`).
+`bankId` never changes, so every client reaches the same order from the same
+data without talking to any other client.
+
+A profile blob written before this landed has no `bankId` at all — and after
+a deploy, every device's first sync reads one, however promptly the clients
+themselves updated. Every ingestion point normalises before merging:
+`normaliseIncomingSyncData` (`src/lib/syncUtils.ts`) fills a missing `bankId`
+in as `String(pageIndex)`, the same deterministic rule the v6→v7 IndexedDB
+migration uses, so both sides of the merge agree on what a bank is called. A
+new ingestion path that skips it keys every remote bank as `undefined`, which
+the merge reads as "every local bank is new".
+
 ### Access model
 
 | Role   | Read | Write | Manage sharing | Delete |

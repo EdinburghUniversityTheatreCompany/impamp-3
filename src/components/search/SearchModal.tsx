@@ -13,6 +13,8 @@ import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { useSearch, type SearchResult } from "@/hooks/useSearch";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
+import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
+import { armModifierLabel, hasArmModifier } from "@/lib/platform";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -28,6 +30,9 @@ interface SearchModalProps {
 const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   // Search functionality
   const { searchTerm, setSearchTerm, results, isLoading } = useSearch();
+
+  // How to name the arm chord in the per-result tooltip
+  const modifier = armModifierLabel(useIsApplePlatform());
 
   // Refs
   const inputRef = useRef<HTMLInputElement>(null);
@@ -102,7 +107,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // Function to arm a sound when Ctrl+Clicked
+  // Function to arm a sound when the arm chord is held
   const handleArmSound = (result: SearchResult) => {
     try {
       // Create a unique key for this armed track
@@ -134,21 +139,21 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // Handle result interaction - play, or arm when Ctrl is held
-  const activateResult = (result: SearchResult, withCtrl: boolean) => {
+  // Handle result interaction - play, or arm when the arm chord is held
+  const activateResult = (result: SearchResult, withArmModifier: boolean) => {
     // Disabled pads are listed so they can be found, but neither play nor arm
     if (result.isDisabled) {
       console.log(`[SearchModal] Pad "${result.name}" is disabled, ignoring.`);
       return;
     }
-    if (withCtrl) {
+    if (withArmModifier) {
       handleArmSound(result);
     } else {
       handlePlaySound(result);
     }
   };
 
-  // Ctrl+Enter arms, mirroring Ctrl+Click.
+  // Ctrl+Enter — or Cmd+Enter on a Mac — arms, mirroring the click chord.
   //
   // A <button> already fires its onClick from Enter and Space, so the plain
   // case needs nothing. The chord does: preventDefault is what stops the
@@ -158,7 +163,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     e: React.KeyboardEvent,
     result: SearchResult,
   ) => {
-    if (e.key !== "Enter" || !e.ctrlKey) return;
+    if (e.key !== "Enter" || !hasArmModifier(e)) return;
     e.preventDefault();
     activateResult(result, true);
   };
@@ -249,7 +254,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                 <button
                   type="button"
                   key={`${result.pageIndex}-${result.padIndex}`}
-                  onClick={(e) => activateResult(result, e.ctrlKey)}
+                  onClick={(e) => activateResult(result, hasArmModifier(e))}
                   onKeyDown={(e) => handleResultKeyDown(e, result)}
                   className={`w-full text-left bg-white dark:bg-gray-700 rounded p-3 shadow transition-colors ${
                     result.isDisabled
@@ -261,7 +266,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
                   title={
                     result.isDisabled
                       ? "This pad is disabled."
-                      : `Click or press Enter to play. Ctrl+Click or Ctrl+Enter to arm track.`
+                      : `Click or press Enter to play. ${modifier}+Click or ${modifier}+Enter to arm track.`
                   }
                 >
                   {/* Spans rather than divs: a <button> may only contain

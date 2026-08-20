@@ -4,6 +4,7 @@ import { fromEvent } from "file-selector";
 import { COMMON_MIME_TYPES } from "file-selector/mime";
 import clsx from "clsx";
 import { getDefaultKeyForPadIndex } from "@/lib/keyboardUtils";
+import { hasArmModifier } from "@/lib/platform";
 import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
 import { usePadPlaybackState, usePadLayerCount } from "@/store/playbackStore";
 import PadProgressBar from "./PadProgressBar"; // Import the new component
@@ -29,7 +30,7 @@ interface PadProps {
   loadingError?: string; // Error message if loading failed
   onClick: () => void;
   onShiftClick: () => void; // Callback for shift+click (for renaming)
-  onCtrlClick?: () => void; // Callback for ctrl+click (for arming)
+  onArm?: () => void; // Callback for the arm chord (Ctrl/Cmd + click or Enter)
   onDropAudio: (acceptedFiles: File[], padIndex: number) => Promise<void>; // Callback for drop
   onRemoveSound?: () => void; // New callback for removing sound from pad
   onSwapWith?: (fromIndex: number, toIndex: number) => void; // Callback for pad swapping
@@ -52,7 +53,7 @@ const Pad: React.FC<PadProps> = ({
   loadingError,
   onClick,
   onShiftClick,
-  onCtrlClick,
+  onArm,
   onDropAudio,
   onRemoveSound,
   onSwapWith,
@@ -301,14 +302,15 @@ const Pad: React.FC<PadProps> = ({
    * The pad's one activation path, shared by the pointer and the keyboard so
    * the two cannot drift into meaning different things.
    *
-   * `withCtrl` is the arm chord: Ctrl+Click from the mouse, Ctrl+Enter or
-   * Ctrl+Space from the keyboard.
+   * `withArmModifier` is the arm chord: Ctrl (or Cmd on a Mac) held with a
+   * click, with Enter, or with Space. See `hasArmModifier` for why Ctrl alone
+   * is not enough.
    */
   const activate = React.useCallback(
-    (withCtrl: boolean) => {
-      // Ctrl arms the track
-      if (withCtrl && isConfigured && onCtrlClick && soundCount > 0) {
-        onCtrlClick();
+    (withArmModifier: boolean) => {
+      // The arm chord queues the track instead of playing it
+      if (withArmModifier && isConfigured && onArm && soundCount > 0) {
+        onArm();
       }
       // In Delete/Move mode, activating deletes the pad (but not special pads)
       else if (
@@ -330,7 +332,7 @@ const Pad: React.FC<PadProps> = ({
     },
     [
       isConfigured,
-      onCtrlClick,
+      onArm,
       soundCount,
       isDeleteMoveMode,
       onRemoveSound,
@@ -352,7 +354,7 @@ const Pad: React.FC<PadProps> = ({
       onClick={(e) => {
         // Prevent dropzone's default click behavior if necessary, though noClick should handle it
         e.stopPropagation();
-        activate(e.ctrlKey);
+        activate(hasArmModifier(e));
 
         // A pointer click must not park focus on the pad.
         //
@@ -383,7 +385,7 @@ const Pad: React.FC<PadProps> = ({
         e.preventDefault();
         e.stopPropagation();
         if (e.repeat) return; // Holding a pad key must not retrigger it
-        activate(e.ctrlKey);
+        activate(hasArmModifier(e));
       }}
       draggable={isDeleteMoveMode && !isSpecialPad}
       onDragStart={handleDragStart}

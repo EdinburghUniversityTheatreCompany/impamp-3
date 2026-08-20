@@ -4,8 +4,12 @@ import type {
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
-import { migrateToV7, type V7Transaction } from "./dbMigrations/v7BankId";
-import { normaliseBankOrder } from "./bankOrder";
+import {
+  migrateToV7,
+  migratedBankId,
+  type V7Transaction,
+} from "./dbMigrations/v7BankId";
+import { compareBankOrder, normaliseBankOrder } from "./bankOrder";
 
 export type { LoudnessAnalysis, NormalisationSettings };
 export { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
@@ -1478,6 +1482,36 @@ const BACKUP_ONLY_FIELDS = new Set([
   "followOnly",
 ]);
 
+/**
+ * Whether a bank row is one the app wrote for itself and nobody has touched
+ * since — the bank equivalent of `BACKUP_ONLY_FIELDS` above.
+ *
+ * Banks 1-10 used to be synthesised in the page component, so an unedited
+ * profile carried no `pageMetadata` rows at all. Since v7 they are real rows,
+ * materialised by `ensureDefaultBanks` and by `migrateToV7`'s pass 1, both
+ * stamped with the moment they were written. Those rows still have to *sync* —
+ * materialising a bank genuinely is a change to the profile's data, and
+ * dropping their `_created`/`_modified` would break the merge — so the
+ * housekeeping has to be recognised here, at the one place that asks "did the
+ * user change anything worth backing up?", rather than at the write.
+ *
+ * A row counts as untouched only if it still looks exactly the way those two
+ * paths write it: the deterministic migrated id, sitting at the position that
+ * id encodes, under that position's default name, not an emergency bank, and
+ * with no modification after its creation. Any edit breaks at least one of
+ * those — a rename changes `name`, the emergency toggle changes
+ * `isEmergency`, a reorder moves the row away from the position its id
+ * encodes and bumps `_modified`, and a bank the user added has a random id.
+ */
+function isUntouchedDefaultBank(bank: PageMetadata): boolean {
+  return (
+    bank.bankId === migratedBankId(bank.pageIndex) &&
+    bank.name === `Bank ${convertIndexToBankNumber(bank.pageIndex)}` &&
+    !bank.isEmergency &&
+    (bank._modified === undefined || bank._modified === bank._created)
+  );
+}
+
 // Records restored from sync payloads can carry ISO strings rather than Dates,
 // so coerce before comparing. Unusable values are treated as "not changed".
 function toTimestamp(value: Date | string | number | undefined | null): number {
@@ -1523,7 +1557,13 @@ export async function hasProfileChangedSince(
     .index("profileId")
     .getAll(profileId);
   await pageTx.done;
-  if (pages.some((page) => toTimestamp(page.updatedAt) > since)) return true;
+  if (
+    pages.some(
+      (page) =>
+        !isUntouchedDefaultBank(page) && toTimestamp(page.updatedAt) > since,
+    )
+  )
+    return true;
 
   return false;
 }
@@ -2016,6 +2056,58 @@ export async function createBank(
   await tx.done;
 
   return { ...content, id, createdAt: now, updatedAt: now };
+}
+
+/**
+ * Writes a new bank order.
+ *
+ * One transaction over `pageMetadata`. Position is an ordinary field, so a
+ * reorder moves no pad row and stresses no unique index. Only a bank that
+ * really changed position gets a fresh sync stamp, so the merge sees a
+ * position change rather than a mass rename.
+ *
+ * @param profileId - The profile whose banks move
+ * @param orderedBankIds - The identities, in the new order. An id the
+ *   profile does not hold is ignored. A repeated id is placed at its first
+ *   occurrence only; later repeats are ignored. A bank the caller does not
+ *   name (including every bank, when this is empty) keeps its relative
+ *   order, after the named ones.
+ */
+export async function reorderBanks(
+  profileId: number,
+  orderedBankIds: string[],
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("pageMetadata", "readwrite");
+  const store = tx.objectStore("pageMetadata");
+  const banks = await store.index("profileId").getAll(profileId);
+  const byId = new Map(banks.map((bank) => [bank.bankId, bank]));
+
+  const ordered: PageMetadata[] = [];
+  for (const bankId of orderedBankIds) {
+    const bank = byId.get(bankId);
+    if (!bank) continue;
+    byId.delete(bankId);
+    ordered.push(bank);
+  }
+  // Sorted with the shared comparator rather than renumbered, because the
+  // loop below decides what to write by the *old* position.
+  ordered.push(...[...byId.values()].sort(compareBankOrder));
+
+  const now = new Date();
+  const nowMs = now.getTime();
+  for (let position = 0; position < ordered.length; position++) {
+    const bank = ordered[position];
+    if (bank.pageIndex === position) continue;
+    await store.put({
+      ...bank,
+      pageIndex: position,
+      updatedAt: now,
+      _modified: nowMs,
+      _fieldsModified: { ...(bank._fieldsModified ?? {}), pageIndex: nowMs },
+    });
+  }
+  await tx.done;
 }
 
 // Find audio file IDs referenced by pads that no longer exist in the audioFiles store
