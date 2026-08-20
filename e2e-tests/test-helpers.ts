@@ -394,6 +394,45 @@ export async function triggerAndReadSoundIndex(
   return index;
 }
 
+/**
+ * Sets the *profile's* "what happens when a pad is triggered while it plays"
+ * through the Playback Settings modal.
+ *
+ * This is the profile default, not a per-pad override: a pad that has never
+ * been given a behaviour of its own follows whatever is set here. The pad's
+ * own override lives in the Edit Pad modal, under the
+ * `edit-pad-active-behavior-*` test ids.
+ *
+ * Lives here rather than in one spec because two specs now need it — the
+ * behaviour tests in audio-playback.spec.ts and the layering tests in
+ * layered-retrigger.spec.ts — and a second copy of a form-driving helper is
+ * exactly how the two drift apart.
+ */
+export async function setProfileActivePadBehavior(
+  page: Page,
+  behavior: string,
+) {
+  const settingsButton = page.locator(
+    '[data-testid="active-tracks-panel"] button[aria-label="Playback settings"]',
+  );
+  await settingsButton.click();
+
+  const modal = page.locator(".fixed.inset-0.bg-black\\/50");
+  await expect(modal).toBeVisible();
+
+  const behaviorRadioButton = modal.locator(
+    `input[name="activePadBehavior"][value="${behavior}"]`,
+  );
+  await expect(behaviorRadioButton).toBeVisible();
+  await behaviorRadioButton.click();
+
+  const saveButton = modal.locator('button:has-text("Save Settings")');
+  await saveButton.click();
+
+  await expect(modal).not.toBeVisible(); // Wait for modal to close
+  console.log(`[Test Helper] Set profile activePadBehavior to: ${behavior}`);
+}
+
 // --- Helpers for Edit Pad Modal ---
 
 // Helper to open the edit modal for a specific pad

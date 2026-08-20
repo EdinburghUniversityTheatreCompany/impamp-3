@@ -10,34 +10,9 @@ import {
   setPlaybackModeInModal,
   triggerAndReadSoundIndex,
   gotoApp,
+  setProfileActivePadBehavior,
 } from "./test-helpers";
 import { ActivePadBehavior, PlaybackType } from "../src/lib/db";
-
-// Helper function to set the Active Pad Behavior setting via the UI
-async function setActivePadBehaviorSetting(
-  page: Page,
-  behavior: ActivePadBehavior,
-) {
-  const settingsButton = page.locator(
-    '[data-testid="active-tracks-panel"] button[aria-label="Playback settings"]',
-  );
-  await settingsButton.click();
-
-  const modal = page.locator(".fixed.inset-0.bg-black\\/50");
-  await expect(modal).toBeVisible();
-
-  const behaviorRadioButton = modal.locator(
-    `input[name="activePadBehavior"][value="${behavior}"]`,
-  );
-  await expect(behaviorRadioButton).toBeVisible();
-  await behaviorRadioButton.click();
-
-  const saveButton = modal.locator('button:has-text("Save Settings")');
-  await saveButton.click();
-
-  await expect(modal).not.toBeVisible(); // Wait for modal to close
-  console.log(`[Test Helper] Set activePadBehavior to: ${behavior}`);
-}
 
 test.describe("ImpAmp3 Audio Playback", () => {
   test.beforeEach(async ({ page }) => {
@@ -260,7 +235,7 @@ test.describe("ImpAmp3 Audio Playback", () => {
     );
 
     // Set behavior
-    await setActivePadBehaviorSetting(page, behavior);
+    await setProfileActivePadBehavior(page, behavior);
 
     // Load audio
     await padInput.setInputFiles(audioFilePath);
