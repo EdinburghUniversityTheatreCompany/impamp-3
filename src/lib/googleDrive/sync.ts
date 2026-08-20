@@ -10,7 +10,7 @@ import {
   getAudioFileIdsForProfile,
   getAudioFile,
   getAudioFileMetadata,
-  addAudioFile,
+  addOrReuseAudioFile,
   updateAudioFileDriveId,
   getAudioFileByHash,
   ensureAudioFileHash,
@@ -364,13 +364,25 @@ export async function downloadMissingAudioFiles(
         refreshCallback,
       );
       if (blob) {
-        await addAudioFile({
+        // Reuse by content hash. The check above is a separate transaction
+        // from this write, and a browser runs several syncs at once — one per
+        // connected profile, plus a second tab — so two of them can both miss
+        // it and both download the same shared sound. Only a lookup inside
+        // the writing transaction collapses that pair.
+        const { id, reused } = await addOrReuseAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
           hash: ref.hash,
           driveFileIds: { [profileId]: ref.driveFileId },
         });
+        if (reused) {
+          // Reuse returns the row exactly as it found it, so the Drive id
+          // this profile knows for these bytes is still not on it. The
+          // `existingFile` branch above does the same thing for the same
+          // reason.
+          await updateAudioFileDriveId(id, ref.driveFileId, profileId);
+        }
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       } else {
         // Gone from Drive for good — pads referencing it lose the reference
