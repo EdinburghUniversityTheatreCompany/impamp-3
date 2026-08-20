@@ -27,43 +27,13 @@
  */
 import "@/lib/testSupport/browserGlobals";
 import { describe, expect, it } from "vitest";
-import { openDB } from "idb";
+import { openLegacyDatabase } from "@/lib/testSupport/legacyDatabase";
 
-const DB_NAME = "impamp3DB";
 const PROFILE_ID = 1;
 
 /** The shape a real device's database had at version 2, built by hand. */
 async function seedPreV3Database(): Promise<void> {
-  const seedDb = await openDB(DB_NAME, 2, {
-    upgrade(db) {
-      db.createObjectStore("profiles", {
-        keyPath: "id",
-        autoIncrement: true,
-      }).createIndex("name", "name", { unique: true });
-      db.createObjectStore("audioFiles", {
-        keyPath: "id",
-        autoIncrement: true,
-      }).createIndex("name", "name");
-      const padStore = db.createObjectStore("padConfigurations", {
-        keyPath: "id",
-        autoIncrement: true,
-      });
-      padStore.createIndex("profileId", "profileId");
-      padStore.createIndex(
-        "profilePagePad",
-        ["profileId", "pageIndex", "padIndex"],
-        { unique: true },
-      );
-      const pageStore = db.createObjectStore("pageMetadata", {
-        keyPath: "id",
-        autoIncrement: true,
-      });
-      pageStore.createIndex("profileId", "profileId");
-      pageStore.createIndex("profilePage", ["profileId", "pageIndex"], {
-        unique: true,
-      });
-    },
-  });
+  const seedDb = await openLegacyDatabase(2);
 
   const now = new Date();
   const tx = seedDb.transaction(
