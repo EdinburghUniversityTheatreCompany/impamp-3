@@ -39,6 +39,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
   - _Multi-Sound Pads_: Shift+click opens an editor to manage sounds (add, remove, reorder via drag-and-drop) and select playback mode.
 - **Bulk Import**: In delete/swap mode, use the bulk import feature to assign multiple audio files to empty pads at once with a visual mapping interface.
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
+- **Reorder Banks**: In edit mode, drag a bank tab to a new position. The pads move with the bank, and the number keys follow the new order
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
 - **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
 - **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
@@ -210,6 +211,7 @@ stuck on an old build.
 3. **Bank Navigation**: Use the numeric keys 1-9, 0 for banks 1-10, and Ctrl+1 through Ctrl+0 for banks 11-20.
 4. **Edit Mode**: Hold Shift to enter edit mode
    - Shift+click on banks to rename them or toggle emergency status.
+   - Drag a bank tab sideways to move the bank, with all of its pads, to another position.
    - Shift+click on pads to edit them:
      - _Empty/Single Sound Pads_: Opens a simple rename prompt (or the full editor if preferred).
      - _Multi-Sound Pads_: Opens the full pad editor to manage sounds (add, remove, reorder) and playback mode.
