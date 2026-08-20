@@ -261,7 +261,8 @@ export function usePadInteractions(params: PadInteractionsParams) {
   );
 
   /**
-   * Handler for arming a track on Ctrl+Click
+   * Handler for arming a track on the arm chord — Ctrl+Click, or Cmd+Click on
+   * a Mac. See `hasArmModifier` in `src/lib/platform.ts`.
    */
   const handleArmTrack = useCallback(
     (padIndex: number) => {
