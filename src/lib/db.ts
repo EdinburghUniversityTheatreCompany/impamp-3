@@ -720,6 +720,36 @@ const updateFieldsModified = <T>(
   return updatedFields;
 };
 
+/**
+ * Starts the loudness analysis for one newly written audio file.
+ *
+ * Analyse in the background. A file being imported is already being decoded,
+ * so this is nearly free — but it must never block the import, so it is fired
+ * without awaiting. The file plays at 0 dB normalisation until this lands,
+ * which is exactly how it behaved before this feature existed.
+ *
+ * Shared by `addAudioFile` and `addOrReuseAudioFile` so that a row gets its
+ * analysis from either writer, and only ever once. A row that
+ * `addOrReuseAudioFile` reused keeps the analysis it already has, which is the
+ * whole saving: each set of bytes is analysed once, no matter how many pads
+ * across how many profiles come to name it.
+ */
+function startBackgroundAnalysis(id: number): void {
+  if (typeof window === "undefined") return;
+  void import("@/lib/audio/loudness/pipeline")
+    .then(({ analyseAndStore }) => analyseAndStore(id))
+    .catch((error) => {
+      // analyseAndStore already contains its own errors; this only guards
+      // the dynamic import itself (e.g. a chunk-load failure). Either way,
+      // analysis failing must never surface as an unhandled rejection —
+      // the whole design is that an unanalysed file just plays at 0 dB.
+      console.warn(
+        `[Loudness] Background analysis failed for audio file ${id}:`,
+        error,
+      );
+    });
+}
+
 // Add an audio file
 export async function addAudioFile(
   audioFile: Omit<AudioFile, "id" | "createdAt">,
@@ -731,24 +761,7 @@ export async function addAudioFile(
   await tx.done;
   console.log(`Added audio file with id: ${id}`);
 
-  // Analyse in the background. A file being imported is already being
-  // decoded, so this is nearly free — but it must never block the import, so
-  // it is fired without awaiting. The file plays at 0 dB normalisation until
-  // this lands, which is exactly how it behaved before this feature existed.
-  if (typeof window !== "undefined") {
-    void import("@/lib/audio/loudness/pipeline")
-      .then(({ analyseAndStore }) => analyseAndStore(id))
-      .catch((error) => {
-        // analyseAndStore already contains its own errors; this only guards
-        // the dynamic import itself (e.g. a chunk-load failure). Either way,
-        // analysis failing must never surface as an unhandled rejection —
-        // the whole design is that an unanalysed file just plays at 0 dB.
-        console.warn(
-          `[Loudness] Background analysis failed for audio file ${id}:`,
-          error,
-        );
-      });
-  }
+  startBackgroundAnalysis(id);
 
   return id;
 }
@@ -901,6 +914,80 @@ export async function getAudioFileByHash(
   const results = await tx.store.index("hash").getAll(hash);
   await tx.done;
   return results[0];
+}
+
+/**
+ * The one answer to "does a row already hold these bytes?".
+ *
+ * Takes the index rather than the hash alone, so a caller that is already
+ * inside a transaction can ask without opening a second one — which is what
+ * keeps the decision and the write atomic in `addOrReuseAudioFile` and in
+ * `importAudioSources`. Two copies of this rule would drift.
+ *
+ * The empty check is load-bearing, not defensive noise. `index.getAll(key)`
+ * with no key is IndexedDB for "every row", so an absent hash — and an archive
+ * manifest or a sync blob is unvalidated JSON, whatever the type here says —
+ * would be answered with whichever row the store returned first. That is two
+ * unrelated sounds merged into one, which no later pass can undo. A missing
+ * hash must mean "no match", never "any match".
+ */
+export async function findAudioFileIdByHashIn(
+  hashIndex: { getAll(key: string): Promise<AudioFile[]> },
+  hash: string,
+): Promise<number | undefined> {
+  if (!hash) return undefined;
+  const matches = await hashIndex.getAll(hash);
+  return matches.find((file) => file.id !== undefined)?.id;
+}
+
+/**
+ * Adds an audio file, or returns the id of the row that already holds these
+ * bytes.
+ *
+ * Deliberately separate from `addAudioFile`. Callers use the return value to
+ * decide what to clean up: `importProfileCore` hands its created ids to
+ * `deleteUnreferencedAudioFiles` when an import fails, and a rollback must
+ * never delete a row that another profile depends on. `reused` is what lets
+ * the caller tell the two apart.
+ *
+ * Identity is the SHA-256 of the bytes and nothing else, so the same sound
+ * under two names collapses to one row. Name and type therefore belong to
+ * whichever caller wrote the row first, and a reused row is returned exactly
+ * as it was found — including any loudness analysis it already carries.
+ *
+ * A hash the caller supplies is trusted rather than checked, because that is
+ * what lets a shared sound be reused before its bytes are read at all. Equal
+ * hashes mean one row: a caller that lies, or a SHA-256 collision, silently
+ * drops the second blob. Neither is defended against here.
+ *
+ * The hash is computed before the transaction opens. `crypto.subtle` is not
+ * an IndexedDB request, so an await on it inside a transaction closes it.
+ *
+ * Audio rows are global rather than per-profile, so reuse crosses profiles:
+ * a sound already in the library is reused whichever profile put it there.
+ * That is the point, and it is what makes `deleteUnreferencedAudioFiles`'
+ * cross-profile correctness load-bearing.
+ */
+export async function addOrReuseAudioFile(
+  audioFile: Omit<AudioFile, "id" | "createdAt">,
+): Promise<{ id: number; reused: boolean }> {
+  // `||` rather than `??`: an empty string is a missing hash, not a key to
+  // store rows under. See `findAudioFileIdByHashIn`.
+  const hash = audioFile.hash || (await computeBlobHash(audioFile.blob));
+  const db = await getDb();
+  const tx = db.transaction("audioFiles", "readwrite");
+  const store = tx.objectStore("audioFiles");
+
+  const existingId = await findAudioFileIdByHashIn(store.index("hash"), hash);
+  if (existingId !== undefined) {
+    await tx.done;
+    return { id: existingId, reused: true };
+  }
+
+  const id = await store.add({ ...audioFile, hash, createdAt: new Date() });
+  await tx.done;
+  startBackgroundAnalysis(id);
+  return { id, reused: false };
 }
 
 // Get the hash for an audio file, computing and saving it if not yet stored
