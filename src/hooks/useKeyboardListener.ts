@@ -297,6 +297,16 @@ export function useKeyboardListener() {
 
       // Handle Escape key as "panic button" to stop all audio
       if (event.key === "Escape") {
+        // The same capture-phase `window` listener that claims Space claims
+        // Escape: `getDraggingBindings` cancels a keyboard drag on Escape and
+        // calls `preventDefault()` first (dnd.cjs.js:5227-5231, bound on
+        // `window` with `capture: true` at :5320-5323). Without this check,
+        // Escaping out of a bank-tab drag also hard-stopped every sound in
+        // the room — the same bug as the Space one below, on the branch
+        // where it costs the most.
+        if (event.defaultPrevented) {
+          return;
+        }
         event.preventDefault();
         console.log(
           "[KeyboardListener] Escape key pressed - stopping all audio playback.",
