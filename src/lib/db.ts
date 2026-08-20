@@ -2276,8 +2276,11 @@ export async function replaceMissingAudioFile(
   const blob = file as Blob;
   const hash = await computeBlobHash(blob);
 
-  // Store the new audio file
-  const newId = await addAudioFile({
+  // Reuse rather than add. A repair means picking the file off disk again,
+  // and the bytes are very often already in the library — under another pad,
+  // or under this profile's own copy of the same sound. Adding a second row
+  // is how a library grows a duplicate of everything a user has re-linked.
+  const { id: newId } = await addOrReuseAudioFile({
     name: file.name,
     type: file.type,
     blob,

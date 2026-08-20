@@ -25,9 +25,12 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({ analyseAndStore }));
 const {
   addAudioFile,
   addOrReuseAudioFile,
+  addProfile,
   computeBlobHash,
   findAudioFileIdByHashIn,
   getDb,
+  replaceMissingAudioFile,
+  upsertPadConfiguration,
 } = await import("./db");
 
 /** The same bytes every time, as a fresh Blob. */
@@ -288,5 +291,76 @@ describe("findAudioFileIdByHashIn", () => {
 
     expect(await lookup(undefined as unknown as string)).toBeUndefined();
     expect(await lookup("")).toBeUndefined();
+  });
+});
+
+describe("replaceMissingAudioFile", () => {
+  it("points the pad at the row that already holds the bytes", async () => {
+    // Repairing a broken reference means picking the file off disk again, so
+    // the bytes are very often already in the library — under another pad, or
+    // under this profile's own copy of the same sound. Adding a second row
+    // for them is how a library grows a duplicate of everything a user has
+    // ever re-linked.
+    const db = await getDb();
+    const profileId = await addProfile({ name: "Repair", syncType: "local" });
+    const keeperId = await addAudioFile({
+      name: "horn.wav",
+      type: "audio/wav",
+      blob: horn(),
+    });
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "0",
+      padIndex: 0,
+      name: "Broken",
+      audioFileIds: [999999],
+      playbackType: "sequential",
+    });
+
+    const replacement = new File([horn()], "horn-again.wav", {
+      type: "audio/wav",
+    });
+    await replaceMissingAudioFile(profileId, "0", 0, 999999, replacement);
+
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    expect(pads[0].audioFileIds).toEqual([keeperId]);
+    expect(await db.getAll("audioFiles")).toHaveLength(1);
+  });
+
+  it("adds a row when the replacement is bytes the library has never held", async () => {
+    // The other half: reuse must not swallow a genuine replacement. Without
+    // this, a `replaceMissingAudioFile` that returned some arbitrary existing
+    // id would still satisfy the test above.
+    const db = await getDb();
+    const profileId = await addProfile({ name: "Repair", syncType: "local" });
+    const strangerId = await addAudioFile({
+      name: "horn.wav",
+      type: "audio/wav",
+      blob: horn(),
+    });
+    await upsertPadConfiguration({
+      profileId,
+      bankId: "0",
+      padIndex: 0,
+      name: "Broken",
+      audioFileIds: [999999],
+      playbackType: "sequential",
+    });
+
+    const replacement = new File([stab()], "stab.wav", { type: "audio/wav" });
+    await replaceMissingAudioFile(profileId, "0", 0, 999999, replacement);
+
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    expect(pads[0].audioFileIds).not.toEqual([strangerId]);
+    expect(pads[0].audioFileIds).not.toEqual([999999]);
+    expect(await db.getAll("audioFiles")).toHaveLength(2);
   });
 });
