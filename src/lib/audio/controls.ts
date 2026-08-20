@@ -9,7 +9,11 @@
  */
 
 import { useProfileStore } from "@/store/profileStore";
-import { PadConfiguration, getAudioFile } from "../db";
+import {
+  PadConfiguration,
+  getAudioFile,
+  resolveActivePadBehavior,
+} from "../db";
 import {
   loadAndDecodeAudioInstant,
   loadAndDecodeAudioEnhanced,
@@ -22,6 +26,7 @@ import {
   playBuffer,
   playBlobStreaming,
   waitForStreamingPlayable,
+  allocateLayerKey,
   stopTrack,
   stopInstance,
   fadeOutTrack,
@@ -284,6 +289,7 @@ export async function triggerAudioForPadInstant(
     audioGainSettings,
     padGainDb,
     isDisabled,
+    activePadBehavior,
     onLoadingStateChange,
     onInstantFeedback,
     onAudioReady,
@@ -313,71 +319,92 @@ export async function triggerAudioForPadInstant(
     return;
   }
 
-  // Generate a unique key for this pad's playback
-  const playbackKey = generatePlaybackKey(
-    activeProfileId,
-    currentBankId,
-    padIndex,
-  );
+  // The pad's own key. A layer plays on an instance key derived from it; every
+  // read about the pad — is it playing, was it stopped, which sound is next —
+  // stays on this one.
+  const baseKey = generatePlaybackKey(activeProfileId, currentBankId, padIndex);
   // A fading track is on its way out, so it must not block a new trigger
-  const isFadingOut = isTrackFading(playbackKey);
-  const isAlreadyPlaying = isTrackPlaying(playbackKey) && !isFadingOut;
+  const isFadingOut = isTrackFading(baseKey);
+  const isAlreadyPlaying = isTrackPlaying(baseKey) && !isFadingOut;
 
-  // Get the active pad behavior from the profile store
-  const activePadBehavior = useProfileStore.getState().getActivePadBehavior();
+  // The pad's own setting wins; undefined follows the profile.
+  const behavior = resolveActivePadBehavior(
+    { activePadBehavior },
+    useProfileStore.getState().getActivePadBehavior(),
+  );
+
+  // Which key this trigger plays on. A layer takes its own; everything else
+  // takes the pad's, so the single-instance path is unchanged in shape.
+  let playbackKey = baseKey;
 
   console.log(
-    `[Audio Controls] [Instant] Triggering pad ${padIndex}, key: ${playbackKey}, ` +
-      `Is Playing: ${isAlreadyPlaying}, Is Fading: ${isFadingOut}, Behavior: ${activePadBehavior}, ` +
+    `[Audio Controls] [Instant] Triggering pad ${padIndex}, key: ${baseKey}, ` +
+      `Is Playing: ${isAlreadyPlaying}, Is Fading: ${isFadingOut}, Behavior: ${behavior}, ` +
       `Playback Type: ${playbackType}, Audio Files: ${audioFileIds.length}`,
   );
 
   // Handle behavior if the track is already playing
   if (isAlreadyPlaying) {
-    switch (activePadBehavior) {
+    switch (behavior) {
       case "continue":
         console.log(
-          `[Audio Controls] [Instant] Behavior=continue. Doing nothing for key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=continue. Doing nothing for key: ${baseKey}`,
         );
         return;
 
       case "stop":
         console.log(
-          `[Audio Controls] [Instant] Behavior=stop. Stopping key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=stop. Stopping key: ${baseKey}`,
         );
-        stopTrack(playbackKey);
+        stopTrack(baseKey);
         return;
 
       case "restart":
         console.log(
-          `[Audio Controls] [Instant] Behavior=restart. Handling restart for key: ${playbackKey}`,
+          `[Audio Controls] [Instant] Behavior=restart. Handling restart for key: ${baseKey}`,
         );
-        stopTrack(playbackKey);
+        stopTrack(baseKey);
+        break;
+
+      case "layer":
+        playbackKey = allocateLayerKey(baseKey);
+        console.log(
+          `[Audio Controls] [Instant] Behavior=layer. New layer on key: ${playbackKey}`,
+        );
         break;
 
       default:
+        // Unreachable for any value in the union, and reached in earnest by a
+        // profile written by a newer build: nothing validates this field on
+        // the sync or import path. Behaving as "continue" is what lets a
+        // value this build has never heard of degrade instead of throwing,
+        // and is why there is no compatibility shim.
         console.warn(
-          `[Audio Controls] [Instant] Unknown activePadBehavior: ${activePadBehavior}. Defaulting to 'continue'.`,
+          `[Audio Controls] [Instant] Unknown activePadBehavior: ${behavior}. Defaulting to 'continue'.`,
         );
         return;
     }
   } else if (isFadingOut) {
     // Hard stop the outgoing instance so the new one owns the playback key
     console.log(
-      `[Audio Controls] [Instant] Stopping fading instance before re-trigger for key: ${playbackKey}`,
+      `[Audio Controls] [Instant] Stopping fading instance before re-trigger for key: ${baseKey}`,
     );
-    stopTrack(playbackKey);
+    stopTrack(baseKey);
   }
 
   // Capture the stop counters so a stop during loading cancels this trigger.
   // Re-baselined whenever this function stops a track itself, so its own
   // bookkeeping stops are never mistaken for a user-requested stop. Scoped to
-  // this playback key, so stopping a *different* pad no longer cancels us.
-  let triggerGeneration = getStopGeneration(playbackKey);
+  // the *pad*, not to this layer's instance key: a stop reaches the pad by its
+  // base key, and a layer that watched only its own key would never see it.
+  let triggerGeneration = getStopGeneration(baseKey);
 
   try {
-    // Use the strategy pattern to select which audio file to play
-    const strategy = getStrategy(playbackType, playbackKey);
+    // Use the strategy pattern to select which audio file to play. Keyed by
+    // the pad, so its layers share one cursor — a strategy per instance key
+    // would give every layer a fresh one, and a multi-sound pad set to layer
+    // would replay its first sound forever.
+    const strategy = getStrategy(playbackType, baseKey);
     const { audioFileId, index } = strategy.selectNextSound(audioFileIds);
 
     // Look up trim and gain for this specific audio file. Gain resolution is
@@ -478,7 +505,7 @@ export async function triggerAudioForPadInstant(
 
       // Bail out if a stop was requested while the blob was being read —
       // nothing is audible yet, so just abandon the trigger
-      if (stopRequestedSince(playbackKey, triggerGeneration)) {
+      if (stopRequestedSince(baseKey, triggerGeneration)) {
         console.log(
           `[Audio Controls] [Instant] Blob load cancelled by a stop request for key: ${playbackKey}`,
         );
@@ -505,10 +532,7 @@ export async function triggerAudioForPadInstant(
           const stillOurs =
             active?.source.kind === "media" &&
             active.source.element === element;
-          if (
-            !stillOurs &&
-            stopRequestedSince(playbackKey, triggerGeneration)
-          ) {
+          if (!stillOurs && stopRequestedSince(baseKey, triggerGeneration)) {
             console.log(
               `[Audio Controls] [Instant] Streaming start cancelled by a stop request for key: ${playbackKey}`,
             );
@@ -523,11 +547,19 @@ export async function triggerAudioForPadInstant(
             onAudioReady?.();
             return;
           }
-          // Release the failed streaming attempt (no-op if the element's
-          // error handler already cleaned it up). This is our own stop, so
-          // re-baseline the generation to keep the decode fallback alive.
-          stopTrack(playbackKey);
-          triggerGeneration = getStopGeneration(playbackKey);
+          // Release this layer alone when the stream fails. The other layers
+          // of the pad keep their sound — releasing the whole pad here would
+          // silence every one of them because one of them failed to start.
+          // (A no-op if the element's error handler already cleaned it up.)
+          //
+          // This is our own bookkeeping stop, not a user's, so the decode
+          // fallback below must not read it as a stop request. `stopInstance`
+          // does not bump the pad's stop generation, so re-reading it hands
+          // back the generation we already hold; the re-baseline stays
+          // because what the fallback needs is the pad's *current* count,
+          // whatever this release did to it.
+          stopInstance(playbackKey);
+          triggerGeneration = getStopGeneration(baseKey);
         }
         console.warn(
           `[Audio Controls] [Instant] Streaming start failed for ID: ${audioFileId}, falling back to decode...`,
@@ -575,7 +607,7 @@ export async function triggerAudioForPadInstant(
     }
 
     // Bail out if a stop was requested while we were loading
-    if (stopRequestedSince(playbackKey, triggerGeneration)) {
+    if (stopRequestedSince(baseKey, triggerGeneration)) {
       console.log(
         `[Audio Controls] [Instant] Load cancelled by a stop request for key: ${playbackKey}`,
       );

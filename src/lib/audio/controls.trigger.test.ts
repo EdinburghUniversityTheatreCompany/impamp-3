@@ -65,7 +65,14 @@ vi.mock("./context", () => ({
   resumeAudioContext: vi.fn(),
   getAudioContext: vi.fn(() => ({ state: "running", currentTime: 0 })),
 }));
-vi.mock("../db", () => ({ getAudioFile: vi.fn(async () => null) }));
+// Spread the real module: `controls` reads `resolveActivePadBehavior` from
+// here as well as `getAudioFile`, and a mock listing only the latter leaves
+// the resolver undefined — which fails as a broken behaviour switch rather
+// than as the broken mock it is.
+vi.mock("../db", async () => {
+  const actual = await vi.importActual<typeof import("../db")>("../db");
+  return { ...actual, getAudioFile: vi.fn(async () => null) };
+});
 vi.mock("./preloader", () => ({
   audioPreloader: { trackPlayedFile: vi.fn() },
 }));
