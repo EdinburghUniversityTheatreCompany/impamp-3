@@ -1146,7 +1146,7 @@ export function stopAllTracks(): number {
   playbackStoreActions.clearAllTracks();
 
   console.log(
-    `[Audio Playback] Stopped ${stoppedCount}/${keys.length} active tracks`,
+    `[Audio Playback] Stopped ${stoppedCount}/${keys.length} active pads`,
   );
   return stoppedCount;
 }
