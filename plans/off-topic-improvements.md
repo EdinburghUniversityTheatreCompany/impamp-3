@@ -181,3 +181,26 @@ form: give `FormField`'s label `id={`${id}-label`}`, and drop or repoint the
 
 Noticed while adding the Layer option to the three activePadBehavior radio
 groups (Task 9 of the layered-retrigger plan).
+
+## `getAudioFileByHash` is one unguarded caller away from returning any row
+
+`getAudioFileByHash(hash)` ends in `tx.store.index("hash").getAll(hash)` and
+returns `results[0]`. `getAll` with an undefined key is IndexedDB for _every
+row_, so a caller that passes an absent hash gets an arbitrary unrelated audio
+file back and treats it as a content match — two different sounds merged, with
+no way to tell afterwards.
+
+Both current callers happen to guard: `googleDrive/sync.ts:329` uses
+`ref.hash ? … : undefined`, and `serverAudio/transfer.ts:249` filters
+`hostedRefs` down to `ref is typeof ref & { hash: string }` first. So nothing
+is broken today. But the guard lives in the callers rather than in the
+function, `hash: string` is a type rather than a runtime fact, and the refs it
+is fed come from unvalidated JSON in an archive manifest or a sync blob.
+
+`findAudioFileIdByHashIn` (added in `db.ts` by the audio-dedup plan) already
+carries the guard and a comment explaining why. `getAudioFileByHash` should
+grow the same `if (!hash) return undefined;` — better still, the two should
+become one function, since they now ask the same question of the same index
+and differ only in whether they return the record or its id.
+
+Noticed while adding `addOrReuseAudioFile` (Task 1 of the audio-dedup plan).
