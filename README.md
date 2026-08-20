@@ -41,7 +41,7 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 - **Bank Navigation**: Press 1-9 for banks 1-9, 0 for bank 10, and Ctrl+1 through Ctrl+0 for banks 11-20
 - **Reorder Banks**: In edit mode, drag a bank tab to a new position. The pads move with the bank, and the number keys follow the new order
 - **Emergency Banks**: Mark banks as emergency for quick access during performances
-- **Configurable Active Pad Behavior**: Choose whether triggering an active pad continues, stops, or restarts the sound (via Playback Settings).
+- **Configurable Active Pad Behavior**: Choose what triggering an already-playing pad does — continue, stop, restart, or layer a second copy over the first (up to 16). Set it per profile in Playback Settings, and override it on individual pads in the pad editor.
 - **Backup Reminders**: Get notified when profiles haven't been backed up recently (configurable frequency).
 - **Sync Options**: Local profiles, manual export/import (V2 format supports multi-sound), automatic [Google Drive sync](docs/google-drive-sync.md), and [sync against the app's own server](docs/server-sync.md) with live change notifications.
 - **Server-hosted audio** (optional): keep sounds in the app's own storage rather than Drive — see [docs/wasabi-audio.md](docs/wasabi-audio.md).

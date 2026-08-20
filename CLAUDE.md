@@ -115,6 +115,14 @@ IndexedDB abstraction in `src/lib/db.ts` with four object stores:
   sub-range can be measured exactly without re-decoding. Gain resolves as
   normalisation x per-sound gain x per-pad gain into `PlayAudioParams.volume`.
   `src/lib/audio/loudness/`. See `docs/loudness-normalisation.md`.
+- **Layered retrigger** - `activePadBehavior` is `continue`, `stop`, `restart`
+  or `layer`. It is a profile setting with a per-pad override
+  (`PadConfiguration.activePadBehavior`), where `undefined` means "follow the
+  profile"; resolve the two through `resolveActivePadBehavior` in `db.ts` and
+  nowhere else, and import the `ActivePadBehavior` union from there rather
+  than writing the members out again (it was duplicated in four places once).
+  A layered pad stacks up to `MAX_LAYERS_PER_PAD` (16) overlapping sounds, and
+  the 17th trigger steals the oldest so a press always makes a sound
 - **Offline / PWA** - `public/sw.js` caches the app shell so the board runs
   with no network; registered from `src/lib/serviceWorker/register.ts`, and in
   production builds only. The precache list is derived at install by walking
@@ -209,6 +217,23 @@ packages, none of them is fair game.
   for three review rounds while the bank-tab drag did not work in a browser
   at all. Anything that depends on the library actually doing something needs
   a real browser: `e2e-tests/bank-reorder.spec.ts` is the regression test
+- Two assertions in this area look like they check something and do not.
+  `useKeyboardListener` holds a 100 ms per-key debounce as well as its
+  `if (event.repeat) return;` guard, so a test that bursts auto-repeats at a
+  real OS rate (~30 ms) is measuring the debounce and passes whichever way the
+  guard goes — space the repeats past 100 ms. And a text assertion on the
+  Active Tracks group row can pass while the row is unreadable: the layer
+  badge covered the remaining time for a while and `textContent` still held
+  `0:59`. Geometry was the only tell, which is why
+  `e2e-tests/layer-count-row.spec.ts` measures bounding boxes in a browser
+- Shared test scaffolding lives in `src/lib/testSupport/` and is excluded from
+  coverage. The jscpd gate runs at threshold 0, so a second copy of a fake
+  fails the commit rather than the review — reach for `fakeWebAudio.ts` (the
+  Web Audio fake whose sources record `stop()`), `audioStackMocks.ts`
+  (everything below `controls.ts`, installed with `vi.doMock` because
+  `vi.mock` is hoisted into the file it is written in and cannot be called on
+  another file's behalf), `legacyDatabase.ts`, `browserGlobals.ts` or
+  `audioFixtures.ts` before writing a third
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
@@ -307,6 +332,32 @@ packages, none of them is fair game.
   shortcut must not act on a key something nearer the target already claimed.
   Keep that a single guard — the same rule written three times is this repo's
   characteristic regression
+- A pad owns a **base key**; each overlapping sound owns an **instance key**.
+  A pad's first instance registers under the bare base key and later ones as
+  `base#n`, where `n` grows and is never reused. Anything reading a playback
+  key must go through `baseKeyOf` / `makeInstanceKey` / `layerIndexOf`
+  (`src/lib/audio/types.ts`) rather than splitting the string itself:
+  `baseKeyOf` splits at `lastIndexOf("#")` and only when the suffix is all
+  digits, because an imported archive supplies its `bankId` unvalidated and a
+  first-separator split would truncate the base key in the wrong place.
+  `stopTrack` takes a base key and stops **every** layer — it is what ESC and
+  the Active Tracks row call — while `stopInstance` stops exactly one.
+  `stopTrack` also bumps the pad's stop generation and `stopInstance`
+  deliberately does not: releasing one layer must not cancel a different layer
+  of the same pad that is still loading
+- Two invariants hold the layering together, and neither has a compiler behind
+  it. `layersByBase` is written by `claimPlaybackKey` and `clearTrackState`
+  only, because those are the only two places a track enters and leaves
+  `activeTracks`; anywhere else and the two maps will disagree about what is
+  playing. And there is one playback strategy cursor per **pad**, never per
+  layer — `controls.ts` calls `getStrategy(playbackType, baseKey)`, and keying
+  it by the instance key would hand each layer a fresh cursor, so a
+  multi-sound layered pad would replay its first sound forever
+- The `stopPropagation` on the Active Tracks layer-count button
+  (`shared/PadTrackGroup.tsx`) is load-bearing. It was decorative while the
+  button was a **sibling** of the row; the button now sits **inside** the row,
+  so that one call is all that stands between expanding a group and silencing
+  the pad mid-show. It has its own test — do not tidy it away
 
 ## Pinned Versions
 
