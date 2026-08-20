@@ -107,12 +107,10 @@ export type ActivePadBehavior = "continue" | "stop" | "restart" | "layer";
 /**
  * What a trigger must do to this pad, given the profile's default.
  *
- * One rule in one place. Every trigger path asks this rather than reading the
- * pad and the profile itself, so a path that forgets the override cannot exist.
- *
- * @param pad - The pad, or anything that carries its override
- * @param profileDefault - What the active profile says
- * @returns The behaviour to apply
+ * Every trigger path should ask this rather than reading the pad and the
+ * profile itself. It has no caller yet — Task 8 wires it — and note that
+ * `TriggerablePad` does not declare the field, so a site that spreads a pad
+ * into one drops the override with no compiler error.
  */
 export function resolveActivePadBehavior(
   pad: { activePadBehavior?: ActivePadBehavior },
