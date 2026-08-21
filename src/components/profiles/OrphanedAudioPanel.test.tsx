@@ -87,18 +87,31 @@ function padNaming(
 }
 
 /**
- * Presses Delete and waits out the re-scan it schedules.
+ * The re-scan the cleanup schedules, held rather than raced.
  *
  * The panel re-reads the library half a second after a cleanup that deleted
- * something, and `handleScanOrphans` clears the cleanup report as it starts.
- * A test that does not wait leaves that timer to fire after the file has
- * finished — a stray database read and its logging, which is what tears a
- * coverage run down. So every test that deletes anything waits here.
+ * something, and `handleScanOrphans` clears the cleanup report as it starts —
+ * so a test that lets that timer run is racing it for the report, and one
+ * that ends before it fires leaves a stray database read to log after the
+ * file has finished, which is what tears a coverage run down. Both of those
+ * happened: the first version of this file raced real timers, passed alone,
+ * and failed twice under the load of the whole suite.
+ *
+ * So the panel's own timer is intercepted by its delay and never scheduled.
+ * Nothing else here asks for 500 ms, and everything else — including the
+ * harness's own settle — goes through to the real `setTimeout`.
  */
-async function cleanupAndWaitForRescan(): Promise<void> {
-  await click("orphan-cleanup");
+const realSetTimeout = globalThis.setTimeout;
+let scheduledRescan: (() => void) | null = null;
+let timeoutSpy: ReturnType<typeof vi.spyOn>;
+
+/** Runs the re-scan the cleanup scheduled, which nothing else will. */
+async function runScheduledRescan(): Promise<void> {
+  const rescan = scheduledRescan;
+  expect(rescan).not.toBeNull();
+  scheduledRescan = null;
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, RESCAN_DELAY_MS + 100));
+    rescan!();
   });
   await panel.settle();
 }
@@ -110,12 +123,29 @@ beforeEach(async () => {
   cleanupOrphanedAudioFiles.mockImplementation(
     realDb.cleanupOrphanedAudioFiles,
   );
+  scheduledRescan = null;
+  timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: () => void,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
+    if (delay === RESCAN_DELAY_MS) {
+      scheduledRescan = callback;
+      return 0;
+    }
+    return realSetTimeout(
+      callback,
+      delay,
+      ...(args as Parameters<typeof setTimeout>[2][]),
+    );
+  }) as unknown as typeof setTimeout);
   profileId = await addProfile({ name: "Show", syncType: "local" });
   panel = await mountPanel(<OrphanedAudioPanel />);
 });
 
 afterEach(async () => {
   await panel.unmount();
+  timeoutSpy.mockRestore();
 });
 
 describe("scanning", () => {
@@ -182,8 +212,6 @@ describe("deleting", () => {
 
     await click("orphan-scan");
     expect(text("orphan-cleanup")).toContain("Delete 2 Orphaned Files");
-    // The report is read before the re-scan clears it, which is the whole of
-    // the half-second window below.
     await click("orphan-cleanup");
 
     expect(text("orphan-cleanup-result")).toContain("Files deleted: 2");
@@ -192,19 +220,19 @@ describe("deleting", () => {
     expect(await db.get("audioFiles", used)).toBeDefined();
     expect(await db.get("audioFiles", firstOrphan)).toBeUndefined();
     expect(await db.get("audioFiles", secondOrphan)).toBeUndefined();
-
-    await act(async () => {
-      await new Promise((resolve) =>
-        setTimeout(resolve, RESCAN_DELAY_MS + 100),
-      );
-    });
   });
 
   it("re-reads the library afterwards rather than subtracting", async () => {
     await soundNamed("orphan-one");
 
     await click("orphan-scan");
-    await cleanupAndWaitForRescan();
+    await click("orphan-cleanup");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(
+      expect.any(Function),
+      RESCAN_DELAY_MS,
+    );
+    await runScheduledRescan();
 
     // Twice: the scan the user asked for, and the one the cleanup scheduled.
     // The second is what puts a count on screen that came from the database
@@ -248,6 +276,9 @@ describe("deleting", () => {
     expect(result).toContain("Errors encountered");
     expect(result).toContain("Failed to delete audio file 7: locked");
     expect(result).not.toContain("Cleanup completed successfully");
+    // And no re-scan: a run that deleted nothing has nothing to re-read, and
+    // scheduling one would wipe the report the user is reading.
+    expect(scheduledRescan).toBeNull();
   });
 
   it("cannot be scanned or pressed again while a delete is running", async () => {
