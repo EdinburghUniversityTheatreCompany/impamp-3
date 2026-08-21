@@ -56,19 +56,30 @@
  * entry name is the exporting device's key, which the importer remaps.
  */
 
+import { IDBPDatabase } from "idb";
+import { TOTAL_PADS } from "./constants";
 import {
+  ImpAmpDBSchema,
   PadConfiguration,
   PageMetadata,
+  createBank,
+  extractPadPlaybackSettings,
   getBankById,
   getPadConfigurationsForProfileBank,
   getProfile,
+  upsertPadConfiguration,
+  upsertPageMetadata,
+  withAudioImportInProgress,
 } from "./db";
 import {
   ArchiveItem,
   AudioFileRef,
+  ImportAudioSource,
   TransferProgressCallback,
   collectAudioForPads,
   getZipJs,
+  importAudioSources,
+  remapPadSettingsOnImport,
   reportPreparing,
   writeArchiveZip,
   zipEntryReaders,
@@ -498,5 +509,362 @@ export async function readArchiveManifest(
     return { kind: "banks", banks };
   } finally {
     await zipReader.close();
+  }
+}
+
+/** Where one incoming bank goes in the destination profile. */
+export type BankPlacement =
+  { kind: "add" } | { kind: "replace"; bankId: string } | { kind: "skip" };
+
+/** What one bank write did. */
+export interface BankWriteOutcome {
+  written: boolean;
+  bankId?: string;
+  pageIndex?: number;
+  /**
+   * The audio rows this write **created**, and never one it reused.
+   *
+   * The rollback deletes from this list, and a reused row is one another
+   * profile is very probably already playing — deleting it is the data loss
+   * `addOrReuseAudioFile`'s `reused` flag exists to prevent.
+   */
+  createdAudioIds: number[];
+}
+
+/**
+ * A bank write that failed, carrying the audio it had already created.
+ *
+ * Without this the rows written before the failing sound are unreachable: the
+ * caller has no return value to read them off, `deleteProfile` cannot find
+ * them because no pad names them, and they sit in the library until somebody
+ * presses the orphan cleanup button. The list is the same created-not-reused
+ * list a successful write returns, so the rollback treats both the same way.
+ */
+export class BankWriteError extends Error {
+  readonly createdAudioIds: number[];
+
+  constructor(
+    message: string,
+    createdAudioIds: number[],
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "BankWriteError";
+    this.createdAudioIds = createdAudioIds;
+  }
+}
+
+/**
+ * A pad from an archive, with every value that could damage a write replaced.
+ *
+ * The spread is deliberate and is the same argument `withoutRowIdentity`
+ * makes in the other direction: the archive is subtractive, so a field added
+ * to a pad after this was written still arrives, and copying the row wholesale
+ * is what lets it. What reaches the database is then narrowed by
+ * `extractPadPlaybackSettings`, which is a `Pick` — so a field this app does
+ * not know is carried *here* and dropped *there*, and the moment
+ * `PadPlaybackSettings` gains a member every copying site gets it at once.
+ *
+ * Only the values that can do harm are overridden, and each for a reason:
+ *
+ * - `padIndex` is a component of the `profileBankPad` key. A string, a
+ *   fraction or a `NaN` is a `DataError` partway through a write, or a pad
+ *   filed at a position no grid shows — so it is refused outright rather than
+ *   normalised, and refused before any audio is written.
+ * - `padGainDb` reaches the gain node. `"loud"` becomes `NaN` there and
+ *   throws at trigger time, on stage.
+ * - `isDisabled` is a flag: `"no"` must not disable a pad.
+ * - the two `Record<audioFileId, …>` maps and `audioFileIds` are read by the
+ *   remap below, which would otherwise iterate a string or throw on `.map`.
+ *
+ * `playbackType` and `activePadBehavior` are deliberately **not** checked
+ * against their unions. `getStrategy` already falls back to sequential for a
+ * value it does not know and `resolveActivePadBehavior` falls back to the
+ * profile's, and a runtime copy of either union here is exactly the duplicated
+ * rule this repo regresses on — CLAUDE.md records `ActivePadBehavior` having
+ * been written out in four places once.
+ */
+type IncomingPad = Partial<PadConfiguration> & { padIndex: number };
+
+function readIncomingPad(value: unknown): IncomingPad {
+  if (!isRecord(value)) {
+    throw new BankWriteError(
+      `This bank has an entry in padConfigurations that is not a pad.`,
+      [],
+    );
+  }
+
+  const padIndex = value.padIndex;
+  if (
+    typeof padIndex !== "number" ||
+    !Number.isInteger(padIndex) ||
+    padIndex < 0 ||
+    padIndex >= TOTAL_PADS
+  ) {
+    const shown = typeof padIndex === "number" ? padIndex : typeof padIndex;
+    throw new BankWriteError(
+      `This bank has a pad at position ${shown}, and a bank has ${TOTAL_PADS} pads numbered from 0.`,
+      [],
+    );
+  }
+
+  return {
+    ...value,
+    padIndex,
+    keyBinding:
+      typeof value.keyBinding === "string" ? value.keyBinding : undefined,
+    name: typeof value.name === "string" ? value.name : undefined,
+    audioFileIds: incomingAudioIds(value),
+    audioTrimSettings: isRecord(value.audioTrimSettings)
+      ? (value.audioTrimSettings as PadConfiguration["audioTrimSettings"])
+      : undefined,
+    audioGainSettings: isRecord(value.audioGainSettings)
+      ? (value.audioGainSettings as PadConfiguration["audioGainSettings"])
+      : undefined,
+    padGainDb:
+      typeof value.padGainDb === "number" && Number.isFinite(value.padGainDb)
+        ? value.padGainDb
+        : undefined,
+    isDisabled: value.isDisabled === true,
+  } as IncomingPad;
+}
+
+/**
+ * The sounds a pad names, in order, from either spelling.
+ *
+ * `audioFileId` is the pre-V3 scalar. `migrateStoreV4` was meant to convert
+ * every one of them and demonstrably did not — it swallows per-record errors,
+ * which is why `collectReferencedAudioFileIds` still reads it and why the
+ * collapse had to remap it. The export is subtractive so such a pad carries
+ * the scalar into the archive, and `collectAudioForPads` reads that spelling
+ * too, so the bytes are in the archive to attach: reading only `audioFileIds`
+ * here would write the pad with no sound at all and delete nothing loudly.
+ *
+ * Not `collectReferencedAudioFileIds` itself, which returns a `Set` over many
+ * pads: a pad's sound *order* is what sequential playback plays in.
+ */
+function incomingAudioIds(pad: Record<string, unknown>): number[] {
+  const ids = Array.isArray(pad.audioFileIds)
+    ? pad.audioFileIds.filter((id): id is number => Number.isInteger(id))
+    : [];
+  const legacy = pad.audioFileId;
+  if (Number.isInteger(legacy) && !ids.includes(legacy as number)) {
+    ids.push(legacy as number);
+  }
+  return ids;
+}
+
+/**
+ * Writes one bank into a profile.
+ *
+ * "add" mints a fresh `bankId` and takes the first free position. "replace"
+ * keeps the destination's `bankId` and its position, clears its pads and
+ * writes the incoming ones, so identity survives and a later merge reads a
+ * content change rather than a new bank. "skip" writes nothing — including
+ * no audio, since a row nothing references and nobody was told about is an
+ * orphan the caller cannot roll back.
+ *
+ * **`bank.sourceBankId` is never read here.** That is the whole of the rule:
+ * an "add" takes its identity from `createBank`, which mints a UUID, and a
+ * "replace" takes it from `mode.bankId`, which the dialog sourced from the
+ * *destination* profile and which is checked against that profile before
+ * anything is written. So no string out of the archive can become a bank id,
+ * and a `sourceBankId` of `"raid#7"` cannot reach `baseKeyOf` — which splits a
+ * playback key at the last `#` followed by digits — and silently merge every
+ * pad on the bank onto one base key.
+ *
+ * Sync stamps are minted, not carried. `upsertPageMetadata`,
+ * `upsertPadConfiguration` and `createBank` each stamp `_created`,
+ * `_modified` and `_fieldsModified` from this device's clock, and none of them
+ * accepts the archive's: writing a bank into an already-synced profile with a
+ * foreign device's per-field stamps either loses the local edit or puts a
+ * conflict modal in front of the user for every field the two disagree about.
+ *
+ * Audio ids are remapped through `importAudioSources` and
+ * `remapPadSettingsOnImport`, never by hand. Reuse by content hash means a
+ * bank imported back into the profile it came from adds no blobs at all, and
+ * an id the caller supplies no source for — a pad naming a sound the archive
+ * never declared, or a declared sound whose bytes are missing, both of which
+ * this app's own writer produces — is simply dropped from the pad's
+ * references and from its trim and gain maps. A source that *fails* is a
+ * different thing and fails the bank: an archive that promised bytes and could
+ * not deliver them would otherwise arrive silently one sound short, at the far
+ * end, in front of someone who no longer has the source.
+ *
+ * Two things it deliberately does not do. It does not clean up the audio a
+ * replaced bank's old pads named, because those rows may be shared and
+ * `deleteUnreferencedAudioFiles` is the only thing entitled to decide that.
+ * And it does not snapshot the bank it replaces: the pads are cleared in one
+ * transaction and written in others, so a failure between them leaves the
+ * bank empty, and restoring it is the caller's — `importBanksFromZip`'s —
+ * job, which is where the snapshot of every replace target belongs.
+ *
+ * @returns Which bank it wrote, and the audio rows it created — the rollback
+ *   deletes from that list and leaves every reused row alone
+ * @throws {BankWriteError} carrying the same created-not-reused list
+ */
+export function writeBankIntoProfile(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  args: {
+    profileId: number;
+    mode: BankPlacement;
+    bank: BankExport;
+    audioSources: ImportAudioSource[];
+  },
+): Promise<BankWriteOutcome> {
+  if (args.mode.kind === "skip") {
+    return Promise.resolve({ written: false, createdAudioIds: [] });
+  }
+  // Declared to the orphan sweeps for the whole write. The audio goes in
+  // first and the pads that name it several steps later — it cannot be
+  // otherwise, since a pad names its sounds by the ids the store assigns — so
+  // in between there are rows nothing references, which is precisely what
+  // `cleanupOrphanedAudioFiles` deletes.
+  return withAudioImportInProgress(() => runBankWrite(db, args));
+}
+
+async function runBankWrite(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  {
+    profileId,
+    mode,
+    bank,
+    audioSources,
+  }: {
+    profileId: number;
+    mode: BankPlacement;
+    bank: BankExport;
+    audioSources: ImportAudioSource[];
+  },
+): Promise<BankWriteOutcome> {
+  if (mode.kind === "skip") return { written: false, createdAudioIds: [] };
+
+  // Everything that can refuse the bank happens before anything is written,
+  // so a corrupt archive costs no audio rows and needs no rollback. These
+  // checks repeat some of `readArchiveManifest`'s deliberately: this function
+  // is also the seam an in-app "merge that profile into this one" would call,
+  // and it does not get to assume a parser ran first.
+  const page = isRecord(bank.page) ? bank.page : undefined;
+  if (typeof page?.name !== "string") {
+    throw new BankWriteError(`This bank has no name, so it is not a bank.`, []);
+  }
+  const pageName = page.name;
+  // A flag, not anything truthy: a hand-edited `"yes"` must not make a bank
+  // answer the emergency key.
+  const isEmergency = page.isEmergency === true;
+  const incomingPads = (
+    Array.isArray(bank.padConfigurations) ? bank.padConfigurations : []
+  ).map(readIncomingPad);
+
+  // The placement, read-only. A replace target names a bank in the
+  // *destination* profile, and bank identity is per profile, so this both
+  // resolves the position and is the check that the id is one of ours.
+  const target =
+    mode.kind === "replace"
+      ? await getBankById(profileId, mode.bankId)
+      : undefined;
+  if (mode.kind === "replace" && !target) {
+    throw new BankWriteError(
+      `Bank ${mode.bankId} is no longer in this profile.`,
+      [],
+    );
+  }
+
+  const now = new Date();
+  const { audioIdMap, createdIds, failures } = await importAudioSources(
+    db,
+    audioSources,
+    now,
+  );
+  if (failures.length > 0) {
+    const names = failures.map((failure) => failure.name).join("; ");
+    throw new BankWriteError(
+      `${failures.length} of ${audioSources.length} sounds could not be imported (${names}).`,
+      createdIds,
+      { cause: failures[0].error },
+    );
+  }
+
+  try {
+    let bankId: string;
+    let pageIndex: number;
+
+    if (target) {
+      bankId = target.bankId;
+      pageIndex = target.pageIndex;
+
+      // Clear the pads first. A pad the incoming bank does not define has to
+      // go, or the replaced bank keeps sounds from the bank it replaced. By
+      // bank rather than by profile: the profile's other banks are not part
+      // of this.
+      const existingPads = await getPadConfigurationsForProfileBank(
+        profileId,
+        bankId,
+      );
+      const tx = db.transaction("padConfigurations", "readwrite");
+      const store = tx.objectStore("padConfigurations");
+      for (const pad of existingPads) {
+        if (pad.id !== undefined) await store.delete(pad.id);
+      }
+      await tx.done;
+
+      // No `pageIndex`: the bank exists and its position belongs to the
+      // profile holding it, so passing one back would be the importer placing
+      // by position after all.
+      await upsertPageMetadata({
+        profileId,
+        bankId,
+        name: pageName,
+        isEmergency,
+      });
+    } else {
+      // createBank owns the cap check, the free-slot search, the new id and
+      // the initial sync fields. A second copy of those four rules here would
+      // drift from it, and it would also drop the sync fields.
+      const created = await createBank(profileId, pageName, isEmergency);
+      bankId = created.bankId;
+      pageIndex = created.pageIndex;
+    }
+
+    for (const pad of incomingPads) {
+      const audioFileIds = pad
+        .audioFileIds!.map((originalId) => audioIdMap.get(originalId))
+        .filter((newId): newId is number => newId !== undefined);
+
+      await upsertPadConfiguration({
+        profileId,
+        bankId,
+        padIndex: pad.padIndex,
+        keyBinding: pad.keyBinding,
+        // Through the shared helper, so a new pad field cannot be dropped here
+        // without being dropped everywhere at once — and so that `id`,
+        // `profileId`, `bankId` and the archive's sync stamps cannot ride in
+        // on the spread above. An `id` that did would put this pad on top of
+        // whatever row already holds that key, in whatever profile.
+        ...extractPadPlaybackSettings({
+          ...pad,
+          audioFileIds,
+          audioTrimSettings: remapPadSettingsOnImport(
+            pad.audioTrimSettings,
+            audioIdMap,
+          ),
+          audioGainSettings: remapPadSettingsOnImport(
+            pad.audioGainSettings,
+            audioIdMap,
+          ),
+        }),
+      });
+    }
+
+    return { written: true, bankId, pageIndex, createdAudioIds: createdIds };
+  } catch (error) {
+    // Everything from here on can still fail — `createBank` refuses a
+    // twenty-first bank, and a pad write can throw — and the audio is already
+    // in the library by then.
+    throw new BankWriteError(
+      error instanceof Error ? error.message : String(error),
+      createdIds,
+      { cause: error },
+    );
   }
 }

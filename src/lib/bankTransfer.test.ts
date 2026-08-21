@@ -24,6 +24,8 @@ import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeArchive } from "@/lib/testSupport/zipArchive";
 import type { PadConfiguration, PlaybackType } from "./db";
+import type { BankExport, BankExportPad } from "./bankTransfer";
+import { TOTAL_PADS } from "./constants";
 
 /**
  * The loudness pipeline, stubbed.
@@ -38,11 +40,17 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
   analyseAndStore: vi.fn(async () => null),
 }));
 
-const { collectBankDataForZip, exportBanksToZip, readArchiveManifest } =
-  await import("./bankTransfer");
+const {
+  collectBankDataForZip,
+  exportBanksToZip,
+  readArchiveManifest,
+  writeBankIntoProfile,
+} = await import("./bankTransfer");
 const {
   addAudioFile,
   addProfile,
+  cleanupOrphanedAudioFiles,
+  computeBlobHash,
   getDb,
   updateAudioFileLoudness,
   upsertPadConfiguration,
@@ -1340,5 +1348,700 @@ describe("readArchiveManifest", () => {
     // Counts describe what the documents say, which is all a dialog can
     // honestly report before anything is extracted.
     expect(described.banks[0]).toMatchObject({ padCount: 1, audioCount: 2 });
+  });
+});
+
+/**
+ * Writing a bank into a profile — where an archive's data finally lands.
+ *
+ * Three rules from the tasks before this one are load-bearing here, and each
+ * has its own tests below.
+ *
+ * `sourceBankId` is a *comparison* key. An "add" mints its own identity and a
+ * "replace" carries one from the destination profile, so the archive's string
+ * never becomes a bank id — which is what keeps a `#` in it out of a playback
+ * key. The fixtures use an id containing one, so an implementation that
+ * adopted it would be visible rather than merely possible.
+ *
+ * An archive carries no sync stamps, and a hand-edited one that carries some
+ * anyway must not have them adopted: a foreign device's per-field stamps
+ * either lose a local edit or manufacture a conflict modal. Every write here
+ * mints local stamps.
+ *
+ * And audio is deduplicated by content hash, so writing a bank whose sounds
+ * the destination already holds reuses those rows. `createdAudioIds` is the
+ * rollback's only defence against deleting a row another profile depends on,
+ * so it lists what was created and never what was reused.
+ */
+describe("writeBankIntoProfile", () => {
+  /**
+   * The destination's banks, at positions their ids do not encode.
+   *
+   * A UUID sits at position 0 and the perfectly ordinary id `"0"` sits at
+   * position 2, so `banks[Number(bankId)]` — the conflation `bankId` exists
+   * to end — answers "Held" when asked for "Kept" and would pass a fixture
+   * where the two agree. The gap at position 1 is what makes "the first free
+   * position" distinguishable from "one past the last" and from "the number
+   * of banks".
+   */
+  const HELD_ID = "8c2d7f10-4a55-4b9e-8d31-6f0a9c3e7b21";
+  const TARGET_BANKS = [
+    { bankId: HELD_ID, pageIndex: 0, name: "Held" },
+    { bankId: "0", pageIndex: 2, name: "Kept" },
+  ] as const;
+
+  /**
+   * The archive's claim about where its bank came from.
+   *
+   * Deliberately a string no profile could hold and that would break
+   * `baseKeyOf` if it ever reached a playback key: `baseKeyOf` splits at the
+   * last `#` when the suffix is all digits, so a bank id of `"raid#7"` would
+   * make every pad on it resolve to the base key `"raid"`.
+   */
+  const HOSTILE_SOURCE_BANK_ID = "raid#7";
+
+  async function seedTargetProfile(): Promise<number> {
+    const target = await addProfile({ name: "Show B", syncType: "local" });
+    for (const bank of TARGET_BANKS) {
+      await seedBank(target, bank, [
+        { padIndex: 0, name: `${bank.name} pad`, audioFileIds: [] },
+      ]);
+    }
+    return target;
+  }
+
+  /** One import source, carrying a real hash unless the caller withholds it. */
+  async function sourceFor(
+    originalId: number,
+    name: string,
+    options: { hash?: string | null; bytes?: string } = {},
+  ) {
+    const blob = new Blob([options.bytes ?? `the bytes of ${name}`], {
+      type: "audio/wav",
+    });
+    const hash =
+      options.hash === null
+        ? undefined
+        : (options.hash ?? (await computeBlobHash(blob)));
+    return {
+      originalId,
+      name: `${name}.wav`,
+      type: "audio/wav",
+      hash,
+      getBlob: vi.fn(async () => blob),
+    };
+  }
+
+  /** A pad as it sits in a `bank.json`, with room for fields no type declares. */
+  function incomingPad(fields: Record<string, unknown>) {
+    return {
+      padIndex: 0,
+      name: "Horn",
+      audioFileIds: [],
+      playbackType: "sequential",
+      createdAt: new Date("2020-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      ...fields,
+    } as unknown as BankExportPad;
+  }
+
+  /** A bank as it sits in a `bank.json`. */
+  function incomingBank(fields: Record<string, unknown> = {}): BankExport {
+    return {
+      exportVersion: 4,
+      exportDate: "2020-01-01T00:00:00.000Z",
+      sourceBankId: HOSTILE_SOURCE_BANK_ID,
+      page: {
+        name: "Stings",
+        isEmergency: false,
+        createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+      padConfigurations: [],
+      audioFiles: [],
+      ...fields,
+    } as unknown as BankExport;
+  }
+
+  async function padsOfBank(profileId: number, bankId: string) {
+    const db = await getDb();
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    return pads
+      .filter((pad) => pad.bankId === bankId)
+      .sort((a, b) => a.padIndex - b.padIndex);
+  }
+
+  /**
+   * Adds a bank holding one pad, and hands back the outcome and the pad row.
+   *
+   * The single most repeated shape in this describe block, and the jscpd gate
+   * refused it as three copies before it was a function.
+   */
+  async function addOneBank(
+    target: number,
+    pad: Record<string, unknown>,
+    audioSources: Awaited<ReturnType<typeof sourceFor>>[] = [],
+  ) {
+    const db = await getDb();
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        padConfigurations: [incomingPad({ padIndex: 3, ...pad })],
+      }),
+      audioSources,
+    });
+    const [written] = await padsOfBank(target, result.bankId!);
+    return { result, pad: written };
+  }
+
+  it("adds a bank at the first free position, under an id of its own", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        page: { name: "Stings", isEmergency: true },
+        padConfigurations: [incomingPad({ padIndex: 3, name: "Horn" })],
+      }),
+      audioSources: [],
+    });
+
+    expect(result.written).toBe(true);
+    // Position 1 is the gap. Two banks exist, and the last sits at 2, so
+    // "one past the last" and "how many there are" both give other answers.
+    expect(result.pageIndex).toBe(1);
+
+    // The archive's claim is not an identity. Neither is any id already here.
+    expect(result.bankId).not.toBe(HOSTILE_SOURCE_BANK_ID);
+    expect(result.bankId).not.toBe(HELD_ID);
+    expect(result.bankId).not.toBe("0");
+    expect(result.bankId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const pages = await db.getAllFromIndex("pageMetadata", "profileId", target);
+    expect(pages.map((page) => page.name).sort()).toEqual([
+      "Held",
+      "Kept",
+      "Stings",
+    ]);
+    const written = pages.find((page) => page.name === "Stings");
+    expect(written?.isEmergency).toBe(true);
+    expect(written?.bankId).toBe(result.bankId);
+
+    // The pad is filed under the minted id, not under the archive's string.
+    expect(
+      (await padsOfBank(target, result.bankId!)).map((p) => p.name),
+    ).toEqual(["Horn"]);
+  });
+
+  it("keeps the destination's own bank id and position on replace", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "replace", bankId: "0" },
+      bank: incomingBank({
+        page: { name: "Stings", isEmergency: true },
+        padConfigurations: [incomingPad({ padIndex: 3, name: "Horn" })],
+      }),
+      audioSources: [],
+    });
+
+    expect(result.bankId).toBe("0");
+    // The bank whose id is "0" sits at position 2. Only an identity lookup
+    // answers this; a position lookup lands on "Held".
+    expect(result.pageIndex).toBe(2);
+
+    const pages = await db.getAllFromIndex("pageMetadata", "profileId", target);
+    expect(pages).toHaveLength(2);
+    const replaced = pages.find((page) => page.bankId === "0");
+    expect(replaced?.name).toBe("Stings");
+    expect(replaced?.isEmergency).toBe(true);
+    expect(replaced?.pageIndex).toBe(2);
+    // The bank a position lookup would have taken is untouched.
+    const held = pages.find((page) => page.bankId === HELD_ID);
+    expect(held?.name).toBe("Held");
+    expect(held?.pageIndex).toBe(0);
+  });
+
+  it("clears the pads the replaced bank had, and only that bank's", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    // A pad the incoming bank does not define: replace must clear it, or the
+    // bank keeps sounds from the bank it replaced.
+    await upsertPadConfiguration({
+      profileId: target,
+      bankId: "0",
+      padIndex: 11,
+      name: "Leftover",
+      audioFileIds: [],
+      playbackType: "sequential",
+    });
+
+    await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "replace", bankId: "0" },
+      bank: incomingBank({
+        padConfigurations: [incomingPad({ padIndex: 3, name: "Horn" })],
+      }),
+      audioSources: [],
+    });
+
+    expect((await padsOfBank(target, "0")).map((pad) => pad.name)).toEqual([
+      "Horn",
+    ]);
+    // The other bank's pad is a bank away, not a profile away — a clear that
+    // ranged the profile would take it too.
+    expect((await padsOfBank(target, HELD_ID)).map((pad) => pad.name)).toEqual([
+      "Held pad",
+    ]);
+  });
+
+  it("refuses to replace a bank this profile does not hold", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    // Another profile's bank, with an id this profile does not have. Bank
+    // identity is per profile, so holding it elsewhere is holding it nowhere.
+    const other = await addProfile({ name: "Show C", syncType: "local" });
+    await seedBank(other, {
+      bankId: "elsewhere",
+      pageIndex: 0,
+      name: "Someone else's",
+    });
+
+    await expect(
+      writeBankIntoProfile(db, {
+        profileId: target,
+        mode: { kind: "replace", bankId: "elsewhere" },
+        bank: incomingBank(),
+        audioSources: [],
+      }),
+    ).rejects.toThrow(/elsewhere/);
+
+    expect(
+      await db.getAllFromIndex("pageMetadata", "profileId", target),
+    ).toHaveLength(2);
+  });
+
+  it("writes nothing at all on skip, not even the audio", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const source = await sourceFor(11, "sting");
+    const before = (await db.getAll("audioFiles")).length;
+
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "skip" },
+      bank: incomingBank({
+        padConfigurations: [incomingPad({ audioFileIds: [11] })],
+      }),
+      audioSources: [source],
+    });
+
+    expect(result).toEqual({ written: false, createdAudioIds: [] });
+    expect(
+      await db.getAllFromIndex("pageMetadata", "profileId", target),
+    ).toHaveLength(2);
+    // Importing the audio anyway would leave rows nothing references, and
+    // the caller has no created-id list to roll them back with.
+    expect(source.getBlob).not.toHaveBeenCalled();
+    expect((await db.getAll("audioFiles")).length).toBe(before);
+  });
+
+  it("never adopts the archive's bank id, on either placement", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const bank = incomingBank({
+      sourceBankId: HOSTILE_SOURCE_BANK_ID,
+      padConfigurations: [incomingPad({ padIndex: 3 })],
+    });
+
+    const added = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank,
+      audioSources: [],
+    });
+    const replaced = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "replace", bankId: HELD_ID },
+      bank,
+      audioSources: [],
+    });
+
+    expect(added.bankId).not.toBe(HOSTILE_SOURCE_BANK_ID);
+    expect(replaced.bankId).toBe(HELD_ID);
+
+    // Not as a bank id, and not on any row either: a pad filed under it would
+    // reach `baseKeyOf` at trigger time.
+    const pages = await db.getAllFromIndex("pageMetadata", "profileId", target);
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      target,
+    );
+    for (const row of [...pages, ...pads]) {
+      expect(row.bankId).not.toBe(HOSTILE_SOURCE_BANK_ID);
+    }
+  });
+
+  it("mints local sync stamps rather than adopting the archive's", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const before = Date.now();
+
+    await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        page: {
+          name: "Stings",
+          isEmergency: false,
+          _created: 1,
+          _modified: 2,
+          _fieldsModified: { name: 3 },
+        },
+        padConfigurations: [
+          incomingPad({
+            padIndex: 3,
+            _created: 1,
+            _modified: 2,
+            _fieldsModified: { name: 3, audioFileIds: 4 },
+          }),
+        ],
+      }),
+      audioSources: [],
+    });
+
+    const page = (
+      await db.getAllFromIndex("pageMetadata", "profileId", target)
+    ).find((row) => row.name === "Stings");
+    const [pad] = await padsOfBank(target, page!.bankId);
+
+    // A foreign device's per-field stamps make every field the two profiles
+    // disagree about a manual conflict, so they are minted, not carried.
+    for (const row of [page!, pad]) {
+      expect(row._created).toBeGreaterThanOrEqual(before);
+      expect(row._modified).toBeGreaterThanOrEqual(before);
+      expect(Object.keys(row._fieldsModified ?? {}).length).toBeGreaterThan(0);
+      for (const at of Object.values(row._fieldsModified ?? {})) {
+        expect(at).toBeGreaterThanOrEqual(before);
+      }
+    }
+    // And the row's own dates are this device's, not the exporting device's.
+    expect(pad.createdAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(pad.updatedAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("drops every field that says where a row lived, and any it does not know", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    // A pad in another profile, whose id the archive claims for itself. A
+    // write that carried `id` through would land on this row.
+    const other = await addProfile({ name: "Show C", syncType: "local" });
+    await seedBank(other, { bankId: "c0", pageIndex: 0, name: "Theirs" });
+    const victimId = await upsertPadConfiguration({
+      profileId: other,
+      bankId: "c0",
+      padIndex: 7,
+      name: "Theirs",
+      audioFileIds: [],
+      playbackType: "sequential",
+    });
+
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        padConfigurations: [
+          incomingPad({
+            id: victimId,
+            profileId: other,
+            bankId: "c0",
+            pageIndex: 9,
+            padIndex: 3,
+            name: "Horn",
+            somethingNewer: "from a later version",
+          }),
+        ],
+      }),
+      audioSources: [],
+    });
+
+    const victim = await db.get("padConfigurations", victimId);
+    expect(victim?.name).toBe("Theirs");
+    expect(victim?.profileId).toBe(other);
+
+    const [pad] = await padsOfBank(target, result.bankId!);
+    expect(pad.name).toBe("Horn");
+    expect(pad.profileId).toBe(target);
+    expect(pad.bankId).toBe(result.bankId);
+    expect(pad.id).not.toBe(victimId);
+    expect(pad).not.toHaveProperty("pageIndex");
+    expect(pad).not.toHaveProperty("somethingNewer");
+  });
+
+  it("re-keys the trim and gain onto the ids it wrote", async () => {
+    const target = await seedTargetProfile();
+    const sting = await sourceFor(11, "sting");
+
+    const { pad } = await addOneBank(
+      target,
+      {
+        keyBinding: "q",
+        audioFileIds: [11],
+        audioTrimSettings: { 11: { trimStart: 0.25, trimEnd: 1.75 } },
+        audioGainSettings: { 11: -4.5 },
+        padGainDb: 2,
+        playbackType: "sequential",
+        isDisabled: true,
+        activePadBehavior: "layer",
+      },
+      [sting],
+    );
+    const newAudioId = pad.audioFileIds[0];
+    // The archive's id is the exporting device's key. Leaving either map
+    // keyed by it attaches the trim and the gain to the wrong sound.
+    expect(newAudioId).not.toBe(11);
+    expect(pad.audioGainSettings).toEqual({ [newAudioId]: -4.5 });
+    expect(pad.audioTrimSettings).toEqual({
+      [newAudioId]: { trimStart: 0.25, trimEnd: 1.75 },
+    });
+    expect(pad.padGainDb).toBe(2);
+    expect(pad.playbackType).toBe("sequential");
+    expect(pad.isDisabled).toBe(true);
+    expect(pad.keyBinding).toBe("q");
+    expect(pad.activePadBehavior).toBe("layer");
+  });
+
+  it("lists a sound it really created, so the rollback can take it back", async () => {
+    const target = await seedTargetProfile();
+    const sting = await sourceFor(11, "sting");
+
+    const { result, pad } = await addOneBank(target, { audioFileIds: [11] }, [
+      sting,
+    ]);
+    expect(result.createdAudioIds).toEqual([pad.audioFileIds[0]]);
+  });
+
+  it("reuses a sound the library already holds, and does not list it as created", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    // Seeded under another profile on purpose: deleting this row on rollback
+    // is the data loss `createdAudioIds` exists to prevent.
+    const existing = await addSound("sting");
+    const before = (await db.getAll("audioFiles")).length;
+    const sting = await sourceFor(11, "sting");
+
+    const { result, pad } = await addOneBank(target, { audioFileIds: [11] }, [
+      sting,
+    ]);
+    expect(pad.audioFileIds).toEqual([existing]);
+    expect(result.createdAudioIds).toEqual([]);
+    expect((await db.getAll("audioFiles")).length).toBe(before);
+    // The hash came with the reference, so the bytes were never asked for.
+    expect(sting.getBlob).not.toHaveBeenCalled();
+  });
+
+  it("reuses by bytes when the archive states no hash", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const existing = await addSound("sting");
+    const before = (await db.getAll("audioFiles")).length;
+    // No hash, so the reuse cannot happen before the read: this is the
+    // second reuse branch, the one inside the write transaction, and it has
+    // its own fixture because a shared one only ever exercises the first.
+    const sting = await sourceFor(11, "sting", { hash: null });
+
+    const { result, pad } = await addOneBank(target, { audioFileIds: [11] }, [
+      sting,
+    ]);
+    expect(sting.getBlob).toHaveBeenCalled();
+    expect(pad.audioFileIds).toEqual([existing]);
+    expect(result.createdAudioIds).toEqual([]);
+    expect((await db.getAll("audioFiles")).length).toBe(before);
+  });
+
+  it("drops a reference to a sound the archive never supplies", async () => {
+    const target = await seedTargetProfile();
+    // Both of these come out of this app's own writer: a pad may name an id
+    // `audioFiles` never declares, and a declared id may have no bytes — so
+    // neither is corruption and neither may fail the bank.
+    const sting = await sourceFor(11, "sting");
+
+    const { pad } = await addOneBank(
+      target,
+      {
+        name: "Horn",
+        audioFileIds: [11, 12],
+        audioTrimSettings: {
+          11: { trimStart: 0, trimEnd: 1 },
+          12: { trimStart: 2, trimEnd: 3 },
+        },
+        audioGainSettings: { 11: -4.5, 12: -6 },
+      },
+      [sting],
+    );
+    const kept = pad.audioFileIds[0];
+    expect(pad.audioFileIds).toHaveLength(1);
+    expect(pad.name).toBe("Horn");
+    // A setting left keyed by 12 would attach to whatever sound is written
+    // under id 12 next.
+    expect(pad.audioTrimSettings).toEqual({
+      [kept]: { trimStart: 0, trimEnd: 1 },
+    });
+    expect(pad.audioGainSettings).toEqual({ [kept]: -4.5 });
+  });
+
+  it("carries a pre-V3 pad's single audioFileId", async () => {
+    const target = await seedTargetProfile();
+    const sting = await sourceFor(11, "sting");
+
+    // The export is subtractive, so a pad row still carrying the pre-V3
+    // scalar carries it into the archive — and `collectAudioForPads` reads
+    // that spelling too, so the bytes are there to attach.
+    const { result, pad } = await addOneBank(
+      target,
+      { audioFileIds: undefined, audioFileId: 11 },
+      [sting],
+    );
+    expect(pad.audioFileIds).toHaveLength(1);
+    expect(pad.audioFileIds[0]).toBe(result.createdAudioIds[0]);
+  });
+
+  it("fails, naming what it created, when a sound cannot be materialised", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const good = await sourceFor(11, "sting");
+    const bad = await sourceFor(12, "bed");
+    bad.getBlob = vi.fn(async () => {
+      throw new Error("that entry is not in the archive");
+    });
+
+    const error = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        padConfigurations: [
+          incomingPad({ padIndex: 3, audioFileIds: [11, 12] }),
+        ],
+      }),
+      audioSources: [good, bad],
+    }).then(
+      () => null,
+      (thrown) => thrown as Error & { createdAudioIds?: number[] },
+    );
+
+    expect(error?.message).toMatch(/bed\.wav/);
+    // Nothing was placed, so the bank does not arrive silently one sound short.
+    expect(
+      await db.getAllFromIndex("pageMetadata", "profileId", target),
+    ).toHaveLength(2);
+    // The row written before the failure would otherwise be an orphan the
+    // caller never hears about.
+    expect(error?.createdAudioIds).toHaveLength(1);
+    expect(
+      await db.get("audioFiles", error!.createdAudioIds![0]),
+    ).toBeDefined();
+  });
+
+  it("refuses a pad whose position is not a pad position, before writing anything", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    const before = (await db.getAll("audioFiles")).length;
+
+    for (const padIndex of [-1, TOTAL_PADS, 1.5, "3", undefined, NaN]) {
+      const sting = await sourceFor(11, "sting");
+      await expect(
+        writeBankIntoProfile(db, {
+          profileId: target,
+          mode: { kind: "add" },
+          bank: incomingBank({
+            padConfigurations: [incomingPad({ padIndex, audioFileIds: [11] })],
+          }),
+          audioSources: [sting],
+        }),
+        // `padIndex` is a component of the `profileBankPad` key, so a bad one
+        // is a DataError partway through a write rather than an odd pad.
+      ).rejects.toThrow(/pad/i);
+      expect(sting.getBlob).not.toHaveBeenCalled();
+    }
+
+    expect(
+      await db.getAllFromIndex("pageMetadata", "profileId", target),
+    ).toHaveLength(2);
+    expect((await db.getAll("audioFiles")).length).toBe(before);
+  });
+
+  it("reads a hand-edited flag as a flag, not as anything truthy", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+
+    const result = await writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        page: { name: "Stings", isEmergency: "yes" },
+        padConfigurations: [
+          incomingPad({ padIndex: 3, isDisabled: "yes", padGainDb: "loud" }),
+        ],
+      }),
+      audioSources: [],
+    });
+
+    const page = (
+      await db.getAllFromIndex("pageMetadata", "profileId", target)
+    ).find((row) => row.bankId === result.bankId);
+    // An emergency bank answers the emergency key; `"yes"` must not make one.
+    expect(page?.isEmergency).toBe(false);
+
+    const [pad] = await padsOfBank(target, result.bankId!);
+    expect(pad.isDisabled).toBe(false);
+    // A non-numeric gain reaches the gain node as NaN and throws at trigger.
+    expect(pad.padGainDb).toBeUndefined();
+  });
+
+  it("holds off the orphan sweep until its pads name the audio it wrote", async () => {
+    const db = await getDb();
+    const target = await seedTargetProfile();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sting = await sourceFor(11, "sting", { hash: null });
+    const blob = new Blob(["the bytes of sting"], { type: "audio/wav" });
+    sting.getBlob = vi.fn(async () => {
+      await gate;
+      return blob;
+    });
+
+    const writing = writeBankIntoProfile(db, {
+      profileId: target,
+      mode: { kind: "add" },
+      bank: incomingBank({
+        padConfigurations: [incomingPad({ padIndex: 3, audioFileIds: [11] })],
+      }),
+      audioSources: [sting],
+    });
+
+    // Between the audio write and the pad write the audio is real and nothing
+    // references it, which is exactly what the sweep deletes.
+    const sweeping = cleanupOrphanedAudioFiles();
+    release!();
+    const result = await writing;
+    await sweeping;
+
+    const [pad] = await padsOfBank(target, result.bankId!);
+    expect(pad.audioFileIds).toHaveLength(1);
+    expect(await db.get("audioFiles", pad.audioFileIds[0])).toBeDefined();
   });
 });

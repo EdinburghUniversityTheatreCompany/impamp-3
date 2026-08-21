@@ -505,7 +505,10 @@ async function findExistingAudioId(
 // latency-bound sources like Google Drive downloads, pointless for local
 // ZIP extraction — reporting per-file completion progress instead (bytes
 // from interleaved files would not be meaningful).
-async function importAudioSources(
+//
+// Exported for the bank import, which needs the same reuse-by-hash rule and
+// the same created-versus-reused split its rollback depends on.
+export async function importAudioSources(
   db: IDBPDatabase<ImpAmpDBSchema>,
   audioSources: ImportAudioSource[],
   now: Date,
