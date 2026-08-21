@@ -87,11 +87,27 @@ export default defineConfig({
       // paths, the import register and the keyboard work, and the combined
       // tree measures 54.43 / 46.32 / 51.25 / 55.14. A floor four points below
       // what the suite actually does is not a ratchet, it is decoration.
+      //
+      // Raised once more at the end of the audio-dedup + bank-transfer plan.
+      // Sixteen tasks each declined to touch this block, deliberately, so that
+      // one measurement at the end would cover the whole of it rather than
+      // sixteen small ones against a floor main had meanwhile overtaken. Four
+      // back-to-back runs on an idle machine measured
+      // 59.31 / 50.95 / 56.65 / 60.12,
+      // 59.31 / 50.95 / 56.65 / 60.12,
+      // 59.27 / 50.98 / 56.70 / 60.11 and
+      // 59.31 / 50.95 / 56.70 / 60.13 — so the lowest seen for each metric is
+      // 59.27 / 50.95 / 56.65 / 60.11, and the floor sits about a point and a
+      // half under each, the same deliberate gap as every raise above. The
+      // gate was proved to bite before it was set: 60 / 49 / 55 / 59 exits 1
+      // with "Coverage for statements (59.31%) does not meet global threshold
+      // (60%)", which also shows the other three are genuinely under the run
+      // rather than merely unenforced.
       thresholds: {
-        statements: 53,
-        branches: 45,
-        functions: 50,
-        lines: 54,
+        statements: 58,
+        branches: 49,
+        functions: 55,
+        lines: 59,
       },
     },
   },
