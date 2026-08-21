@@ -27,6 +27,7 @@ import type { PadConfiguration, PlaybackType } from "./db";
 import type { BankExport, BankExportPad } from "./bankTransfer";
 import type { TransferProgress } from "./importExport";
 import { TOTAL_PADS } from "./constants";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
 /**
  * The loudness pipeline, stubbed.
@@ -37,9 +38,7 @@ import { TOTAL_PADS } from "./constants";
  * a real background analysis racing them would be a flake blamed on the
  * fixture.
  */
-vi.doMock("@/lib/audio/loudness/pipeline", () => ({
-  analyseAndStore: vi.fn(async () => null),
-}));
+stubLoudnessPipeline();
 
 const {
   collectBankDataForZip,

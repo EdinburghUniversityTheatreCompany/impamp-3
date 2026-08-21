@@ -292,8 +292,20 @@ packages, none of them is fair game.
   Web Audio fake whose sources record `stop()`), `audioStackMocks.ts`
   (everything below `controls.ts`, installed with `vi.doMock` because
   `vi.mock` is hoisted into the file it is written in and cannot be called on
-  another file's behalf), `legacyDatabase.ts`, `browserGlobals.ts` or
+  another file's behalf), `loudnessPipelineStub.ts`, `legacyDatabase.ts`,
+  `browserGlobals.ts`, `zipArchive.ts`, `reactPanel.tsx` or
   `audioFixtures.ts` before writing a third
+- **A suite that writes an audio row must call `stubLoudnessPipeline()`**,
+  unless it mocks `@/lib/db` wholesale or is one of the two suites testing the
+  pipeline itself. `addAudioFile` and `addOrReuseAudioFile` fire
+  `startBackgroundAnalysis` without awaiting it; in node that rejects and
+  db.ts logs the rejection _after_ the test file has finished, which under
+  `--coverage` tears the worker down with
+  `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`.
+  Measured at two failing runs in three before the stub and zero in five
+  after. The suite stays green and the **command exits 1**, so it reads as
+  your change breaking everything; and because it is timing, one passing run
+  is no evidence at all
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`

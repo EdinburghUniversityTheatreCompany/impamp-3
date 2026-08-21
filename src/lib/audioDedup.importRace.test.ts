@@ -35,11 +35,10 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { someAnalysis } from "@/lib/testSupport/audioFixtures";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
-/** See audioDedup.test.ts: without this every write reaches Web Audio. */
-const analyseAndStore = vi.fn(async () => null);
-vi.doMock("@/lib/audio/loudness/pipeline", () => ({ analyseAndStore }));
+stubLoudnessPipeline();
 
 const { collapseDuplicateAudioGroups, findDuplicateAudioGroups } =
   await import("./audioDedup");

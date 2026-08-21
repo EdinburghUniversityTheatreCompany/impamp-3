@@ -27,15 +27,14 @@ import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BankImportResult, BankPlacement } from "@/lib/bankTransfer";
 import type { TransferProgressCallback } from "@/lib/importExport";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
 /**
  * The loudness pipeline, stubbed: `db.ts` imports it dynamically inside
  * `addAudioFile`, and a real background analysis racing the round-trip below
  * would be a flake blamed on the fixture.
  */
-vi.doMock("@/lib/audio/loudness/pipeline", () => ({
-  analyseAndStore: vi.fn(async () => null),
-}));
+stubLoudnessPipeline();
 
 /**
  * The library, mocked over — but only the two functions the store calls, and

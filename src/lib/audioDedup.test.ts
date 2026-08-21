@@ -15,23 +15,16 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { someAnalysis } from "@/lib/testSupport/audioFixtures";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 // Type-only, so it is erased before runtime and cannot defeat the ordering
 // the comment above describes.
 import type { PadConfiguration } from "./db";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
-/**
- * The loudness pipeline, stubbed.
- *
- * `db.ts` imports it dynamically at call time, so `vi.doMock` registered here
- * — before `db.ts` itself is imported — is what the dynamic import resolves
- * to. Without it every `addAudioFile` fires a real background analysis that
- * reaches Web Audio, which node does not have, and the election tests below
- * turn on whether a row carries an analysis: a stray write racing the
- * assertions is exactly the flake that would be blamed on the fixture.
- */
-const analyseAndStore = vi.fn(async () => null);
-vi.doMock("@/lib/audio/loudness/pipeline", () => ({ analyseAndStore }));
+// The election tests below turn on whether a row carries an analysis, so a
+// real background write racing the assertions is exactly the flake that would
+// be blamed on the fixture. See loudnessPipelineStub.ts for the rest.
+const { analyseAndStore } = stubLoudnessPipeline();
 
 const { collapseDuplicateAudioGroups, findDuplicateAudioGroups } =
   await import("./audioDedup");
