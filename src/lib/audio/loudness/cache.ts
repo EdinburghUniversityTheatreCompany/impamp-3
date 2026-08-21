@@ -59,6 +59,26 @@ export function warmLoudnessCache(
   notifyCacheListeners();
 }
 
+/**
+ * Forgets the analyses for ids whose rows have gone.
+ *
+ * The counterpart to `clearCachedAudioBuffer` for this map. The duplicate
+ * collapse deletes audio rows, and an entry left under a deleted id is a
+ * measurement of a recording nothing can name any more — harmless today,
+ * because no reference to that id survives, but the map is otherwise only
+ * ever emptied wholesale at profile activation.
+ *
+ * @returns How many entries were removed
+ */
+export function dropCachedLoudness(ids: Iterable<number>): number {
+  let dropped = 0;
+  for (const id of ids) {
+    if (cache.delete(id)) dropped++;
+  }
+  if (dropped > 0) notifyCacheListeners();
+  return dropped;
+}
+
 export function clearLoudnessCache(): void {
   cache.clear();
   notifyCacheListeners();

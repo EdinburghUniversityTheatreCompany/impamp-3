@@ -1146,10 +1146,16 @@ function separateOrphans(
 /**
  * Drops decoded-buffer cache entries for audio whose records have gone.
  *
+ * Exported because the duplicate collapse deletes rows too, and a decoded
+ * buffer still cached under a deleted id is a sound that can play after its
+ * row is gone.
+ *
  * Dynamic import for the same reason the other callers use one: `audio/cache`
  * reaches Web Audio, and `db.ts` is imported by code that runs on the server.
  */
-async function clearAudioCacheEntries(ids: Iterable<number>): Promise<number> {
+export async function clearAudioCacheEntries(
+  ids: Iterable<number>,
+): Promise<number> {
   if (typeof window === "undefined") return 0;
   try {
     const { clearCachedAudioBuffer } = await import("./audio/cache");
