@@ -44,35 +44,63 @@ interface EditPadFormProps extends FormModalRenderProps<PadFormValues> {
 
 // Internal state for managing sound display
 interface SoundListItem {
+  /**
+   * Identifies this *row*, not the sound in it: `${fileId}-${occurrence}`.
+   *
+   * Everything that has to name one row and not its twin is built from this —
+   * the drag id, all four test ids, and the accessible names of the row's
+   * buttons. `fileId` alone cannot do that job any more; see `placeSounds`.
+   */
+  rowId: string;
   dndId: string; // Unique ID for drag-and-drop
   fileId: number; // Actual audioFile ID
   name: string; // Display name
+  /**
+   * Distinguishes the second and later copies of one sound by name, e.g.
+   * " (copy 2)". Empty for the first, so an ordinary pad reads as it always
+   * did. Appended to the labels a screen reader announces, which would
+   * otherwise be three pairs of identical buttons doing different things.
+   */
+  copyLabel: string;
 }
 
 /** A sound before it has been given its place in the list. */
-type UnplacedSound = Omit<SoundListItem, "dndId">;
+type UnplacedSound = Omit<SoundListItem, "rowId" | "dndId" | "copyLabel">;
 
 /**
- * Hands each sound a drag id that is unique even when one pad names the same
- * sound twice.
+ * Hands each sound a row identity that is unique even when one pad names the
+ * same sound twice.
  *
  * Audio rows are reused by content hash, so adding the same bytes twice
- * returns one id both times and `sound-${fileId}` stopped being unique within
- * a pad. Two identical ids give @hello-pangea/dnd two draggables claiming one
- * id, React two children with one key, and `handleRemoveSound` — which
- * matches on the drag id — every copy instead of the one clicked. A pad that
- * plays a sound twice in a sequence is a thing users ask for, so the answer
- * is to number the copies rather than to refuse the second.
+ * returns one id both times and `${fileId}` stopped being unique within a
+ * pad. Two identical ids give @hello-pangea/dnd two draggables claiming one
+ * id, React two children with one key, `handleRemoveSound` — which matches on
+ * the drag id — every copy instead of the one clicked, two `<li>`s answering
+ * one `data-testid`, and two Remove buttons a screen reader cannot tell
+ * apart. A pad that plays a sound twice in a sequence is a thing users ask
+ * for, so the answer is to number the copies rather than to refuse the
+ * second.
+ *
+ * Numbering the drag id alone is not enough, and was the shape of the bug
+ * this replaced: the neighbouring test ids were left on `fileId` and went on
+ * colliding. Everything that names a row derives from `rowId` here, so there
+ * is one place to get it right.
  *
  * @param sounds - The list in display order
- * @returns The same list, each entry carrying a distinct `dndId`
+ * @returns The same list, each entry carrying a distinct `rowId` and `dndId`
  */
 function placeSounds(sounds: UnplacedSound[]): SoundListItem[] {
   const seen = new Map<number, number>();
   return sounds.map((sound) => {
     const occurrence = seen.get(sound.fileId) ?? 0;
     seen.set(sound.fileId, occurrence + 1);
-    return { ...sound, dndId: `sound-${sound.fileId}-${occurrence}` };
+    const rowId = `${sound.fileId}-${occurrence}`;
+    return {
+      ...sound,
+      rowId,
+      dndId: `sound-${rowId}`,
+      copyLabel: occurrence === 0 ? "" : ` (copy ${occurrence + 1})`,
+    };
   });
 }
 
@@ -388,19 +416,27 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                           {...provided.draggableProps}
                           {...provided.dragHandleProps}
                           className="p-2 flex items-center justify-between bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
-                          data-testid={`edit-pad-sound-item-${sound.fileId}`}
+                          data-testid={`edit-pad-sound-item-${sound.rowId}`}
                         >
                           <span className="text-gray-800 dark:text-gray-200 truncate flex-1">
                             {sound.name}
                           </span>
                           <div className="flex items-center gap-2 ml-2 shrink-0">
+                            {/*
+                              The row's *identity* is `rowId`; its *value* is
+                              still keyed by `fileId`, and deliberately so —
+                              `audioGainSettings` (like `audioTrimSettings`
+                              below) is a Record keyed by audio file ID, so
+                              two copies of one sound share one gain. Only
+                              what names the element moves to `rowId`.
+                            */}
                             <GainControl
                               compact
-                              label={`Gain for ${sound.name}`}
+                              label={`Gain for ${sound.name}${sound.copyLabel}`}
                               valueDb={
                                 values.audioGainSettings?.[sound.fileId] ?? 0
                               }
-                              testId={`edit-pad-gain-sound-${sound.fileId}`}
+                              testId={`edit-pad-gain-sound-${sound.rowId}`}
                               onChange={(db) =>
                                 updateValue("audioGainSettings", {
                                   ...(values.audioGainSettings ?? {}),
@@ -411,9 +447,9 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                             <button
                               onClick={() => setTrimmingSound(sound)}
                               className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
-                              aria-label={`Trim ${sound.name}`}
-                              title={`Trim ${sound.name}`}
-                              data-testid={`edit-pad-trim-sound-${sound.fileId}`}
+                              aria-label={`Trim ${sound.name}${sound.copyLabel}`}
+                              title={`Trim ${sound.name}${sound.copyLabel}`}
+                              data-testid={`edit-pad-trim-sound-${sound.rowId}`}
                               type="button"
                             >
                               Trim
@@ -421,9 +457,9 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                             <button
                               onClick={() => handleRemoveSound(sound.dndId)}
                               className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-bold"
-                              aria-label={`Remove ${sound.name}`}
-                              title={`Remove ${sound.name}`}
-                              data-testid={`edit-pad-remove-sound-${sound.fileId}`}
+                              aria-label={`Remove ${sound.name}${sound.copyLabel}`}
+                              title={`Remove ${sound.name}${sound.copyLabel}`}
+                              data-testid={`edit-pad-remove-sound-${sound.rowId}`}
                               type="button"
                             >
                               ✕

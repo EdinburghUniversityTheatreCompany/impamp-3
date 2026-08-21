@@ -163,6 +163,65 @@ describe("adding sounds in the pad editor", () => {
     expect(soundRows()).toHaveLength(1);
   });
 
+  it("gives each copy its own test ids and its own accessible names", async () => {
+    // A duplicate `data-testid` is as wrong as a duplicate React key, and it
+    // is what a `fileId`-keyed id becomes the moment reuse hands two rows one
+    // id. Playwright says so out loud — "strict mode violation: … resolved to
+    // 2 elements" — but only in the browser, hours later; this is the same
+    // fact in jsdom.
+    //
+    // All four ids are checked together on purpose. The drag id was fixed on
+    // its own once and the three beside it were left keyed on `fileId`, which
+    // is this repo's characteristic regression: take the data, leave the
+    // guard.
+    await addSounds([horn("horn.wav")], 1);
+    await addSounds([horn("horn (1).wav")], 2);
+
+    const [first, second] = soundRows();
+    for (const prefix of [
+      "edit-pad-sound-item-",
+      "edit-pad-gain-sound-",
+      "edit-pad-trim-sound-",
+      "edit-pad-remove-sound-",
+    ]) {
+      const ids = [first, second].map((row) =>
+        row.matches(`[data-testid^="${prefix}"]`)
+          ? row.getAttribute("data-testid")
+          : row
+              .querySelector(`[data-testid^="${prefix}"]`)!
+              .getAttribute("data-testid"),
+      );
+      expect(ids[0], `${prefix} is missing`).toBeTruthy();
+      expect(ids[0], `${prefix} collides between the two copies`).not.toBe(
+        ids[1],
+      );
+      // And every one of them still answers a document-wide lookup with
+      // exactly one element, which is the property a locator relies on.
+      for (const id of ids) {
+        expect(document.querySelectorAll(`[data-testid="${id}"]`)).toHaveLength(
+          1,
+        );
+      }
+    }
+
+    // The same for what a screen reader hears: two "Remove horn.wav" buttons
+    // that remove different rows are indistinguishable by ear.
+    for (const prefix of ["Remove ", "Trim ", "Gain for "]) {
+      const labels = [first, second].map((row) =>
+        row
+          .querySelector(`[aria-label^="${prefix}"]`)!
+          .getAttribute("aria-label")!,
+      );
+      // Both rows name the same stored row, so both carry the row's own
+      // name — "horn.wav", the name it was written under, not "horn (1).wav",
+      // the name on the file the second add happened to arrive under.
+      expect(labels[0]).toBe(`${prefix}horn.wav`);
+      expect(labels[1], `"${prefix}" labels collide`).toBe(
+        `${prefix}horn.wav (copy 2)`,
+      );
+    }
+  });
+
   it("stores a second row for a different sound", async () => {
     // The other half: reuse must not collapse two sounds into one row.
     await addSounds([horn("horn.wav")], 1);

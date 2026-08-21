@@ -41,7 +41,9 @@ test.describe("Escape inside the waveform trimmer", () => {
     const editor = page.getByRole("dialog");
     await expect(editor).toBeVisible();
 
-    await page.getByTestId("edit-pad-trim-sound-1").click();
+    // `1-0`: the sound-row test ids are `${audioFileId}-${occurrence}`, so
+    // that a pad naming one sound twice does not render the same id twice.
+    await page.getByTestId("edit-pad-trim-sound-1-0").click();
     const trimmer = page.getByText(`Trim: ${fileName}`);
     await expect(trimmer).toBeVisible();
 

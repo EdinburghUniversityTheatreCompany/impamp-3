@@ -196,7 +196,12 @@ test.describe("loudness normalisation", () => {
       .locator('input[data-testid^="edit-pad-gain-sound-"]')
       .first();
     const testIdAttr = await slider.getAttribute("data-testid");
-    const audioFileId = Number(testIdAttr!.replace("edit-pad-gain-sound-", ""));
+    // The suffix is `${audioFileId}-${occurrence}` — a pad may name one sound
+    // twice, and then only the occurrence tells the two rows apart — so the
+    // file id is the part before the first dash, not the whole suffix.
+    const audioFileId = Number(
+      testIdAttr!.replace("edit-pad-gain-sound-", "").split("-")[0],
+    );
     expect(Number.isNaN(audioFileId)).toBe(false);
 
     // <input type="range"> can't be driven with .fill() (Playwright rejects
