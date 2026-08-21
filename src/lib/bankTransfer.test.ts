@@ -1625,11 +1625,19 @@ describe("writeBankIntoProfile", () => {
         bank: incomingBank(),
         audioSources: [],
       }),
-    ).rejects.toThrow(/elsewhere/);
+      // Named exactly. `/elsewhere/` alone also matches
+      // `upsertPageMetadata`'s "cannot create bank elsewhere without a
+      // position", which is what a lookup that ranged every profile would
+      // throw two steps later — so a loose assertion passes for the wrong
+      // reason and cannot tell the guard from its absence.
+    ).rejects.toThrow(/Bank elsewhere is no longer in this profile/);
 
     expect(
       await db.getAllFromIndex("pageMetadata", "profileId", target),
     ).toHaveLength(2);
+    // And the bank it named, in the profile that really holds it, is untouched.
+    const theirs = await db.getAllFromIndex("pageMetadata", "profileId", other);
+    expect(theirs.map((page) => page.name)).toEqual(["Someone else's"]);
   });
 
   it("writes nothing at all on skip, not even the audio", async () => {
@@ -2013,35 +2021,53 @@ describe("writeBankIntoProfile", () => {
   it("holds off the orphan sweep until its pads name the audio it wrote", async () => {
     const db = await getDb();
     const target = await seedTargetProfile();
+
+    // The window this guards is *between* the two audio writes, not before
+    // them: the first sound has to be in the library and unreferenced before
+    // the sweep has anything to take. So the second sound's bytes are held,
+    // and the sweep starts the moment they are asked for.
+    const sting = await sourceFor(11, "sting");
+    const bed = await sourceFor(12, "bed", { hash: null });
     let release: (() => void) | undefined;
+    let asked: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const sting = await sourceFor(11, "sting", { hash: null });
-    const blob = new Blob(["the bytes of sting"], { type: "audio/wav" });
-    sting.getBlob = vi.fn(async () => {
+    const askedFor = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    const bedBytes = new Blob(["the bytes of bed"], { type: "audio/wav" });
+    bed.getBlob = vi.fn(async () => {
+      asked!();
       await gate;
-      return blob;
+      return bedBytes;
     });
 
     const writing = writeBankIntoProfile(db, {
       profileId: target,
       mode: { kind: "add" },
       bank: incomingBank({
-        padConfigurations: [incomingPad({ padIndex: 3, audioFileIds: [11] })],
+        padConfigurations: [
+          incomingPad({ padIndex: 3, audioFileIds: [11, 12] }),
+        ],
       }),
-      audioSources: [sting],
+      audioSources: [sting, bed],
     });
 
-    // Between the audio write and the pad write the audio is real and nothing
-    // references it, which is exactly what the sweep deletes.
+    await askedFor;
+    // The fixture can only exhibit the failure if the orphan is really there.
+    expect(await db.getAll("audioFiles")).toHaveLength(1);
+
     const sweeping = cleanupOrphanedAudioFiles();
     release!();
     const result = await writing;
-    await sweeping;
+    const swept = await sweeping;
 
+    expect(swept.deletedCount).toBe(0);
     const [pad] = await padsOfBank(target, result.bankId!);
-    expect(pad.audioFileIds).toHaveLength(1);
-    expect(await db.get("audioFiles", pad.audioFileIds[0])).toBeDefined();
+    expect(pad.audioFileIds).toHaveLength(2);
+    for (const audioFileId of pad.audioFileIds) {
+      expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+    }
   });
 });
