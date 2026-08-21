@@ -22,6 +22,7 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeArchive } from "@/lib/testSupport/zipArchive";
 import type { PadConfiguration, PlaybackType } from "./db";
 
 /**
@@ -37,7 +38,7 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
   analyseAndStore: vi.fn(async () => null),
 }));
 
-const { collectBankDataForZip, exportBanksToZip } =
+const { collectBankDataForZip, exportBanksToZip, readArchiveManifest } =
   await import("./bankTransfer");
 const {
   addAudioFile,
@@ -835,5 +836,491 @@ describe("exportBanksToZip", () => {
     expect(
       (parseEntry(entries, "manifest.json") as { banks: unknown[] }).banks,
     ).toEqual([]);
+  });
+});
+
+/**
+ * Everything below is the other side of the module comment's list: the reader
+ * of an archive nobody here wrote.
+ *
+ * `readArchiveManifest` is the first code in this feature to parse a file the
+ * user picked, so the tests that matter are the malformed ones. Two of them
+ * hold even for archives `exportBanksToZip` produces — an id in `audioFiles`
+ * with no bytes behind it, and a pad naming an id `audioFiles` never declares
+ * — because `collectAudioForPads` skips a dead row and leaves the pad's
+ * reference alone.
+ */
+
+const EXPORT_DATE = "2026-08-19T00:00:00.000Z";
+
+/** A manifest listing exactly the bank entries given. */
+function manifestJson(banks: unknown[]): string {
+  return JSON.stringify({ exportVersion: 4, exportDate: EXPORT_DATE, banks });
+}
+
+/** A well-formed `bank.json`, with any field replaced. */
+function bankJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    exportVersion: 4,
+    exportDate: EXPORT_DATE,
+    sourceBankId: "b1",
+    page: { name: "Stings", isEmergency: false },
+    padConfigurations: [],
+    audioFiles: [],
+    ...overrides,
+  });
+}
+
+/** The manifest entry the writer produces for a single bank at folder 0. */
+const LISTED_BANK = {
+  name: "Stings",
+  folder: "0",
+  sourceProfileName: "Show A",
+};
+
+/** A one-bank archive whose two documents can each be replaced. */
+function oneBankArchive(
+  listed: unknown = LISTED_BANK,
+  bank: string = bankJson(),
+): Promise<Blob> {
+  return makeArchive({
+    "manifest.json": manifestJson([listed]),
+    "banks/0/bank.json": bank,
+  });
+}
+
+/**
+ * Three banks that differ in every field a summary reports.
+ *
+ * A fixture of one bank — or of three identical ones — cannot tell "read the
+ * bank this manifest entry names" from "read the first bank in the archive",
+ * which is the mistake worth catching. So the pad counts run 1, 3, 2; the
+ * sound counts run 2, 1, 4; one bank is an emergency bank and two are not;
+ * and no two counts within a bank are equal, so a summary that reported
+ * `padCount` where it meant `audioCount` would be visible.
+ */
+async function seedThreeDistinctBanks(profileId: number): Promise<void> {
+  const sounds: number[] = [];
+  for (const name of ["a", "b", "c", "d", "e", "f", "g"]) {
+    sounds.push(await addSound(name));
+  }
+  // Distinct bytes per sound, or deduplication by content hash collapses them
+  // and the counts below stop meaning what they say.
+  expect(new Set(sounds).size).toBe(sounds.length);
+  const [a, b, shared, d, e, f, g] = sounds;
+
+  await seedBank(profileId, OPENERS, [
+    { padIndex: 0, name: "Horn", audioFileIds: [a, b] },
+  ]);
+  await seedBank(profileId, CLOSERS, [
+    { padIndex: 0, name: "Rain", audioFileIds: [shared] },
+    { padIndex: 1, name: "Wind", audioFileIds: [shared] },
+    { padIndex: 2, name: "Sea", audioFileIds: [shared] },
+  ]);
+  await seedBank(profileId, WALKS, [
+    { padIndex: 0, name: "Up", audioFileIds: [d, e] },
+    { padIndex: 1, name: "Down", audioFileIds: [f, g] },
+  ]);
+}
+
+describe("readArchiveManifest", () => {
+  it("describes each bank in a bank archive", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await seedThreeDistinctBanks(profileId);
+
+    // Neither the positional order nor the sorted one, so a reader that
+    // walked the archive's entries instead of the manifest disagrees.
+    const archive = await exportBanksToZip(
+      profileId,
+      ["9", OPENERS_ID, "0"],
+      "blob",
+    );
+
+    const described = await readArchiveManifest(archive!);
+
+    expect(described.kind).toBe("banks");
+    if (described.kind !== "banks") throw new Error("unreachable");
+    // An exact array rather than field-by-field matching: a summary that
+    // grew a field, dropped one, or filled one from the wrong bank fails.
+    expect(described.banks).toEqual([
+      {
+        folder: "0",
+        name: "Walks",
+        isEmergency: false,
+        padCount: 2,
+        audioCount: 4,
+        sourceProfileName: "Show A",
+        sourceBankId: "9",
+      },
+      {
+        folder: "1",
+        name: "Stings",
+        isEmergency: true,
+        padCount: 1,
+        audioCount: 2,
+        sourceProfileName: "Show A",
+        sourceBankId: OPENERS_ID,
+      },
+      {
+        folder: "2",
+        name: "Beds",
+        isEmergency: false,
+        padCount: 3,
+        audioCount: 1,
+        sourceProfileName: "Show A",
+        sourceBankId: "0",
+      },
+    ]);
+  });
+
+  it("says a profile archive is a profile archive", async () => {
+    const { exportProfilesToZip } = await import("./importExport");
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const sting = await addSound("sting");
+    await seedBank(profileId, OPENERS, [
+      { padIndex: 0, name: "Horn", audioFileIds: [sting] },
+    ]);
+    const archive = await exportProfilesToZip([profileId], "blob");
+
+    expect(await readArchiveManifest(archive!)).toEqual({ kind: "profiles" });
+  });
+
+  it("says a legacy single-profile archive is a profile archive", async () => {
+    const archive = await makeArchive({
+      "profile.json": JSON.stringify({ exportVersion: 2, profile: {} }),
+    });
+
+    expect(await readArchiveManifest(archive)).toEqual({ kind: "profiles" });
+  });
+
+  it("routes a version 3 manifest to the profile importer without judging it", async () => {
+    // Deliberately not re-checking that `profiles` is an array. The profile
+    // importer says "Invalid or unsupported multi-profile ZIP format" for
+    // that, and a second copy of the rule here would be free to drift from
+    // the one that actually refuses the file.
+    const archive = await makeArchive({
+      "manifest.json": JSON.stringify({ exportVersion: 3 }),
+    });
+
+    expect(await readArchiveManifest(archive)).toEqual({ kind: "profiles" });
+  });
+
+  it("describes an empty manifest.json the way the profile importer treats it", async () => {
+    // `importProfilesFromZip` tests the manifest text for truthiness, so an
+    // empty entry falls through to `profile.json`. Answering anything else
+    // here would describe a file differently from the code that imports it.
+    const archive = await makeArchive({
+      "manifest.json": "",
+      "profile.json": JSON.stringify({ exportVersion: 2, profile: {} }),
+    });
+
+    expect(await readArchiveManifest(archive)).toEqual({ kind: "profiles" });
+  });
+
+  it("refuses an archive that is neither", async () => {
+    const archive = await makeArchive({ "readme.txt": "hello" });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /missing manifest\.json or profile\.json/,
+    );
+  });
+
+  it("refuses a file that is not a zip at all", async () => {
+    // The first thing a picker can hand this function is a photo.
+    await expect(
+      readArchiveManifest(new Blob(["not a zip, just some bytes"])),
+    ).rejects.toThrow();
+  });
+
+  it("names manifest.json when it is not valid JSON", async () => {
+    const archive = await makeArchive({ "manifest.json": "{ not json" });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /manifest\.json .* not valid JSON/,
+    );
+  });
+
+  it("refuses a bank entry that is not valid JSON", async () => {
+    const archive = await oneBankArchive(LISTED_BANK, "{ not json");
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/0\/bank\.json .* not valid JSON/,
+    );
+  });
+
+  it("refuses a manifest that is not an object", async () => {
+    const archive = await makeArchive({ "manifest.json": '"a string"' });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /unsupported .iaz archive/i,
+    );
+  });
+
+  it("refuses a manifest version this app does not know", async () => {
+    const archive = await makeArchive({
+      "manifest.json": JSON.stringify({
+        exportVersion: 5,
+        exportDate: EXPORT_DATE,
+        banks: [],
+      }),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /unsupported .iaz archive/i,
+    );
+  });
+
+  it("refuses a manifest with no version at all", async () => {
+    const archive = await makeArchive({
+      "manifest.json": JSON.stringify({ banks: [] }),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /unsupported .iaz archive/i,
+    );
+  });
+
+  it("refuses a version 4 manifest whose banks is not a list", async () => {
+    const archive = await makeArchive({
+      "manifest.json": JSON.stringify({
+        exportVersion: 4,
+        exportDate: EXPORT_DATE,
+        banks: { "0": LISTED_BANK },
+      }),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /unsupported .iaz archive/i,
+    );
+  });
+
+  it("describes a bank archive holding no banks", async () => {
+    const archive = await makeArchive({ "manifest.json": manifestJson([]) });
+
+    expect(await readArchiveManifest(archive)).toEqual({
+      kind: "banks",
+      banks: [],
+    });
+  });
+
+  it("refuses a folder that tries to climb out of the archive", async () => {
+    // `folder` is a string out of the file. It is concatenated into an entry
+    // path, and it is the key of the placement map the dialog builds, so it
+    // has to be the decimal index this format defines and nothing else.
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([{ ...LISTED_BANK, folder: "../../.." }]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /not a bank folder this format uses/,
+    );
+  });
+
+  it("refuses a folder that is not a string", async () => {
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([{ ...LISTED_BANK, folder: 0 }]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /not a bank folder this format uses/,
+    );
+  });
+
+  it("refuses a manifest entry that is not an object", async () => {
+    const archive = await makeArchive({
+      "manifest.json": manifestJson(["banks/0"]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /not a bank folder this format uses/,
+    );
+  });
+
+  it("truncates an absurd folder name rather than echoing it into an error", async () => {
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([
+        { ...LISTED_BANK, folder: "9".repeat(200000) },
+      ]),
+    });
+
+    let message = "";
+    try {
+      await readArchiveManifest(archive);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toMatch(/not a bank folder this format uses/);
+    expect(message.length).toBeLessThan(200);
+  });
+
+  it("refuses a manifest naming one folder twice", async () => {
+    // Two summaries with one folder key means the dialog's placement map
+    // holds one of them and the import writes the other.
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([
+        LISTED_BANK,
+        { ...LISTED_BANK, name: "Beds" },
+      ]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /lists banks\/0 twice/,
+    );
+  });
+
+  it("refuses a manifest promising a bank the archive does not hold", async () => {
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([{ ...LISTED_BANK, folder: "1" }]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/1\/bank\.json/,
+    );
+  });
+
+  it("refuses a bank entry with no page", async () => {
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ page: undefined }),
+    );
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/0\/bank\.json does not describe a bank/,
+    );
+  });
+
+  it("refuses a bank entry whose name is not a string", async () => {
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ page: { name: { evil: true }, isEmergency: false } }),
+    );
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/0\/bank\.json does not describe a bank/,
+    );
+  });
+
+  it("refuses a bank entry whose padConfigurations is not a list", async () => {
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ padConfigurations: "three" }),
+    );
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /padConfigurations is not a list/,
+    );
+  });
+
+  it("refuses a bank entry whose audioFiles is not a list", async () => {
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ audioFiles: 4 }),
+    );
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /audioFiles is not a list/,
+    );
+  });
+
+  it("takes the name and the flag from the bank, not from the manifest", async () => {
+    // The manifest's copy is a convenience for a lister; `bank.json` is what
+    // gets written into the profile, so it is what the dialog must show.
+    const archive = await oneBankArchive(
+      { name: "Lies", folder: "0", sourceProfileName: "Show A" },
+      bankJson({ page: { name: "Stings", isEmergency: true } }),
+    );
+
+    const described = await readArchiveManifest(archive);
+    if (described.kind !== "banks") throw new Error("unreachable");
+    expect(described.banks[0].name).toBe("Stings");
+    expect(described.banks[0].isEmergency).toBe(true);
+  });
+
+  it("reads the emergency flag as a flag, not as anything truthy", async () => {
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ page: { name: "Stings", isEmergency: "yes" } }),
+    );
+
+    const described = await readArchiveManifest(archive);
+    if (described.kind !== "banks") throw new Error("unreachable");
+    expect(described.banks[0].isEmergency).toBe(false);
+  });
+
+  it("takes the source profile name from the manifest, and only as a string", async () => {
+    const archive = await makeArchive({
+      "manifest.json": manifestJson([
+        { name: "Stings", folder: "0", sourceProfileName: { evil: true } },
+      ]),
+      "banks/0/bank.json": bankJson(),
+    });
+
+    const described = await readArchiveManifest(archive);
+    if (described.kind !== "banks") throw new Error("unreachable");
+    expect(described.banks[0].sourceProfileName).toBe("");
+  });
+
+  it("carries sourceBankId verbatim, without cleaning it", async () => {
+    // It is a *comparison* key: it is matched against the ids the destination
+    // profile already holds so the dialog can offer "replace that bank", and
+    // it is never adopted as an id. Cleaning it would make it look adoptable,
+    // and a `#` in an adopted bank id breaks `baseKeyOf`'s playback keys.
+    const hostile = "b1#9/../..";
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({ sourceBankId: hostile }),
+    );
+
+    const described = await readArchiveManifest(archive);
+    if (described.kind !== "banks") throw new Error("unreachable");
+    expect(described.banks[0].sourceBankId).toBe(hostile);
+    // And it stays out of the one field that is used as a key.
+    expect(described.banks[0].folder).toBe("0");
+  });
+
+  it("answers a matchless sourceBankId when the archive has none", async () => {
+    // "" equals no bank id any profile holds, so the "replace that bank"
+    // offer simply does not appear — which is the right answer for an
+    // archive that does not say where it came from.
+    for (const value of [undefined, 7, { evil: true }]) {
+      const archive = await oneBankArchive(
+        LISTED_BANK,
+        bankJson({ sourceBankId: value }),
+      );
+
+      const described = await readArchiveManifest(archive);
+      if (described.kind !== "banks") throw new Error("unreachable");
+      expect(described.banks[0].sourceBankId).toBe("");
+    }
+  });
+
+  it("describes a bank whose sounds have no bytes and whose pad names a sound it never declares", async () => {
+    // Both of these come out of this app's own writer: `collectAudioForPads`
+    // skips an audio row that has been deleted and leaves the pad's
+    // reference alone, so a pad can name an id the bank never declares.
+    const archive = await oneBankArchive(
+      LISTED_BANK,
+      bankJson({
+        padConfigurations: [
+          { padIndex: 0, name: "Horn", audioFileIds: [11, 12, 99] },
+        ],
+        audioFiles: [
+          { id: 11, name: "a.wav", type: "audio/wav" },
+          { id: 12, name: "b.wav", type: "audio/wav" },
+        ],
+      }),
+    );
+
+    const described = await readArchiveManifest(archive);
+    if (described.kind !== "banks") throw new Error("unreachable");
+    // Counts describe what the documents say, which is all a dialog can
+    // honestly report before anything is extracted.
+    expect(described.banks[0]).toMatchObject({ padCount: 1, audioCount: 2 });
   });
 });

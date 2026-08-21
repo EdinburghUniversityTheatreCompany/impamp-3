@@ -17,6 +17,7 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeArchive } from "@/lib/testSupport/zipArchive";
 
 const { exportProfilesToZip, importProfilesFromZip } =
   await import("./importExport");
@@ -463,14 +464,3 @@ describe("importing an archive that is not what it claims", () => {
     );
   });
 });
-
-/** Builds a .iaz-shaped archive with exactly the entries given. */
-async function makeArchive(entries: Record<string, string>): Promise<Blob> {
-  const zipjs = await import("@zip.js/zip.js");
-  zipjs.configure({ useWebWorkers: false });
-  const writer = new zipjs.ZipWriter(new zipjs.BlobWriter("application/zip"));
-  for (const [name, text] of Object.entries(entries)) {
-    await writer.add(name, new zipjs.TextReader(text));
-  }
-  return writer.close();
-}

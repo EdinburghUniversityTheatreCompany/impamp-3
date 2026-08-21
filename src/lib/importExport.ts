@@ -27,6 +27,7 @@ import { convertIndexToBankNumber } from "./bankUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
 import { fetchWithTimeout } from "./fetchWithTimeout";
+import type { Entry } from "@zip.js/zip.js";
 
 /**
  * Represents a single pad within an impamp2 page.
@@ -1865,7 +1866,7 @@ export type TransferProgressCallback = (progress: TransferProgress) => void;
 // Loads zip.js lazily and disables its web workers: they complicate bundling
 // under Next.js and buy nothing here since audio entries are STOREd
 // (no compression work to offload).
-async function getZipJs() {
+export async function getZipJs() {
   const zipjs = await import("@zip.js/zip.js");
   zipjs.configure({ useWebWorkers: false });
   return zipjs;
@@ -2066,6 +2067,83 @@ export interface ZipImportResult {
   result: number | Error;
 }
 
+/** How much of an untrusted name to put in an error message. */
+const MAX_NAME_IN_MESSAGE = 60;
+
+/** An entry name, cut short: a name out of a file may be megabytes long. */
+function shortName(name: string): string {
+  return name.length > MAX_NAME_IN_MESSAGE
+    ? `${name.slice(0, MAX_NAME_IN_MESSAGE)}...`
+    : name;
+}
+
+/**
+ * The two readers every archive path needs, bound to one set of entries.
+ *
+ * Lifted out of `importProfilesFromZip` so the bank reader shares the size
+ * cap and the "which entry failed" error text rather than re-stating them.
+ * Both archives arrive from a file picker, so both need exactly the same
+ * suspicion, and two copies of that rule is the shape this repo regresses on.
+ *
+ * A duplicate entry name is refused rather than resolved. The zip format
+ * permits one, `new Map(entries.map(...))` silently keeps the last, and a
+ * streaming reader of the same file would take the first — so an archive can
+ * be built that shows one `manifest.json` to this app and another to
+ * anything else that opens it. There is no answer to "which one did the user
+ * mean", and this app's own writer never produces one.
+ */
+export function zipEntryReaders(entries: Entry[]): {
+  entryByName: Map<string, Entry>;
+  readEntryText: (name: string) => Promise<string | null>;
+  parseEntryJson: (name: string, text: string) => unknown;
+} {
+  const entryByName = new Map<string, Entry>();
+  for (const entry of entries) {
+    if (entryByName.has(entry.filename)) {
+      throw new Error(
+        `This archive contains two entries named ${shortName(entry.filename)}, so there is no telling which one it means.`,
+      );
+    }
+    entryByName.set(entry.filename, entry);
+  }
+
+  // A metadata entry is read into a single string, so its *uncompressed*
+  // size is what matters, not the archive's. Without this an archive of a
+  // few hundred kilobytes could name a manifest that expands to gigabytes
+  // and take the tab out before anything was validated — the JSON import
+  // path has had a cap all along, the ZIP path had none. The size is the
+  // archive's own claim, so it is checked *before* `getData`, which is the
+  // only point at which checking it is worth anything.
+  const readEntryText = async (name: string): Promise<string | null> => {
+    const entry = entryByName.get(name);
+    if (!entry || entry.directory) return null;
+
+    const size = entry.uncompressedSize ?? 0;
+    if (size > MAX_ZIP_METADATA_BYTES) {
+      throw new Error(
+        `The entry ${shortName(name)} in this archive is implausibly large (${Math.round(size / 1024 / 1024)} MB) and was not read.`,
+      );
+    }
+
+    const zipjs = await getZipJs();
+    return entry.getData(new zipjs.TextWriter());
+  };
+
+  /**
+   * Parses a metadata entry, saying which entry failed rather than throwing
+   * a bare SyntaxError from somewhere inside the archive.
+   */
+  const parseEntryJson = (name: string, text: string): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`${shortName(name)} in this archive is not valid JSON.`);
+    }
+  };
+
+  return { entryByName, readEntryText, parseEntryJson };
+}
+
 /**
  * Imports profiles from a .iaz ZIP archive. Handles both layouts:
  * multi-profile (manifest.json + profiles/<n>/profile.json) and legacy
@@ -2093,39 +2171,9 @@ export async function importProfilesFromZip(
       totalBytes: 0,
     });
 
-    const entries = await zipReader.getEntries();
-    const entryByName = new Map(entries.map((e) => [e.filename, e]));
-
-    // A metadata entry is read into a single string, so its *uncompressed*
-    // size is what matters, not the archive's. Without this an archive of a
-    // few hundred kilobytes could name a manifest that expands to gigabytes
-    // and take the tab out before anything was validated — the JSON import
-    // path has had a cap all along, the ZIP path had none.
-    const readEntryText = async (name: string): Promise<string | null> => {
-      const entry = entryByName.get(name);
-      if (!entry || entry.directory) return null;
-
-      const size = entry.uncompressedSize ?? 0;
-      if (size > MAX_ZIP_METADATA_BYTES) {
-        throw new Error(
-          `The entry ${name} in this archive is implausibly large (${Math.round(size / 1024 / 1024)} MB) and was not read.`,
-        );
-      }
-
-      return entry.getData(new zipjs.TextWriter());
-    };
-
-    /**
-     * Parses a metadata entry, saying which entry failed rather than throwing
-     * a bare SyntaxError from somewhere inside the archive.
-     */
-    const parseEntryJson = (name: string, text: string): unknown => {
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(`${name} in this archive is not valid JSON.`);
-      }
-    };
+    const { entryByName, readEntryText, parseEntryJson } = zipEntryReaders(
+      await zipReader.getEntries(),
+    );
 
     // Determine the archive layout and gather the lean profile descriptors
     const results: ZipImportResult[] = [];

@@ -68,8 +68,10 @@ import {
   AudioFileRef,
   TransferProgressCallback,
   collectAudioForPads,
+  getZipJs,
   reportPreparing,
   writeArchiveZip,
+  zipEntryReaders,
 } from "./importExport";
 
 /**
@@ -274,4 +276,227 @@ export async function exportBanksToZip(
   };
 
   return writeArchiveZip(target, manifest, items, onProgress);
+}
+
+/** What the placement dialog shows for one bank in an archive. */
+export interface BankSummary {
+  /** The archive folder, and the key of the placement map. */
+  folder: string;
+  name: string;
+  isEmergency: boolean;
+  padCount: number;
+  audioCount: number;
+  sourceProfileName: string;
+  /**
+   * The archive's claim about where this bank came from — a comparison key.
+   *
+   * Carried **verbatim**, and deliberately not cleaned, trimmed or validated.
+   * Its only use is `=== ` against the bank ids the destination profile
+   * already holds, so that the dialog can offer "replace that bank"; nothing
+   * adopts it as an identity, and `writeBankIntoProfile` mints its own id
+   * when it adds a bank. A sanitised value would look adoptable, and an
+   * adopted id containing `#` would break `baseKeyOf`'s playback-key parsing.
+   *
+   * An archive that does not say, or says something that is not a string,
+   * gets `""` — which equals no bank id any profile holds, so the offer
+   * simply does not appear.
+   */
+  sourceBankId: string;
+}
+
+/** What an archive turned out to be. */
+export type ArchiveDescription =
+  { kind: "profiles" } | { kind: "banks"; banks: BankSummary[] };
+
+/**
+ * The only folder names this format defines: the decimal index of the bank in
+ * the selection, as `exportBanksToZip` writes it.
+ *
+ * `folder` is a string out of the file. It is concatenated into an entry path
+ * and it is the key of the placement map the dialog builds, so an archive is
+ * otherwise free to say `"../../.."`, `""`, or two hundred kilobytes of
+ * digits. Nine digits is far past any real selection and keeps the string
+ * short enough to put in a message.
+ */
+const BANK_FOLDER_PATTERN = /^\d{1,9}$/;
+
+/** How much of an untrusted string to put in an error message. */
+const MAX_FOLDER_IN_MESSAGE = 40;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A folder name as it can safely be shown: short, and quoted. */
+function describeFolder(value: unknown): string {
+  if (typeof value !== "string") return `${typeof value}`;
+  return value.length > MAX_FOLDER_IN_MESSAGE
+    ? `"${value.slice(0, MAX_FOLDER_IN_MESSAGE)}..."`
+    : `"${value}"`;
+}
+
+/**
+ * Checks the manifest's bank list without reading a single bank entry.
+ *
+ * Two passes rather than one, because the second pass reads from the archive:
+ * every folder is checked and every duplicate refused before any entry is
+ * opened, so the work an archive can ask for is bounded by the number of
+ * distinct folders it names rather than by the length of its list.
+ */
+function listedBanks(
+  banks: unknown[],
+): { folder: string; sourceProfileName: string }[] {
+  const listed: { folder: string; sourceProfileName: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of banks) {
+    const folder = isRecord(entry) ? entry.folder : undefined;
+    if (typeof folder !== "string" || !BANK_FOLDER_PATTERN.test(folder)) {
+      throw new Error(
+        `This archive names ${describeFolder(folder)}, which is not a bank folder this format uses.`,
+      );
+    }
+    if (seen.has(folder)) {
+      throw new Error(
+        `This archive's manifest lists banks/${folder} twice, so there is no telling which bank is which.`,
+      );
+    }
+    seen.add(folder);
+
+    // A name shown to the user, so it has to be text or nothing. The bank's
+    // own name comes from `bank.json`; only the profile's name lives here.
+    const sourceProfileName = isRecord(entry) ? entry.sourceProfileName : "";
+    listed.push({
+      folder,
+      sourceProfileName:
+        typeof sourceProfileName === "string" ? sourceProfileName : "",
+    });
+  }
+
+  return listed;
+}
+
+/**
+ * Describes one `bank.json`, from the document rather than from the manifest.
+ *
+ * The manifest carries a copy of the bank's name, and it is not the copy that
+ * gets written into the profile — so a dialog built from it could show a name
+ * the import will not use. `bank.json` is the authority for everything except
+ * the source profile's name, which only the manifest holds.
+ */
+function summariseBank(
+  path: string,
+  folder: string,
+  sourceProfileName: string,
+  value: unknown,
+): BankSummary {
+  const page = isRecord(value) ? value.page : undefined;
+  if (!isRecord(page) || typeof page.name !== "string") {
+    throw new Error(`${path} does not describe a bank: it has no page name.`);
+  }
+  const padConfigurations = (value as Record<string, unknown>)
+    .padConfigurations;
+  if (!Array.isArray(padConfigurations)) {
+    throw new Error(
+      `${path} does not describe a bank: its padConfigurations is not a list.`,
+    );
+  }
+  const audioFiles = (value as Record<string, unknown>).audioFiles;
+  if (!Array.isArray(audioFiles)) {
+    throw new Error(
+      `${path} does not describe a bank: its audioFiles is not a list.`,
+    );
+  }
+
+  const sourceBankId = (value as Record<string, unknown>).sourceBankId;
+  return {
+    folder,
+    name: page.name,
+    // A flag, not anything truthy: `"no"` out of a hand-edited archive must
+    // not turn a bank into an emergency bank.
+    isEmergency: page.isEmergency === true,
+    // What the documents say, which is all that can honestly be reported
+    // before anything is extracted. A pad may name a sound `audioFiles`
+    // never declares, and a declared sound may have no bytes behind it —
+    // both come out of this app's own writer, because `collectAudioForPads`
+    // skips a dead audio row and leaves the pad's reference alone.
+    padCount: padConfigurations.length,
+    audioCount: audioFiles.length,
+    sourceProfileName,
+    sourceBankId: typeof sourceBankId === "string" ? sourceBankId : "",
+  };
+}
+
+/**
+ * Says what an archive holds, without a write of any kind.
+ *
+ * The manifest version routes the file, so the `.iaz` extension and the file
+ * input's accept list stay as they are. The bank entries are read too, since
+ * the manifest alone cannot report a pad count or an emergency flag; those
+ * are small JSON documents under the same size cap `importProfilesFromZip`
+ * uses, and no `audio/` entry is touched.
+ *
+ * This is the first code in this feature to parse a file the user picked, so
+ * it assumes nothing the module comment above says a reader may not assume.
+ * Where a judgement is the profile importer's to make it is left to it: a
+ * version 3 manifest is reported as a profile archive without checking its
+ * `profiles` list, and an empty `manifest.json` falls through to
+ * `profile.json` exactly as that importer's own truthiness test does — a
+ * describer that disagreed with the importer would refuse files that import
+ * perfectly well, or promise ones that do not.
+ */
+export async function readArchiveManifest(
+  blob: Blob,
+): Promise<ArchiveDescription> {
+  const zipjs = await getZipJs();
+  const zipReader = new zipjs.ZipReader(new zipjs.BlobReader(blob));
+
+  try {
+    const { readEntryText, parseEntryJson } = zipEntryReaders(
+      await zipReader.getEntries(),
+    );
+
+    const manifestText = await readEntryText("manifest.json");
+    if (!manifestText) {
+      if (await readEntryText("profile.json")) return { kind: "profiles" };
+      throw new Error(
+        "Invalid .iaz file: missing manifest.json or profile.json",
+      );
+    }
+
+    const manifest = parseEntryJson("manifest.json", manifestText);
+    if (isRecord(manifest) && manifest.exportVersion === 3) {
+      return { kind: "profiles" };
+    }
+    if (
+      !isRecord(manifest) ||
+      manifest.exportVersion !== 4 ||
+      !Array.isArray(manifest.banks)
+    ) {
+      throw new Error("Invalid or unsupported .iaz archive format.");
+    }
+
+    const banks: BankSummary[] = [];
+    for (const listed of listedBanks(manifest.banks)) {
+      const path = `banks/${listed.folder}/bank.json`;
+      const text = await readEntryText(path);
+      if (text === null) {
+        throw new Error(
+          `This archive's manifest lists ${path}, but the archive does not contain it.`,
+        );
+      }
+      banks.push(
+        summariseBank(
+          path,
+          listed.folder,
+          listed.sourceProfileName,
+          parseEntryJson(path, text),
+        ),
+      );
+    }
+
+    return { kind: "banks", banks };
+  } finally {
+    await zipReader.close();
+  }
 }
