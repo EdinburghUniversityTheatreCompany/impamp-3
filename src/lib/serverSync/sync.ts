@@ -20,6 +20,7 @@ import {
   getProfile,
   hasProfileChangedSince,
   updateProfile,
+  withAudioImportInProgress,
   type Profile,
 } from "@/lib/db";
 import {
@@ -114,7 +115,13 @@ export function syncServerProfile(
   drive: DriveAccess = NO_DRIVE,
 ): Promise<ServerSyncResult> {
   return coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
-    performServerSync(profileId, fanOut, drive),
+    // Held off from the orphan sweeps for the whole run, for the reason spelt
+    // out on the Drive backend's matching call: this downloads audio — from
+    // the bucket and from Drive — several steps before `updateLocalData`
+    // writes the pads that name it, and in between nothing references it.
+    withAudioImportInProgress(() =>
+      performServerSync(profileId, fanOut, drive),
+    ),
   );
 }
 

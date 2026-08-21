@@ -14,6 +14,7 @@ import {
   getAudioFileByHash,
   computeBlobHash,
   createHashlessAudioIndex,
+  withAudioImportInProgress,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
@@ -511,7 +512,15 @@ export const syncProfile = (
   refreshCallback: (token: TokenInfo) => void,
 ): Promise<SyncResult> =>
   coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
-    performProfileSync(profileId, tokenInfo, fanOut, refreshCallback),
+    // A sync writes audio several steps before the pads that name it, which is
+    // the window `cleanupOrphanedAudioFiles` is entitled to delete in — the
+    // same one an import opens, for the same unavoidable reason: a pad names
+    // its sounds by the ids the store assigns on write. Declaring the whole
+    // run rather than just the download pass, because the pads are written at
+    // the far end of the merge and there is no smaller region that spans both.
+    withAudioImportInProgress(() =>
+      performProfileSync(profileId, tokenInfo, fanOut, refreshCallback),
+    ),
   );
 
 const performProfileSync = async (
