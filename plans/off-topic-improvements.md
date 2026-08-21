@@ -204,3 +204,58 @@ become one function, since they now ask the same question of the same index
 and differ only in whether they return the record or its id.
 
 Noticed while adding `addOrReuseAudioFile` (Task 1 of the audio-dedup plan).
+
+## Drive's legacy import still matches audio by _name_
+
+`googleDrive/dataAccess.ts`'s `updateLocalData` reuses an existing audio row
+through `findLocalAudioMatch`, which tries the content hash first and then
+falls back to the `name` index. The name fallback merges two genuinely
+different recordings that happen to share a filename — `horn.wav` from one
+library and `horn.wav` from another become one row, and every pad on both
+sides plays whichever arrived first. Nothing can undo that afterwards.
+
+The rest of the codebase now identifies audio by its bytes and nothing else
+(`addOrReuseAudioFile`, `findAudioFileIdByHashIn`, `importAudioSources`). This
+is the one place left that does not. It survives because it is the legacy
+base64 path — a modern blob carries a hash — so the fallback fires only for
+old data, which is also exactly the data most likely to collide.
+
+Left alone by Task 3 of the audio-dedup plan on purpose: converting it to
+`addOrReuseAudioFile` would drop the name fallback (a behaviour change for old
+profiles) _and_ the `driveFileIds` backfill sitting in the same branch. Worth
+doing deliberately, with a test for each half, rather than as a side effect.
+
+Noticed while enumerating the inbound audio paths (Task 3 of the audio-dedup
+plan).
+
+## Two sound rows in the pad editor can share a `data-testid`
+
+`EditPadForm`'s list rows are tagged `edit-pad-sound-item-${sound.fileId}`,
+and so are the trim, gain and remove controls inside them. A pad may name one
+audio row twice — legitimately, since a sequential pad can play a sound twice
+in a round, and reuse by content hash makes it easy to arrive at. The drag ids
+were fixed for that in Task 3 (`placeSounds` numbers the copies); the test ids
+were not, because `e2e-tests/loudness.spec.ts:199` parses the audio file id
+back out of `edit-pad-gain-sound-${id}` and several specs match on the
+`edit-pad-sound-item-` prefix.
+
+Nothing is broken today: no spec builds a pad that names one sound twice. One
+that did would hit Playwright's strict-mode "resolved to 2 elements". The fix
+is to tag the row with the drag id and keep the file id only where a spec
+genuinely needs to read it back.
+
+Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
+
+## The pre-commit hook does not run `tsc`
+
+`hk.pkl` runs prettier, eslint, gitleaks, jscpd, vitest, a large-file check
+and an exec-bit check. It does not typecheck, so a commit can pass the hook
+cleanly and still fail CI — which is what happened to a test fixture on the
+audio-dedup branch that built a `TokenInfo` without its `refreshToken`. ESLint
+does not catch it either, because the type error is in the argument, not in
+the lint rules.
+
+Adding `npx tsc --noEmit` to the hook costs a few seconds per commit on this
+repo and closes the gap between "the hook passed" and "CI will pass".
+
+Noticed while committing Task 3 of the audio-dedup plan.
