@@ -903,6 +903,41 @@ export async function getAudioFileByHash(
   return results[0];
 }
 
+/**
+ * A lazy index of local audio by content hash, for files that predate hashing.
+ *
+ * A factory rather than a module-level cache, deliberately. Each sync pass
+ * wants the index built at most once, and wants it built from what the
+ * database holds *now* — a cache living longer than the pass would miss every
+ * file added since, and silently re-download audio the device already has.
+ *
+ * Lazy for the same reason it is expensive: building it reads and SHA-256s
+ * every audio blob in the library, one at a time so the whole library never
+ * sits in memory at once. Most syncs never need it, because the refs carry
+ * their hashes; it is only reached when one does not.
+ *
+ * This existed as two hand-written copies, in the Drive downloader and the
+ * hosted-audio downloader, differing only in a temporary variable — which is
+ * why the duplication gate never saw them.
+ *
+ * @returns A getter that builds the index on first call and reuses it after
+ */
+export function createHashlessAudioIndex(): () => Promise<Map<string, number>> {
+  let index: Map<string, number> | null = null;
+
+  return async () => {
+    if (index) return index;
+    const built = new Map<string, number>();
+    const db = await getDb();
+    for (const localId of await db.getAllKeys("audioFiles")) {
+      const computed = await ensureAudioFileHash(localId);
+      if (computed) built.set(computed, localId);
+    }
+    index = built;
+    return index;
+  };
+}
+
 // Get the hash for an audio file, computing and saving it if not yet stored
 export async function ensureAudioFileHash(id: number): Promise<string | null> {
   const db = await getDb();

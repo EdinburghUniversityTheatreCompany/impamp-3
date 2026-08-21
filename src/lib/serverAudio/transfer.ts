@@ -13,10 +13,9 @@
 import {
   addAudioFile,
   computeBlobHash,
-  ensureAudioFileHash,
+  createHashlessAudioIndex,
   getAudioFile,
   getAudioFileByHash,
-  getDb,
   markAudioFilesHosted,
   type AudioFile,
 } from "@/lib/db";
@@ -252,19 +251,9 @@ export async function downloadProfileAudio(
   );
   if (hostedRefs.length === 0) return { warnings, retryable, downloaded };
 
-  // Local files that predate hashing may still be the same audio. Built once,
-  // and only if a reference actually misses the hash index.
-  let hashlessIndex: Map<string, number> | null = null;
-  const getHashlessIndex = async (): Promise<Map<string, number>> => {
-    if (hashlessIndex) return hashlessIndex;
-    hashlessIndex = new Map();
-    const db = await getDb();
-    for (const localId of await db.getAllKeys("audioFiles")) {
-      const computed = await ensureAudioFileHash(localId);
-      if (computed) hashlessIndex.set(computed, localId);
-    }
-    return hashlessIndex;
-  };
+  // Built at most once per pass, and only if a reference actually misses the
+  // hash index. See `createHashlessAudioIndex` for why it is a factory.
+  const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of hostedRefs) {
     if (await getAudioFileByHash(ref.hash)) continue;

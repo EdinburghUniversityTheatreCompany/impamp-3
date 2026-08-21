@@ -6,15 +6,14 @@
 import {
   updateProfile,
   getProfile,
-  getDb,
   getAudioFileIdsForProfile,
   getAudioFile,
   getAudioFileMetadata,
   addAudioFile,
   updateAudioFileDriveId,
   getAudioFileByHash,
-  ensureAudioFileHash,
   computeBlobHash,
+  createHashlessAudioIndex,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
@@ -307,21 +306,9 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
-  // Hashes for local files that predate hashing, built once and only if a
-  // reference actually misses the hash index — the blobs are read one at a
-  // time so the whole audio library never sits in memory at once.
-  let hashlessIndex: Map<string, number> | null = null;
-  const getHashlessIndex = async (): Promise<Map<string, number>> => {
-    if (hashlessIndex) return hashlessIndex;
-    hashlessIndex = new Map();
-    const db = await getDb();
-    const localIds = await db.getAllKeys("audioFiles");
-    for (const localId of localIds) {
-      const computedHash = await ensureAudioFileHash(localId);
-      if (computedHash) hashlessIndex.set(computedHash, localId);
-    }
-    return hashlessIndex;
-  };
+  // Built at most once per pass, and only if a reference actually misses the
+  // hash index. See `createHashlessAudioIndex` for why it is a factory.
+  const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData

@@ -10,6 +10,10 @@ import { NotSignedInError } from "@/lib/serverSync/types";
 const dbMocks = vi.hoisted(() => ({
   addAudioFile: vi.fn(),
   computeBlobHash: vi.fn(),
+  // Returns the getter the real factory returns. These suites never exercise
+  // the pre-hashing fallback — every reference carries a hash — so an empty
+  // index is the honest stand-in for "nothing matched by content".
+  createHashlessAudioIndex: vi.fn(() => async () => new Map()),
   ensureAudioFileHash: vi.fn(),
   getAudioFile: vi.fn(),
   getAudioFileByHash: vi.fn(),
