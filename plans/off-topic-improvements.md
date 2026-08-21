@@ -259,3 +259,19 @@ Adding `npx tsc --noEmit` to the hook costs a few seconds per commit on this
 repo and closes the gap between "the hook passed" and "CI will pass".
 
 Noticed while committing Task 3 of the audio-dedup plan.
+
+## `clearCachedAudioBuffer` leaves the pin behind
+
+`src/lib/audio/cache.ts` keeps two maps keyed by audio file id: the buffer
+cache and `pinnedAudioFileIds`. `clearCachedAudioBuffer` deletes from the
+first only, so a row deleted while one of its buffers was pinned leaves a pin
+under an id that no longer exists — `isAudioBufferPinned` answers true for it
+forever, and the entry is never collected.
+
+Harmless today: nothing can reference the deleted id, so the stale pin only
+protects a cache entry that is already gone. It becomes wrong the moment
+autoIncrement hands the number out again, which IndexedDB will not do — but
+the asymmetry is still a trap for the next person reading either map.
+
+Noticed while enumerating what a duplicate collapse has to clean up (Task 5 of
+the audio-dedup plan).
