@@ -5,51 +5,28 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeProfileRequest, isErrorResponse } from "./apiAuth";
-import { getProfileById, getProfileMeta, type ProfileMeta } from "./profiles";
+import { getProfileMeta, type ProfileMeta } from "./profiles";
 import { redactProfileBlob } from "./profileBlob";
-import type { Access, ProfileRow, UserRow } from "./db";
+import type { Access, UserRow } from "./db";
 
-export interface AuthorizedProfile {
-  profile: ProfileRow;
+export interface AuthorizedProfileMeta {
+  profile: ProfileMeta;
   access: Access;
   user: UserRow | null;
 }
 
 /**
- * Resolve the caller's access to a profile and load the row, or return the
- * response to send instead.
+ * Resolve the caller's access to a profile, without reading the blob.
  *
  * A profile the caller may not see and a profile that does not exist both
  * answer 404, so profile IDs stay unenumerable.
- */
-export function loadAuthorizedProfile(
-  request: NextRequest,
-  id: string,
-): AuthorizedProfile | NextResponse {
-  const auth = authorizeProfileRequest(request, id);
-  if (isErrorResponse(auth)) return auth;
-
-  const profile = getProfileById(id);
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  return { profile, access: auth.access, user: auth.user };
-}
-
-export interface AuthorizedProfileMeta {
-  profile: ProfileMeta;
-  access: Access;
-  user: AuthorizedProfile["user"];
-}
-
-/**
- * The same authorisation, without reading the blob.
  *
- * For callers that only need `version` or `owner_id`: the 304 branch of GET,
- * DELETE, and the SSE connect and heartbeat. Those were each pulling up to
- * MAX_PROFILE_BODY_BYTES off disk and turning it into a JS string, once per
- * call — and the heartbeat runs every 25 seconds for every open stream.
+ * There is deliberately no blob-loading twin any more. Every route here needs
+ * `version` or `owner_id` to authorise and nothing else — including PUT, whose
+ * blob-loading version read up to MAX_PROFILE_BODY_BYTES off disk to check who
+ * was allowed to *overwrite* it. GET is the one caller that wants the row, and
+ * it asks `getProfileById` for it explicitly, after the 304 branch has had its
+ * chance to answer without one.
  */
 export function loadAuthorizedProfileMeta(
   request: NextRequest,

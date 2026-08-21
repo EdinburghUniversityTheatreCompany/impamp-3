@@ -8,7 +8,6 @@ import {
 import { publishProfileChange } from "@/lib/server/events";
 import { redactStoredProfileBlob } from "@/lib/server/profileBlob";
 import {
-  loadAuthorizedProfile,
   loadAuthorizedProfileMeta,
   parseProfileBody,
   etagMatches,
@@ -89,7 +88,12 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const loaded = loadAuthorizedProfile(request, id);
+  // Meta, not the row. Authorisation wants the owner id and nothing else, and
+  // the blob this loads is the one the request is about to replace: it was
+  // read here, read again to check the version, and read a third time to
+  // report the result — three full-body reads for one write, two of them
+  // holding the write lock.
+  const loaded = loadAuthorizedProfileMeta(request, id);
   if (loaded instanceof NextResponse) return loaded;
 
   if (!canWrite(loaded.access)) {
