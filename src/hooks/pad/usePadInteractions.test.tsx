@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   openModal: vi.fn(),
   closeModal: vi.fn(),
   requestSync: vi.fn(),
+  incrementPadConfigsVersion: vi.fn(),
 }));
 
 vi.mock("@/lib/db", async (importOriginal) => ({
@@ -46,14 +47,20 @@ vi.mock("@/store/playbackStore", () => ({
 vi.mock("@/hooks/modal/useFormModal", () => ({
   useFormModal: () => ({ openFormModal: mocks.openFormModal }),
 }));
-vi.mock("@/store/profileStore", () => ({
-  useProfileStore: (
-    selector: (s: {
-      activeProfileId: number;
-      requestSync: typeof mocks.requestSync;
-    }) => unknown,
-  ) => selector({ activeProfileId: 1, requestSync: mocks.requestSync }),
-}));
+// A selector hook *and* a `getState`: the pad-write tail in `padWrites` reads
+// the store imperatively, because the two modal components that share it are
+// not wired to `usePadConfigurations` at all.
+vi.mock("@/store/profileStore", () => {
+  const state = {
+    activeProfileId: 1,
+    requestSync: mocks.requestSync,
+    incrementPadConfigsVersion: mocks.incrementPadConfigsVersion,
+  };
+  const useProfileStore = (selector: (s: typeof state) => unknown) =>
+    selector(state);
+  useProfileStore.getState = () => state;
+  return { useProfileStore };
+});
 vi.mock("@/store/uiStore", () => ({
   useUIStore: (
     selector: (s: {
@@ -103,7 +110,6 @@ function mountOver(pad: PadConfiguration) {
     handlers = usePadInteractions({
       currentBankId: "0",
       padConfigs: new Map([[PAD_INDEX, pad]]),
-      refreshPadConfigs: () => {},
       hasInteractedRef: { current: true },
     });
     return null;

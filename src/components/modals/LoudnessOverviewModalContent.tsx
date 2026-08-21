@@ -35,9 +35,9 @@ import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import {
   getAllPageMetadataForProfile,
   getAudioFileMetadata,
-  upsertPadConfiguration,
   type PadConfiguration,
 } from "@/lib/db";
+import { savePadConfiguration } from "@/hooks/pad/padWrites";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { useProfileStore } from "@/store/profileStore";
@@ -60,10 +60,6 @@ export default function LoudnessOverviewModalContent() {
       s.profiles.find((p) => p.id === s.activeProfileId)?.normalisation ??
       DEFAULT_NORMALISATION,
   );
-  const incrementPadConfigsVersion = useProfileStore(
-    (s) => s.incrementPadConfigsVersion,
-  );
-  const requestSync = useProfileStore((s) => s.requestSync);
 
   const [pads, setPads] = useState<PadConfiguration[]>([]);
   const [names, setNames] = useState<Map<number, string>>(new Map());
@@ -324,7 +320,7 @@ export default function LoudnessOverviewModalContent() {
     };
 
     try {
-      await upsertPadConfiguration({
+      await savePadConfiguration({
         profileId: pad.profileId,
         bankId: pad.bankId,
         padIndex: pad.padIndex,
@@ -351,9 +347,6 @@ export default function LoudnessOverviewModalContent() {
             : p,
         ),
       );
-
-      incrementPadConfigsVersion(); // Refresh keyboard bindings too
-      requestSync(pad.profileId);
     } catch (error) {
       // The slider is a controlled input driven by `pendingGain` while a
       // drag is in flight; since `pads` never updated, clearing the buffer

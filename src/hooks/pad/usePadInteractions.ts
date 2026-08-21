@@ -9,11 +9,8 @@
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
-import {
-  PadConfiguration,
-  DEFAULT_PLAYBACK_TYPE,
-  upsertPadConfiguration,
-} from "@/lib/db";
+import { PadConfiguration, DEFAULT_PLAYBACK_TYPE } from "@/lib/db";
+import { savePadConfiguration } from "./padWrites";
 import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import EditPadModalContent, {
@@ -30,7 +27,6 @@ import { extractPadPlaybackSettings } from "@/lib/db";
 interface PadInteractionsParams {
   currentBankId: string;
   padConfigs: Map<number, PadConfiguration>;
-  refreshPadConfigs: () => void;
   hasInteractedRef: React.RefObject<boolean>;
 }
 
@@ -41,10 +37,8 @@ interface PadInteractionsParams {
  * @returns Object containing handlers for pad interactions
  */
 export function usePadInteractions(params: PadInteractionsParams) {
-  const { currentBankId, padConfigs, refreshPadConfigs, hasInteractedRef } =
-    params;
+  const { currentBankId, padConfigs, hasInteractedRef } = params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const requestSync = useProfileStore((state) => state.requestSync);
   // Consumed by PadGrid, so a bare subscription meant opening *any* modal
   // re-rendered the grid's whole handler tree.
   const openModal = useUIStore((s) => s.openModal);
@@ -107,7 +101,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           };
 
           try {
-            await upsertPadConfiguration(updatedPadConfigData);
+            await savePadConfiguration(updatedPadConfigData);
           } catch (error) {
             console.error(`Failed to save changes for pad ${padIndex}:`, error);
             alert(
@@ -130,22 +124,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
               `armed-${activeProfileId}-${currentBankId}-${padIndex}`,
             );
           }
-
-          // Reaches the grid, the keyboard and the emergency set alike —
-          // they all watch the one version counter.
-          refreshPadConfigs();
-          requestSync(activeProfileId);
         },
       });
     },
-    [
-      activeProfileId,
-      currentBankId,
-      padConfigs,
-      refreshPadConfigs,
-      requestSync,
-      openFormModal,
-    ],
+    [activeProfileId, currentBankId, padConfigs, openFormModal],
   );
 
   /**
@@ -188,7 +170,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           }
 
           // Update config to have empty audioFileIds and default playbackType
-          await upsertPadConfiguration({
+          await savePadConfiguration({
             profileId: activeProfileId,
             bankId: currentBankId,
             padIndex: padIndex,
@@ -203,8 +185,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
             activePadBehavior: undefined,
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
-          refreshPadConfigs();
-          requestSync(activeProfileId);
           console.log(`Removed single sound from pad ${padIndex}`);
         } catch (error) {
           console.error(`Failed to remove sound from pad ${padIndex}:`, error);
@@ -228,8 +208,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
       activeProfileId,
       currentBankId,
       padConfigs,
-      refreshPadConfigs,
-      requestSync,
       openModal,
       closeModal,
       handleEditInteraction,

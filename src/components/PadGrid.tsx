@@ -162,7 +162,6 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
     padConfigs,
     isLoading: isLoadingConfigs,
     error: configError,
-    refetch: refreshPadConfigs,
   } = usePadConfigurations(
     activeProfileId !== null ? String(activeProfileId) : null,
     bankId,
@@ -192,21 +191,16 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
   } = usePadInteractions({
     currentBankId: bankId,
     padConfigs: actionableConfigs,
-    refreshPadConfigs,
     hasInteractedRef,
   });
 
   const { handleSwapPads } = usePadSwap({
     currentBankId: bankId,
     padConfigs: actionableConfigs,
-    refreshPadConfigs,
     specialPadIndices: SPECIAL_PAD_INDICES,
   });
 
-  const { handleDropAudio, isDropAllowed } = usePadDrop(
-    bankId,
-    refreshPadConfigs,
-  );
+  const { handleDropAudio, isDropAllowed } = usePadDrop(bankId);
 
   useEffect(() => {
     if (configError) {
@@ -349,12 +343,11 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
         profileId: activeProfileId,
         bankId,
         existingPadConfigs: existingConfigMap,
-        onAssignmentComplete: () => {
-          closeModal();
-          // Invalidates every cached copy of pad data, the keyboard's
-          // emergency set included.
-          refreshPadConfigs();
-        },
+        // The importer announces its own writes, the way every other pad
+        // write does — this callback used to carry the version bump for it,
+        // which is how the two halves of that announcement came to live in
+        // different files.
+        onAssignmentComplete: closeModal,
       },
       confirmText: "",
       showConfirmButton: false,

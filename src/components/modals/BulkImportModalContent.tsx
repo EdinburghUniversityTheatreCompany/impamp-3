@@ -2,8 +2,11 @@
 
 import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { addAudioFile, upsertPadConfiguration } from "@/lib/db";
-import { useProfileStore } from "@/store/profileStore";
+import { addAudioFile } from "@/lib/db";
+import {
+  notifyPadConfigsChanged,
+  savePadConfiguration,
+} from "@/hooks/pad/padWrites";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 
 // Define special pad indices to avoid assignment
@@ -319,8 +322,10 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
           type: file.type,
         });
 
-        // Create pad configuration
-        await upsertPadConfiguration({
+        // Create pad configuration. The announcement is deliberately not
+        // per-pad: one import can write sixty of them, and every bump
+        // re-reads the bank.
+        await savePadConfiguration({
           profileId,
           bankId,
           padIndex: assignment.padIndex,
@@ -334,7 +339,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
       }
 
       // Complete import
-      useProfileStore.getState().requestSync(profileId);
+      notifyPadConfigsChanged(profileId);
       setIsImporting(false);
       onAssignmentComplete();
     } catch (error) {
