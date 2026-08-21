@@ -32,111 +32,29 @@
  */
 
 import { useEffect, useState } from "react";
-import { normaliseBankOrder } from "@/lib/bankOrder";
+import {
+  describeBank,
+  loadBankOptions,
+  UNNAMED_BANK,
+  type BankListOption,
+} from "@/lib/bankSummaries";
 import { count } from "@/lib/plural";
 import TransferProgressBar from "./TransferProgressBar";
-import type { PadConfiguration, PageMetadata, Profile } from "@/lib/db";
+import type { Profile } from "@/lib/db";
 import type {
   TransferProgress,
   TransferProgressCallback,
 } from "@/lib/importExport";
 
-/** One row of the list: a bank, where it sits, and what it would carry. */
-export interface BankExportOption {
-  bankId: string;
-  /** The stored name, verbatim — it is what goes into the archive. */
-  name: string;
-  /** Display position, 0-based. The number shown is this plus one. */
-  position: number;
-  isEmergency: boolean;
-  /** Pads that name at least one sound. A cleared pad keeps its row. */
-  padCount: number;
-  /** Distinct audio rows, which is what the archive actually carries. */
-  soundCount: number;
-}
-
-/** What a bank with no name is called in the list. */
-export const UNNAMED_BANK = "Unnamed bank";
-
-/**
- * Turns a profile's banks and pads into the rows the list shows.
- *
- * Pure, and exported for its own tests: everything that can go wrong here is
- * invisible on a profile whose banks were never rearranged, because a default
- * or migrated bank has `bankId === String(pageIndex)` and position-keyed code
- * then gives the same answers as identity-keyed code.
- *
- * `collectReferencedAudioFileIds` is what the exporter itself uses to decide
- * which sounds a bank carries, so the count here cannot promise a different
- * archive from the one that gets written — a pad naming one sound twice, or
- * two pads sharing a sound, is one sound in both. (It can over-count by a row
- * a pad names but the library no longer holds; the exporter skips those, and
- * checking would mean reading every audio row to draw a list.)
- *
- * @param pages The profile's banks, in any order
- * @param pads Every pad row of that profile, from every bank
- */
-export function summariseBanksForExport(
-  pages: PageMetadata[],
-  pads: PadConfiguration[],
-  collectReferencedAudioFileIds: (pads: PadConfiguration[]) => Set<number>,
-): BankExportOption[] {
-  const padsByBank = new Map<string, PadConfiguration[]>();
-  for (const pad of pads) {
-    const existing = padsByBank.get(pad.bankId);
-    if (existing) existing.push(pad);
-    else padsByBank.set(pad.bankId, [pad]);
-  }
-
-  return normaliseBankOrder(pages).map((page, position) => {
-    const bankPads = padsByBank.get(page.bankId) ?? [];
-    return {
-      bankId: page.bankId,
-      name: page.name,
-      position,
-      isEmergency: page.isEmergency,
-      padCount: bankPads.filter((pad) => pad.audioFileIds.length > 0).length,
-      soundCount: collectReferencedAudioFileIds(bankPads).size,
-    };
-  });
-}
-
-/** The one-line description under a bank's name. */
-function describe(option: BankExportOption): string {
-  const contents =
-    option.soundCount === 0
-      ? "Empty"
-      : `${count(option.padCount, "pad", "pads")}, ${count(
-          option.soundCount,
-          "sound",
-          "sounds",
-        )}`;
-  return option.isEmergency ? `${contents} · Emergency bank` : contents;
-}
-
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** Reads one profile's banks and turns them into rows. */
-async function loadBankOptions(profileId: number): Promise<BankExportOption[]> {
-  const {
-    collectReferencedAudioFileIds,
-    getAllPageMetadataForProfile,
-    getPadConfigurationsForProfile,
-  } = await import("@/lib/db");
-  const [pages, pads] = await Promise.all([
-    getAllPageMetadataForProfile(profileId),
-    getPadConfigurationsForProfile(profileId),
-  ]);
-  return summariseBanksForExport(pages, pads, collectReferencedAudioFileIds);
 }
 
 /** No banks ticked, as a shared value so it does not re-render on identity. */
 const NOTHING_SELECTED: ReadonlySet<string> = new Set();
 
 /** No rows: either nothing has been read yet, or the profile has no banks. */
-const NO_OPTIONS: BankExportOption[] = [];
+const NO_OPTIONS: BankListOption[] = [];
 
 export default function ExportBanksPanel({
   profiles,
@@ -165,7 +83,7 @@ export default function ExportBanksPanel({
   // list unreachable rather than merely unlikely.
   const [loaded, setLoaded] = useState<{
     profileId: number | null;
-    options: BankExportOption[];
+    options: BankListOption[];
   }>({ profileId: null, options: NO_OPTIONS });
   // The selection carries the profile it was made in. A bank id means nothing
   // outside its own profile — and "0" is a *different* bank in every profile,
@@ -359,7 +277,7 @@ export default function ExportBanksPanel({
                     data-testid="export-bank-summary"
                     className="block text-xs text-gray-500 dark:text-gray-400"
                   >
-                    {describe(option)}
+                    {describeBank(option)}
                   </span>
                 </div>
               </div>

@@ -8,6 +8,7 @@ import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
+import BankImportPlacementDialog from "./BankImportPlacementDialog";
 import DuplicateAudioPanel from "./DuplicateAudioPanel";
 import ExportBanksPanel from "./ExportBanksPanel";
 import TransferProgressBar from "./TransferProgressBar";
@@ -15,6 +16,7 @@ import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
 import type { TransferProgress } from "@/lib/importExport";
+import type { BankSummary } from "@/lib/bankTransfer";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
@@ -59,6 +61,7 @@ export default function ProfileManager() {
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
     exportBanksToZip,
+    importBanksFromArchive,
     importProfilesFromZip,
     isGoogleSignedIn,
     googleUser,
@@ -75,6 +78,7 @@ export default function ProfileManager() {
       importMultipleProfilesFromJSON: s.importMultipleProfilesFromJSON,
       exportMultipleProfilesToZip: s.exportMultipleProfilesToZip,
       exportBanksToZip: s.exportBanksToZip,
+      importBanksFromArchive: s.importBanksFromArchive,
       importProfilesFromZip: s.importProfilesFromZip,
       isGoogleSignedIn: s.isGoogleSignedIn,
       googleUser: s.googleUser,
@@ -111,6 +115,15 @@ export default function ProfileManager() {
   );
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  // A bank archive stops here rather than importing itself: a bank has to be
+  // given a slot before anything is written, and the answer is a dialog away.
+  // `token` remounts that dialog when a second file is picked, so the
+  // placements chosen for the last archive cannot be applied to this one.
+  const [pendingBankImport, setPendingBankImport] = useState<{
+    token: number;
+    file: File;
+    banks: BankSummary[];
+  } | null>(null);
   const [exportSelectionIds, setExportSelectionIds] = useState<Set<number>>(
     new Set(),
   ); // State for export selection
@@ -815,6 +828,29 @@ export default function ProfileManager() {
                         const format = await detectImportFormat(file);
 
                         if (format === "zip") {
+                          // Both archives are `.iaz` and the manifest version
+                          // is what tells them apart, so the file input's
+                          // accept list stays as it is and the routing
+                          // happens here.
+                          const { readArchiveManifest } =
+                            await import("@/lib/bankTransfer");
+                          const described = await readArchiveManifest(file);
+
+                          if (described.kind === "banks") {
+                            if (activeProfileId === null) {
+                              setImportError(
+                                "Banks are imported into the profile you are using, and there is no active profile to import them into.",
+                              );
+                              return;
+                            }
+                            setPendingBankImport((previous) => ({
+                              token: (previous?.token ?? 0) + 1,
+                              file,
+                              banks: described.banks,
+                            }));
+                            return;
+                          }
+
                           // Handles both single- and multi-profile archives;
                           // audio streams straight from the file to IndexedDB.
                           const results = await importProfilesFromZip(
@@ -909,6 +945,24 @@ export default function ProfileManager() {
                       }
                     }}
                   />
+
+                  {pendingBankImport && activeProfileId !== null && (
+                    <BankImportPlacementDialog
+                      key={pendingBankImport.token}
+                      archive={pendingBankImport}
+                      profileId={activeProfileId}
+                      profileName={
+                        profiles.find(
+                          (profile) => profile.id === activeProfileId,
+                        )?.name ?? "this profile"
+                      }
+                      importBanksFromArchive={importBanksFromArchive}
+                      // The manager's own flag, so the file picker cannot
+                      // hand a second archive to a dialog mid-write.
+                      onBusyChange={setIsImporting}
+                      onDismiss={() => setPendingBankImport(null)}
+                    />
+                  )}
 
                   {importError && (
                     <div className="mb-4 p-2 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded border border-red-200 dark:border-red-800">
