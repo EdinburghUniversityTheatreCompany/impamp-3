@@ -208,16 +208,30 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
         // row. Note: The pad itself is associated with the profile, so we
         // don't need to explicitly associate the audio file with the profile
         // here.
-        const { id: newFileId } = await addOrReuseAudioFile({
+        const { id: newFileId, reused } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,
           type: file.type,
         });
 
-        soundNamesRef.current.set(newFileId, file.name);
+        // A reused row keeps the name it was first written under — that is
+        // the documented contract of `addOrReuseAudioFile` — so the name on
+        // the file the user just picked is not this sound's name. Writing it
+        // into the cache anyway made the editor display a name that exists
+        // nowhere, and, because the cache is keyed by file id, made it
+        // display that name on *every* row naming the same sound: adding
+        // `soundA` and then `soundB` with identical bytes showed two rows
+        // both reading "soundB", while the stored row was "soundA".
+        let storedName = soundNamesRef.current.get(newFileId);
+        if (storedName === undefined) {
+          storedName = reused
+            ? ((await getAudioFile(newFileId))?.name ?? file.name)
+            : file.name;
+          soundNamesRef.current.set(newFileId, storedName);
+        }
         newSounds.push({
           fileId: newFileId,
-          name: file.name,
+          name: storedName,
         });
       }
 

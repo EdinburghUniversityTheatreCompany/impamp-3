@@ -141,6 +141,12 @@ describe("adding sounds in the pad editor", () => {
     // The pad still names it twice: playing a sound twice in a sequence is a
     // thing a user asks for, and reuse is about the bytes, not the list.
     expect(soundRows()).toHaveLength(2);
+    // And both rows read the *stored* row's name. `addOrReuseAudioFile`
+    // returns a reused row exactly as it found it, so "horn (1).wav" — the
+    // name the second file happened to arrive under — is nobody's name.
+    expect(
+      soundRows().map((row) => row.querySelector("span")!.textContent),
+    ).toEqual(["horn.wav", "horn.wav"]);
   });
 
   it("removes only the copy whose button was clicked", async () => {
