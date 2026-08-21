@@ -2,10 +2,10 @@
  * What a download pass costs the database before it has downloaded anything.
  *
  * Both audio downloaders decide, per remote reference, whether this device
- * already holds those bytes — and asked with one `getAudioFileByHash`, which is
- * one IndexedDB transaction each. A shared profile of a few hundred sounds is
- * a few hundred transactions on every pass that finds nothing to do, and a
- * sync makes up to six passes.
+ * already holds those bytes — and used to ask that one reference at a time,
+ * through a helper that opened its own transaction on the `hash` index each
+ * time. A shared profile of a few hundred sounds is a few hundred transactions
+ * on every pass that finds nothing to do, and a sync makes up to six passes.
  *
  * The question is the same one every time and the answer is a single index, so
  * this measures transactions rather than milliseconds: a wall-clock threshold

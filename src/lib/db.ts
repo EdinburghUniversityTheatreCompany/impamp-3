@@ -904,19 +904,6 @@ export async function deleteAudioFile(id: number): Promise<void> {
   console.log(`Deleted audio file with id: ${id}`);
 }
 
-// Get an audio file by name (returns first match)
-
-// Get an audio file by content hash (returns first match)
-export async function getAudioFileByHash(
-  hash: string,
-): Promise<AudioFile | undefined> {
-  const db = await getDb();
-  const tx = db.transaction("audioFiles", "readonly");
-  const results = await tx.store.index("hash").getAll(hash);
-  await tx.done;
-  return results[0];
-}
-
 /**
  * The one answer to "does a row already hold these bytes?".
  *
