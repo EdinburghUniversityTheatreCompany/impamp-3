@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeDb, getDb } from "./db";
+import { closeDb, execute, getDb, queryAll, queryOne, transaction } from "./db";
 import { getUserByEmail, toPublicUser, upsertUserFromGoogle } from "./users";
 import {
   createProfile,
@@ -176,7 +176,12 @@ describe("profiles", () => {
     });
 
     expect(listProfilesForUser(stranger.id, stranger.email)).toEqual([]);
-    expect(owned.id).not.toBe(shared.id);
+    // Was `expect(owned.id).not.toBe(shared.id)`, which compares two
+    // `randomUUID()`s and can never fail. What the listing owes the
+    // collaborator is that the profile they are *not* on stays out of it.
+    expect(forCollaborator.map((profile) => profile.id)).not.toContain(
+      owned.id,
+    );
   });
 
   it("cascades shares away when a profile is deleted", () => {
@@ -362,5 +367,74 @@ describe("signup policy", () => {
     process.env.IMPAMP_ALLOWED_EMAILS = " Me@Example.COM , @Team.test ";
     expect(isSignupAllowed("me@example.com")).toBe(true);
     expect(isSignupAllowed("Someone@TEAM.test")).toBe(true);
+  });
+});
+
+/**
+ * The transaction wrapper's rollback path, which every write in this codebase
+ * goes through and which nothing exercised.
+ *
+ * A missing `ROLLBACK` is not a quiet failure. `getDb()` memoises one handle
+ * per process, so a transaction left open on it poisons every later write:
+ * node:sqlite refuses to `BEGIN` inside a transaction, which turns one failed
+ * write into a server that cannot write at all until it is restarted.
+ */
+describe("transaction", () => {
+  const emails = () =>
+    queryAll<{ email: string }>("SELECT email FROM users").map(
+      (row) => row.email,
+    );
+
+  it("undoes everything the body wrote before it threw", () => {
+    upsertUserFromGoogle(googleUser(1));
+
+    expect(() =>
+      transaction(() => {
+        execute(
+          `INSERT INTO users (google_sub, email, name, picture, is_admin,
+                              can_upload_audio, created_at, updated_at)
+           VALUES ('rolled-back', 'ghost@example.com', NULL, NULL, 0, 0, 0, 0)`,
+        );
+        // Written, and visible inside the transaction — which is exactly why
+        // undoing it has to be the wrapper's job rather than the caller's.
+        expect(emails()).toContain("ghost@example.com");
+        throw new Error("the write changed its mind");
+      }),
+    ).toThrow("the write changed its mind");
+
+    expect(emails()).toEqual(["user1@example.com"]);
+  });
+
+  it("leaves the shared handle able to write again afterwards", () => {
+    expect(() =>
+      transaction(() => {
+        throw new Error("nope");
+      }),
+    ).toThrow("nope");
+
+    // The handle is memoised per process, so a transaction left open here is
+    // not one failed write — it is every write from now on.
+    const survivor = upsertUserFromGoogle(googleUser(2));
+    expect(getUserByEmail("user2@example.com")?.id).toBe(survivor.id);
+  });
+
+  it("commits when the body returns, and hands back its value", () => {
+    // A raw insert rather than `upsertUserFromGoogle`, which opens a
+    // transaction of its own — node:sqlite refuses to nest them, and that
+    // refusal is the same mechanism the rollback test above is about.
+    const returned = transaction(() => {
+      execute(
+        `INSERT INTO users (google_sub, email, name, picture, is_admin,
+                            can_upload_audio, created_at, updated_at)
+         VALUES ('kept', 'kept@example.com', NULL, NULL, 0, 0, 0, 0)`,
+      );
+      return "the body's own value";
+    });
+
+    expect(returned).toBe("the body's own value");
+    expect(emails()).toEqual(["kept@example.com"]);
+    expect(queryOne<{ n: number }>("SELECT COUNT(*) AS n FROM users")?.n).toBe(
+      1,
+    );
   });
 });
