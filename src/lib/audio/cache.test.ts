@@ -110,11 +110,16 @@ describe("audio buffer cache pinning", () => {
     unpinAudioBuffer(99);
     expect(isAudioBufferPinned(99)).toBe(false);
 
-    // The assertions above cannot fail on their own: nothing was pinned, so
-    // "did not throw" and "is not pinned" are both true before the call. What
-    // a stray unpin can actually do is drive the count below zero, silently,
-    // and the damage shows up later as a pin that does not hold — an armed
-    // pad's sound evicted from a cache whose whole job is to keep it.
+    // `not.toThrow()` says nothing on its own, but the line under it is not
+    // vacuous the way it looks: `isAudioBufferPinned` is `has()`, so a stray
+    // unpin that inserted *anything* — a zero, a negative, a NaN — would be
+    // caught. Removing the `count === undefined` guard does exactly that, and
+    // this test fails.
+    //
+    // The two lines below are for the reimplementation rather than the
+    // implementation: if pinning ever became count-based, a stray unpin
+    // reaching -1 would be silent until the next pin failed to hold, and this
+    // is where that would show up.
     pinAudioBuffer(99);
     expect(isAudioBufferPinned(99)).toBe(true);
   });
