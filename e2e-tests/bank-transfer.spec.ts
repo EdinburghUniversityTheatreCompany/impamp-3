@@ -240,6 +240,11 @@ test.describe("Banks between profiles", () => {
     const names = await archiveEntryNames(archivePath);
     const audioEntries = names.filter((name) => name.startsWith("audio/"));
     expect(audioEntries).toHaveLength(2);
+    // Both banks are in there at all. An export that stopped one short reads
+    // as a missing folder several assertions later, which says nothing about
+    // where it went wrong.
+    expect(names).toContain("banks/0/bank.json");
+    expect(names).toContain("banks/1/bank.json");
     const declared = await Promise.all(
       ["0", "1"].map(async (folder) =>
         (await readBankJson(archivePath, folder)).audioFiles.map(
