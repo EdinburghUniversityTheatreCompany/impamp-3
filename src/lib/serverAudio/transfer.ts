@@ -11,7 +11,7 @@
  */
 
 import {
-  addAudioFile,
+  addOrReuseAudioFile,
   computeBlobHash,
   ensureAudioFileHash,
   getAudioFile,
@@ -296,7 +296,18 @@ export async function downloadProfileAudio(
         // It came from the object store, so that is where it lives.
         serverHosted: true,
       };
-      await addAudioFile(stored);
+      // Reuse by content hash. The check at the top of this loop is a
+      // separate transaction from this write, and a browser runs several
+      // syncs at once — one per connected profile, plus a second tab — so two
+      // of them can both miss it and both fetch the same shared sound. Only a
+      // lookup inside the writing transaction collapses that pair.
+      const { reused } = await addOrReuseAudioFile(stored);
+      if (reused) {
+        // Reuse returns the row exactly as it found it, so it still does not
+        // say the bucket holds these bytes — and that field is what decides
+        // whether the next push uploads them all over again.
+        await markAudioFilesHosted([ref.hash]);
+      }
       downloaded++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

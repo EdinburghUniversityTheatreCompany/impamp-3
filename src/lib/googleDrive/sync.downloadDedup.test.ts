@@ -57,7 +57,11 @@ async function download(refs: ProfileSyncData["audioFiles"]) {
   return downloadMissingAudioFiles(
     refs,
     PROFILE_ID,
-    { accessToken: "token", expiresAt: Date.now() + 60_000 },
+    {
+      accessToken: "token",
+      refreshToken: null,
+      expiresAt: Date.now() + 60_000,
+    },
     () => {},
   );
 }

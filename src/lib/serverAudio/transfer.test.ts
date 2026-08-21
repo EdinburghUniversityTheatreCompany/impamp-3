@@ -8,7 +8,7 @@ import type { ProfileSyncData } from "@/lib/syncUtils";
 import { NotSignedInError } from "@/lib/serverSync/types";
 
 const dbMocks = vi.hoisted(() => ({
-  addAudioFile: vi.fn(),
+  addOrReuseAudioFile: vi.fn(),
   computeBlobHash: vi.fn(),
   ensureAudioFileHash: vi.fn(),
   getAudioFile: vi.fn(),
@@ -68,6 +68,10 @@ beforeEach(() => {
     getAllKeys: vi.fn().mockResolvedValue([]),
   });
   dbMocks.getAudioFileByHash.mockResolvedValue(undefined);
+  // A resolved shape, not the default `undefined`: the downloader reads
+  // `reused` off it to decide whether the row it got back still needs
+  // marking as hosted.
+  dbMocks.addOrReuseAudioFile.mockResolvedValue({ id: 1, reused: false });
   // Mirrors whatever getAudioFile is stubbed to return, so a test that sets up
   // a local file gets a consistent answer from both without saying it twice.
   dbMocks.getAudioFileMetadata.mockImplementation(
@@ -330,7 +334,7 @@ describe("downloadProfileAudio", () => {
     );
 
     expect(result.downloaded).toBe(1);
-    expect(dbMocks.addAudioFile).toHaveBeenCalledWith(
+    expect(dbMocks.addOrReuseAudioFile).toHaveBeenCalledWith(
       expect.objectContaining({ hash: HASH_A, name: "sound-0.wav" }),
     );
   });
@@ -375,7 +379,7 @@ describe("downloadProfileAudio", () => {
 
     expect(result.retryable).toHaveLength(1);
     expect(result.downloaded).toBe(0);
-    expect(dbMocks.addAudioFile).not.toHaveBeenCalled();
+    expect(dbMocks.addOrReuseAudioFile).not.toHaveBeenCalled();
   });
 
   it("remembers locally that the bytes are hosted", async () => {
@@ -395,7 +399,7 @@ describe("downloadProfileAudio", () => {
       refs([{ hash: HASH_A, serverHosted: true }]),
     );
 
-    expect(dbMocks.addAudioFile).toHaveBeenCalledWith(
+    expect(dbMocks.addOrReuseAudioFile).toHaveBeenCalledWith(
       expect.objectContaining({ serverHosted: true }),
     );
   });
