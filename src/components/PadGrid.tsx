@@ -117,7 +117,6 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
         bankId={bankId}
         keyBinding={config?.keyBinding}
         name={config?.name}
-        isConfigured={soundCount > 0}
         soundCount={soundCount}
         audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
         isDisabled={config?.isDisabled ?? false}
@@ -377,8 +376,11 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
-            isConfigured={true} // Special pads are always "configured"
-            soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
+            // A special pad holds no sounds. It used to claim two, to switch
+            // off drop handling that `isSpecialPad` switches off anyway, and
+            // to claim `isConfigured` beside them — the pad now reads "filled"
+            // from `isSpecialPad` itself.
+            soundCount={0}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved
@@ -400,8 +402,8 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
-            isConfigured={true} // Special pads are always "configured"
-            soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
+            // As above: no sounds, and `isSpecialPad` is what refuses drops.
+            soundCount={0}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved
