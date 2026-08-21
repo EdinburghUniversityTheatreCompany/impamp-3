@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { addAudioFile, upsertPadConfiguration } from "@/lib/db";
+import { addOrReuseAudioFile, upsertPadConfiguration } from "@/lib/db";
 import { useProfileStore } from "@/store/profileStore";
 import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
 
@@ -312,8 +312,11 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
         const file = fileMap.get(assignment.fileId);
         if (!file) continue;
 
-        // Upload the file to IndexedDB
-        const audioFileId = await addAudioFile({
+        // Reuse by content hash rather than adding unconditionally. A folder
+        // routinely holds one sting twice — `horn.wav` and the `horn (1).wav`
+        // a browser download made — and the same folder imported onto a
+        // second bank used to store every sound in it again.
+        const { id: audioFileId } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,
           type: file.type,
