@@ -26,6 +26,7 @@ import type {
   ImportLink,
   HostedAudioDownloader,
 } from "../lib/importExport";
+import type { BankImportResult, BankPlacement } from "@/lib/bankTransfer";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { convertBankNumberToIndex } from "@/lib/bankUtils";
 import { positionOfBank } from "@/lib/bankOrder";
@@ -125,6 +126,27 @@ interface ProfileState {
     zipBlob: Blob,
     onProgress?: TransferProgressCallback,
   ) => Promise<ZipImportResult[]>;
+  /** Writes the named banks of one profile to a `.iaz` file the user picks. */
+  exportBanksToZip: (
+    profileId: number,
+    bankIds: string[],
+    bankNames: string[],
+    onProgress?: TransferProgressCallback,
+  ) => Promise<boolean>;
+  /**
+   * Writes an archive's banks into one profile, where `placements` says.
+   *
+   * Rejects when any bank fails, because the import is all-or-nothing: by the
+   * time one can fail a `replace` has already cleared its destination, so a
+   * half-applied set is worse than none. The message is the library's own and
+   * is what the dialog has to show.
+   */
+  importBanksFromArchive: (
+    file: Blob,
+    profileId: number,
+    placements: Record<string, BankPlacement>,
+    onProgress?: TransferProgressCallback,
+  ) => Promise<BankImportResult>;
   importProfileFromSyncData: (
     syncData: ProfileSyncData,
     downloadAudioBlob: (driveFileId: string) => Promise<Blob | null>,
@@ -195,6 +217,95 @@ const _buildExportFilename = (
     return `impamp-${sanitizedName}-${date}.${extension}`;
   }
   return `impamp-multi-profile-export-${profileIds.length}-profiles-${date}.${extension}`;
+};
+
+// Banks get their own filename rule. A bank export is not a profile export,
+// and a file called impamp-show-a-2026-08-19.iaz that holds two banks is how a
+// restore goes wrong six months later, in front of somebody who no longer has
+// the source.
+const _buildBankExportFilename = (bankNames: string[]): string => {
+  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  if (bankNames.length === 1) {
+    const sanitized = (bankNames[0] || "bank")
+      .replace(/[^a-z0-9]/gi, "-")
+      .toLowerCase();
+    return `impamp-bank-${sanitized}-${date}.iaz`;
+  }
+  return `impamp-banks-${bankNames.length}-${date}.iaz`;
+};
+
+/**
+ * What happened to the file, which is three answers rather than two.
+ *
+ * A user who cancelled the save dialog and a download that could not be
+ * started both leave no file, and both are reported to the caller as `false` —
+ * but only the second is worth a line in the console, and neither is worth a
+ * backup timestamp.
+ */
+type ArchiveSaveOutcome = "saved" | "cancelled" | "failed";
+
+/**
+ * Puts an archive somewhere the user can find it.
+ *
+ * Both export actions want the same three steps, and the reasons for each are
+ * the same for a profile and for a bank: stream straight to disk through the
+ * File System Access API where it exists, so the archive never has to fit in
+ * memory; fall back to an in-memory Blob and an anchor element where it does
+ * not (Firefox, Safari); and open the picker *early*, while the click's user
+ * activation is still valid.
+ *
+ * `write` is called exactly once, with whichever target won.
+ */
+const _saveArchive = async (
+  filename: string,
+  description: string,
+  write: (target: WritableStream | "blob") => Promise<Blob | null>,
+): Promise<ArchiveSaveOutcome> => {
+  if (typeof window.showSaveFilePicker === "function") {
+    let handle: FileSystemFileHandle | null = null;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description, accept: { "application/zip": [".iaz"] } }],
+      });
+    } catch (pickerError) {
+      if (
+        pickerError instanceof DOMException &&
+        pickerError.name === "AbortError"
+      ) {
+        // User cancelled the save dialog — not an error.
+        return "cancelled";
+      }
+      // Picker unavailable (e.g. blocked in this context) — fall through to
+      // the in-memory blob download below.
+      console.warn(
+        "Save picker failed, falling back to blob download:",
+        pickerError,
+      );
+    }
+
+    if (handle) {
+      const writable = await handle.createWritable();
+      try {
+        await write(writable);
+      } catch (error) {
+        // A half-written archive under a name that promises a whole one is
+        // worse than no file at all.
+        try {
+          await writable.abort();
+        } catch {
+          // stream may already be closed
+        }
+        throw error;
+      }
+      return "saved";
+    }
+  }
+
+  const zipBlob = await write("blob");
+  return zipBlob !== null && _triggerBlobDownload(zipBlob, filename)
+    ? "saved"
+    : "failed";
 };
 
 type ProfileSetState = (
@@ -689,81 +800,82 @@ export const useProfileStore = create<ProfileState>()(
               "iaz",
             );
 
-            // Preferred path: stream the archive straight to disk via the File
-            // System Access API (Chromium). The archive never has to fit in
-            // memory, so export size is bounded only by free disk space.
-            // Note: the picker must be called early, while the button click's
-            // user activation is still valid.
-            if (typeof window.showSaveFilePicker === "function") {
-              let handle: FileSystemFileHandle | null = null;
-              try {
-                handle = await window.showSaveFilePicker({
-                  suggestedName: filename,
-                  types: [
-                    {
-                      description: "ImpAmp profile archive",
-                      accept: { "application/zip": [".iaz"] },
-                    },
-                  ],
-                });
-              } catch (pickerError) {
-                if (
-                  pickerError instanceof DOMException &&
-                  pickerError.name === "AbortError"
-                ) {
-                  // User cancelled the save dialog — not an error.
-                  return false;
-                }
-                // Picker unavailable (e.g. blocked in this context) — fall
-                // through to the in-memory blob download below.
-                console.warn(
-                  "Save picker failed, falling back to blob download:",
-                  pickerError,
-                );
-              }
-
-              if (handle) {
-                const writable = await handle.createWritable();
-                try {
-                  await exportProfilesToZip(profileIds, writable, onProgress);
-                } catch (error) {
-                  try {
-                    await writable.abort();
-                  } catch {
-                    // stream may already be closed
-                  }
-                  throw error;
-                }
-                // The archive is on disk, so this is a successful export
-                // whatever happens next. A failed timestamp update only means
-                // the backup reminder will fire again, which is the safe way
-                // round; it used to be reported into a store field nobody read.
-                await _warnIfTimestampFails(set, profileIds);
-                return true;
-              }
-            }
-
-            // Fallback: build the archive as an in-memory Blob and download it
-            // via an anchor element (browsers without the File System Access
-            // API — Firefox/Safari).
-            const zipBlob = await exportProfilesToZip(
-              profileIds,
-              "blob",
-              onProgress,
+            const outcome = await _saveArchive(
+              filename,
+              "ImpAmp profile archive",
+              (target) => exportProfilesToZip(profileIds, target, onProgress),
             );
-            const success =
-              zipBlob !== null && _triggerBlobDownload(zipBlob, filename);
 
-            if (success) {
+            if (outcome === "saved") {
+              // The archive is on disk, so this is a successful export
+              // whatever happens next. A failed timestamp update only means
+              // the backup reminder will fire again, which is the safe way
+              // round; it used to be reported into a store field nobody read.
               await _warnIfTimestampFails(set, profileIds);
-            } else {
+            } else if (outcome === "failed") {
               console.error("Failed to trigger download for profile export.");
             }
 
-            return success;
+            return outcome === "saved";
           } catch (error) {
             console.error("Failed to export profiles as ZIP:", error);
             throw error;
+          }
+        },
+
+        exportBanksToZip: async (
+          profileId: number,
+          bankIds: string[],
+          bankNames: string[],
+          onProgress?: TransferProgressCallback,
+        ) => {
+          if (bankIds.length === 0) return false;
+          const { exportBanksToZip } = await import("../lib/bankTransfer");
+
+          // No `lastBackedUpAt` stamp on any path out of here. A selection of
+          // banks is not a backup of the profile, and a stamp would silence
+          // the backup reminder on data nobody exported.
+          const outcome = await _saveArchive(
+            _buildBankExportFilename(bankNames),
+            "ImpAmp bank archive",
+            (target) =>
+              exportBanksToZip(profileId, bankIds, target, onProgress),
+          );
+          return outcome === "saved";
+        },
+
+        importBanksFromArchive: async (
+          file: Blob,
+          profileId: number,
+          placements: Record<string, BankPlacement>,
+          onProgress?: TransferProgressCallback,
+        ) => {
+          const { importBanksFromZip } = await import("../lib/bankTransfer");
+          const { getDb } = await import("@/lib/db");
+          const db = await getDb();
+          try {
+            const result = await importBanksFromZip(
+              file,
+              db,
+              { profileId, placements },
+              onProgress,
+            );
+            // Only on the way out, and only on success: a rollback puts back
+            // the rows it took, so there is nothing new to publish, and if the
+            // rollback failed too the user is about to be told so rather than
+            // have the mess pushed to their other devices.
+            get().requestSync(profileId);
+            return result;
+          } catch (error) {
+            console.error("Failed to import banks from archive:", error);
+            throw error;
+          } finally {
+            // Every cached copy of pad data is stale now, and "wrote nothing"
+            // is not "changed nothing": the import writes bank by bank, and a
+            // failure rewrites those rows again on its way back. The board
+            // reads pads, bank tabs and emergency cues off this counter, and
+            // without it they stay as they were for the rest of the session.
+            get().incrementPadConfigsVersion();
           }
         },
 
