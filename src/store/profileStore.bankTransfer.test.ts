@@ -53,6 +53,20 @@ vi.doMock("@/lib/bankTransfer", async () => ({
   ...transfer,
 }));
 
+/**
+ * The profile export, mocked the same way and for one reason only: the two
+ * export actions now share the save-picker dance, and the two tests at the
+ * bottom of this file are what stops the sharing from changing what the
+ * profile export does with it.
+ */
+const profileExport = { exportProfilesToZip: vi.fn() };
+vi.doMock("@/lib/importExport", async () => ({
+  ...(await vi.importActual<typeof import("@/lib/importExport")>(
+    "@/lib/importExport",
+  )),
+  ...profileExport,
+}));
+
 const realTransfer =
   await vi.importActual<typeof import("@/lib/bankTransfer")>(
     "@/lib/bankTransfer",
@@ -193,6 +207,8 @@ beforeEach(async () => {
   transfer.exportBanksToZip.mockReset();
   transfer.importBanksFromZip.mockReset();
   transfer.exportBanksToZip.mockResolvedValue(null);
+  profileExport.exportProfilesToZip.mockReset();
+  profileExport.exportProfilesToZip.mockResolvedValue(null);
   useProfileStore.setState({
     profiles: [],
     padConfigsVersion: 0,
@@ -441,6 +457,49 @@ describe("importBanksFromArchive", () => {
     // publish; and if the rollback failed too, the user is about to be told
     // so rather than have the mess pushed to their other devices.
     expect(state().syncRequestQueue).toEqual({});
+  });
+});
+
+/**
+ * The neighbour this task refactored.
+ *
+ * Nothing else in the unit suite drives it, and it is the only caller of the
+ * save-picker dance that is meant to stamp a backup — so these two are here to
+ * keep the sharing honest rather than because the bank export needs them.
+ */
+describe("exportMultipleProfilesToZip", () => {
+  async function seedProfile(lastBackedUpAt: number): Promise<number> {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await updateProfile(profileId, { lastBackedUpAt });
+    useProfileStore.setState({ profiles: [(await getProfile(profileId))!] });
+    return profileId;
+  }
+
+  it("stamps the profile as backed up once the archive is on disk", async () => {
+    const profileId = await seedProfile(Date.UTC(2025, 0, 2));
+    installSavePicker();
+
+    expect(await state().exportMultipleProfilesToZip([profileId])).toBe(true);
+
+    expect((await getProfile(profileId))?.lastBackedUpAt).toBeGreaterThan(
+      Date.UTC(2026, 0, 1),
+    );
+  });
+
+  it("stamps nothing and reports nothing when the dialog is cancelled", async () => {
+    const lastYear = Date.UTC(2025, 0, 2);
+    const profileId = await seedProfile(lastYear);
+    installFailingPicker(
+      new DOMException("The user aborted a request.", "AbortError"),
+    );
+    const complaints = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await state().exportMultipleProfilesToZip([profileId])).toBe(false);
+
+    // A cancel is not a failure. It used to return before the console.error
+    // that a failed download earns, and it still must.
+    expect((await getProfile(profileId))?.lastBackedUpAt).toBe(lastYear);
+    expect(complaints).not.toHaveBeenCalled();
   });
 });
 
