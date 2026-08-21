@@ -82,7 +82,11 @@ describe("detectProfileConflicts — location fields never travel", () => {
       expect((result.mergedData.profile as Partial<Profile>)[field]).toEqual(
         mine,
       );
-      expect(result.requiresManualResolution).toBe(false);
+      // No `requiresManualResolution` assertion here, deliberately. The local
+      // side is stamped at LAST_SYNC, and the predicate needs the local
+      // modification to be *later* than the last sync — so it could never have
+      // been true in this fixture whatever the code did. The block below is
+      // where that claim belongs, and there both sides really have moved.
     },
   );
 

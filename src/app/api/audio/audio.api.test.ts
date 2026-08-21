@@ -207,8 +207,14 @@ describe("POST /api/audio/upload-url", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.uploadUrl).toContain("upload=1");
     expect(body.key).toBe(objectKeyForHash(hashOf("a", KB), "wav"));
+    // `toContain("upload=1")` used to stand here, which asserts on a query
+    // parameter `fakeObjectStore` invents — it says the fake was called and
+    // nothing about what was asked of it. The decision this route makes is
+    // *which key* gets a PUT URL, so assert that instead, and that it was the
+    // upload presign rather than the download one.
+    expect(body.uploadUrl).toContain(body.key);
+    expect(store.uploadUrls).toEqual([body.uploadUrl]);
     expect(body.alreadyStored).toBe(false);
   });
 
@@ -716,8 +722,12 @@ describe("GET /api/audio/:hash", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.url).toContain("download=1");
     expect(body.contentType).toBe("audio/wav");
+    // The type is pinned onto the URL, not merely reported beside it. That is
+    // what stops an object being served as whatever the uploader's PUT
+    // claimed — `toContain("download=1")` was an assertion about the fake's
+    // own URL shape and could not tell the two apart.
+    expect(body.url).toContain("response-content-type=audio%2Fwav");
   });
 
   it("404s for a user who holds no reference, rather than 403", async () => {
@@ -841,7 +851,9 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((await response.json()).url).toContain("download=1");
+    expect((await response.json()).url).toContain(
+      "response-content-type=audio%2Fwav",
+    );
   });
 
   it("answers from the profile_audio index rather than re-reading the blob", async () => {

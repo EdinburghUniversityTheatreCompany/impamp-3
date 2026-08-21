@@ -107,8 +107,16 @@ describe("audio buffer cache pinning", () => {
   });
 
   it("ignores an unpin for a file that was never pinned", () => {
-    expect(() => unpinAudioBuffer(99)).not.toThrow();
+    unpinAudioBuffer(99);
     expect(isAudioBufferPinned(99)).toBe(false);
+
+    // The assertions above cannot fail on their own: nothing was pinned, so
+    // "did not throw" and "is not pinned" are both true before the call. What
+    // a stray unpin can actually do is drive the count below zero, silently,
+    // and the damage shows up later as a pin that does not hold — an armed
+    // pad's sound evicted from a cache whose whole job is to keep it.
+    pinAudioBuffer(99);
+    expect(isAudioBufferPinned(99)).toBe(true);
   });
 
   it("reports pinned entries in the cache stats", () => {
