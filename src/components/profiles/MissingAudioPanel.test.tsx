@@ -38,6 +38,11 @@ import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
 stubLoudnessPipeline();
 
+const incrementPadConfigsVersion = vi.fn();
+vi.doMock("@/store/profileStore", () => ({
+  useProfileStore: { getState: () => ({ incrementPadConfigsVersion }) },
+}));
+
 const MissingAudioPanel = (
   await import("@/components/profiles/MissingAudioPanel")
 ).default;
@@ -336,6 +341,30 @@ describe("repairing", () => {
     expect(await db.count("audioFiles")).toBe(before);
   });
 
+  it("bumps the pad-configs version so the board drops the dead id", async () => {
+    // The pad now names a different row, and every in-memory copy of it — the
+    // grid, the keyboard listener's map — still holds the id that is not
+    // there. `padConfigsVersion` is the single counter all of them re-read on,
+    // so without this the sound is repaired and the pad stays silent until a
+    // bank switch or a reload.
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+    expect(incrementPadConfigsVersion).not.toHaveBeenCalled();
+
+    await chooseReplacement(
+      rowKey({ profileId, ...brokenPad }),
+      replacementNamed("found-again"),
+    );
+
+    expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
+  });
+
   it("does not claim a repair when the write failed", async () => {
     await padNaming({
       profileId,
@@ -364,5 +393,8 @@ describe("repairing", () => {
     const rows = panel.all("missing-audio-row");
     expect(rows[0].textContent).not.toContain("Replaced");
     expect(rows[0].textContent).toContain("Choose replacement…");
+    // The bump is unconditional: a throw can land after the pad transaction
+    // committed, and an unnecessary one costs a re-read of the current bank.
+    expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
   });
 });

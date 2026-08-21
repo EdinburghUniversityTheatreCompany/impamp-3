@@ -24,6 +24,7 @@
 
 import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
+import { useProfileStore } from "@/store/profileStore";
 
 export default function MissingAudioPanel() {
   // Missing audio files state
@@ -74,6 +75,16 @@ export default function MissingAudioPanel() {
         next.delete(key);
         return next;
       });
+      // The pad now names a different row, and every in-memory copy of it —
+      // the grid, the keyboard listener's map of what each key plays — still
+      // holds the id that is not there. `padConfigsVersion` is the single
+      // counter all of them re-read on, so without this the sound is repaired
+      // and the pad stays silent until a bank switch or a reload.
+      //
+      // Unconditional, as in `DuplicateAudioPanel`: a throw can land after the
+      // pad transaction committed, and a bump that turns out to have been
+      // unnecessary costs one re-read of the current bank.
+      useProfileStore.getState().incrementPadConfigsVersion();
     }
   };
 
