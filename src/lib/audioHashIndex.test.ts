@@ -37,6 +37,25 @@ vi.mock("@/lib/serverAudio/api", async (importOriginal) => ({
   requestProfileDownloadUrl: serverApiMocks.requestProfileDownloadUrl,
 }));
 
+/**
+ * Seeding fires background loudness analysis, which this measurement must not
+ * count.
+ *
+ * `addAudioFile` analyses each new file without awaiting it (db.ts) — by
+ * design, so an import is never blocked. The counter below wraps
+ * `IDBDatabase.prototype.transaction` globally, so it sees those analyses too,
+ * and seeding thirty sounds leaves a tail of them still running when the
+ * measured pass begins. Measured rather than reasoned about: with this mock
+ * removed, an *idle* window straight after `seedLocalLibrary()` records 22
+ * transactions, against an assertion that allows 2. The suite passed only
+ * because that tail usually drained before the counter was installed; on a
+ * loaded machine it does not, and the failure reads as "the download pass
+ * opened five transactions" — a bug in code that did nothing wrong.
+ */
+vi.mock("@/lib/audio/loudness/pipeline", () => ({
+  analyseAndStore: vi.fn().mockResolvedValue(null),
+}));
+
 const { downloadMissingAudioFiles } = await import("@/lib/googleDrive/sync");
 const { downloadProfileAudio } = await import("@/lib/serverAudio/transfer");
 const { addAudioFile, computeBlobHash } = await import("@/lib/db");
