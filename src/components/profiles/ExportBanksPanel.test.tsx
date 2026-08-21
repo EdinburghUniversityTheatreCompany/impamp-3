@@ -79,20 +79,24 @@ const OPENERS = "f0b1c7de-4f3a-4d2f-9c1e-000000000001";
 const STINGS = "f0b1c7de-4f3a-4d2f-9c1e-000000000002";
 
 /**
- * The banks of the profile under test, in the order the board would show them.
+ * The banks of the profile under test, in the order they are **written**.
  *
- * Read the pairs as (identity, position): "0" sits at 1, "9" at 2, "7" at 3.
- * Not one of them sits where its id says, which is the only arrangement that
- * can tell identity-keyed code from position-keyed code. `STINGS` shares
- * position 3 with "7" — a merge is allowed to leave two banks on one
- * `pageIndex` — so the display order has to be derived rather than read.
+ * Three things are deliberate. Read the pairs as (identity, position): "0"
+ * sits at 1, "9" at 2, "7" at 3 — not one of them sits where its id says,
+ * which is the only arrangement that can tell identity-keyed code from
+ * position-keyed code. `STINGS` shares position 3 with "7", because a merge is
+ * allowed to leave two banks on one `pageIndex`, so the display order has to
+ * be derived rather than read off. And the write order below is *not* the
+ * display order, because `getAllPageMetadataForProfile` hands rows back in key
+ * order: a fixture written in display order cannot tell "sorted properly"
+ * from "read the array at that index".
  */
 const BANKS: [bankId: string, pageIndex: number, name: string][] = [
-  [OPENERS, 0, "Openers"],
   ["0", 1, "SFX"],
-  ["9", 2, "SFX"],
-  ["7", 3, ""],
   [STINGS, 3, "Stings"],
+  ["9", 2, "SFX"],
+  [OPENERS, 0, "Openers"],
+  ["7", 3, ""],
 ];
 
 /** The display order the fixture above must produce. */
@@ -216,10 +220,12 @@ beforeEach(async () => {
     await sound("charlie"),
     await sound("delta"),
   ];
-  // Openers: two pads, three references, two distinct sounds — the archive
-  // carries a shared sound once, and the summary has to agree with it.
+  // Openers: two sounding pads, three references, two distinct sounds — the
+  // archive carries a shared sound once, and the summary has to agree with it
+  // — plus a third pad somebody cleared, which is not a pad worth counting.
   await pad(profileId, OPENERS, 0, [alpha]);
   await pad(profileId, OPENERS, 1, [alpha, bravo]);
+  await pad(profileId, OPENERS, 2, []);
   await pad(profileId, "0", 0, [charlie]);
   // "7" has a pad row with every sound cleared off it, which is what
   // clearing a pad leaves behind. It is still an empty bank.
@@ -260,8 +266,10 @@ describe("the bank list", () => {
   });
 
   it("counts the sounds a bank would carry, per sound and not per reference", () => {
-    // Two pads, three references, two rows: the archive writes the shared
-    // sound once, so saying "3 sounds" here would promise a bigger file.
+    // Three pad rows, one of them cleared; three references across the other
+    // two; two audio rows. The archive writes the shared sound once, so "3
+    // sounds" would promise a bigger file, and "3 pads" would count a pad
+    // that carries nothing.
     expect(summary(OPENERS)).toContain("2 pads");
     expect(summary(OPENERS)).toContain("2 sounds");
     expect(summary("0")).toContain("1 pad,");
