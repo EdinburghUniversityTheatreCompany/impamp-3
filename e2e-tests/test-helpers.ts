@@ -2,6 +2,7 @@ import { Page, Locator, expect } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { createHash } from "crypto";
 
 /**
  * Navigates to the app and waits until it is actually ready to be driven.
@@ -65,9 +66,72 @@ export async function exitEditMode(page: Page) {
 }
 
 /**
+ * The bytes handed out so far this worker, as digest -> the name and duration
+ * that produced them. See `assertDistinct`.
+ */
+const bytesByDigest = new Map<string, string>();
+
+/**
+ * The tone this file name gets, in Hz.
+ *
+ * The generator used to ignore the name entirely, so every fixture of a given
+ * duration was byte-identical — and once audio rows are reused by content
+ * hash, three "different" sounds handed to one pad collapse into one row
+ * listed three times. Specs whose names promise three distinct sounds
+ * ("Sequential mode plays sounds in order") were then asserting on a pad that
+ * had one, and had been for as long as anything compared content rather than
+ * file names. Dedup only made it visible.
+ *
+ * FNV-1a over the name, spread across the whole 32-bit space rather than a
+ * few buckets: two names an octave apart is audibly different audio, and two
+ * that hash close together still differ far enough down the decimal to sample
+ * differently 44 100 times a second. 220-880 Hz keeps every fixture a quiet
+ * mid-band sine, which is what the loudness specs assume of it.
+ *
+ * @param fileName - The basename the caller asked for
+ * @returns A frequency in [220, 880)
+ */
+function toneHzFor(fileName: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < fileName.length; i++) {
+    hash ^= fileName.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 220 + ((hash >>> 0) / 2 ** 32) * 660;
+}
+
+/**
+ * Refuses to hand out one set of bytes under two different names.
+ *
+ * The distinctness above is the whole point of the fixture and nothing in the
+ * app enforces it, so a future edit that drops the name from the waveform —
+ * or a genuine hash collision — has to fail here, loudly, rather than turn
+ * every multi-sound spec into a single-sound one that still passes its
+ * weaker assertions. The register is per worker process, which is where a
+ * spec's own files are all generated.
+ *
+ * @param buffer - The WAV about to be written
+ * @param signature - What was asked for: name and duration
+ */
+function assertDistinct(buffer: Buffer, signature: string): void {
+  const digest = createHash("sha256").update(buffer).digest("hex");
+  const owner = bytesByDigest.get(digest);
+  if (owner !== undefined && owner !== signature) {
+    throw new Error(
+      `test audio fixtures collided: ${signature} produced the same bytes as ` +
+        `${owner}. Audio rows are reused by content hash, so these would be ` +
+        `one row and any spec expecting two distinct sounds is silently ` +
+        `testing one.`,
+    );
+  }
+  bytesByDigest.set(digest, signature);
+}
+
+/**
  * Helper function to create a test audio file path for testing.
- * Generates a simple sine wave audio buffer, formats it as WAV,
- * saves it to a temporary file, and returns the file path.
+ * Generates a sine wave audio buffer whose pitch is derived from the file
+ * name, formats it as WAV, saves it to a temporary file, and returns the file
+ * path. Two names never make the same bytes — see `toneHzFor`.
  */
 export async function createTestAudioFilePath(
   fileName: string,
@@ -77,13 +141,14 @@ export async function createTestAudioFilePath(
   // to blow the test timeout on its own).
   durationSeconds: number = 60,
 ): Promise<string> {
-  // Generate raw audio data (simple sine wave)
+  // Generate raw audio data (simple sine wave, pitched by the file name)
   const sampleRate = 44100;
   const numChannels = 1; // Mono
   const numSamples = sampleRate * durationSeconds;
+  const toneHz = toneHzFor(fileName);
   const audioData = new Float32Array(numSamples);
   for (let i = 0; i < numSamples; i++) {
-    audioData[i] = Math.sin((i / sampleRate) * 440 * 2 * Math.PI) * 0.1; // A4 note
+    audioData[i] = Math.sin((i / sampleRate) * toneHz * 2 * Math.PI) * 0.1;
   }
 
   // Convert Float32Array to Int16Array for WAV format
@@ -144,6 +209,8 @@ export async function createTestAudioFilePath(
   await fs.promises.mkdir(tempDir, { recursive: true });
   const tempFilePath = path.join(tempDir, fileName + ".wav");
 
+  assertDistinct(buffer, `${fileName} (${durationSeconds}s)`);
+
   // Write the buffer to the temporary file
   await fs.promises.writeFile(tempFilePath, buffer);
 
@@ -154,6 +221,12 @@ export async function createTestAudioFilePath(
 /**
  * Helper function to create multiple test audio files.
  * Calls createTestAudioFilePath for each name in the provided array.
+ *
+ * Every caller of this one hands the whole list to a single pad and then
+ * asserts on the sounds coming back in some order, so the files being
+ * genuinely different sounds is the premise of the test rather than a detail
+ * of it. `createTestAudioFilePath` derives the waveform from the name and
+ * refuses a collision, so that premise is checked rather than assumed.
  */
 export async function createMultipleTestAudioFiles(
   fileNames: string[],
