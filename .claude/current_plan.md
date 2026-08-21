@@ -50,6 +50,37 @@ Report: `plans/repo-review-2026-08-21.md`. Fourteen findings.
       `localhost:3000`. Carry it into phase 3 rather than pretending.
 - [ ] 🟢 14 — the service worker caches share-link URLs as cache keys
 
+## In flight
+
+Six agents, one worktree and one branch each, all cut from `f20aeb7`. They
+merge back into `fix/review-2026-08-21` as they land.
+
+| Branch              | Carrying                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `p1/deps-docs`      | 🟡 4 (dep rule + seven patch bumps), 🟡 5 (e2e script), 🟡 9 (gitignore)    |
+| `p1/a11y`           | 🟡 3 (radiogroup name), 🟢 11 (dedup confirmation copy)                     |
+| `p1/deadcode`       | 🟡 7 (six dead exports), 🟢 12 (export transactions), 🟢 14 (sw key)        |
+| `p1/profilemanager` | 🟡 8 (extract the Maintenance tab, with real unit tests)                    |
+| `p2/sync-bugs`      | renamed profile never converges; Drive legacy import matches by name        |
+| `p2/small-fixes`    | `triggerPad` spread; cache pin asymmetry; silent pad drop; search arm chord |
+
+## Phase 2 — the off-topic backlog
+
+Sixteen entries. Two are already resolved and only need closing out (the
+`tsc` pre-commit hook, and the coverage ratchet, which is now 58/49/55/59
+against a measured 59.26/50.96/56.72/60.10). One belongs upstream in
+dev-hooks rather than here (`check_version_sync.sh` reading only the first
+Dockerfile — the local half is already covered by
+`scripts/check_extra_dockerfiles.sh`). Two are in flight above. That leaves,
+for a later wave:
+
+- inline SVG icons should live in their own files (31 blocks, 15 components —
+  a real decision: icon library vs local `icons/`, and it must be one pass)
+- ProfileManager's repair list can read "Bank Bank 3"
+- two sound rows in the pad editor can share a `data-testid`
+- the duplicate-audio panel names no sounds
+- `bankUtils.ts` spells the 20-bank cap out three times
+
 ## Standing notes
 
 - **Running e2e:** always `E2E_PORT=<free port>`; port 3000 is often taken and
