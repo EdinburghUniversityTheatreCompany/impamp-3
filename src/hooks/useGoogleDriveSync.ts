@@ -21,7 +21,10 @@ import {
   SyncResult,
 } from "@/lib/googleDrive/types";
 import { isTokenValid } from "@/lib/googleDrive/utils";
-import { checkAndRefreshAuth } from "@/lib/googleDrive/auth";
+import {
+  resetSharedTokenRefresh,
+  sharedCheckAndRefresh,
+} from "@/lib/googleDrive/auth";
 import {
   applyDriveTokenRefresh,
   currentDriveToken,
@@ -119,36 +122,27 @@ interface GoogleDriveSyncHookReturn {
 }
 
 /**
- * Token validation is shared across every instance of this hook.
+ * How recently *this poll* asked, on top of the refresh dedupe in `auth.ts`.
  *
  * `useGoogleDriveSync` is mounted by ClientSideInitializer, ProfileManager,
  * every ProfileCard, ProfileSyncPanel, SharingPanel, ConnectProfileList,
  * useConnectServerProfile and both share-link pages — so with the profile
  * manager open on ten profiles there are a dozen live instances. The throttle
- * and the refresh were per instance, so an expired token produced up to a
- * dozen simultaneous `POST /api/auth/google/refresh` calls, each finishing by
- * writing its result to the store, last writer winning.
+ * was per instance, so an expired token produced up to a dozen simultaneous
+ * refresh attempts, each finishing by writing its result to the store, last
+ * writer winning.
  *
- * `useServerSync` already solves exactly this with a module-level in-flight
- * promise and a listener set; this is the same shape.
+ * The in-flight promise that collapsed those into one used to live here too,
+ * which meant it covered this poll and none of the four 401 handlers in
+ * `api.ts`. It now lives in `auth.ts` next to the refresh it guards, and this
+ * is only the "don't re-ask every render" throttle a periodic check needs.
  */
 let lastRefreshAttempt = 0;
-let refreshInFlight: ReturnType<typeof checkAndRefreshAuth> | null = null;
-
-/** Refreshes at most once at a time, whichever instance asks. */
-function sharedCheckAndRefresh(
-  tokenInfo: Parameters<typeof checkAndRefreshAuth>[0],
-): ReturnType<typeof checkAndRefreshAuth> {
-  refreshInFlight ??= checkAndRefreshAuth(tokenInfo).finally(() => {
-    refreshInFlight = null;
-  });
-  return refreshInFlight;
-}
 
 /** Test seam: forget the shared throttle between cases. */
 export function resetGoogleTokenRefreshState(): void {
   lastRefreshAttempt = 0;
-  refreshInFlight = null;
+  resetSharedTokenRefresh();
 }
 
 /**

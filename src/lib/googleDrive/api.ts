@@ -10,7 +10,7 @@ import {
   ProfileSyncData,
   TokenInfo,
 } from "./types";
-import { checkAndRefreshAuth } from "./auth";
+import { sharedCheckAndRefresh } from "./auth";
 import { getProfileFolderName } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { normaliseIncomingSyncData } from "@/lib/syncUtils";
@@ -75,7 +75,7 @@ async function authenticatedRequest<T>(
       console.warn("Token expired during request. Attempting to refresh...");
 
       const { isValid, refreshedTokenInfo } =
-        await checkAndRefreshAuth(tokenInfo);
+        await sharedCheckAndRefresh(tokenInfo);
 
       if (isValid && refreshedTokenInfo) {
         // Update token through callback
@@ -815,7 +815,7 @@ export const uploadDriveFile = async (
       console.warn("Token expired during upload. Attempting to refresh...");
 
       const { isValid, refreshedTokenInfo } =
-        await checkAndRefreshAuth(tokenInfo);
+        await sharedCheckAndRefresh(tokenInfo);
 
       if (isValid && refreshedTokenInfo) {
         // Update token through callback
@@ -944,7 +944,7 @@ export const uploadAudioFile = async (
 
     if (response.status === 401) {
       const { isValid, refreshedTokenInfo } =
-        await checkAndRefreshAuth(tokenInfo);
+        await sharedCheckAndRefresh(tokenInfo);
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
         const retryResponse = await fetchWithTimeout(url, {
@@ -1038,7 +1038,7 @@ export const downloadAudioFileAsBlob = async (
 
     if (response.status === 401) {
       const { isValid, refreshedTokenInfo } =
-        await checkAndRefreshAuth(tokenInfo);
+        await sharedCheckAndRefresh(tokenInfo);
       if (isValid && refreshedTokenInfo) {
         refreshCallback(refreshedTokenInfo);
         const retryResponse = await fetchWithTimeout(url, {
