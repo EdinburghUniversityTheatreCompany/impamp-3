@@ -8,7 +8,7 @@ import {
   PageMetadata,
   SyncType,
   ImpAmpDBSchema,
-  getAudioFile,
+  getAudioFilesByIds,
   getProfile,
   getAllPageMetadataForProfile,
   deleteProfile, // Needed for cleanup in importImpamp2Profile error handling
@@ -1775,6 +1775,10 @@ export interface ZipManifest {
  * A reference whose row is gone is warned about and skipped rather than
  * failing the export: the alternative is that one orphaned reference makes a
  * board unexportable.
+ *
+ * The whole set is read in one transaction. The ids are known before the first
+ * read and none of them changes while the export runs, so asking row by row
+ * bought nothing and cost a transaction per sound.
  */
 export async function collectAudioForPads(
   padConfigurations: PadConfiguration[],
@@ -1788,8 +1792,11 @@ export async function collectAudioForPads(
     { blob: Blob; name: string; type: string }
   >();
 
-  for (const audioFileId of collectReferencedAudioFileIds(padConfigurations)) {
-    const audioFile = await getAudioFile(audioFileId);
+  const referenced = collectReferencedAudioFileIds(padConfigurations);
+  const rows = await getAudioFilesByIds(referenced);
+
+  for (const audioFileId of referenced) {
+    const audioFile = rows.get(audioFileId);
     if (!audioFile) {
       console.warn(
         `Audio file ID ${audioFileId} referenced but not found in DB.`,

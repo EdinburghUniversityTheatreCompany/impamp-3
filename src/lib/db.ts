@@ -773,6 +773,47 @@ export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   return db.get("audioFiles", id);
 }
 
+/**
+ * Whole audio rows, bytes included, for the given ids in one transaction.
+ *
+ * The blob-carrying sibling of `getAudioFileMetadata`, for the callers that
+ * genuinely need the bytes — the archive writers. The alternative is
+ * `for (const id of ids) await getAudioFile(id)`, and since `getAudioFile` is
+ * a bare `db.get`, that is one transaction per sound: a full board of 400 is
+ * 400 of them before the ZIP is started, multiplied again by the number of
+ * profiles in a multi-profile export.
+ *
+ * Every `get` is issued before the first `await`, which is what keeps them
+ * inside one transaction — IndexedDB commits as soon as the event loop turns
+ * with no request outstanding, so awaiting them one at a time would silently
+ * give the per-row behaviour back under a batched-looking API.
+ *
+ * A cursor would be the other shape, and is the wrong one here: it walks rows
+ * the caller did not ask for, and `cursor.value` on this store materialises an
+ * audio Blob per step. `getAudioFileMetadata` can afford that because it never
+ * touches `.blob`; a reader that wants the bytes cannot.
+ *
+ * @param audioFileIds - Which rows to read; order is not preserved
+ * @returns A map from audio file id to its row, omitting ids not found
+ */
+export async function getAudioFilesByIds(
+  audioFileIds: Iterable<number>,
+): Promise<Map<number, AudioFile>> {
+  const wanted = [...new Set(audioFileIds)];
+  const found = new Map<number, AudioFile>();
+  if (wanted.length === 0) return found;
+
+  const db = await getDb();
+  const store = db.transaction("audioFiles", "readonly").store;
+  const rows = await Promise.all(wanted.map((id) => store.get(id)));
+
+  wanted.forEach((id, i) => {
+    const row = rows[i];
+    if (row) found.set(id, row);
+  });
+  return found;
+}
+
 /** Stores a loudness analysis against an audio file. */
 export async function updateAudioFileLoudness(
   id: number,
