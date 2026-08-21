@@ -91,10 +91,15 @@ const STINGS = "f0b1c7de-4f3a-4d2f-9c1e-000000000002";
  * order: a fixture written in display order cannot tell "sorted properly"
  * from "read the array at that index".
  */
-const BANKS: [bankId: string, pageIndex: number, name: string][] = [
+const BANKS: [
+  bankId: string,
+  pageIndex: number,
+  name: string,
+  isEmergency?: boolean,
+][] = [
   ["0", 1, "SFX"],
   [STINGS, 3, "Stings"],
-  ["9", 2, "SFX"],
+  ["9", 2, "SFX", true],
   [OPENERS, 0, "Openers"],
   ["7", 3, ""],
 ];
@@ -202,8 +207,14 @@ beforeEach(async () => {
   profileId = await addProfile({ name: "Show A", syncType: "local" });
   otherProfileId = await addProfile({ name: "Show B", syncType: "local" });
 
-  for (const [bankId, pageIndex, name] of BANKS) {
-    await upsertPageMetadata({ profileId, bankId, pageIndex, name });
+  for (const [bankId, pageIndex, name, isEmergency] of BANKS) {
+    await upsertPageMetadata({
+      profileId,
+      bankId,
+      pageIndex,
+      name,
+      isEmergency: isEmergency ?? false,
+    });
   }
   // Show B holds a bank whose id is also "0". Counting pads by bank id
   // without filtering by profile would fold these three into Show A's row.
@@ -282,6 +293,11 @@ describe("the bank list", () => {
     expect(summary(STINGS)).not.toContain("Empty");
   });
 
+  it("marks an emergency bank, because that travels with it", () => {
+    expect(summary("9")).toContain("Emergency bank");
+    expect(summary(STINGS)).not.toContain("Emergency");
+  });
+
   it("counts only this profile's pads", () => {
     // Show B's bank is also called "0" and holds three pads.
     expect(summary("0")).toContain("1 pad,");
@@ -317,6 +333,9 @@ describe("the bank list", () => {
     expect(rows()).toHaveLength(0);
     expect(panel.required("bank-export-loading")).not.toBeNull();
     expect(panel.testId("bank-export-none")).toBeNull();
+    // Nor is there a Select all to press. It would tick the five banks that
+    // are no longer on screen and file them under the profile now chosen.
+    expect(panel.testId("bank-export-select-all")).toBeNull();
     // The gate really did engage: without this the assertions above would
     // pass just as happily against a read that had already finished.
     expect(releaseBankRead).not.toBeNull();
@@ -336,6 +355,22 @@ describe("selecting banks", () => {
 
     expect(exported().ids).toEqual(["9"]);
     expect(exported().names).toEqual(["SFX"]);
+  });
+
+  it("ticks the bank whose label was clicked, not the other one of that name", async () => {
+    // A checkbox is a 16-pixel target; the label is how it is hit in
+    // practice, and a label reaches its input through `htmlFor`. Key that id
+    // on the name and the two banks called "SFX" share it, so the browser
+    // hands every click on the second label to the first one's checkbox —
+    // a failure invisible to a test that clicks the input directly.
+    const label = rowFor("9").querySelector<HTMLElement>(
+      '[data-testid="export-bank-label"]',
+    );
+    expect(label?.textContent).toContain("3: SFX");
+    await panel.press(label!);
+
+    await exportSelected();
+    expect(exported().ids).toEqual(["9"]);
   });
 
   it("exports in board order, whatever order they were ticked", async () => {
@@ -362,6 +397,10 @@ describe("selecting banks", () => {
   });
 
   it("exports the profile that is selected, with that profile's banks", async () => {
+    // "0", not Openers, and that is the whole point: Show B's only bank is
+    // *also* called "0". A selection carried across as bare ids would land on
+    // it, and a fixture that ticked an id Show B does not have could not tell.
+    await tick("0");
     await tick(OPENERS);
     await panel.setValue(
       panel.required("bank-export-profile"),
