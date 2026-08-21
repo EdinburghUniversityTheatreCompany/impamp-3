@@ -121,13 +121,60 @@ describe("reconcileBorrowedDriveLinks", () => {
     expect(dbMocks.updateProfile).toHaveBeenCalledWith(1, expect.anything());
   });
 
-  it("finds nothing on a second run", async () => {
-    dbMocks.getAllProfiles.mockResolvedValue([BORROWED]);
-    await reconcileBorrowedDriveLinks();
+  /**
+   * Idempotence, against a store that remembers the first run.
+   *
+   * This used to hand the second call an already-repaired fixture by hand:
+   * `updateProfile` is a mock, so the first call changed nothing, and the 0
+   * came from a profile the test had rewritten itself. That is a restatement of
+   * "leaves a link-imported profile with no Drive ids alone", three tests up,
+   * dressed as idempotence — a repair that wrote the *wrong* fields would still
+   * have found nothing on a second run.
+   *
+   * So the fake applies its patch and `getAllProfiles` reads it back. The
+   * counts are then a real 1-then-0, and the state assertion is what catches a
+   * repair that clears the wrong thing: clearing `serverShareToken` instead of
+   * the Drive ids would also make the second run find nothing, because the
+   * token is half of what `hasBorrowedDriveLink` looks for.
+   *
+   * It runs on every load, so "safe to run repeatedly" is the property that
+   * matters most about it.
+   */
+  it("repairs once and then finds nothing, leaving its neighbours alone", async () => {
+    const store: Profile[] = [
+      profile({ id: 1, syncType: "local" }),
+      { ...BORROWED, id: 2 },
+      profile({ id: 3, serverRole: "owner", googleDriveFolderId: "mine" }),
+    ];
 
-    dbMocks.getAllProfiles.mockResolvedValue([
-      profile({ id: 1, serverShareToken: "tok" }),
-    ]);
+    // Copies out, so the reconciler cannot mutate the store by holding a
+    // reference to a row — the real `getAllProfiles` hands back fresh objects.
+    dbMocks.getAllProfiles.mockImplementation(async () =>
+      store.map((row) => ({ ...row })),
+    );
+    dbMocks.updateProfile.mockImplementation(
+      async (id: number, patch: Partial<Profile>) => {
+        const row = store.find((candidate) => candidate.id === id);
+        if (!row) throw new Error(`updateProfile called with unknown id ${id}`);
+        Object.assign(row, patch);
+      },
+    );
+
+    expect(await reconcileBorrowedDriveLinks()).toBe(1);
     expect(await reconcileBorrowedDriveLinks()).toBe(0);
+
+    expect(dbMocks.updateProfile).toHaveBeenCalledOnce();
+    expect(store).toEqual([
+      profile({ id: 1, syncType: "local" }),
+      {
+        ...BORROWED,
+        id: 2,
+        // The two ids that were never this device's, and nothing else: the
+        // share token and the server profile it points at are still here.
+        googleDriveFileId: null,
+        googleDriveFolderId: null,
+      },
+      profile({ id: 3, serverRole: "owner", googleDriveFolderId: "mine" }),
+    ]);
   });
 });
