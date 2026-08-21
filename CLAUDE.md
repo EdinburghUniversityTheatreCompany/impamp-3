@@ -13,6 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `next start` is unsupported with `output: standalone`. Reads `PORT`; a
   `--port` argument is translated to it.
 - `npm run lint` - Run ESLint
+- `npm run typecheck` - `tsc --noEmit`. A gate with a name, in the CI `unit`
+  job and in `hk.pkl`: TypeScript used to be enforced only as a side effect of
+  `npm run build` inside the e2e job's webServer, so `npm test && npm run lint`
+  went green with a type error in the tree. Some guards here **are** types —
+  `profileWire.ts`'s exhaustiveness assertion is the whole of "adding a field
+  to `Profile` does not put it on the wire"
 
 ### Testing
 
@@ -237,6 +243,41 @@ packages, none of them is fair game.
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
+- The E2E run brings up **two** servers and one global setup, all from
+  `playwright.config.ts`. `e2e-tests/fake-s3.js` is a real HTTP bucket — path
+  style, presigned PUT, HEAD, ranged GET, DELETE, ListObjectsV2 — that
+  `e2e-tests/env.js` points the five `IMPAMP_S3_*` variables at, so hosted
+  audio is **on** during E2E and the presigned PUT, the commit that charges
+  quota from what the bucket reports, proof of possession and the download URL
+  are all exercised for real. It does not verify signatures on purpose;
+  `src/lib/server/s3/sigv4.test.ts` does that against the specification's
+  vectors. What an _unconfigured_ deployment answers lives in
+  `audio.api.test.ts` instead. `scripts/e2e-server.sh` does not start the
+  bucket — Playwright owns it — so poking the app by hand after that script has
+  hosting configured with nothing behind it.
+  `e2e-tests/global-setup.ts` claims the admin account before any worker
+  starts, because admin is not a flag anything can set: the first user written
+  to the database bootstraps as one. Without it the bit lands on whichever
+  throwaway account signed in first, which changes with the worker count and
+  the filter
+- CI runs e2e with **two workers**, not one. Every flake this suite has had
+  came from parallel load, so a single-worker run with two retries was the most
+  forgiving configuration anyone ran and could not see the class of bug
+  developers hit. Any test that needed a retry is listed in the job summary by
+  `e2e-tests/flaky-reporter.ts`; `E2E_FAIL_ON_FLAKE=1` turns that into a gate
+- Generated test WAVs go in a **per-worker** temp directory, keeping the
+  basename — a pad displays the file name and specs assert on it. They used to
+  share one path in `os.tmpdir()`, and two specs using the same name wrote the
+  file the other was handing to `setInputFiles`
+- `activatePad` **re-issues** the click or keypress until something plays,
+  rather than pressing once and waiting. A single press is not guaranteed
+  delivery: the keyboard listener reads its pad configurations through
+  `actionablePadConfigs`, which hands back an empty map while a read is in
+  flight — deliberately, so a key pressed after a bank switch cannot play the
+  previous bank's pad — and assigning a sound starts such a read. The pad's
+  label comes from the read that already settled, so a spec that waits for the
+  name and then presses can land inside the next read's window and lose the
+  press entirely
 - E2E gates on **chromium only**. Firefox and WebKit are **on demand only** —
   they do not run on push or PR (Actions → ci → Run workflow, or
   `gh workflow run ci`). Both are known-red for reasons outside the app, so
