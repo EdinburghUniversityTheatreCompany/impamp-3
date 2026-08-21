@@ -8,6 +8,7 @@ import { MissingAudioFile } from "@/lib/db";
 import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
+import DuplicateAudioPanel from "./DuplicateAudioPanel";
 import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
@@ -1379,6 +1380,8 @@ export default function ProfileManager() {
                   )}
                 </div>
               </section>
+
+              <DuplicateAudioPanel />
 
               {/* Missing Audio Files Section */}
               <section className="mb-8">
