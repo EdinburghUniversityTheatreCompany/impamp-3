@@ -432,6 +432,14 @@ function isQuotaExceededError(error: unknown): boolean {
 }
 
 /**
+ * Names the first few of something, so a message about fifty broken records
+ * stays readable while still answering "which ones?".
+ */
+function nameSome(labels: string[]): string {
+  return `${labels.slice(0, 3).join("; ")}${labels.length > 3 ? "; …" : ""}`;
+}
+
+/**
  * Turns collected audio failures into the message the user is shown.
  *
  * Named files rather than a bare count, because the answer to "which sounds
@@ -441,12 +449,7 @@ function describeAudioImportFailures(
   failures: AudioImportFailure[],
   total: number,
 ): string {
-  const named = failures
-    .slice(0, 3)
-    .map((f) => f.name)
-    .join("; ");
-  const ellipsis = failures.length > 3 ? "; …" : "";
-  const detail = `${failures.length} of ${total} sound${total === 1 ? "" : "s"} could not be imported (${named}${ellipsis}).`;
+  const detail = `${failures.length} of ${total} sound${total === 1 ? "" : "s"} could not be imported (${nameSome(failures.map((f) => f.name))}).`;
 
   if (failures.some((f) => isQuotaExceededError(f.error))) {
     return `${detail} This device has run out of storage space, so importing again will fail the same way — free some up (deleting an unused profile, or clearing other sites' data) first.`;
@@ -646,7 +649,13 @@ async function importPageMetadata(
 
   const pageTx = db.transaction("pageMetadata", "readwrite");
   const pageStore = pageTx.objectStore("pageMetadata");
-  const failures: string[] = [];
+  // Two lists, because the two failures end differently. A bank refused
+  // before any request is made leaves the transaction healthy and the rest of
+  // the import intact; a bank the *store* rejects aborts the transaction and
+  // takes every other bank with it. Reporting both as one number told the
+  // user that some banks had arrived when none had.
+  const skipped: string[] = [];
+  const refused: string[] = [];
 
   const pagePromises = pageMetadata.map((page) => {
     // `PageMetadata.pageIndex` is typed required, which describes what this
@@ -660,7 +669,7 @@ async function importPageMetadata(
       console.warn(
         `Bank "${page.name}" on profile ${profileId} has no pageIndex and no bankId; skipping.`,
       );
-      failures.push(`"${page.name}" (no position could be determined)`);
+      skipped.push(`"${page.name}" (no position could be determined)`);
       return Promise.resolve();
     }
 
@@ -684,28 +693,43 @@ async function importPageMetadata(
       ...initialSyncFields(content, now.getTime()),
       updatedAt: now,
     };
+    // Caught so that every rejection is named before the transaction's own
+    // failure surfaces — not to keep going. The abort has already been
+    // scheduled by the time this runs (see below).
     return pageStore.add(newMetadata).catch((err: unknown) => {
       console.error(
         `Failed to add page metadata for pageIndex ${rawPageIndex}:`,
         err,
       );
-      failures.push(`bank ${convertIndexToBankNumber(rawPageIndex)}`);
+      refused.push(`bank ${convertIndexToBankNumber(rawPageIndex)}`);
     });
   });
 
   try {
     await Promise.all(pagePromises);
     await pageTx.done;
-    if (failures.length > 0) {
-      throw new Error(
-        `${failures.length} bank${failures.length === 1 ? "" : "s"} could not be imported (${failures.join(", ")}).`,
-      );
-    }
-    console.log(`Imported ${pageMetadata.length} page metadata entries.`);
   } catch (txError) {
+    // A rejected IndexedDB request aborts the transaction it belongs to, so
+    // arriving here means nothing at all was written — including the banks
+    // that were accepted. The transaction's own error says only "AbortError",
+    // which names neither the bank nor the reason, so the names collected
+    // above are the whole account of what went wrong.
     console.error("Error during page metadata import transaction:", txError);
-    throw txError; // Re-throw transaction error
+    if (refused.length === 0) throw txError;
+    throw new Error(
+      `No banks could be imported: the database refused ${refused.length} of ${pageMetadata.length} (${nameSome(refused)}).`,
+    );
   }
+
+  if (skipped.length > 0) {
+    // Refused before the request, so the transaction committed the rest.
+    // `importProfileCore` still deletes the profile: a board missing a bank
+    // is not the board that was exported.
+    throw new Error(
+      `${skipped.length} bank${skipped.length === 1 ? "" : "s"} could not be imported (${nameSome(skipped)}).`,
+    );
+  }
+  console.log(`Imported ${pageMetadata.length} page metadata entries.`);
 }
 
 /**
@@ -789,7 +813,12 @@ async function importPadConfigurations(
 
   const padTx = db.transaction("padConfigurations", "readwrite");
   const padStore = padTx.objectStore("padConfigurations");
-  const failures: string[] = [];
+  // Split for the same reason as the bank importer above: a pad refused
+  // before its request leaves the transaction alive, a pad the store rejects
+  // rolls the whole thing back, and one count for both misdescribes whichever
+  // happened.
+  const skipped: string[] = [];
+  const refused: string[] = [];
 
   const padPromises = padConfigurations.map((pad) => {
     // A pad with neither an id nor a position cannot be placed at all.
@@ -802,7 +831,7 @@ async function importPadConfigurations(
       console.warn(
         `Pad ${pad.padIndex} on profile ${profileId} has neither bankId nor pageIndex; skipping.`,
       );
-      failures.push(`pad ${pad.padIndex + 1} (no bank could be determined)`);
+      skipped.push(`pad ${pad.padIndex + 1} (no bank could be determined)`);
       return Promise.resolve();
     }
 
@@ -890,34 +919,47 @@ async function importPadConfigurations(
     return padStore.add(newPadData).catch((err: unknown) => {
       // Collected rather than swallowed. This used to log and carry on, and
       // the import then reported success — so a board came back missing pads
-      // and said nothing, which is discovered mid-show.
+      // and said nothing, which is discovered mid-show. It cannot mean
+      // "carry on" either way: the rejection has already aborted the
+      // transaction, and what is collected here is the diagnosis, not a
+      // decision.
       console.error(
         `Failed to add pad configuration for ${bankLabel}, padIndex ${pad.padIndex}:`,
         err,
       );
-      failures.push(`${bankLabel}, pad ${pad.padIndex + 1}`);
+      refused.push(`${bankLabel}, pad ${pad.padIndex + 1}`);
     });
   });
 
   try {
     await Promise.all(padPromises);
     await padTx.done;
-    if (failures.length > 0) {
-      // `importProfileCore` deletes the partial profile when this throws, so
-      // the user gets a clear failure and an intact library rather than a
-      // board with holes in it.
-      throw new Error(
-        `${failures.length} of ${padConfigurations.length} pads could not be imported (${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "; …" : ""}).`,
-      );
-    }
-    console.log(`Imported ${padConfigurations.length} pad configurations.`);
   } catch (txError) {
+    // Every pad rolled back, not only the refused ones — see the bank
+    // importer above. This used to compose its message after `padTx.done`
+    // resolved, where a rejected write never lets it reach, so the one thing
+    // the user was ever shown for a duplicate or malformed pad was the word
+    // "AbortError".
     console.error(
       "Error during pad configuration import transaction:",
       txError,
     );
-    throw txError; // Re-throw transaction error
+    if (refused.length === 0) throw txError;
+    throw new Error(
+      `No pads could be imported: the database refused ${refused.length} of ${padConfigurations.length} (${nameSome(refused)}).`,
+    );
   }
+
+  if (skipped.length > 0) {
+    // These never reached the store, so the pads around them committed.
+    // `importProfileCore` deletes the partial profile anyway, so the user
+    // gets a clear failure and an intact library rather than a board with
+    // holes in it.
+    throw new Error(
+      `${skipped.length} of ${padConfigurations.length} pads could not be imported (${nameSome(skipped)}).`,
+    );
+  }
+  console.log(`Imported ${padConfigurations.length} pad configurations.`);
 }
 
 // Shared metadata shape for imports: a full ProfileExport minus the audio
