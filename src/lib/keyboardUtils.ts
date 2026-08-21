@@ -107,3 +107,67 @@ export const getPadIndexForKey = (key: string): number | undefined => {
   // Key not found in the mapped rows
   return undefined;
 };
+
+/**
+ * Elements the browser itself activates with Enter or Space while they hold
+ * focus. `role` counts as well as the tag, because the chrome contains
+ * `role="tab"` buttons and dnd-driven handles.
+ */
+const ACTIVATION_TAGS = new Set(["BUTTON", "A", "SELECT", "SUMMARY"]);
+const ACTIVATION_ROLES = new Set([
+  "button",
+  "tab",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "switch",
+  "checkbox",
+  "radio",
+  "option",
+]);
+
+/** The slice of an element this needs — so it is testable without a DOM. */
+export interface ActivationTarget {
+  tagName: string;
+  getAttribute(name: string): string | null;
+}
+
+/**
+ * Whether a keydown is one the control holding focus would activate on.
+ *
+ * Enter is the emergency bank and Space is Fade Out All, globally, and they
+ * have to keep meaning that at every moment of a show. But the header, the
+ * bank tabs and the profile selector are ordinary controls a keyboard user
+ * must be able to operate, and those two keys are how a button is pressed —
+ * so the hook hands them over, but only for focus the operator moved there
+ * with Tab (see `useKeyboardListener`).
+ *
+ * Only Enter and Space are ever claimed. A letter still fires its pad and a
+ * digit still switches bank while focus sits in the chrome, because no
+ * control activates on those.
+ *
+ * `:focus-visible` looks like the natural test for "reached by keyboard" and
+ * is the wrong one here: Chromium flips an already-focused element to
+ * focus-visible on the very keydown being judged, so a button focused by a
+ * click reports true the moment Space is pressed — which is precisely the
+ * case that has to keep Fade Out All.
+ */
+export function isControlActivationKey(key: string, target: unknown): boolean {
+  if (key !== "Enter" && key !== " ") return false;
+
+  const el = target as Partial<ActivationTarget> | null;
+  if (
+    !el ||
+    typeof el.tagName !== "string" ||
+    typeof el.getAttribute !== "function"
+  ) {
+    return false;
+  }
+
+  const role = el.getAttribute("role");
+  return (
+    ACTIVATION_TAGS.has(el.tagName) ||
+    (role !== null && ACTIVATION_ROLES.has(role))
+  );
+}

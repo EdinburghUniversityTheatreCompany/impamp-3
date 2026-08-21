@@ -21,7 +21,7 @@ import {
 } from "@/store/loadingStore";
 import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
-import { getPadIndexForKey } from "@/lib/keyboardUtils";
+import { isControlActivationKey, getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
 import {
   usePadConfigurations,
@@ -135,6 +135,32 @@ export function useKeyboardListener() {
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
 
+  // Whether whatever holds focus was put there by Tab rather than by a
+  // pointer. It is what decides if a focused control may keep Enter and Space
+  // for itself, so it is tracked explicitly rather than asked of the browser:
+  // `:focus-visible` answers the same question and answers it wrong here,
+  // flipping a click-focused button to focus-visible on the very keydown
+  // being judged.
+  //
+  // Its own capture-phase listeners, not a branch of `handleKeyDown`, because
+  // that handler stands down for overlays and text fields — and a Tab pressed
+  // inside a text field still moves focus.
+  const focusReachedByTabRef = useRef(false);
+  useEffect(() => {
+    const noteTab = (event: KeyboardEvent) => {
+      if (event.key === "Tab") focusReachedByTabRef.current = true;
+    };
+    const notePointer = () => {
+      focusReachedByTabRef.current = false;
+    };
+    window.addEventListener("keydown", noteTab, { capture: true });
+    window.addEventListener("pointerdown", notePointer, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", noteTab, { capture: true });
+      window.removeEventListener("pointerdown", notePointer, { capture: true });
+    };
+  }, []);
+
   // The pad configurations for the active page, from the same hook the grid
   // uses. This used to be a second, private fetch into a ref — the old comment
   // here said "might be inefficient if PadGrid already has them, consider
@@ -226,17 +252,35 @@ export function useKeyboardListener() {
       // every sound in the room.
       //
       // Below the early-outs rather than at the top of the handler, because
-      // Ctrl+S must stay live behind an overlay. Covering Tab and Ctrl+F as
-      // well is deliberate and inert: dnd never claims "f", and the Tab
-      // branch only preventDefaults a key whose default is already prevented.
+      // Ctrl+S must stay live behind an overlay. Covering Ctrl+F as well is
+      // deliberate and inert: dnd never claims "f".
       if (event.defaultPrevented) {
         return;
       }
 
-      // Prevent default browser tabbing behavior outside of inputs and modals
-      if (event.key === "Tab") {
-        event.preventDefault();
-        return; // Stop further processing for Tab key
+      // Tab is deliberately *not* suppressed here any more.
+      //
+      // It used to be — `event.preventDefault(); return;` for every Tab
+      // outside an input or an overlay — so that a stray Tab mid-show could
+      // not walk focus onto a pad, where Enter and Space would then fire that
+      // pad instead of the emergency bank and Fade Out All. The cost was that
+      // Search, Help, the mode toggles, the bank tabs and the profile
+      // selector could not be reached without a mouse at all.
+      //
+      // The two halves are now separated. `Pad` carries `tabIndex={-1}`, so
+      // Tab walks the chrome and can never land on the board; and the guard
+      // below hands Enter and Space to a control only when the operator
+      // tabbed to it, so a pointer click still leaves both keys with the
+      // transport. Escape blurs, so panic is also the way back to the
+      // instrument.
+      if (
+        focusReachedByTabRef.current &&
+        isControlActivationKey(event.key, event.target)
+      ) {
+        console.log(
+          "[KeyboardListener] Leaving the key to the control Tab focused.",
+        );
+        return;
       }
 
       // --- Specific Shortcut Handling ---
@@ -324,6 +368,16 @@ export function useKeyboardListener() {
           "[KeyboardListener] Escape key pressed - stopping all audio playback.",
         );
         stopAllAudio(); // Use the imported function
+        // Panic is also the way out of the chrome. Tab can now reach the
+        // header and the bank tabs, and a control that holds focus keeps
+        // Enter and Space for itself — so the operator needs one key that
+        // both stops the room and hands the instrument back, without hunting
+        // for the mouse.
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused !== document.body) {
+          focused.blur();
+        }
+        focusReachedByTabRef.current = false;
         return;
       }
 
