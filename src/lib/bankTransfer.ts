@@ -17,7 +17,14 @@ import {
   getPadConfigurationsForProfileBank,
   getProfile,
 } from "./db";
-import { AudioFileRef, collectAudioForPads } from "./importExport";
+import {
+  ArchiveItem,
+  AudioFileRef,
+  TransferProgressCallback,
+  collectAudioForPads,
+  reportPreparing,
+  writeArchiveZip,
+} from "./importExport";
 
 /**
  * What an exported row does not carry.
@@ -140,4 +147,85 @@ export async function collectBankDataForZip(
     audioBlobs,
     sourceProfileName: profile.name,
   };
+}
+
+/**
+ * The manifest at the root of a bank archive.
+ *
+ * `exportVersion: 4` is what tells a reader this is a bank archive at all: a
+ * profile archive's manifest is version 3 and lists `profiles`, and the two
+ * must never share a number.
+ *
+ * `sourceProfileName` is per bank rather than per archive because a later
+ * version may well let one archive hold banks from several profiles, and it
+ * is what the placement dialog shows to distinguish two banks both called
+ * "Stings".
+ */
+export interface BankZipManifest {
+  exportVersion: 4;
+  exportDate: string;
+  banks: { name: string; folder: string; sourceProfileName: string }[];
+}
+
+/**
+ * Exports banks as a `.iaz` archive: `manifest.json`, one
+ * `banks/<n>/bank.json` per bank, and one shared `audio/<id>` folder.
+ *
+ * The bytes of a sound several banks name are written once — five banks that
+ * all open with the same sting cost one copy of it — while each bank.json
+ * keeps its own reference to that id, so a bank still stands alone when it is
+ * written into a profile.
+ *
+ * A bank that cannot be collected fails the whole export, which is the
+ * opposite of what `exportProfilesToZip` does with a profile. The reasoning is
+ * the user rather than the code: a profile export is a backup of everything,
+ * and one missing profile is better than no file at all; a bank export is a
+ * handful of banks named by hand, and an archive quietly short of one of them
+ * is discovered at the far end, by someone who no longer has the source.
+ *
+ * It does **not** stamp `lastBackedUpAt`. A selection of banks is not a backup
+ * of the profile, and a claim otherwise would silence the backup reminder on
+ * data nobody exported.
+ *
+ * @param profileId The profile the banks come from
+ * @param bankIds Which banks to write, by identity, in the order they appear
+ * @param target A WritableStream to stream to disk, or "blob"
+ * @param onProgress Optional progress callback for the audio phase
+ * @returns The archive Blob when target is "blob", otherwise null
+ */
+export async function exportBanksToZip(
+  profileId: number,
+  bankIds: string[],
+  target: WritableStream | "blob",
+  onProgress?: TransferProgressCallback,
+): Promise<Blob | null> {
+  reportPreparing(onProgress);
+
+  const manifestBanks: BankZipManifest["banks"] = [];
+  const items: ArchiveItem[] = [];
+
+  for (let i = 0; i < bankIds.length; i++) {
+    const { bank, audioBlobs, sourceProfileName } = await collectBankDataForZip(
+      profileId,
+      bankIds[i],
+    );
+    // The folder is the position in `bankIds`, not anything derived from the
+    // bank: `sourceBankId` is a comparison key the importer must be free to
+    // ignore, and an id is not a safe path component in the first place.
+    const folder = String(i);
+    manifestBanks.push({ name: bank.page.name, folder, sourceProfileName });
+    items.push({
+      path: `banks/${folder}/bank.json`,
+      json: JSON.stringify(bank, null, 2),
+      audioBlobs,
+    });
+  }
+
+  const manifest: BankZipManifest = {
+    exportVersion: 4,
+    exportDate: new Date().toISOString(),
+    banks: manifestBanks,
+  };
+
+  return writeArchiveZip(target, manifest, items, onProgress);
 }

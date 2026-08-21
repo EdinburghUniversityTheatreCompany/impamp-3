@@ -1872,59 +1872,61 @@ async function getZipJs() {
 }
 
 /**
- * Exports profiles as a ZIP archive (.iaz), streaming each audio blob
- * straight into the target so the archive never has to fit in memory.
- * Structure: manifest.json + audio/<id> (shared) + profiles/<n>/profile.json
+ * One document in an archive: its JSON entry and the audio its rows name.
  *
- * @param profileIds Profiles to include.
+ * A profile is one of these and so is a bank, which is the whole reason the
+ * two archives share a writer.
+ */
+export interface ArchiveItem {
+  /** Where the JSON goes, e.g. `profiles/0/profile.json`. */
+  path: string;
+  json: string;
+  audioBlobs: Map<number, { blob: Blob; name: string; type: string }>;
+}
+
+/**
+ * Writes a `.iaz` archive: a manifest, one JSON entry per item, and one shared
+ * `audio/<id>` folder.
+ *
+ * The audio maps are merged first-wins, so a sound two items name is stored
+ * once — which is what makes a five-bank archive cost one copy of the sting
+ * they all open with. The items keep their own references to it; the sharing
+ * is in the bytes, not in the metadata.
+ *
+ * This is the only place either archive is written. The profile export and
+ * the bank export differ in what they collect and in nothing else, and two
+ * copies of "manifest, then the JSON, then the audio, reporting progress"
+ * would be free to drift about compression levels, entry names or the order
+ * of the two — the shape of bug that is only found by opening the file.
+ *
  * @param target A WritableStream (e.g. from showSaveFilePicker) to stream the
  *   archive to disk, or "blob" to build an in-memory Blob (fallback for
  *   browsers without the File System Access API).
+ * @param manifest The object serialised to `manifest.json`.
+ * @param items The JSON entries and the audio they name.
+ * @param onProgress Optional progress callback for the audio phase.
  * @returns The archive Blob when target is "blob", otherwise null.
  */
-export async function exportProfilesToZip(
-  profileIds: number[],
+export async function writeArchiveZip(
   target: WritableStream | "blob",
+  manifest: unknown,
+  items: ArchiveItem[],
   onProgress?: TransferProgressCallback,
 ): Promise<Blob | null> {
   const zipjs = await getZipJs();
 
-  onProgress?.({
-    phase: "preparing",
-    processedFiles: 0,
-    totalFiles: 0,
-    processedBytes: 0,
-    totalBytes: 0,
-  });
-
-  // Collect metadata for all profiles first. The audio blobs pulled from
-  // IndexedDB are references (Chrome keeps large blobs on disk), so holding
-  // them in a map is cheap — the data itself is only read while streaming.
-  const manifestProfiles: { name: string; folder: string }[] = [];
-  const profileJsonEntries: { path: string; json: string }[] = [];
+  // The audio blobs pulled from IndexedDB are references (Chrome keeps large
+  // blobs on disk), so holding them in a map is cheap — the data itself is
+  // only read while streaming.
   const allAudioBlobs = new Map<
     number,
     { blob: Blob; name: string; type: string }
   >();
-
-  for (let i = 0; i < profileIds.length; i++) {
-    try {
-      const { lean, audioBlobs } = await collectProfileDataForZip(
-        profileIds[i],
-      );
-      const folder = String(i);
-      manifestProfiles.push({ name: lean.profile.name, folder });
-      profileJsonEntries.push({
-        path: `profiles/${folder}/profile.json`,
-        json: JSON.stringify(lean, null, 2),
-      });
-      for (const [id, data] of audioBlobs) {
-        if (!allAudioBlobs.has(id)) {
-          allAudioBlobs.set(id, data);
-        }
+  for (const item of items) {
+    for (const [id, data] of item.audioBlobs) {
+      if (!allAudioBlobs.has(id)) {
+        allAudioBlobs.set(id, data);
       }
-    } catch (error) {
-      console.warn(`Failed to export profile ID ${profileIds[i]}:`, error);
     }
   }
 
@@ -1940,18 +1942,13 @@ export async function exportProfilesToZip(
     blobWriter ?? (target as WritableStream),
   );
 
-  const manifest: ZipManifest = {
-    exportVersion: 3,
-    exportDate: new Date().toISOString(),
-    profiles: manifestProfiles,
-  };
   // JSON metadata compresses well — DEFLATE it.
   await zipWriter.add(
     "manifest.json",
     new zipjs.TextReader(JSON.stringify(manifest, null, 2)),
     { level: 6 },
   );
-  for (const { path, json } of profileJsonEntries) {
+  for (const { path, json } of items) {
     await zipWriter.add(path, new zipjs.TextReader(json), { level: 6 });
   }
 
@@ -1995,6 +1992,73 @@ export async function exportProfilesToZip(
   await zipWriter.close();
 
   return blobWriter ? blobWriter.getData() : null;
+}
+
+/**
+ * Reports the `preparing` phase, before an export has collected anything.
+ *
+ * Not folded into `writeArchiveZip`: collecting is the slow half, and a
+ * progress bar that only appears once collection is done shows nothing while
+ * the user is waiting.
+ */
+export function reportPreparing(onProgress?: TransferProgressCallback): void {
+  onProgress?.({
+    phase: "preparing",
+    processedFiles: 0,
+    totalFiles: 0,
+    processedBytes: 0,
+    totalBytes: 0,
+  });
+}
+
+/**
+ * Exports profiles as a ZIP archive (.iaz), streaming each audio blob
+ * straight into the target so the archive never has to fit in memory.
+ * Structure: manifest.json + audio/<id> (shared) + profiles/<n>/profile.json
+ *
+ * @param profileIds Profiles to include.
+ * @param target A WritableStream (e.g. from showSaveFilePicker) to stream the
+ *   archive to disk, or "blob" to build an in-memory Blob (fallback for
+ *   browsers without the File System Access API).
+ * @returns The archive Blob when target is "blob", otherwise null.
+ */
+export async function exportProfilesToZip(
+  profileIds: number[],
+  target: WritableStream | "blob",
+  onProgress?: TransferProgressCallback,
+): Promise<Blob | null> {
+  reportPreparing(onProgress);
+
+  const manifestProfiles: { name: string; folder: string }[] = [];
+  const items: ArchiveItem[] = [];
+
+  for (let i = 0; i < profileIds.length; i++) {
+    try {
+      const { lean, audioBlobs } = await collectProfileDataForZip(
+        profileIds[i],
+      );
+      const folder = String(i);
+      manifestProfiles.push({ name: lean.profile.name, folder });
+      items.push({
+        path: `profiles/${folder}/profile.json`,
+        json: JSON.stringify(lean, null, 2),
+        audioBlobs,
+      });
+    } catch (error) {
+      // A whole-library backup is worth having with one profile missing; the
+      // manifest names only what actually went in. `exportBanksToZip` makes
+      // the opposite call, and says why.
+      console.warn(`Failed to export profile ID ${profileIds[i]}:`, error);
+    }
+  }
+
+  const manifest: ZipManifest = {
+    exportVersion: 3,
+    exportDate: new Date().toISOString(),
+    profiles: manifestProfiles,
+  };
+
+  return writeArchiveZip(target, manifest, items, onProgress);
 }
 
 export interface ZipImportResult {

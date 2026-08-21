@@ -37,7 +37,8 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
   analyseAndStore: vi.fn(async () => null),
 }));
 
-const { collectBankDataForZip } = await import("./bankTransfer");
+const { collectBankDataForZip, exportBanksToZip } =
+  await import("./bankTransfer");
 const {
   addAudioFile,
   addProfile,
@@ -56,11 +57,14 @@ const { LOUDNESS_ALGO_VERSION } = await import("./audio/loudness/constants");
  * test is measuring something else entirely. Every caller asserts the ids
  * differ.
  */
-async function addSound(name: string): Promise<number> {
+async function addSound(
+  name: string,
+  bytes: string = `the bytes of ${name}`,
+): Promise<number> {
   return addAudioFile({
     name: `${name}.wav`,
     type: "audio/wav",
-    blob: new Blob([`the bytes of ${name}`], { type: "audio/wav" }),
+    blob: new Blob([bytes], { type: "audio/wav" }),
   });
 }
 
@@ -462,5 +466,353 @@ describe("collectBankDataForZip", () => {
     await expect(collectBankDataForZip(4242, OPENERS_ID)).rejects.toThrow(
       /profile with id 4242/i,
     );
+  });
+});
+
+/** One entry read back out of an archive. */
+interface ArchiveEntry {
+  text: string;
+  uncompressedSize: number;
+  compressedSize: number;
+}
+
+/**
+ * Reads an archive Blob back into its entries.
+ *
+ * Everything is pulled inside the reader's scope: `getData` needs the reader
+ * still open, and a helper that returned entry handles would hand back
+ * objects that throw the moment it closed.
+ */
+async function readArchive(archive: Blob): Promise<Map<string, ArchiveEntry>> {
+  const zipjs = await import("@zip.js/zip.js");
+  zipjs.configure({ useWebWorkers: false });
+  const reader = new zipjs.ZipReader(new zipjs.BlobReader(archive));
+  try {
+    const entries = new Map<string, ArchiveEntry>();
+    for (const entry of await reader.getEntries()) {
+      // A directory entry has no `getData`. This writer creates none, and
+      // `entries` not growing one is part of what the name assertions check.
+      if (entry.directory) continue;
+      entries.set(entry.filename, {
+        text: await entry.getData(new zipjs.TextWriter()),
+        uncompressedSize: entry.uncompressedSize,
+        compressedSize: entry.compressedSize,
+      });
+    }
+    return entries;
+  } finally {
+    await reader.close();
+  }
+}
+
+/** The entry names an archive holds, sorted so a comparison is stable. */
+async function entryNames(archive: Blob): Promise<string[]> {
+  return [...(await readArchive(archive)).keys()].sort();
+}
+
+function parseEntry(entries: Map<string, ArchiveEntry>, path: string): unknown {
+  const entry = entries.get(path);
+  expect(entry, `archive has no ${path}`).toBeDefined();
+  return JSON.parse(entry!.text);
+}
+
+/**
+ * Two banks that share one sound, plus a second sound only one of them has.
+ *
+ * Three references across two banks and two rows, so a count taken per bank
+ * differs from a count taken per row — which is the whole point of the shared
+ * `audio/` folder.
+ */
+async function seedTwoBanksSharingASound(
+  profileId: number,
+  sharedBytes?: string,
+  ownBytes?: string,
+): Promise<{ shared: number; bedsOwn: number }> {
+  const shared = await addSound("shared", sharedBytes);
+  const bedsOwn = await addSound("bedsOwn", ownBytes);
+  expect(shared).not.toBe(bedsOwn);
+
+  await seedBank(profileId, OPENERS, [
+    { padIndex: 0, name: "Horn", audioFileIds: [shared] },
+  ]);
+  await seedBank(profileId, CLOSERS, [
+    { padIndex: 5, name: "Rain", audioFileIds: [shared, bedsOwn] },
+  ]);
+
+  return { shared, bedsOwn };
+}
+
+describe("exportBanksToZip", () => {
+  it("writes a manifest, one entry per bank and one shared audio folder", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const { sting, bed } = await seedTwoBanks(profileId);
+
+    const archive = await exportBanksToZip(
+      profileId,
+      [OPENERS_ID, "0"],
+      "blob",
+    );
+
+    expect(archive).toBeInstanceOf(Blob);
+    // An exact set rather than a `toContain` sweep: what a reader of this
+    // format may reject depends on there being nothing else in here.
+    expect(await entryNames(archive!)).toEqual(
+      [
+        "manifest.json",
+        "banks/0/bank.json",
+        "banks/1/bank.json",
+        `audio/${sting}`,
+        `audio/${bed}`,
+      ].sort(),
+    );
+  });
+
+  it("writes the banks in the order asked for, not the order they sit in", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await seedTwoBanks(profileId);
+
+    // "0" sits at position 1 and the UUID at position 0, so this argument
+    // order is neither the positional order nor the sorted one. A writer that
+    // collected by position, or sorted, or numbered its folders independently
+    // of the manifest, disagrees with all three assertions below.
+    const archive = await exportBanksToZip(
+      profileId,
+      ["0", OPENERS_ID],
+      "blob",
+    );
+    const entries = await readArchive(archive!);
+    const manifest = parseEntry(entries, "manifest.json") as {
+      exportVersion: number;
+      exportDate: string;
+      banks: { name: string; folder: string; sourceProfileName: string }[];
+    };
+
+    expect(manifest.exportVersion).toBe(4);
+    expect(Date.parse(manifest.exportDate)).not.toBeNaN();
+    expect(manifest.banks).toEqual([
+      { name: "Beds", folder: "0", sourceProfileName: "Show A" },
+      { name: "Stings", folder: "1", sourceProfileName: "Show A" },
+    ]);
+
+    for (const listed of manifest.banks) {
+      const bank = parseEntry(entries, `banks/${listed.folder}/bank.json`) as {
+        page: { name: string };
+        sourceBankId: string;
+      };
+      expect(bank.page.name).toBe(listed.name);
+    }
+    expect(
+      (parseEntry(entries, "banks/0/bank.json") as { sourceBankId: string })
+        .sourceBankId,
+    ).toBe("0");
+    expect(
+      (parseEntry(entries, "banks/1/bank.json") as { sourceBankId: string })
+        .sourceBankId,
+    ).toBe(OPENERS_ID);
+  });
+
+  it("stores a sound two banks share once, and leaves both banks naming it", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const { shared, bedsOwn } = await seedTwoBanksSharingASound(profileId);
+
+    const archive = await exportBanksToZip(
+      profileId,
+      [OPENERS_ID, "0"],
+      "blob",
+    );
+    const entries = await readArchive(archive!);
+
+    expect(
+      [...entries.keys()].filter((n) => n.startsWith("audio/")).sort(),
+    ).toEqual([`audio/${shared}`, `audio/${bedsOwn}`].sort());
+    // Sharing the bytes must not cost the second bank its reference: each
+    // bank.json still has to stand alone once it is written into a profile.
+    for (const folder of ["0", "1"]) {
+      const bank = parseEntry(entries, `banks/${folder}/bank.json`) as {
+        audioFiles: { id: number }[];
+      };
+      expect(bank.audioFiles.map((ref) => ref.id)).toContain(shared);
+    }
+  });
+
+  it("writes each sound's own bytes under its own id", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const { sting, bed } = await seedTwoBanks(profileId);
+
+    const archive = await exportBanksToZip(
+      profileId,
+      [OPENERS_ID, "0"],
+      "blob",
+    );
+    const entries = await readArchive(archive!);
+
+    expect(entries.get(`audio/${sting}`)?.text).toBe("the bytes of sting");
+    expect(entries.get(`audio/${bed}`)?.text).toBe("the bytes of bed");
+  });
+
+  it("writes the collected bank, and an audio entry for every reference it lists", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const sting = await addSound("sting");
+    await seedBank(profileId, OPENERS, [
+      {
+        padIndex: 7,
+        name: "Horn",
+        keyBinding: "q",
+        audioFileIds: [sting],
+        audioGainSettings: { [sting]: -4.5 },
+      },
+    ]);
+
+    const archive = await exportBanksToZip(profileId, [OPENERS_ID], "blob");
+    const entries = await readArchive(archive!);
+    const bank = parseEntry(entries, "banks/0/bank.json") as {
+      exportVersion: number;
+      sourceBankId: string;
+      page: Record<string, unknown>;
+      padConfigurations: Record<string, unknown>[];
+      audioFiles: { id: number; name: string; type: string; hash?: string }[];
+    };
+
+    expect(bank.exportVersion).toBe(4);
+    expect(bank.sourceBankId).toBe(OPENERS_ID);
+    expect(bank.page.name).toBe("Stings");
+    expect(bank.page.isEmergency).toBe(true);
+    expect(bank.padConfigurations[0].padIndex).toBe(7);
+    expect(bank.padConfigurations[0].keyBinding).toBe("q");
+    expect(bank.padConfigurations[0].audioGainSettings).toEqual({
+      [sting]: -4.5,
+    });
+    expect(bank.audioFiles[0].name).toBe("sting.wav");
+    expect(bank.audioFiles[0].hash).toBeTruthy();
+
+    // Writing the stored rows rather than the collected ones would put this
+    // device's keys and another device's per-field sync stamps in the file.
+    for (const field of [
+      "id",
+      "profileId",
+      "bankId",
+      "pageIndex",
+      "_created",
+      "_modified",
+      "_fieldsModified",
+    ]) {
+      expect(bank.page).not.toHaveProperty(field);
+      expect(bank.padConfigurations[0]).not.toHaveProperty(field);
+    }
+
+    // The one guarantee a reader most wants: every reference has bytes.
+    for (const ref of bank.audioFiles) {
+      expect(entries.has(`audio/${ref.id}`)).toBe(true);
+    }
+  });
+
+  it("counts the deduplicated audio, not one total per bank", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    // 300 + 50 bytes, so the byte total below can only come from the two
+    // rows and never from three references.
+    await seedTwoBanksSharingASound(profileId, "s".repeat(300), "b".repeat(50));
+
+    const seen: {
+      phase: string;
+      processedFiles: number;
+      totalFiles: number;
+      processedBytes: number;
+      totalBytes: number;
+    }[] = [];
+    await exportBanksToZip(profileId, [OPENERS_ID, "0"], "blob", (progress) =>
+      seen.push({ ...progress }),
+    );
+
+    expect(seen[0].phase).toBe("preparing");
+    const last = seen[seen.length - 1];
+    expect(last.phase).toBe("finalizing");
+    // Three references across the two banks, two rows: a per-bank count says
+    // three, and a progress bar that never reaches its end is the symptom.
+    expect(last.totalFiles).toBe(2);
+    expect(last.processedFiles).toBe(2);
+    expect(last.totalBytes).toBe(350);
+    expect(last.processedBytes).toBe(350);
+    expect(seen.some((p) => p.phase === "audio")).toBe(true);
+  });
+
+  it("streams into a WritableStream and returns no Blob", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    const { sting } = await seedTwoBanks(profileId);
+
+    const chunks: Uint8Array[] = [];
+    const target = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+    });
+
+    const returned = await exportBanksToZip(profileId, [OPENERS_ID], target);
+
+    // The File System Access path streams to disk; holding the archive in
+    // memory as well would defeat the reason it exists.
+    expect(returned).toBeNull();
+    const streamed = new Blob(chunks as BlobPart[]);
+    expect(await entryNames(streamed)).toEqual(
+      ["manifest.json", "banks/0/bank.json", `audio/${sting}`].sort(),
+    );
+  });
+
+  it("stores the audio rather than deflating it, and deflates the metadata", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    // Bytes that DEFLATE would crush, so "stored" is unmistakable.
+    const sting = await addSound("sting", "a".repeat(4096));
+    await seedBank(profileId, OPENERS, [
+      { padIndex: 0, name: "Horn", audioFileIds: [sting] },
+    ]);
+
+    const archive = await exportBanksToZip(profileId, [OPENERS_ID], "blob");
+    const entries = await readArchive(archive!);
+
+    // Real audio is compressed already, so DEFLATE costs UI-blocking time for
+    // nothing; JSON is the opposite case.
+    const audio = entries.get(`audio/${sting}`)!;
+    expect(audio.uncompressedSize).toBe(4096);
+    expect(audio.compressedSize).toBe(audio.uncompressedSize);
+    const manifest = entries.get("manifest.json")!;
+    expect(manifest.compressedSize).toBeLessThan(manifest.uncompressedSize);
+  });
+
+  it("fails rather than writing an archive missing a bank that was asked for", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await seedTwoBanks(profileId);
+
+    // The profile export warns and carries on, because a whole-library backup
+    // is worth having with one profile missing. A bank selection is a handful
+    // of banks named by hand, and an archive quietly short of one of them is
+    // discovered at the other end, on the night.
+    await expect(
+      exportBanksToZip(profileId, [OPENERS_ID, "nope"], "blob"),
+    ).rejects.toThrow(/nope/);
+  });
+
+  it("does not claim the profile has been backed up", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await seedTwoBanks(profileId);
+    const db = await getDb();
+    const before = (await db.get("profiles", profileId))?.lastBackedUpAt;
+
+    await exportBanksToZip(profileId, [OPENERS_ID], "blob");
+
+    // A selection of banks is not a backup of the profile, and stamping it
+    // would silence the reminder on data nobody exported.
+    expect((await db.get("profiles", profileId))?.lastBackedUpAt).toBe(before);
+  });
+
+  it("writes an empty archive rather than throwing when nothing is selected", async () => {
+    const profileId = await addProfile({ name: "Show A", syncType: "local" });
+    await seedTwoBanks(profileId);
+
+    const archive = await exportBanksToZip(profileId, [], "blob");
+    const entries = await readArchive(archive!);
+
+    expect([...entries.keys()]).toEqual(["manifest.json"]);
+    expect(
+      (parseEntry(entries, "manifest.json") as { banks: unknown[] }).banks,
+    ).toEqual([]);
   });
 });
