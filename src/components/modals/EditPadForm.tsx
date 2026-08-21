@@ -6,14 +6,7 @@
  * @module components/modals/EditPadForm
  */
 
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  lazy,
-  Suspense,
-} from "react";
+import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import {
   DragDropContext,
   Droppable,
@@ -31,7 +24,7 @@ import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
 import {
   getAudioFile,
-  addAudioFile,
+  addOrReuseAudioFile,
   type ActivePadBehavior,
   PlaybackType,
 } from "@/lib/db";
@@ -54,6 +47,33 @@ interface SoundListItem {
   dndId: string; // Unique ID for drag-and-drop
   fileId: number; // Actual audioFile ID
   name: string; // Display name
+}
+
+/** A sound before it has been given its place in the list. */
+type UnplacedSound = Omit<SoundListItem, "dndId">;
+
+/**
+ * Hands each sound a drag id that is unique even when one pad names the same
+ * sound twice.
+ *
+ * Audio rows are reused by content hash, so adding the same bytes twice
+ * returns one id both times and `sound-${fileId}` stopped being unique within
+ * a pad. Two identical ids give @hello-pangea/dnd two draggables claiming one
+ * id, React two children with one key, and `handleRemoveSound` — which
+ * matches on the drag id — every copy instead of the one clicked. A pad that
+ * plays a sound twice in a sequence is a thing users ask for, so the answer
+ * is to number the copies rather than to refuse the second.
+ *
+ * @param sounds - The list in display order
+ * @returns The same list, each entry carrying a distinct `dndId`
+ */
+function placeSounds(sounds: UnplacedSound[]): SoundListItem[] {
+  const seen = new Map<number, number>();
+  return sounds.map((sound) => {
+    const occurrence = seen.get(sound.fileId) ?? 0;
+    seen.set(sound.fileId, occurrence + 1);
+    return { ...sound, dndId: `sound-${sound.fileId}-${occurrence}` };
+  });
 }
 
 /**
@@ -79,11 +99,6 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
   // Cache of already resolved sound names, keyed by audio file ID
   const soundNamesRef = useRef(new Map<number, string>());
 
-  // Generate consistent IDs for the same audio files across renders
-  const getDndId = useCallback((fileId: number) => {
-    return `sound-${fileId}`;
-  }, []);
-
   // Load sound names when audioFileIds change
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +112,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
       setIsLoadingNames(true);
       try {
         const nameCache = soundNamesRef.current;
-        const fetchedSounds: SoundListItem[] = [];
+        const fetchedSounds: UnplacedSound[] = [];
         for (const fileId of values.audioFileIds) {
           if (!nameCache.has(fileId)) {
             const audioFile = await getAudioFile(fileId);
@@ -105,13 +120,12 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
             nameCache.set(fileId, audioFile?.name || `File ID ${fileId}`); // Fallback name
           }
           fetchedSounds.push({
-            dndId: getDndId(fileId), // Create a consistent ID
             fileId: fileId,
             name: nameCache.get(fileId)!,
           });
         }
         if (cancelled) return;
-        setSounds(fetchedSounds);
+        setSounds(placeSounds(fetchedSounds));
 
         // Log for debugging
         if (initialLoadRef.current) {
@@ -131,7 +145,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [values.audioFileIds, getDndId]);
+  }, [values.audioFileIds]);
 
   // Drag-and-drop handler
   const onDragEnd: OnDragEndResponder = (result) => {
@@ -173,7 +187,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
     if (!files || files.length === 0) return;
 
     console.log(`Adding ${files.length} new sounds...`);
-    const newSounds: SoundListItem[] = [];
+    const newSounds: UnplacedSound[] = [];
     let firstFileName: string | null = null;
 
     try {
@@ -189,18 +203,19 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           firstFileName = file.name.split(".").slice(0, -1).join(".");
         }
 
-        // Add file to DB
-        const newFileId = await addAudioFile({
+        // Reuse by content hash rather than adding unconditionally: the same
+        // sound added to a second pad, or added here twice, must name one
+        // row. Note: The pad itself is associated with the profile, so we
+        // don't need to explicitly associate the audio file with the profile
+        // here.
+        const { id: newFileId } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,
           type: file.type,
-          // Note: The pad itself is associated with the profile, so we don't need to
-          // explicitly associate the audio file with the profile here
         });
 
         soundNamesRef.current.set(newFileId, file.name);
         newSounds.push({
-          dndId: getDndId(newFileId),
           fileId: newFileId,
           name: file.name,
         });
@@ -218,7 +233,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
       onSoundsAdded?.(newSounds.map((sound) => sound.fileId));
 
       // Combine existing sounds with new ones and update the form state
-      const updatedSounds = [...sounds, ...newSounds];
+      const updatedSounds = placeSounds([...sounds, ...newSounds]);
       setSounds(updatedSounds);
       updateValue(
         "audioFileIds",
