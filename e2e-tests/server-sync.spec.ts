@@ -234,6 +234,76 @@ test.describe("server sync API", () => {
     expect(write.status()).toBe(403);
   });
 
+  /**
+   * A revoked link must stop reading. Nothing tested this: shares were created
+   * and read all over this file and never withdrawn, so a `DELETE` that
+   * answered `{ ok: true }` without touching the row would have left every
+   * issued link live forever. A share you believe you have recalled but which
+   * still serves the profile is a silent data leak, and the UI would report
+   * success either way.
+   */
+  test("revoking a share link stops it reading, and only the owner may", async ({
+    request,
+  }) => {
+    const { token } = await mintSession(request, "revoker");
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+    const { token: outsider } = await mintSession(request, "outsider");
+
+    const { id } = await (
+      await request.post("/api/profiles", {
+        headers: cookie,
+        data: { name: "Revocable", data: SAMPLE },
+      })
+    ).json();
+
+    const { share } = await (
+      await request.post(`/api/profiles/${id}/shares`, {
+        headers: cookie,
+        data: { role: "viewer" },
+      })
+    ).json();
+    const link = `/api/profiles/${id}?token=${share.linkToken}`;
+
+    expect((await request.get(link)).status()).toBe(200);
+
+    // Someone else's session cannot revoke it, and is told nothing about the
+    // profile's existence while being refused.
+    const byOutsider = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: { cookie: `${SESSION_COOKIE}=${outsider}` } },
+    );
+    expect(byOutsider.status()).toBe(404);
+    expect((await request.get(link)).status()).toBe(200);
+
+    // Nor does holding the link grant power over the link.
+    const bySelf = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}?token=${share.linkToken}`,
+    );
+    expect(bySelf.status()).toBe(403);
+    expect((await request.get(link)).status()).toBe(200);
+
+    const revoked = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: cookie },
+    );
+    expect(revoked.status()).toBe(200);
+
+    // The credential is dead, and answers as if the profile never existed.
+    expect((await request.get(link)).status()).toBe(404);
+    // And it is gone from the owner's listing, not merely disabled.
+    const listed = await (
+      await request.get(`/api/profiles/${id}/shares`, { headers: cookie })
+    ).json();
+    expect(listed.shares).toEqual([]);
+
+    // Revoking twice is a 404, not a second success.
+    const again = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: cookie },
+    );
+    expect(again.status()).toBe(404);
+  });
+
   test("hides profiles the caller has no grant on", async ({ request }) => {
     const { token: owner } = await mintSession(request, "owner2");
     const { token: stranger } = await mintSession(request, "stranger");
