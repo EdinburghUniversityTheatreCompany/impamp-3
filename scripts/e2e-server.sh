@@ -13,6 +13,15 @@ set -euo pipefail
 
 PORT="${1:-${E2E_PORT:-3100}}"
 
+# Export it before e2e-tests/env.js is read below. That module derives
+# E2E_S3_PORT — and therefore IMPAMP_S3_ENDPOINT, the bucket the app's
+# presigned URLs point at — from E2E_PORT, so a port passed as an *argument*
+# and never exported left the server signing URLs for the bucket belonging to
+# port 3000 while Playwright, run as `E2E_PORT=<port> npx playwright test`,
+# started the real one somewhere else. Every hosted-audio spec then failed on
+# ECONNREFUSED, or on a URL naming the wrong port, no matter what the app did.
+export E2E_PORT="$PORT"
+
 cd "$(dirname "$0")/.."
 
 ROOT="$PWD"
