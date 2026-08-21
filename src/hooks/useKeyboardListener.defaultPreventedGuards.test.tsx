@@ -32,10 +32,22 @@ const mocks = vi.hoisted(() => ({
   triggerAudioForPadInstant: vi.fn(),
 }));
 
-vi.mock("@/lib/audio", () => ({
-  ensureAudioContextActive: vi.fn(),
-  stopAllAudio: mocks.stopAllAudio,
-  fadeOutAllAudio: mocks.fadeOutAllAudio,
+// The barrel, with the *real* `triggerPad` over a mocked engine. Both keyboard
+// trigger paths go through it, so stubbing it out would leave the assertions
+// below watching the test's own stand-in rather than the pad's fields making
+// the journey.
+vi.mock("@/lib/audio", async () => {
+  const { triggerPad } = await vi.importActual<
+    typeof import("@/lib/audio/triggerPad")
+  >("@/lib/audio/triggerPad");
+  return {
+    triggerPad,
+    ensureAudioContextActive: vi.fn(),
+    stopAllAudio: mocks.stopAllAudio,
+    fadeOutAllAudio: mocks.fadeOutAllAudio,
+  };
+});
+vi.mock("@/lib/audio/controls", () => ({
   triggerAudioForPadInstant: mocks.triggerAudioForPadInstant,
 }));
 

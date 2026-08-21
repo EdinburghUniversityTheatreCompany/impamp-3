@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { PadConfiguration } from "@/lib/db";
+import { extractPadPlaybackSettings, PadConfiguration } from "@/lib/db";
 import {
   EmergencySound,
   hasLoadedEmergencySounds,
@@ -11,14 +11,9 @@ import {
   ensureAudioContextActive,
   stopAllAudio,
   fadeOutAllAudio,
-  triggerAudioForPadInstant,
-  LoadingState,
+  triggerPad,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import {
-  loadingStoreActions,
-  generatePadLoadingKey,
-} from "@/store/loadingStore";
 import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
 import { isControlActivationKey, getPadIndexForKey } from "@/lib/keyboardUtils";
@@ -33,7 +28,19 @@ import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 const keyDebounceMap = new Map<string, boolean>();
 const DEBOUNCE_TIME_MS = 100; // Adjust as needed
 
-// Function to play an emergency sound
+/**
+ * Plays one emergency cue.
+ *
+ * Through `triggerPad`, like every other trigger in the app: this used to
+ * build `triggerAudioForPadInstant`'s four callbacks by hand, recomputing the
+ * loading key inside three of them, and so carried its own answer to what
+ * happens when a trigger is cancelled mid-load.
+ *
+ * `sound` is passed whole rather than field by field. `EmergencySound` is
+ * `TriggerablePad` plus the profile and bank it lives on, and enumerating that
+ * overlap is exactly how a field comes to be dropped in silence — TypeScript
+ * exempts a spread from excess-property checking.
+ */
 async function playEmergencySound(sound: EmergencySound): Promise<void> {
   // Check for valid audioFileIds array
   if (!sound || !sound.audioFileIds || sound.audioFileIds.length === 0) {
@@ -48,58 +55,11 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioIDs: ${sound.audioFileIds.join(",")}`,
   );
 
-  // Call the instant trigger function for emergency sounds
-  await triggerAudioForPadInstant({
-    padIndex: sound.padIndex,
-    audioFileIds: sound.audioFileIds,
-    playbackType: sound.playbackType,
-    activeProfileId: sound.profileId,
-    currentBankId: sound.bankId, // Use the bank identity from the sound object
-    name: sound.name,
-    audioTrimSettings: sound.audioTrimSettings,
-    audioGainSettings: sound.audioGainSettings,
-    padGainDb: sound.padGainDb,
-    activePadBehavior: sound.activePadBehavior,
-    onInstantFeedback: () => {
-      console.log(
-        `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
-      );
-    },
-    onLoadingStateChange: (state: LoadingState) => {
-      console.log(
-        `[KeyboardListener] Emergency sound loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.setPadLoadingState(loadingKey, state);
-    },
-    onAudioReady: () => {
-      console.log(
-        `[KeyboardListener] Emergency sound ready for pad ${sound.padIndex}`,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.clearPadLoadingState(loadingKey);
-    },
-    onError: (error) => {
-      console.error(
-        `[KeyboardListener] Emergency sound error for pad ${sound.padIndex}:`,
-        error,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.clearPadLoadingState(loadingKey);
-    },
-  });
+  await triggerPad(
+    sound,
+    { activeProfileId: sound.profileId, currentBankId: sound.bankId },
+    { logPrefix: "[KeyboardListener] emergency sound" },
+  );
 }
 
 export function useKeyboardListener() {
@@ -448,8 +408,12 @@ export function useKeyboardListener() {
 
       // --- Start of Pad Activation Logic ---
 
-      // Nothing to act on until the store has resolved the bank on screen.
-      if (currentBankId === null) {
+      // Nothing to act on until the store has resolved the bank on screen,
+      // and nothing to key the loading state by without a profile. The second
+      // half used to be an `activeProfileId as number` at the trigger call and
+      // a `=== null` check inside three of its callbacks — a cast that said
+      // the value could not be null next to three guards saying it could.
+      if (currentBankId === null || activeProfileId === null) {
         return;
       }
 
@@ -561,64 +525,24 @@ export function useKeyboardListener() {
           hasInteracted.current = true;
         }
 
-        console.log(
-          `[KeyboardListener] Calling triggerAudioForPadInstant for pad index ${matchedPadIndex}`,
+        // Through `triggerPad`, like every other trigger in the app. This
+        // branch used to build `triggerAudioForPadInstant`'s four callbacks by
+        // hand — a second copy of the loading-key bookkeeping that had already
+        // drifted from the shared one, and that never cleared the overlay for
+        // a trigger cancelled mid-load.
+        //
+        // `extractPadPlaybackSettings` rather than a hand-written field list,
+        // for the reason spelled out on `TriggerablePad`: a spread is exempt
+        // from excess-property checking, so an enumerated field that goes
+        // missing goes missing in silence.
+        await triggerPad(
+          {
+            ...extractPadPlaybackSettings(matchedConfig),
+            padIndex: matchedConfig.padIndex,
+          },
+          { activeProfileId, currentBankId },
+          { logPrefix: "[KeyboardListener] keyboard shortcut" },
         );
-        // Call instant trigger function for keyboard shortcuts
-        triggerAudioForPadInstant({
-          padIndex: matchedConfig.padIndex,
-          audioFileIds: matchedConfig.audioFileIds,
-          playbackType: matchedConfig.playbackType,
-          activeProfileId: activeProfileId as number,
-          currentBankId: currentBankId,
-          name: matchedConfig.name,
-          audioTrimSettings: matchedConfig.audioTrimSettings,
-          audioGainSettings: matchedConfig.audioGainSettings,
-          padGainDb: matchedConfig.padGainDb,
-          activePadBehavior: matchedConfig.activePadBehavior,
-          onInstantFeedback: () => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,
-            );
-          },
-          onLoadingStateChange: (state: LoadingState) => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.setPadLoadingState(loadingKey, state);
-          },
-          onAudioReady: () => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut ready for pad ${matchedConfig.padIndex}`,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.clearPadLoadingState(loadingKey);
-          },
-          onError: (error) => {
-            console.error(
-              `[KeyboardListener] Keyboard shortcut error for pad ${matchedConfig.padIndex}:`,
-              error,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.clearPadLoadingState(loadingKey);
-          },
-        });
       } else if (matchedConfig) {
         console.log(
           `[KeyboardListener] Matched pad ${matchedPadIndex} for key ${event.key}, but it has no audio files.`,
