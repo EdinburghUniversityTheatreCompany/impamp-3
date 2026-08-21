@@ -126,15 +126,3 @@ export function analyseLoudness(
     hopTruePeak: computeHopTruePeak(channels, sampleRate),
   };
 }
-
-/**
- * Convenience wrapper for a decoded AudioBuffer. Kept separate so
- * analyseLoudness itself stays testable without Web Audio.
- */
-export function analyseAudioBuffer(buffer: AudioBuffer): LoudnessAnalysis {
-  const channels: Float32Array[] = [];
-  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-    channels.push(buffer.getChannelData(ch));
-  }
-  return analyseLoudness(channels, buffer.sampleRate);
-}
