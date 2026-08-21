@@ -1153,12 +1153,88 @@ export async function deleteUnreferencedAudioFiles(
   return deletedIds.length;
 }
 
+/**
+ * Imports that are partway through attaching audio to pads.
+ *
+ * An import writes its audio records first and the pads that name them
+ * several steps later, and it cannot do otherwise: a pad names its sounds by
+ * the ids the audio store assigns on write, so those ids do not exist until
+ * the audio does. Between the two moments the audio is real and nothing
+ * references it — which is precisely what `cleanupOrphanedAudioFiles` exists
+ * to delete. A cleanup landing in that window took sounds out from under an
+ * import that then wrote pads naming files that were already gone.
+ *
+ * So an import declares itself here (`withAudioImportInProgress`) and the two
+ * orphan sweeps wait for it to finish before they look. That is a guarantee
+ * rather than a guess: no timer, nothing to tune, and no dependence on how
+ * long the import takes. The alternatives do not survive contact with the
+ * code. A grace period on recently-created audio cannot work at all —
+ * `importAudioSources` stamps every record with the one `now` taken when the
+ * import began, so after ten minutes of downloads its files are ten minutes
+ * old at the moment its pads are written, and any grace period short enough
+ * to still clean up is already too short. One transaction spanning the whole
+ * import is not merely slow but impossible: an IndexedDB transaction commits
+ * as soon as the event loop turns with no request outstanding, and an import
+ * awaits a network download between files.
+ *
+ * The register is in memory, so it is exactly as wide as one tab: a second
+ * tab importing while this one sweeps is still unprotected. That is the
+ * honest limit of this fix — the register would have to move into the
+ * database, or onto the Web Locks API, to cover it — and it is a far smaller
+ * hole than the one it replaces, since both operations are ordinary
+ * foreground work in the tab the user is looking at.
+ */
+const audioImportsInFlight = new Set<Promise<void>>();
+
+/**
+ * Runs an import that writes audio, holding off the orphan sweeps until it
+ * has finished writing the pads that name it.
+ *
+ * The import's own outcome is passed straight back to the caller; the copy
+ * kept here absorbs the rejection so that a failed import releases the sweeps
+ * instead of wedging them behind an unhandled promise.
+ */
+export function withAudioImportInProgress<T>(
+  run: () => Promise<T>,
+): Promise<T> {
+  const running = run();
+  const tracked = running.then(
+    () => {},
+    () => {},
+  );
+  audioImportsInFlight.add(tracked);
+  void tracked.then(() => audioImportsInFlight.delete(tracked));
+  return running;
+}
+
+/**
+ * Waits until no import is midway through attaching audio.
+ *
+ * Loops rather than awaiting one snapshot, because an import can start while
+ * we are waiting for another. Callers must open their transaction in the same
+ * turn this returns in: an import that registers *after* that transaction
+ * exists is harmless — IndexedDB serialises its audio write behind the
+ * sweep's overlapping readwrite scope, so the sweep never sees the new
+ * records at all — but one that registers in a turn between the two would be
+ * missed.
+ */
+async function settleAudioImports(): Promise<void> {
+  while (audioImportsInFlight.size > 0) {
+    await Promise.all([...audioImportsInFlight]);
+  }
+}
+
 export async function findOrphanedAudioFiles(): Promise<{
   orphanedIds: Set<number>;
   referencedIds: Set<number>;
   totalAudioFiles: number;
 }> {
   const db = await getDb();
+
+  // Nothing to report while an import is midway through attaching its audio:
+  // its files are unreferenced by construction, and counting them as orphans
+  // is what invites the user to press the button that deletes them.
+  await settleAudioImports();
 
   // One transaction over both stores, so the two halves describe the same
   // instant. Read separately, an import that had committed its audio but not
@@ -1203,12 +1279,20 @@ export async function cleanupOrphanedAudioFiles(): Promise<{
   try {
     // Deciding *and* deleting inside one transaction, so nothing can start
     // referencing a file between the two. The scan and the delete used to be
-    // three separate transactions, and an import writes its audio records
-    // before the pads that name them — so a cleanup running in that window
-    // deleted sounds an import was midway through attaching.
+    // three separate transactions, and a pad write landing between them was
+    // ignored — the delete acted on a list already out of date.
     //
     // Every await below is an IndexedDB request, which is what keeps the
     // transaction alive; anything else here would let it auto-close.
+    //
+    // The transaction cannot close the *other* window, the one between an
+    // import writing its audio and writing the pads that name it: it opens
+    // after that audio is already there and sees exactly what the import left
+    // behind, files nothing references yet. Waiting for the import is what
+    // closes that one — and it has to be the last thing before the
+    // transaction is created, so that no import can register in between (see
+    // `settleAudioImports`).
+    await settleAudioImports();
     const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
     const audioStore = tx.objectStore("audioFiles");
     const allAudioKeys = await audioStore.getAllKeys();

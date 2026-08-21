@@ -68,6 +68,31 @@ function withCollidingPads(): ProfileSyncData {
   return data;
 }
 
+/**
+ * The same profile with two banks claiming position 0, neither carrying its
+ * own `bankId` — a pre-bankId shape, like this file's other pageIndex-only
+ * fixtures. Both resolve to `migratedBankId(0)` = "0" in the import loop, so
+ * the second violates the unique `profileBank` index (the successor to the
+ * deleted `profilePage` index) and the bank importer throws before a single
+ * pad is written.
+ */
+function withCollidingBanks(): ProfileSyncData {
+  const page = {
+    profileId: 42,
+    pageIndex: 0,
+    name: "Opening",
+    isEmergency: false,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+  const data = syncData();
+  data.pageMetadata = [
+    page,
+    { ...page, name: "Collides" },
+  ] as unknown as ProfileSyncData["pageMetadata"];
+  return data;
+}
+
 /** Runs an import whose audio all downloads fine, and expects it to throw. */
 async function expectImportToFail(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -113,6 +138,41 @@ describe("an audio file that cannot be imported", () => {
     ).rejects.toThrow(/2 of 2/);
   });
 
+  it("says which pad the store refused, rather than just AbortError", async () => {
+    // The pad importer collects a name per rejected write and composed them
+    // into "N of M pads could not be imported" — after `await padTx.done`,
+    // which a rejected write never lets it reach. A rejected IndexedDB
+    // request aborts its transaction, so `done` rejects first and the only
+    // thing the user was ever shown for a duplicate or malformed pad was the
+    // bare word "AbortError", naming neither the pad nor the reason.
+    //
+    // The names are reported from the failure path now, and they say what
+    // really happened: the transaction rolled back, so *no* pad was written,
+    // not "one of two".
+    const db = await getDb();
+
+    await expect(
+      importProfileFromSyncData(
+        db,
+        withCollidingPads(),
+        async () => new Blob(["bytes"], { type: "audio/mpeg" }),
+      ),
+    ).rejects.toThrow(/No pads could be imported.*refused 1 of 2/);
+  });
+
+  it("says which bank the store refused, on the same reasoning", async () => {
+    // The bank importer carried the identical dead message.
+    const db = await getDb();
+
+    await expect(
+      importProfileFromSyncData(
+        db,
+        withCollidingBanks(),
+        async () => new Blob(["bytes"], { type: "audio/mpeg" }),
+      ),
+    ).rejects.toThrow(/No banks could be imported.*refused 1 of 2/);
+  });
+
   it("leaves nothing behind when a later step fails", async () => {
     // Audio is written at step 2 and pads at step 4, so anything that throws
     // in between leaves audio records that `deleteProfile` cannot see — it
@@ -130,27 +190,8 @@ describe("an audio file that cannot be imported", () => {
     // Failing in the page importer is the worse version: not one pad exists,
     // so the pad-derived cleanup deletes none of the archive's audio.
     const db = await getDb();
-    const page = {
-      profileId: 42,
-      pageIndex: 0,
-      name: "Opening",
-      isEmergency: false,
-      createdAt: new Date(0),
-      updatedAt: new Date(0),
-    };
-    // Two banks claiming page 0, neither carrying its own `bankId` — a
-    // pre-bankId shape, same as this file's other pageIndex-only fixtures.
-    // Both resolve to `migratedBankId(0)` = "0" in the import loop, so the
-    // second violates the unique `profileBank` index (the successor to the
-    // deleted `profilePage` index this comment used to name), and the page
-    // importer throws before a single pad is written.
-    const data = syncData();
-    data.pageMetadata = [
-      page,
-      { ...page, name: "Collides" },
-    ] as unknown as ProfileSyncData["pageMetadata"];
 
-    await expectImportToFail(db, data);
+    await expectImportToFail(db, withCollidingBanks());
 
     expect(await db.getAll("audioFiles")).toHaveLength(0);
   });
