@@ -246,7 +246,14 @@ genuinely needs to read it back.
 
 Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
 
-## The pre-commit hook does not run `tsc`
+## ~~The pre-commit hook does not run `tsc`~~ — done on main
+
+**Resolved.** `hk.pkl` now has a `tsc` step running `npm run typecheck`, which
+lands on this branch with the merge from main. The entry is kept because the
+reasoning below is still the argument for it, and because Tasks 1-6 of the
+audio-dedup plan were written against the old behaviour and say so.
+
+## The pre-commit hook did not run `tsc`
 
 `hk.pkl` runs prettier, eslint, gitleaks, jscpd, vitest, a large-file check
 and an exec-bit check. It does not typecheck, so a commit can pass the hook
@@ -275,3 +282,19 @@ the asymmetry is still a trap for the next person reading either map.
 
 Noticed while enumerating what a duplicate collapse has to clean up (Task 5 of
 the audio-dedup plan).
+
+## The duplicate-audio panel names no sounds
+
+`DuplicateAudioPanel` reports a group count, a copy count and a byte total,
+because that is all `DuplicateAudioGroup` carries — `hash`, `canonicalId`,
+`duplicateIds`, `reclaimableBytes`. Before deleting audio it would be better to
+show _which_ sounds, the way the Missing Audio Files section lists its pads:
+"horn.wav / horn (1).wav — 2 copies, 1.4 MB".
+
+The names are in the `audioFiles` rows the scan already opens a cursor over, so
+this is a field on the group rather than a second pass — but adding one changes
+the interface Task 5 pinned with eight tests, which is why it was left out of
+Task 7 rather than bolted on.
+
+Noticed while building the duplicate-audio panel (Task 7 of the audio-dedup
+plan).
