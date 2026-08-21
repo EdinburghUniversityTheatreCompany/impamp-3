@@ -299,6 +299,21 @@ packages, none of them is fair game.
 - All level arithmetic lives in `src/lib/audio/loudness/gain.ts`. The overview
   table and the playback path both call `resolveGain`; a second implementation
   would let the table disagree with what is heard
+- Anything that writes an audio file and the pad naming it in **separate
+  transactions** must run inside `withAudioImportInProgress` (`db.ts`), and both
+  orphan sweeps must `await settleAudioImports()` as the **last** thing before
+  they open their transaction. Between the two writes the audio exists with
+  nothing referencing it, and `cleanupOrphanedAudioFiles` is entitled to delete
+  exactly that — an import racing the cleanup button deterministically left a
+  pad naming a sound that was gone. The ordering is load-bearing: work that
+  registers _after_ the sweep's transaction exists is already serialised behind
+  that scope, which is what closes the other half of the window. Two things this
+  is not: a grace period cannot work, because every record carries the single
+  `now` taken at the start of the import, so after a long download the first
+  files are already older than any useful window; and one transaction spanning
+  the import cannot exist, because IndexedDB commits as soon as the event loop
+  turns with no request outstanding and the importer awaits a network download
+  between writes. The register is in memory, so it is one tab wide
 - `audioGainSettings` is keyed by audio file ID, and those IDs are remapped or
   copied in **five** places, not the three this used to name: `importExport.ts`,
   `googleDrive/dataAccess.ts`, `syncUtils.ts`, `db.ts`'s
