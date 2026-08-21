@@ -10,6 +10,28 @@ const withBundleAnalyzer = bundleAnalyzer({
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  compiler: {
+    // Strip `console.log` from production builds, keeping everything that
+    // reports a problem or a decision.
+    //
+    // 302 `console.log` sites shipped to the browser, densest exactly where it
+    // costs most: 49 in `useKeyboardListener` on the keydown path, 24 in
+    // `controls.ts` (about two per pad trigger), 15 in `playback.ts`, eight in
+    // `cache.ts` — one per buffer stored, each building a `toFixed` template
+    // whether or not anything reads it. With devtools closed that is a few
+    // microseconds a call; with devtools open, which is where an operator
+    // debugging a show actually is, it is one to two orders of magnitude more.
+    // The transform removes the arguments as well as the call, so the template
+    // strings stop being built and stop being shipped.
+    //
+    // `error` and `warn` stay because they report failures. `info` stays as
+    // the level for a message worth having in a venue — the trigger path's
+    // "which route did this cue take" line is one, and the server's operational
+    // logging is all `info`/`warn`/`error` already, so nothing there goes
+    // quiet. `console.log` is left meaning "debug detail", which is what these
+    // 302 are.
+    removeConsole: { exclude: ["error", "warn", "info"] },
+  },
   // Pin the workspace root rather than letting Next infer it. Inference walks
   // up looking for a lockfile, so an unrelated package-lock.json in a parent
   // directory (a stray ~/package-lock.json used to do exactly this) makes Next

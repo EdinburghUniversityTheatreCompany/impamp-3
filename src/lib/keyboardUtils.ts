@@ -1,4 +1,11 @@
-import { GRID_COLS } from "./constants";
+import {
+  GRID_COLS,
+  MANUAL_ROW_START_INDEX,
+  SPECIAL_PAD_CONFIG,
+} from "./constants";
+
+const STOP_ALL_INDEX = SPECIAL_PAD_CONFIG.STOP_ALL.index;
+const FADE_OUT_ALL_INDEX = SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index;
 
 // Define keyboard rows for the first 3 rows (indices 0 up to MANUAL_ROW_START_INDEX)
 // Adjust the keys based on the desired default layout for the grid size
@@ -21,18 +28,12 @@ const KEYBOARD_ROWS = [
 export const getDefaultKeyForPadIndex = (
   padIndex: number,
 ): string | undefined => {
-  // Define special indices based on the grid layout
-  // These might need adjustment if the grid layout changes significantly
-  const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Assumes Stop All is in Row 2, last col
-  const FADE_OUT_ALL_INDEX = 2 * GRID_COLS + (GRID_COLS - 1); // Assumes Fade Out is in Row 3, last col
-  const MANUAL_ROW_START_INDEX = 3 * GRID_COLS; // Assumes manual row starts at Row 4
-
   // Check for special pads first
   if (padIndex === STOP_ALL_INDEX) {
-    return "Escape"; // Use 'Escape' to match KeyboardEvent.key
+    return SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding;
   }
   if (padIndex === FADE_OUT_ALL_INDEX) {
-    return " "; // Use ' ' (space) to match KeyboardEvent.key
+    return SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding;
   }
   // Check if pad is in the manual row (or beyond)
   if (padIndex >= MANUAL_ROW_START_INDEX) {
@@ -70,17 +71,14 @@ export const getDefaultKeyForPadIndex = (
  * @returns The corresponding pad index (0-based) or undefined if the key is not mapped.
  */
 export const getPadIndexForKey = (key: string): number | undefined => {
-  // Define special indices based on the grid layout (must match getDefaultKeyForPadIndex)
-  const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Assumes Stop All is in Row 2, last col
-  const FADE_OUT_ALL_INDEX = 2 * GRID_COLS + (GRID_COLS - 1); // Assumes Fade Out is in Row 3, last col
-  const MANUAL_ROW_START_INDEX = 3 * GRID_COLS; // Assumes manual row starts at Row 4
-
-  // Check for special keys first
-  if (key === "Escape") {
+  // Check for special keys first. The two functions read one definition
+  // rather than each deriving the positions from the grid, which is what the
+  // "must match getDefaultKeyForPadIndex" comment here used to ask of a
+  // reader.
+  if (key === SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding) {
     return STOP_ALL_INDEX;
   }
-  if (key === " ") {
-    // Check for space key
+  if (key === SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding) {
     return FADE_OUT_ALL_INDEX;
   }
 
@@ -107,3 +105,67 @@ export const getPadIndexForKey = (key: string): number | undefined => {
   // Key not found in the mapped rows
   return undefined;
 };
+
+/**
+ * Elements the browser itself activates with Enter or Space while they hold
+ * focus. `role` counts as well as the tag, because the chrome contains
+ * `role="tab"` buttons and dnd-driven handles.
+ */
+const ACTIVATION_TAGS = new Set(["BUTTON", "A", "SELECT", "SUMMARY"]);
+const ACTIVATION_ROLES = new Set([
+  "button",
+  "tab",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "switch",
+  "checkbox",
+  "radio",
+  "option",
+]);
+
+/** The slice of an element this needs — so it is testable without a DOM. */
+export interface ActivationTarget {
+  tagName: string;
+  getAttribute(name: string): string | null;
+}
+
+/**
+ * Whether a keydown is one the control holding focus would activate on.
+ *
+ * Enter is the emergency bank and Space is Fade Out All, globally, and they
+ * have to keep meaning that at every moment of a show. But the header, the
+ * bank tabs and the profile selector are ordinary controls a keyboard user
+ * must be able to operate, and those two keys are how a button is pressed —
+ * so the hook hands them over, but only for focus the operator moved there
+ * with Tab (see `useKeyboardListener`).
+ *
+ * Only Enter and Space are ever claimed. A letter still fires its pad and a
+ * digit still switches bank while focus sits in the chrome, because no
+ * control activates on those.
+ *
+ * `:focus-visible` looks like the natural test for "reached by keyboard" and
+ * is the wrong one here: Chromium flips an already-focused element to
+ * focus-visible on the very keydown being judged, so a button focused by a
+ * click reports true the moment Space is pressed — which is precisely the
+ * case that has to keep Fade Out All.
+ */
+export function isControlActivationKey(key: string, target: unknown): boolean {
+  if (key !== "Enter" && key !== " ") return false;
+
+  const el = target as Partial<ActivationTarget> | null;
+  if (
+    !el ||
+    typeof el.tagName !== "string" ||
+    typeof el.getAttribute !== "function"
+  ) {
+    return false;
+  }
+
+  const role = el.getAttribute("role");
+  return (
+    ACTIVATION_TAGS.has(el.tagName) ||
+    (role !== null && ACTIVATION_ROLES.has(role))
+  );
+}

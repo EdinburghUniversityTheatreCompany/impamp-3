@@ -1,13 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  DragDropContext,
-  Droppable,
-  Draggable,
-  OnDragEndResponder,
-} from "@hello-pangea/dnd";
+import React, { Suspense, useEffect, useState } from "react";
 import type { PageMetadata } from "@/lib/db";
+import BankTab, { BANK_TAB_STRIP_CLASSES } from "./BankTab";
 
 export interface BankTabStripProps {
   banks: PageMetadata[];
@@ -17,6 +12,21 @@ export interface BankTabStripProps {
   onEdit: (bankId: string) => void;
   onReorder: (orderedBankIds: string[]) => void;
 }
+
+/**
+ * Everything about the strip that involves `@hello-pangea/dnd`, in a chunk of
+ * its own.
+ *
+ * The library is 92 KB raw / 28 KB gzipped — measured on this build, the
+ * largest single dependency in the payload — and the strip is on screen from
+ * the first paint, so a static import made it a `<script async>` on the
+ * prerendered document: roughly 9% of the gzipped first load, for a gesture
+ * that only exists in edit mode. It is downloaded after first paint instead
+ * (see the preload below), and the service worker still precaches it, because
+ * the worker walks the asset graph through chunk contents rather than only the
+ * HTML.
+ */
+const BankTabsDraggable = React.lazy(() => import("./BankTabsDraggable"));
 
 /**
  * The bank ids in their new order after moving the one at `sourceIndex` to
@@ -45,7 +55,10 @@ export function reorderBankIds(
  * `profileStore.banks` is, via `normaliseBankOrder`).
  *
  * Dragging is enabled in edit mode (or mid-drag; see `canDrag` below) and
- * reports the new order through `onReorder`.
+ * reports the new order through `onReorder`. Until the drag chunk has arrived
+ * — a moment after first paint — the strip is the same tabs without a
+ * `DragDropContext` around them, so the board is drawn and playable without
+ * ever waiting on the drag library.
  */
 export default function BankTabStrip({
   banks,
@@ -61,98 +74,81 @@ export default function BankTabStrip({
   // the drop lands.
   const canDrag = isEditMode || isDragging;
 
-  const onDragEnd: OnDragEndResponder = (result) => {
-    setIsDragging(false);
-    if (!result.destination) return;
-    onReorder(
-      reorderBankIds(banks, result.source.index, result.destination.index),
-    );
-  };
+  // Fetch the drag chunk once the board is up, and swap the strip over as
+  // soon as it lands — not when edit mode turns on.
+  //
+  // That timing is the point. Edit mode is one keystroke away at any moment,
+  // and swapping the strip at that moment would replace the very button the
+  // operator had just focused, losing the focus dnd's keyboard sensor needs to
+  // lift a tab. It also means the drag strip is mounted with dragging merely
+  // *disabled* until edit mode, which is exactly the arrangement this
+  // component had before the chunk was split out — `isDragDisabled` toggles,
+  // nothing remounts.
+  //
+  // The download costs nothing on the critical path: it runs after paint and
+  // the chunk is not referenced by the document. If it never arrives — offline
+  // before the service worker has precached it — the plain strip stays, and
+  // the board is fully usable without being reorderable.
+  const [isDragStripReady, setIsDragStripReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const preload = () => {
+      void import("./BankTabsDraggable").then(() => {
+        if (!cancelled) setIsDragStripReady(true);
+      });
+    };
+    const idle = (
+      window as unknown as {
+        requestIdleCallback?: (cb: () => void) => number;
+      }
+    ).requestIdleCallback;
+    if (idle) {
+      idle(preload);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = window.setTimeout(preload, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  const plainTabs = (
+    <div className={BANK_TAB_STRIP_CLASSES} role="tablist">
+      {banks.map((bank, position) => (
+        <BankTab
+          key={bank.bankId}
+          bank={bank}
+          position={position}
+          isSelected={bank.bankId === currentBankId}
+          isEditMode={isEditMode}
+          onSelect={onSelect}
+          onEdit={onEdit}
+        />
+      ))}
+    </div>
+  );
+
+  if (!isDragStripReady) return plainTabs;
 
   return (
-    <DragDropContext
-      onDragStart={() => setIsDragging(true)}
-      onDragEnd={onDragEnd}
-    >
-      <Droppable droppableId="bankTabs" direction="horizontal">
-        {(provided) => (
-          <div
-            {...provided.droppableProps}
-            ref={provided.innerRef}
-            className="flex flex-1 space-x-1 overflow-x-auto pb-1"
-            role="tablist"
-          >
-            {banks.map((bank, position) => {
-              const bankNumber = position + 1;
-              const isSelected = bank.bankId === currentBankId;
-              return (
-                <Draggable
-                  key={bank.bankId}
-                  draggableId={bank.bankId}
-                  index={position}
-                  isDragDisabled={!canDrag}
-                  // Without this the tabs cannot be dragged at all, by any
-                  // sensor: `@hello-pangea/dnd` refuses a drag whose source
-                  // event happened inside an interactive element, and its
-                  // `interactiveTagNames` (dnd.cjs.js:5605) contains 'button',
-                  // which is what a tab is. It bails before preventDefault, so
-                  // the key also falls through to the global handler — that is
-                  // why Space faded out all audio despite the defaultPrevented
-                  // guard there. Safe to disable because the tab has no
-                  // interactive content of its own: it IS the handle. Only
-                  // e2e-tests/bank-reorder.spec.ts can catch a regression;
-                  // jsdom cannot run dnd's sensors.
-                  disableInteractiveElementBlocking
-                >
-                  {(provided) => (
-                    <button
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                      data-bank-index={position}
-                      data-bank-id={bank.bankId}
-                      role="tab"
-                      aria-selected={isSelected}
-                      onClick={() => {
-                        if (isEditMode) {
-                          onEdit(bank.bankId);
-                        } else {
-                          onSelect(bank.bankId);
-                        }
-                      }}
-                      className={`relative px-4 py-2 rounded-t-lg flex items-center text-sm font-medium transition-colors
-                                ${
-                                  isSelected
-                                    ? "bg-blue-500 text-white"
-                                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                                }
-                                ${isEditMode ? "border-t-2 border-x-2 border-dashed border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20" : ""}
-                                ${bank.isEmergency ? "ring-1 ring-red-500" : ""}`}
-                      aria-label={`${isEditMode ? "Edit" : "Switch to"} bank ${bankNumber}`}
-                      title={
-                        isEditMode
-                          ? `${bank.name}${bank.isEmergency ? " (Emergency)" : ""}\nShift+click to rename`
-                          : bank.name
-                      }
-                    >
-                      <span>
-                        {bankNumber}: {bank.name}
-                      </span>
-                      {bank.isEmergency && (
-                        <span
-                          className="ml-2 w-3 h-3 bg-red-500 rounded-full"
-                          title="Emergency bank"
-                        ></span>
-                      )}
-                    </button>
-                  )}
-                </Draggable>
-              );
-            })}
-            {provided.placeholder}
-          </div>
-        )}
-      </Droppable>
-    </DragDropContext>
+    <Suspense fallback={plainTabs}>
+      <BankTabsDraggable
+        banks={banks}
+        currentBankId={currentBankId}
+        isEditMode={isEditMode}
+        canDrag={canDrag}
+        onSelect={onSelect}
+        onEdit={onEdit}
+        onDragStart={() => setIsDragging(true)}
+        onDrop={(sourceIndex, destinationIndex) => {
+          setIsDragging(false);
+          if (destinationIndex === null) return;
+          onReorder(reorderBankIds(banks, sourceIndex, destinationIndex));
+        }}
+      />
+    </Suspense>
   );
 }

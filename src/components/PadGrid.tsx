@@ -14,33 +14,19 @@ import {
   preloadCurrentPageIntelligent,
 } from "@/lib/audio";
 import { useArmedTracks } from "@/store/playbackStore";
-import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
+import {
+  GRID_COLS,
+  GRID_ROWS,
+  SPECIAL_PAD_CONFIG,
+  SPECIAL_PAD_INDICES,
+  TOTAL_PADS,
+} from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
 import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
-
-// Define configuration for special pads
-const SPECIAL_PAD_CONFIG = {
-  STOP_ALL: {
-    index: 1 * GRID_COLS + (GRID_COLS - 1),
-    label: "Stop All",
-    keyBinding: "Escape",
-  }, // Row 2, last col
-  FADE_OUT_ALL: {
-    index: 2 * GRID_COLS + (GRID_COLS - 1),
-    label: "Fade Out All",
-    keyBinding: " ",
-  }, // Row 3, last col
-};
-
-// Get array of special pad indices for checking
-const SPECIAL_PAD_INDICES = [
-  SPECIAL_PAD_CONFIG.STOP_ALL.index,
-  SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index,
-];
 
 // Stable no-op handlers for the special pads (no edit or drop actions)
 const noopClick = () => {};
@@ -117,7 +103,6 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
         bankId={bankId}
         keyBinding={config?.keyBinding}
         name={config?.name}
-        isConfigured={soundCount > 0}
         soundCount={soundCount}
         audioFileIds={config?.audioFileIds} // Add audio file IDs for hover preloading
         isDisabled={config?.isDisabled ?? false}
@@ -162,7 +147,6 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
     padConfigs,
     isLoading: isLoadingConfigs,
     error: configError,
-    refetch: refreshPadConfigs,
   } = usePadConfigurations(
     activeProfileId !== null ? String(activeProfileId) : null,
     bankId,
@@ -192,21 +176,16 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
   } = usePadInteractions({
     currentBankId: bankId,
     padConfigs: actionableConfigs,
-    refreshPadConfigs,
     hasInteractedRef,
   });
 
   const { handleSwapPads } = usePadSwap({
     currentBankId: bankId,
     padConfigs: actionableConfigs,
-    refreshPadConfigs,
     specialPadIndices: SPECIAL_PAD_INDICES,
   });
 
-  const { handleDropAudio, isDropAllowed } = usePadDrop(
-    bankId,
-    refreshPadConfigs,
-  );
+  const { handleDropAudio, isDropAllowed } = usePadDrop(bankId);
 
   useEffect(() => {
     if (configError) {
@@ -349,12 +328,11 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
         profileId: activeProfileId,
         bankId,
         existingPadConfigs: existingConfigMap,
-        onAssignmentComplete: () => {
-          closeModal();
-          // Invalidates every cached copy of pad data, the keyboard's
-          // emergency set included.
-          refreshPadConfigs();
-        },
+        // The importer announces its own writes, the way every other pad
+        // write does — this callback used to carry the version bump for it,
+        // which is how the two halves of that announcement came to live in
+        // different files.
+        onAssignmentComplete: closeModal,
       },
       confirmText: "",
       showConfirmButton: false,
@@ -384,8 +362,11 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
-            isConfigured={true} // Special pads are always "configured"
-            soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
+            // A special pad holds no sounds. It used to claim two, to switch
+            // off drop handling that `isSpecialPad` switches off anyway, and
+            // to claim `isConfigured` beside them — the pad now reads "filled"
+            // from `isSpecialPad` itself.
+            soundCount={0}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved
@@ -407,8 +388,8 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             bankId={bankId}
             keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
-            isConfigured={true} // Special pads are always "configured"
-            soundCount={2} // Treat special pads as having multiple sounds to disable drop logic
+            // As above: no sounds, and `isSpecialPad` is what refuses drops.
+            soundCount={0}
             isEditMode={isEditMode}
             isDeleteMoveMode={isDeleteMoveMode}
             isSpecialPad={true} // Mark as special pad - can't be deleted or moved

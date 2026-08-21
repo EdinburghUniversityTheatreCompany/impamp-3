@@ -11,6 +11,7 @@ import {
   clearAudioFileLoudness,
   getAudioFileIdsForProfile,
 } from "@/lib/db";
+import { MS_IN_DAY } from "@/lib/constants";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
@@ -25,8 +26,6 @@ import {
 import { getSyncTimestamp } from "@/lib/googleDrive/utils";
 import ProfileSyncPanel from "./sync/ProfileSyncPanel";
 import SyncStatusChip from "./sync/SyncStatusChip";
-
-const MS_IN_DAY = 1000 * 60 * 60 * 24;
 
 // Helper to convert period (ms) to days string, handling 'Never' (-1)
 function formatReminderPeriod(periodMs: number | undefined): string {

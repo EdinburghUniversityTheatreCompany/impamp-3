@@ -9,11 +9,11 @@
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { PadConfiguration, swapPadConfigurations } from "@/lib/db";
+import { notifyPadConfigsChanged } from "./padWrites";
 
 interface PadSwapParams {
   currentBankId: string;
   padConfigs: Map<number, PadConfiguration>;
-  refreshPadConfigs: () => void;
   specialPadIndices: number[];
 }
 
@@ -24,10 +24,8 @@ interface PadSwapParams {
  * @returns Object containing handler for swapping pads
  */
 export function usePadSwap(params: PadSwapParams) {
-  const { currentBankId, padConfigs, refreshPadConfigs, specialPadIndices } =
-    params;
+  const { currentBankId, padConfigs, specialPadIndices } = params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const requestSync = useProfileStore((state) => state.requestSync);
 
   /**
    * Handler for swapping pads in delete/move mode
@@ -75,8 +73,7 @@ export function usePadSwap(params: PadSwapParams) {
 
         // One call invalidates every cached copy of pad data, the emergency
         // set included, so there is no page-is-emergency question to ask.
-        refreshPadConfigs();
-        requestSync(activeProfileId);
+        notifyPadConfigsChanged(activeProfileId);
         console.log(`Successfully swapped pads ${fromIndex} and ${toIndex}`);
       } catch (error) {
         console.error(
@@ -86,14 +83,7 @@ export function usePadSwap(params: PadSwapParams) {
         alert(`Failed to swap pads. Please try again.`);
       }
     },
-    [
-      activeProfileId,
-      currentBankId,
-      padConfigs,
-      refreshPadConfigs,
-      specialPadIndices,
-      requestSync,
-    ],
+    [activeProfileId, currentBankId, padConfigs, specialPadIndices],
   );
 
   return {

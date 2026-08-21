@@ -8,26 +8,18 @@
 
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import {
-  addAudioFile,
-  DEFAULT_PLAYBACK_TYPE,
-  upsertPadConfiguration,
-} from "@/lib/db";
+import { addAudioFile, DEFAULT_PLAYBACK_TYPE } from "@/lib/db";
+import { savePadConfiguration } from "./padWrites";
 import { loadAndDecodeAudio } from "@/lib/audio/decoder";
 
 /**
  * Hook that provides pad drop functionality
  *
  * @param currentBankId - The identity of the current bank
- * @param refreshPadConfigs - Function to refresh pad configurations
  * @returns Object containing handler for dropping audio files
  */
-export function usePadDrop(
-  currentBankId: string,
-  refreshPadConfigs: () => void,
-) {
+export function usePadDrop(currentBankId: string) {
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const requestSync = useProfileStore((state) => state.requestSync);
   // Dropping a file is a write, and it is the one write that needs no edit
   // mode — so none of the Shift-key gates cover it. On a profile that cannot
   // push, the sound would be added locally and then deleted by the next sync
@@ -74,8 +66,11 @@ export function usePadDrop(
           type: file.type,
         });
 
-        // Create a pad configuration with the new audio file
-        await upsertPadConfiguration({
+        // Create a pad configuration with the new audio file, and tell the
+        // rest of the app. One call: the version bump the grid, the keyboard
+        // and the emergency set all watch, and the sync request, are the
+        // single tail every pad write shares — see `padWrites`.
+        await savePadConfiguration({
           profileId: activeProfileId,
           bankId: currentBankId,
           padIndex: padIndex,
@@ -83,14 +78,6 @@ export function usePadDrop(
           playbackType: DEFAULT_PLAYBACK_TYPE,
           name: file.name.replace(/\.[^/.]+$/, ""), // Set default name (without extension)
         });
-
-        // Refresh the UI
-        // One call: refreshing the configurations *is* bumping the shared
-        // version now, so the grid, the keyboard and the emergency set cannot
-        // disagree. There used to be an isEmergencyPage() read and a second
-        // counter here as well, which is how they came to.
-        refreshPadConfigs();
-        requestSync(activeProfileId);
 
         // Preload the audio file to ensure it's ready to play
         await loadAndDecodeAudio(audioFileId);
@@ -105,7 +92,7 @@ export function usePadDrop(
         alert(`Failed to add audio file "${file.name}". Please try again.`);
       }
     },
-    [activeProfileId, currentBankId, refreshPadConfigs, requestSync],
+    [activeProfileId, currentBankId],
   );
 
   /**

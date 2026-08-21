@@ -353,7 +353,7 @@ export async function getAudioCacheState(page: Page): Promise<AudioCacheState> {
  * Index, within the pad's own sound list, of the sound currently playing.
  * Asserts exactly one track is active so a stray track can't be read silently.
  */
-export async function getPlayingSoundIndex(page: Page): Promise<number> {
+async function getPlayingSoundIndex(page: Page): Promise<number> {
   const active = await getActiveSounds(page);
   expect(active).toHaveLength(1);
   const index = active[0].currentAudioIndex;
@@ -372,7 +372,7 @@ export async function getPlayingSoundIndex(page: Page): Promise<number> {
  * "continue", so re-triggering a pad that is already playing is a no-op and the
  * playback strategy never advances.
  */
-export async function stopPlayingTrack(page: Page) {
+async function stopPlayingTrack(page: Page) {
   await page.locator('[data-testid="active-track-item"]').first().click();
   await expect(page.locator("text=Nothing playing")).toBeVisible();
 }

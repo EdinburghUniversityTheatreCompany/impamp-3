@@ -487,7 +487,12 @@ export async function triggerAudioForPadInstant(
     //    playback.
     const cachedBuffer = getCachedAudioBuffer(audioFileId);
     if (cachedBuffer) {
-      console.log(
+      // `info`, not `log`, and deliberately: production builds strip
+      // `console.log` (see `compiler.removeConsole` in next.config.ts), and
+      // which path a trigger took is the one thing worth keeping when a cue
+      // misfires in a venue. `armed-tracks.spec.ts` asserts this exact line
+      // against a production build, so it is also load-bearing for the suite.
+      console.info(
         `[Audio Controls] [Instant] Playing cached buffer for ID: ${audioFileId}, pad ${padIndex}`,
       );
       audioPreloader.trackPlayedFile(audioFileId);

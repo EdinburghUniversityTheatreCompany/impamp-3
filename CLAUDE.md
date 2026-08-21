@@ -147,9 +147,19 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 - Banks 11-19: Ctrl+1 through Ctrl+9 (Ctrl on every platform: Cmd+digit is the
   browser's tab switcher and cannot be cancelled from the page)
 - Bank 20: Ctrl+0
-- ESC: Stop all sounds (panic button)
+- ESC: Stop all sounds (panic button), and hand focus back to the board
 - F9: Play next armed track
 - Shift: Enter edit mode
+- Tab: walks the chrome only. `Pad` is `tabIndex={-1}`, so Tab can never park
+  focus on the board — which is what would turn Enter and Space into "replay
+  the pad Tab stopped on". A control Tab focused keeps Enter and Space for
+  itself; a control a _pointer_ focused does not, so clicking Help never costs
+  the operator Fade Out All. `useKeyboardListener` tracks that difference in a
+  ref fed by capture-phase `keydown`/`pointerdown` listeners rather than
+  asking `:focus-visible`, which flips a click-focused button to focus-visible
+  on the very keydown being judged. Tab used to be suppressed app-wide
+  instead, which cost the header, the bank tabs and the profile selector every
+  keyboard route in
 
 A digit names a **position**, not a bank. `setCurrentPageIndex` indexes into
 `profileStore.banks` — already in display order, see `src/lib/bankOrder.ts` —

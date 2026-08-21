@@ -62,7 +62,6 @@ function renderPad() {
         profileId={PROFILE_ID}
         bankId={BANK_ID}
         name="Applause"
-        isConfigured={true}
         soundCount={1}
         isEditMode={false}
         onClick={() => {}}

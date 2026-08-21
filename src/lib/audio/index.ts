@@ -40,9 +40,3 @@ export type {
   LoadingStateCallback,
 } from "./controls";
 export type { LoadingState } from "./decoder";
-
-/**
- * Audio Module Version
- * Update this when making significant changes to the audio module
- */
-export const AUDIO_MODULE_VERSION = "1.0.0";

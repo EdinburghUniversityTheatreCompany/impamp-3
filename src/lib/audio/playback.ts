@@ -863,15 +863,6 @@ export function isTrackFading(playbackKey: string): boolean {
 }
 
 /**
- * Gets all currently active playback keys
- *
- * @returns Array of active playback keys
- */
-export function getActivePlaybackKeys(): string[] {
-  return Array.from(activeTracks.keys());
-}
-
-/**
  * The track behind a key.
  *
  * An instance key answers with its own track, which is what the streaming path

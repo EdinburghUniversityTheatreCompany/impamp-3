@@ -2,15 +2,17 @@
 
 import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { addAudioFile, upsertPadConfiguration } from "@/lib/db";
-import { useProfileStore } from "@/store/profileStore";
-import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
-
-// Define special pad indices to avoid assignment
-const SPECIAL_PAD_INDICES = [
-  1 * GRID_COLS + (GRID_COLS - 1), // Stop All (Row 2, last col)
-  2 * GRID_COLS + (GRID_COLS - 1), // Fade Out All (Row 3, last col)
-];
+import { addAudioFile } from "@/lib/db";
+import {
+  notifyPadConfigsChanged,
+  savePadConfiguration,
+} from "@/hooks/pad/padWrites";
+import {
+  GRID_COLS,
+  GRID_ROWS,
+  SPECIAL_PAD_INDICES,
+  TOTAL_PADS,
+} from "@/lib/constants";
 
 interface AudioFilePreview {
   id: string; // Temporary ID for drag/drop
@@ -319,8 +321,10 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
           type: file.type,
         });
 
-        // Create pad configuration
-        await upsertPadConfiguration({
+        // Create pad configuration. The announcement is deliberately not
+        // per-pad: one import can write sixty of them, and every bump
+        // re-reads the bank.
+        await savePadConfiguration({
           profileId,
           bankId,
           padIndex: assignment.padIndex,
@@ -334,7 +338,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
       }
 
       // Complete import
-      useProfileStore.getState().requestSync(profileId);
+      notifyPadConfigsChanged(profileId);
       setIsImporting(false);
       onAssignmentComplete();
     } catch (error) {
