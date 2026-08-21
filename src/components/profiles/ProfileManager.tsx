@@ -9,6 +9,7 @@ import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
 import DuplicateAudioPanel from "./DuplicateAudioPanel";
+import ExportBanksPanel from "./ExportBanksPanel";
 import TransferProgressBar from "./TransferProgressBar";
 import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
@@ -57,6 +58,7 @@ export default function ProfileManager() {
     importProfileFromImpamp2JSON,
     importMultipleProfilesFromJSON,
     exportMultipleProfilesToZip,
+    exportBanksToZip,
     importProfilesFromZip,
     isGoogleSignedIn,
     googleUser,
@@ -72,6 +74,7 @@ export default function ProfileManager() {
       importProfileFromImpamp2JSON: s.importProfileFromImpamp2JSON,
       importMultipleProfilesFromJSON: s.importMultipleProfilesFromJSON,
       exportMultipleProfilesToZip: s.exportMultipleProfilesToZip,
+      exportBanksToZip: s.exportBanksToZip,
       importProfilesFromZip: s.importProfilesFromZip,
       isGoogleSignedIn: s.isGoogleSignedIn,
       googleUser: s.googleUser,
@@ -773,6 +776,13 @@ export default function ProfileManager() {
                   />
                 )}
               </section>
+
+              {/* Export Banks Section */}
+              <ExportBanksPanel
+                profiles={profiles}
+                activeProfileId={activeProfileId}
+                exportBanksToZip={exportBanksToZip}
+              />
 
               {/* Import Profile Section */}
               <section className="mb-8">
