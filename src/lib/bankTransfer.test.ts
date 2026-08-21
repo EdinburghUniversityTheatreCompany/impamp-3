@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeArchive } from "@/lib/testSupport/zipArchive";
 import type { PadConfiguration, PlaybackType } from "./db";
 import type { BankExport, BankExportPad } from "./bankTransfer";
+import type { TransferProgress } from "./importExport";
 import { TOTAL_PADS } from "./constants";
 
 /**
@@ -43,14 +44,17 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
 const {
   collectBankDataForZip,
   exportBanksToZip,
+  importBanksFromZip,
   readArchiveManifest,
   writeBankIntoProfile,
 } = await import("./bankTransfer");
 const {
+  MAX_BANKS,
   addAudioFile,
   addProfile,
   cleanupOrphanedAudioFiles,
   computeBlobHash,
+  deleteProfile,
   getDb,
   updateAudioFileLoudness,
   upsertPadConfiguration,
@@ -2069,5 +2073,681 @@ describe("writeBankIntoProfile", () => {
     for (const audioFileId of pad.audioFileIds) {
       expect(await db.get("audioFiles", audioFileId)).toBeDefined();
     }
+  });
+});
+
+/**
+ * Writing an archive's banks into one profile.
+ *
+ * This is the orchestrator, so the fixtures are deliberately bigger than the
+ * ones below it. Four banks rather than two, because a single-bank fixture
+ * cannot tell "wrote the banks the map named" from "wrote the first one", and
+ * cannot put a failure in the *middle* of a set at all — which is the only
+ * place the rollback is interesting.
+ *
+ * Two facts about the fixtures are load-bearing:
+ *
+ * - The source profile is **deleted** before the archive is imported
+ *   (`archiveFromElsewhere`). While its rows are still in the library every
+ *   sound in the archive is *reused* by content hash rather than created, so
+ *   a rollback that deleted reused rows would look perfectly correct and the
+ *   created/reused split would never be exercised. The one test that means to
+ *   check reuse keeps the source on purpose.
+ * - Every "refuses before any write" test seeds a destination that already
+ *   holds banks, pads and audio, and asserts they are still there. A rollback
+ *   is "delete every bank this profile did not have before", so a rollback
+ *   that ran with no baseline would empty the profile — and a fixture whose
+ *   destination is empty could not tell that apart from doing nothing.
+ */
+describe("importBanksFromZip", () => {
+  /**
+   * A fourth bank, so a failure can land with banks written on both sides of
+   * it. `"7"` at position 3 keeps the id/position disagreement the other
+   * three fixtures rely on.
+   */
+  const HORNS = {
+    bankId: "7",
+    pageIndex: 3,
+    name: "Horns",
+    isEmergency: false,
+  } as const;
+
+  /**
+   * Which archive folder holds which bank.
+   *
+   * The export order below is neither the banks' position order nor their id
+   * order, so a placement map keyed by folder cannot accidentally agree with
+   * either.
+   */
+  const FOLDER = { walks: "0", stings: "1", beds: "2", horns: "3" } as const;
+
+  /** The destination's first bank, at a position its id does not encode. */
+  const HELD_BANK_ID = "d41f6b3c-9a72-4e15-8b0d-5c7e2f8a1934";
+
+  /** A show worth four banks, one sound of which two banks share. */
+  async function showAArchive(): Promise<{ source: number; archive: Blob }> {
+    const source = await addProfile({ name: "Show A", syncType: "local" });
+    const sting = await addSound("sting");
+    const bed = await addSound("bed");
+    const walk = await addSound("walk");
+    const horn = await addSound("horn");
+    expect(new Set([sting, bed, walk, horn]).size).toBe(4);
+
+    await seedBank(source, OPENERS, [
+      { padIndex: 0, name: "Horn", audioFileIds: [sting] },
+    ]);
+    await seedBank(source, CLOSERS, [
+      { padIndex: 5, name: "Rain", audioFileIds: [bed] },
+      { padIndex: 6, name: "Both", audioFileIds: [bed, sting] },
+    ]);
+    await seedBank(source, WALKS, [
+      { padIndex: 2, name: "Walk", audioFileIds: [walk] },
+    ]);
+    await seedBank(source, HORNS, [
+      { padIndex: 1, name: "Blast", audioFileIds: [horn] },
+    ]);
+
+    const archive = await exportBanksToZip(
+      source,
+      [WALKS.bankId, OPENERS.bankId, CLOSERS.bankId, HORNS.bankId],
+      "blob",
+    );
+    return { source, archive: archive! };
+  }
+
+  /** The same archive, as it arrives on a device that never had Show A. */
+  async function archiveFromElsewhere(): Promise<Blob> {
+    const { source, archive } = await showAArchive();
+    await deleteProfile(source);
+    expect(await (await getDb()).getAll("audioFiles")).toHaveLength(0);
+    return archive;
+  }
+
+  /**
+   * The destination: two banks holding one sound between them, at positions
+   * 0 and 2.
+   *
+   * The gap at 1 is what tells "the first free position" from "one past the
+   * last" and from "the number of banks". `"0"` as the second bank's id is
+   * the id the archive's own "Beds" bank carries, so a write that adopted the
+   * archive's identity would land on top of it.
+   */
+  async function seedShowB(): Promise<{ target: number; held: number }> {
+    const target = await addProfile({ name: "Show B", syncType: "local" });
+    const held = await addSound("held");
+    await seedBank(
+      target,
+      { bankId: HELD_BANK_ID, pageIndex: 0, name: "Held" },
+      [{ padIndex: 0, name: "Held pad", audioFileIds: [held] }],
+    );
+    await seedBank(target, { bankId: "0", pageIndex: 2, name: "Kept" }, [
+      { padIndex: 4, name: "Kept pad", audioFileIds: [held] },
+    ]);
+    return { target, held };
+  }
+
+  async function banksOf(profileId: number) {
+    const db = await getDb();
+    const pages = await db.getAllFromIndex(
+      "pageMetadata",
+      "profileId",
+      profileId,
+    );
+    return pages.sort((a, b) => a.pageIndex - b.pageIndex);
+  }
+
+  async function padRowsOf(profileId: number) {
+    const db = await getDb();
+    const pads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    return pads.sort((a, b) =>
+      a.bankId === b.bankId
+        ? a.padIndex - b.padIndex
+        : a.bankId.localeCompare(b.bankId),
+    );
+  }
+
+  async function padsOfBank(profileId: number, bankId: string) {
+    return (await padRowsOf(profileId)).filter((pad) => pad.bankId === bankId);
+  }
+
+  async function audioIds(): Promise<number[]> {
+    const db = await getDb();
+    return (await db.getAll("audioFiles"))
+      .map((file) => file.id!)
+      .sort((a, b) => a - b);
+  }
+
+  async function bytesOf(id: number): Promise<string> {
+    const db = await getDb();
+    const row = await db.get("audioFiles", id);
+    return row!.blob.text();
+  }
+
+  /** Adds all four banks — the setup several tests start from. */
+  async function addAllFour(
+    archive: Blob,
+    target: number,
+    onProgress?: (progress: TransferProgress) => void,
+  ) {
+    return importBanksFromZip(
+      archive,
+      await getDb(),
+      {
+        profileId: target,
+        placements: {
+          [FOLDER.walks]: { kind: "add" },
+          [FOLDER.stings]: { kind: "add" },
+          [FOLDER.beds]: { kind: "add" },
+          [FOLDER.horns]: { kind: "add" },
+        },
+      },
+      onProgress,
+    );
+  }
+
+  /**
+   * A hand-built one-bank archive: one pad, and whatever `audioFiles` says.
+   *
+   * The sound entries an exporter would write are not enough here — the cases
+   * that matter are a reference with no bytes behind it, a reference that is
+   * not a reference, and a hash that is not a string.
+   */
+  function oddBankArchive(
+    audioFiles: unknown[],
+    audioFileIds: unknown[],
+  ): Promise<Blob> {
+    return makeArchive({
+      "manifest.json": manifestJson([
+        { name: "Odd", folder: "0", sourceProfileName: "Show A" },
+      ]),
+      "banks/0/bank.json": bankJson({
+        page: { name: "Odd", isEmergency: false },
+        padConfigurations: [
+          {
+            padIndex: 2,
+            name: "Odd pad",
+            audioFileIds,
+            playbackType: "sequential",
+          },
+        ],
+        audioFiles,
+      }),
+      "audio/1": "the bytes of here",
+    });
+  }
+
+  /** Fills a profile up to `total` banks, at positions nothing else uses. */
+  async function fillTo(profileId: number, total: number): Promise<void> {
+    const have = (await banksOf(profileId)).length;
+    for (let index = 0; index < total - have; index++) {
+      await upsertPageMetadata({
+        profileId,
+        bankId: `filler-${index}`,
+        pageIndex: 10 + index,
+        name: `Filler ${index}`,
+        isEmergency: false,
+      });
+    }
+    expect(await banksOf(profileId)).toHaveLength(total);
+  }
+
+  /**
+   * Flips a byte inside one entry's stored data.
+   *
+   * A truncated download or a bad sector, in other words: zip.js checks what
+   * it inflates, so `getData` throws rather than handing back different
+   * bytes. It is the only way to build the case the module comment calls "an
+   * archive that promised bytes and could not deliver them" — a *missing*
+   * entry is a different thing, and is dropped rather than fatal.
+   */
+  async function corruptEntry(archive: Blob, name: string): Promise<Blob> {
+    const bytes = new Uint8Array(await archive.arrayBuffer());
+    const wanted = new TextEncoder().encode(name);
+    let at = -1;
+    search: for (let i = 0; i + wanted.length <= bytes.length; i++) {
+      for (let j = 0; j < wanted.length; j++) {
+        if (bytes[i + j] !== wanted[j]) continue search;
+      }
+      at = i;
+      break;
+    }
+    expect(at).toBeGreaterThan(0);
+    // The local file header ends with the name length and the extra-field
+    // length, immediately before the name itself; the data follows both.
+    const nameLength = bytes[at - 4] | (bytes[at - 3] << 8);
+    const extraLength = bytes[at - 2] | (bytes[at - 1] << 8);
+    const dataAt = at + nameLength + extraLength;
+    bytes[dataAt] ^= 0xff;
+    return new Blob([bytes], { type: "application/zip" });
+  }
+
+  it("writes every bank the placement map names, in the archive's order", async () => {
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+
+    const result = await addAllFour(archive, target);
+
+    expect(
+      result.written.map((bank) => [bank.folder, bank.name, bank.pageIndex]),
+    ).toEqual([
+      ["0", "Walks", 1],
+      ["1", "Stings", 3],
+      ["2", "Beds", 4],
+      ["3", "Horns", 5],
+    ]);
+    expect(result.skipped).toEqual([]);
+
+    // Four fresh identities, none of them the archive's — and "0" would have
+    // collided with the destination's own second bank.
+    const ids = result.written.map((bank) => bank.bankId);
+    expect(new Set(ids).size).toBe(4);
+    for (const sourceId of [
+      WALKS.bankId,
+      OPENERS.bankId,
+      CLOSERS.bankId,
+      HORNS.bankId,
+    ]) {
+      expect(ids).not.toContain(sourceId);
+    }
+
+    expect((await banksOf(target)).map((bank) => bank.name)).toEqual([
+      "Held",
+      "Walks",
+      "Kept",
+      "Stings",
+      "Beds",
+      "Horns",
+    ]);
+  });
+
+  it("brings each bank's pads and the bytes of their sounds", async () => {
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+
+    const result = await addAllFour(archive, target);
+    const byName = new Map(
+      result.written.map((bank) => [bank.name, bank.bankId]),
+    );
+
+    const beds = await padsOfBank(target, byName.get("Beds")!);
+    expect(beds.map((pad) => [pad.padIndex, pad.name])).toEqual([
+      [5, "Rain"],
+      [6, "Both"],
+    ]);
+    expect(await bytesOf(beds[0].audioFileIds[0])).toBe("the bytes of bed");
+    expect(beds[1].audioFileIds).toHaveLength(2);
+    expect(await bytesOf(beds[1].audioFileIds[0])).toBe("the bytes of bed");
+    expect(await bytesOf(beds[1].audioFileIds[1])).toBe("the bytes of sting");
+
+    // One row for a sound two banks name: the sting the Stings bank plays is
+    // the very row the Beds bank's second slot names.
+    const stings = await padsOfBank(target, byName.get("Stings")!);
+    expect(stings.map((pad) => pad.audioFileIds)).toEqual([
+      [beds[1].audioFileIds[1]],
+    ]);
+
+    // Five sounds in the library: the destination's own, plus the archive's
+    // four, with the shared sting stored once.
+    expect(await audioIds()).toHaveLength(5);
+  });
+
+  it("skips a bank the map skips, and one it does not name at all", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+
+    const result = await importBanksFromZip(archive, db, {
+      profileId: target,
+      placements: {
+        [FOLDER.walks]: { kind: "add" },
+        [FOLDER.stings]: { kind: "skip" },
+        [FOLDER.horns]: { kind: "add" },
+      },
+    });
+
+    expect(result.written.map((bank) => bank.name)).toEqual(["Walks", "Horns"]);
+    expect(result.skipped).toEqual(["Stings", "Beds"]);
+    expect((await banksOf(target)).map((bank) => bank.name)).toEqual([
+      "Held",
+      "Walks",
+      "Kept",
+      "Horns",
+    ]);
+    // Nothing of a skipped bank reaches the library, not even its audio.
+    expect(await audioIds()).toHaveLength(3);
+  });
+
+  it("adds no audio row when a bank goes back into the profile it came from", async () => {
+    const db = await getDb();
+    const { source, archive } = await showAArchive();
+    const before = await audioIds();
+
+    const result = await importBanksFromZip(archive, db, {
+      profileId: source,
+      placements: { [FOLDER.beds]: { kind: "add" } },
+    });
+
+    expect(result.written).toHaveLength(1);
+    expect(await audioIds()).toEqual(before);
+    const copy = await padsOfBank(source, result.written[0].bankId);
+    const original = await padsOfBank(source, CLOSERS.bankId);
+    expect(copy.map((pad) => pad.audioFileIds)).toEqual(
+      original.map((pad) => pad.audioFileIds),
+    );
+  });
+
+  it("refuses the whole set before any write when the free slots run out", async () => {
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+    await fillTo(target, MAX_BANKS - 3);
+    const banksBefore = await banksOf(target);
+    const padsBefore = await padRowsOf(target);
+    const audioBefore = await audioIds();
+
+    await expect(addAllFour(archive, target)).rejects.toThrow(/free slot/i);
+
+    expect(await banksOf(target)).toEqual(banksBefore);
+    expect(await padRowsOf(target)).toEqual(padsBefore);
+    expect(await audioIds()).toEqual(audioBefore);
+  });
+
+  it("counts only the banks it adds against the free slots", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+    await fillTo(target, MAX_BANKS);
+
+    const result = await importBanksFromZip(archive, db, {
+      profileId: target,
+      placements: {
+        [FOLDER.walks]: { kind: "replace", bankId: HELD_BANK_ID },
+      },
+    });
+
+    expect(
+      result.written.map((bank) => [bank.name, bank.bankId, bank.pageIndex]),
+    ).toEqual([["Walks", HELD_BANK_ID, 0]]);
+    expect(await banksOf(target)).toHaveLength(MAX_BANKS);
+  });
+
+  it("refuses an archive of profiles, without touching the destination", async () => {
+    const db = await getDb();
+    const { target } = await seedShowB();
+    const archive = await makeArchive({
+      "profile.json": JSON.stringify({ exportVersion: 2 }),
+    });
+    const banksBefore = await banksOf(target);
+
+    await expect(
+      importBanksFromZip(archive, db, { profileId: target, placements: {} }),
+    ).rejects.toThrow(/profiles, not banks/i);
+
+    expect(await banksOf(target)).toEqual(banksBefore);
+    expect(await padRowsOf(target)).toHaveLength(2);
+    expect(await audioIds()).toHaveLength(1);
+  });
+
+  it("refuses a file that is neither, without touching the destination", async () => {
+    const db = await getDb();
+    const { target } = await seedShowB();
+    const archive = await makeArchive({ "readme.txt": "hello" });
+    const banksBefore = await banksOf(target);
+
+    await expect(
+      importBanksFromZip(archive, db, { profileId: target, placements: {} }),
+    ).rejects.toThrow(/missing manifest\.json or profile\.json/);
+
+    expect(await banksOf(target)).toEqual(banksBefore);
+    expect(await padRowsOf(target)).toHaveLength(2);
+    expect(await audioIds()).toHaveLength(1);
+  });
+
+  it("puts every bank back the way it was when a later bank fails", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+    const banksBefore = await banksOf(target);
+    const padsBefore = await padRowsOf(target);
+    const audioBefore = await audioIds();
+
+    await expect(
+      importBanksFromZip(archive, db, {
+        profileId: target,
+        placements: {
+          [FOLDER.walks]: { kind: "replace", bankId: HELD_BANK_ID },
+          [FOLDER.stings]: { kind: "add" },
+          [FOLDER.beds]: { kind: "replace", bankId: "not-here" },
+          [FOLDER.horns]: { kind: "add" },
+        },
+      }),
+    ).rejects.toThrow(/no longer in this profile/);
+
+    // Row for row, id for id: the replaced bank's own pads are back, the two
+    // banks that were added are gone, and so is the audio they created.
+    expect(await banksOf(target)).toEqual(banksBefore);
+    expect(await padRowsOf(target)).toEqual(padsBefore);
+    expect(await audioIds()).toEqual(audioBefore);
+  });
+
+  it("keeps a sound it reused, and an orphan it never touched, when it takes back what it created", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target, held } = await seedShowB();
+    // Two rows no pad names. The first holds the very bytes the archive's
+    // "Walks" bank carries, so that bank reuses it rather than creating one;
+    // the second has nothing to do with this import at all. A rollback that
+    // deleted what it reused would take the first, and one that reached for
+    // the orphan sweep instead of the list of what it created would take
+    // both.
+    const reused = await addSound("walk");
+    const stranger = await addSound("stranger");
+    expect(new Set([held, reused, stranger]).size).toBe(3);
+
+    await expect(
+      importBanksFromZip(archive, db, {
+        profileId: target,
+        placements: {
+          [FOLDER.walks]: { kind: "add" },
+          [FOLDER.stings]: { kind: "add" },
+          [FOLDER.beds]: { kind: "replace", bankId: "not-here" },
+        },
+      }),
+    ).rejects.toThrow(/no longer in this profile/);
+
+    expect(await audioIds()).toEqual(
+      [held, reused, stranger].sort((a, b) => a - b),
+    );
+  });
+
+  it("takes back the audio a failing bank had already written", async () => {
+    const db = await getDb();
+    const { target } = await seedShowB();
+    const audioBefore = await audioIds();
+    const banksBefore = await banksOf(target);
+
+    const archive = await corruptEntry(
+      await makeArchive({
+        "manifest.json": manifestJson([
+          { name: "First", folder: "0", sourceProfileName: "Show A" },
+          { name: "Second", folder: "1", sourceProfileName: "Show A" },
+        ]),
+        "banks/0/bank.json": bankJson({
+          page: { name: "First", isEmergency: false },
+          padConfigurations: [
+            {
+              padIndex: 0,
+              name: "One",
+              audioFileIds: [1],
+              playbackType: "sequential",
+            },
+          ],
+          audioFiles: [{ id: 1, name: "one.wav", type: "audio/wav" }],
+        }),
+        "banks/1/bank.json": bankJson({
+          page: { name: "Second", isEmergency: false },
+          padConfigurations: [
+            {
+              padIndex: 0,
+              name: "Two",
+              audioFileIds: [2, 3],
+              playbackType: "sequential",
+            },
+          ],
+          audioFiles: [
+            { id: 2, name: "two.wav", type: "audio/wav" },
+            { id: 3, name: "three.wav", type: "audio/wav" },
+          ],
+        }),
+        "audio/1": "the bytes of one",
+        "audio/2": "the bytes of two",
+        "audio/3": "the bytes of three, and enough of them to deflate ".repeat(
+          8,
+        ),
+      }),
+      "audio/3",
+    );
+
+    await expect(
+      importBanksFromZip(archive, db, {
+        profileId: target,
+        placements: { "0": { kind: "add" }, "1": { kind: "add" } },
+      }),
+    ).rejects.toThrow(/could not be imported/);
+
+    // Sound 2 was written before sound 3 was reached, and the write that
+    // wrote it never returned — so the only route back to it is the error.
+    expect(await audioIds()).toEqual(audioBefore);
+    expect(await banksOf(target)).toEqual(banksBefore);
+  });
+
+  it("refuses two placements that replace the same bank, before any write", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+    const banksBefore = await banksOf(target);
+    const audioBefore = await audioIds();
+
+    await expect(
+      importBanksFromZip(archive, db, {
+        profileId: target,
+        placements: {
+          [FOLDER.walks]: { kind: "replace", bankId: HELD_BANK_ID },
+          [FOLDER.stings]: { kind: "replace", bankId: HELD_BANK_ID },
+        },
+      }),
+    ).rejects.toThrow(/same bank/i);
+
+    expect(await banksOf(target)).toEqual(banksBefore);
+    expect(await audioIds()).toEqual(audioBefore);
+  });
+
+  it("writes a bank whose sounds have no bytes, or are not references at all", async () => {
+    const db = await getDb();
+    const { target } = await seedShowB();
+    // The pad names three sounds: one with bytes, one declared with no
+    // `audio/` entry behind it, and one the bank never declares. Only the
+    // first can be written, and the other two are dropped rather than failing
+    // the bank — both come out of this app's own writer.
+    const archive = await oddBankArchive(
+      [
+        { id: 1, name: "here.wav", type: "audio/wav" },
+        { id: 2, name: "gone.wav", type: "audio/wav" },
+        null,
+      ],
+      [1, 2, 3],
+    );
+
+    const result = await importBanksFromZip(archive, db, {
+      profileId: target,
+      placements: { "0": { kind: "add" } },
+    });
+
+    const pads = await padsOfBank(target, result.written[0].bankId);
+    expect(pads.map((pad) => pad.padIndex)).toEqual([2]);
+    expect(pads[0].audioFileIds).toHaveLength(1);
+    expect(await bytesOf(pads[0].audioFileIds[0])).toBe("the bytes of here");
+  });
+
+  it("ignores a stated hash that is not a hash, rather than failing the bank", async () => {
+    const db = await getDb();
+    const { target } = await seedShowB();
+    // A hash is an IndexedDB key on the way in. An object here reaches
+    // `index.getAll` and takes the whole bank down with a DataError.
+    const archive = await oddBankArchive(
+      [{ id: 1, name: "here.wav", type: "audio/wav", hash: { not: "one" } }],
+      [1],
+    );
+
+    const result = await importBanksFromZip(archive, db, {
+      profileId: target,
+      placements: { "0": { kind: "add" } },
+    });
+
+    const pads = await padsOfBank(target, result.written[0].bankId);
+    expect(await bytesOf(pads[0].audioFileIds[0])).toBe("the bytes of here");
+  });
+
+  it("holds each bank's audio to its pads, so a sweep between banks takes nothing", async () => {
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+
+    // The orphan sweep, fired once per bank as the import runs. It waits for
+    // whatever write is in flight and then looks — so if the audio of the
+    // banks already written were not yet named by their pads, it would delete
+    // exactly that, and say so in its count.
+    const sweeps: Promise<{ deletedCount: number }>[] = [];
+    const result = await addAllFour(archive, target, (progress) => {
+      if (progress.phase === "audio") sweeps.push(cleanupOrphanedAudioFiles());
+    });
+
+    expect(result.written).toHaveLength(4);
+    expect(
+      (await Promise.all(sweeps)).map((sweep) => sweep.deletedCount),
+    ).toEqual([0, 0, 0, 0]);
+    for (const pad of await padRowsOf(target)) {
+      for (const id of pad.audioFileIds) {
+        expect(await bytesOf(id)).toContain("the bytes of");
+      }
+    }
+  });
+
+  it("reports one step per bank it writes, and a finish", async () => {
+    const db = await getDb();
+    const archive = await archiveFromElsewhere();
+    const { target } = await seedShowB();
+    const seen: TransferProgress[] = [];
+
+    await importBanksFromZip(
+      archive,
+      db,
+      {
+        profileId: target,
+        placements: {
+          [FOLDER.walks]: { kind: "add" },
+          [FOLDER.stings]: { kind: "skip" },
+          [FOLDER.beds]: { kind: "add" },
+        },
+      },
+      (progress) => seen.push(progress),
+    );
+
+    expect(seen[0].phase).toBe("preparing");
+    expect(
+      seen
+        .filter((step) => step.phase === "audio")
+        .map((step) => [step.fileName, step.processedFiles, step.totalFiles]),
+    ).toEqual([
+      ["Walks", 0, 2],
+      ["Beds", 1, 2],
+    ]);
+    expect(seen.at(-1)).toMatchObject({
+      phase: "finalizing",
+      processedFiles: 2,
+      totalFiles: 2,
+    });
   });
 });

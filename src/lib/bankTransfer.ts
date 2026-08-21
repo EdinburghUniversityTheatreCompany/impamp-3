@@ -60,10 +60,13 @@ import { IDBPDatabase } from "idb";
 import { TOTAL_PADS } from "./constants";
 import {
   ImpAmpDBSchema,
+  MAX_BANKS,
   PadConfiguration,
   PageMetadata,
   createBank,
+  deleteUnreferencedAudioFiles,
   extractPadPlaybackSettings,
+  getAllPageMetadataForProfile,
   getBankById,
   getPadConfigurationsForProfileBank,
   getProfile,
@@ -75,6 +78,7 @@ import {
   ArchiveItem,
   AudioFileRef,
   ImportAudioSource,
+  SerialisedLoudness,
   TransferProgressCallback,
   collectAudioForPads,
   getZipJs,
@@ -463,53 +467,88 @@ export async function readArchiveManifest(
   const zipReader = new zipjs.ZipReader(new zipjs.BlobReader(blob));
 
   try {
-    const { readEntryText, parseEntryJson } = zipEntryReaders(
-      await zipReader.getEntries(),
+    const described = await readBankArchive(
+      zipEntryReaders(await zipReader.getEntries()),
     );
-
-    const manifestText = await readEntryText("manifest.json");
-    if (!manifestText) {
-      if (await readEntryText("profile.json")) return { kind: "profiles" };
-      throw new Error(
-        "Invalid .iaz file: missing manifest.json or profile.json",
-      );
-    }
-
-    const manifest = parseEntryJson("manifest.json", manifestText);
-    if (isRecord(manifest) && manifest.exportVersion === 3) {
-      return { kind: "profiles" };
-    }
-    if (
-      !isRecord(manifest) ||
-      manifest.exportVersion !== 4 ||
-      !Array.isArray(manifest.banks)
-    ) {
-      throw new Error("Invalid or unsupported .iaz archive format.");
-    }
-
-    const banks: BankSummary[] = [];
-    for (const listed of listedBanks(manifest.banks)) {
-      const path = `banks/${listed.folder}/bank.json`;
-      const text = await readEntryText(path);
-      if (text === null) {
-        throw new Error(
-          `This archive's manifest lists ${path}, but the archive does not contain it.`,
-        );
-      }
-      banks.push(
-        summariseBank(
-          path,
-          listed.folder,
-          listed.sourceProfileName,
-          parseEntryJson(path, text),
-        ),
-      );
-    }
-
-    return { kind: "banks", banks };
+    return described.kind === "banks"
+      ? { kind: "banks", banks: described.banks.map((held) => held.summary) }
+      : described;
   } finally {
     await zipReader.close();
   }
+}
+
+/** The readers `zipEntryReaders` hands back, named so it can be passed on. */
+type ZipEntryReaders = ReturnType<typeof zipEntryReaders>;
+
+/** One bank of an archive: what to show about it, and what it holds. */
+interface LoadedBank {
+  summary: BankSummary;
+  bank: BankExport;
+}
+
+/**
+ * Reads and checks every document in a bank archive — the shared half of
+ * "what is this file" and "write it into this profile".
+ *
+ * Both callers need the same manifest routing and the same per-bank checks,
+ * and they cannot share a *parse*: the two phases are separated by the user
+ * answering a dialog, so the importer opens the file again from scratch.
+ * What they can share is the rule, which is this function, so a document the
+ * describer accepted cannot be one the importer reads differently.
+ *
+ * The importer keeps the parsed documents; `readArchiveManifest` throws them
+ * away. `bank` is only as trustworthy as {@link summariseBank} makes it: a
+ * page with a name, and `padConfigurations` and `audioFiles` that are lists.
+ * Everything inside those lists is still whatever the file said, which is why
+ * `writeBankIntoProfile` checks each pad and this module checks each sound
+ * reference.
+ */
+async function readBankArchive(
+  readers: ZipEntryReaders,
+): Promise<{ kind: "profiles" } | { kind: "banks"; banks: LoadedBank[] }> {
+  const { readEntryText, parseEntryJson } = readers;
+
+  const manifestText = await readEntryText("manifest.json");
+  if (!manifestText) {
+    if (await readEntryText("profile.json")) return { kind: "profiles" };
+    throw new Error("Invalid .iaz file: missing manifest.json or profile.json");
+  }
+
+  const manifest = parseEntryJson("manifest.json", manifestText);
+  if (isRecord(manifest) && manifest.exportVersion === 3) {
+    return { kind: "profiles" };
+  }
+  if (
+    !isRecord(manifest) ||
+    manifest.exportVersion !== 4 ||
+    !Array.isArray(manifest.banks)
+  ) {
+    throw new Error("Invalid or unsupported .iaz archive format.");
+  }
+
+  const banks: LoadedBank[] = [];
+  for (const listed of listedBanks(manifest.banks)) {
+    const path = `banks/${listed.folder}/bank.json`;
+    const text = await readEntryText(path);
+    if (text === null) {
+      throw new Error(
+        `This archive's manifest lists ${path}, but the archive does not contain it.`,
+      );
+    }
+    const document = parseEntryJson(path, text);
+    banks.push({
+      summary: summariseBank(
+        path,
+        listed.folder,
+        listed.sourceProfileName,
+        document,
+      ),
+      bank: document as BankExport,
+    });
+  }
+
+  return { kind: "banks", banks };
 }
 
 /** Where one incoming bank goes in the destination profile. */
@@ -867,4 +906,384 @@ async function runBankWrite(
       { cause: error },
     );
   }
+}
+
+/** What one import of an archive's banks did. */
+export interface BankImportResult {
+  written: {
+    folder: string;
+    name: string;
+    bankId: string;
+    pageIndex: number;
+  }[];
+  /** The names of the banks the placement map did not ask for. */
+  skipped: string[];
+}
+
+/** Every row of one bank, as it stood before the import touched it. */
+interface BankSnapshot {
+  page: PageMetadata | undefined;
+  pads: PadConfiguration[];
+}
+
+/**
+ * The profile as it stood before the first bank was written.
+ *
+ * `bankIds` is a *set of identities* rather than a list of what this run
+ * added, and that distinction is the whole of the rollback: a write that
+ * failed between `createBank` and its first pad has already put a bank in the
+ * profile and has no return value to say so — its `BankWriteError` carries
+ * audio ids, not a bank id — so a rollback driven by what succeeded leaves a
+ * stray empty bank behind for ever.
+ */
+interface ImportBaseline {
+  bankIds: Set<string>;
+  snapshots: Map<string, BankSnapshot>;
+}
+
+/**
+ * Where the caller wants one bank.
+ *
+ * A folder nothing is said about is a **skip**, not an add. The map comes
+ * from a dialog the user filled in, and a bank they did not answer for is one
+ * they did not ask for; defaulting the other way would write banks nobody
+ * chose into their profile.
+ *
+ * `folder` matched `/^\d{1,9}$/` before it ever reached here — `listedBanks`
+ * refuses anything else — so the only strings that index this map are decimal
+ * indexes, and an archive cannot name `constructor` and pull a placement out
+ * of `Object.prototype`.
+ */
+function placementFor(
+  placements: Record<string, BankPlacement>,
+  folder: string,
+): BankPlacement {
+  return placements[folder] ?? { kind: "skip" };
+}
+
+/**
+ * One archive sound, as the audio importer takes it — or nothing.
+ *
+ * Every field here is a value out of a file the user picked, so every field
+ * is checked. `hash` matters most: it becomes an IndexedDB key on the way in,
+ * so anything but a string reaches `index.getAll` and takes the whole bank
+ * down with a `DataError`. It is *trusted rather than verified* on purpose —
+ * that is what lets a sound already in the library be reused before its bytes
+ * are extracted at all — which is exactly why its type has to be real.
+ *
+ * A reference with no `audio/<id>` entry behind it is dropped rather than
+ * fatal, and so is one that is not a reference at all. The first comes out of
+ * this app's own writer whenever `collectAudioForPads` meets a pad naming an
+ * audio row that has since gone; `writeBankIntoProfile` then drops the pad's
+ * reference to it and writes the rest of the pad. A source that *fails* is a
+ * different thing entirely and fails its bank.
+ */
+function audioSourceFor(
+  ref: unknown,
+  bankName: string,
+  readers: ZipEntryReaders,
+  zipjs: Awaited<ReturnType<typeof getZipJs>>,
+): ImportAudioSource | null {
+  if (!isRecord(ref) || !Number.isInteger(ref.id)) {
+    console.warn(
+      `Bank "${bankName}" lists something in audioFiles that is not a sound reference.`,
+    );
+    return null;
+  }
+
+  const originalId = ref.id as number;
+  const entry = readers.entryByName.get(`audio/${originalId}`);
+  if (!entry || entry.directory) {
+    console.warn(
+      `Audio file ${originalId} referenced by bank "${bankName}" is not in this archive.`,
+    );
+    return null;
+  }
+
+  const type =
+    typeof ref.type === "string" ? ref.type : "application/octet-stream";
+  const getData = entry.getData.bind(entry);
+  return {
+    originalId,
+    name: typeof ref.name === "string" ? ref.name : `Sound ${originalId}`,
+    type,
+    size: entry.uncompressedSize,
+    loudness: isRecord(ref.loudness)
+      ? (ref.loudness as unknown as SerialisedLoudness)
+      : undefined,
+    hash: typeof ref.hash === "string" ? ref.hash : undefined,
+    getBlob: () => getData(new zipjs.BlobWriter(type)),
+  };
+}
+
+/**
+ * Writes an archive's banks into one profile.
+ *
+ * Two-phase on purpose: `readArchiveManifest` answers "what is in this file",
+ * the user gives each bank a slot, and this writes. A bank cannot be written
+ * before its slot is known, and the file is opened again here because the
+ * answer arrives from a dialog rather than from the same turn.
+ *
+ * ## What only this function can decide
+ *
+ * `writeBankIntoProfile` sees one bank at a time, so everything about the
+ * *set* is decided here and before the first write: that the adds fit in the
+ * free slots (`createBank` would refuse the last one halfway through
+ * otherwise), and that no two banks are pointed at the same replace target
+ * (the second would silently overwrite the first, with nothing left to tell
+ * the user). What one bank can decide for itself is left to it — a replace
+ * target that this profile does not hold is `writeBankIntoProfile`'s check,
+ * and a second copy of it here is the duplicated rule this repo regresses on.
+ *
+ * ## A failure takes the whole import back
+ *
+ * Partial success is not offered, and the reason is the user rather than the
+ * code. A replace has already cleared the destination bank by the time
+ * anything can go wrong, so leaving the set half-applied means the pads of a
+ * bank they still have are simply gone. An add mints a fresh bank id, so
+ * "just run it again" after a partial success duplicates every bank that
+ * landed — and the dialog places banks by archive folder, so there is no way
+ * for the user to ask for "only the ones that failed". One gesture, one
+ * outcome.
+ *
+ * The rollback puts every replaced bank back row for row and deletes every
+ * bank the profile did not hold before, then deletes the audio rows *this
+ * attempt created* — never one it reused, which is a row another profile is
+ * very probably already playing. The created-not-reused list comes from
+ * `writeBankIntoProfile`, both from what it returns and from the
+ * `BankWriteError` it throws: the rows a failing bank wrote before it failed
+ * are reachable no other way.
+ *
+ * Audio is written inside `withAudioImportInProgress` — by
+ * `writeBankIntoProfile`, once per bank, which is enough. Between two banks
+ * every sound already written is named by the pads of the bank that brought
+ * it, so an orphan sweep landing in that gap has nothing to take. That is
+ * also why `onProgress` is called *outside* the write it announces: a sweep
+ * fired from a progress callback inside that scope would wait for an import
+ * that is waiting for the callback.
+ *
+ * @param blob The archive, as picked
+ * @param db An open connection, shared with `writeBankIntoProfile`
+ * @param options The destination profile, and where each archive folder goes
+ * @param onProgress Optional progress callback, one step per bank written
+ */
+export async function importBanksFromZip(
+  blob: Blob,
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  options: { profileId: number; placements: Record<string, BankPlacement> },
+  onProgress?: TransferProgressCallback,
+): Promise<BankImportResult> {
+  const { profileId, placements } = options;
+  reportPreparing(onProgress);
+
+  const zipjs = await getZipJs();
+  const zipReader = new zipjs.ZipReader(new zipjs.BlobReader(blob));
+  const createdAudioIds: number[] = [];
+  // Null until the profile has been read. A rollback with no baseline would
+  // read "this profile held no banks" and delete every bank in it, so a
+  // failure before this point must not reach one.
+  let baseline: ImportBaseline | null = null;
+
+  try {
+    const readers = zipEntryReaders(await zipReader.getEntries());
+    const described = await readBankArchive(readers);
+    if (described.kind !== "banks") {
+      throw new Error(
+        "This archive holds profiles, not banks. Import it from the profile manager instead.",
+      );
+    }
+
+    // Every sound of every bank being written, resolved to an archive entry
+    // before anything is decided. The blobs are not extracted here — each
+    // source is a closure over its entry — so this costs a map lookup per
+    // sound and gives the progress bar a total that means something.
+    const plan = described.banks.map(({ summary, bank }) => {
+      const mode = placementFor(placements, summary.folder);
+      const audioSources =
+        mode.kind === "skip"
+          ? []
+          : (Array.isArray(bank.audioFiles) ? bank.audioFiles : [])
+              .map((ref) => audioSourceFor(ref, summary.name, readers, zipjs))
+              .filter((source): source is ImportAudioSource => source !== null);
+      return { summary, bank, mode, audioSources };
+    });
+
+    const pages = await getAllPageMetadataForProfile(profileId);
+    const freeSlots = Math.max(0, MAX_BANKS - pages.length);
+    const wantedSlots = plan.filter(({ mode }) => mode.kind === "add").length;
+    if (wantedSlots > freeSlots) {
+      throw new Error(
+        `This profile has ${freeSlots} free slot${freeSlots === 1 ? "" : "s"}, and the import needs ${wantedSlots}.`,
+      );
+    }
+
+    const replacing = new Set<string>();
+    for (const { mode } of plan) {
+      if (mode.kind !== "replace") continue;
+      if (replacing.has(mode.bankId)) {
+        throw new Error(
+          "Two of these banks are set to replace the same bank, and the second would overwrite the first.",
+        );
+      }
+      replacing.add(mode.bankId);
+    }
+
+    // The pads of the whole profile once, partitioned — rather than one
+    // indexed read per replace target. An import can replace many banks.
+    const allPads = await db.getAllFromIndex(
+      "padConfigurations",
+      "profileId",
+      profileId,
+    );
+    const snapshots = new Map<string, BankSnapshot>();
+    for (const bankId of replacing) {
+      snapshots.set(bankId, {
+        page: pages.find((page) => page.bankId === bankId),
+        pads: allPads.filter((pad) => pad.bankId === bankId),
+      });
+    }
+    baseline = {
+      bankIds: new Set(pages.map((page) => page.bankId)),
+      snapshots,
+    };
+
+    const toWrite = plan.filter(({ mode }) => mode.kind !== "skip");
+    const totalBytes = toWrite.reduce(
+      (total, { audioSources }) =>
+        total +
+        audioSources.reduce((sum, source) => sum + (source.size ?? 0), 0),
+      0,
+    );
+
+    const written: BankImportResult["written"] = [];
+    const skipped: string[] = [];
+    let doneBytes = 0;
+
+    for (const { summary, bank, mode, audioSources } of plan) {
+      if (mode.kind === "skip") {
+        skipped.push(summary.name);
+        continue;
+      }
+
+      onProgress?.({
+        phase: "audio",
+        fileName: summary.name,
+        processedFiles: written.length,
+        totalFiles: toWrite.length,
+        processedBytes: doneBytes,
+        totalBytes,
+      });
+
+      try {
+        const outcome = await writeBankIntoProfile(db, {
+          profileId,
+          mode,
+          bank,
+          audioSources,
+        });
+        createdAudioIds.push(...outcome.createdAudioIds);
+        written.push({
+          folder: summary.folder,
+          name: summary.name,
+          bankId: outcome.bankId!,
+          pageIndex: outcome.pageIndex!,
+        });
+      } catch (error) {
+        // A write that threw still wrote audio, and the error is the only
+        // route back to it: nothing references those rows, so `deleteProfile`
+        // cannot find them and only the orphan-cleanup button ever would.
+        if (error instanceof BankWriteError) {
+          createdAudioIds.push(...error.createdAudioIds);
+        }
+        throw error;
+      }
+
+      doneBytes += audioSources.reduce(
+        (sum, source) => sum + (source.size ?? 0),
+        0,
+      );
+    }
+
+    onProgress?.({
+      phase: "finalizing",
+      processedFiles: written.length,
+      totalFiles: toWrite.length,
+      processedBytes: doneBytes,
+      totalBytes,
+    });
+
+    return { written, skipped };
+  } catch (error) {
+    // Logged before the rollback, because a rollback that throws replaces
+    // this error with its own — and "the profile could not be put back" is
+    // the more urgent of the two, so it is the one that reaches the caller.
+    console.error("Bank import failed:", error);
+    if (baseline) await rollbackBankImport(db, profileId, baseline);
+    if (createdAudioIds.length > 0) {
+      try {
+        await deleteUnreferencedAudioFiles(createdAudioIds);
+      } catch (cleanupError) {
+        console.error(
+          "Failed to clean up audio files from the failed bank import:",
+          cleanupError,
+        );
+      }
+    }
+    throw error;
+  } finally {
+    try {
+      await zipReader.close();
+    } catch {
+      // Closing a reader that has already failed is not news.
+    }
+  }
+}
+
+/**
+ * Puts the profile's banks back the way the baseline found them.
+ *
+ * Delete first, restore second, in one transaction over both stores, so there
+ * is no moment at which a bank exists with neither its old pads nor its new
+ * ones. A replaced bank's rows go back verbatim — the same records, under the
+ * same keys, carrying the same sync stamps — so the next merge reads no
+ * change at all rather than a rewrite by this device.
+ *
+ * What gets undone is "every bank this profile did not hold before", not
+ * "every bank this run reported adding". See {@link ImportBaseline}: a bank
+ * whose first pad write failed was added and never reported. The cost of that
+ * choice is one tab wide — a bank created in *another* tab while the import
+ * ran is also a bank this profile did not hold before — which is the same
+ * limit `withAudioImportInProgress` documents, against an operation that is a
+ * modal in the tab the user is looking at.
+ */
+async function rollbackBankImport(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  profileId: number,
+  baseline: ImportBaseline,
+): Promise<void> {
+  const undo = (bankId: string): boolean =>
+    !baseline.bankIds.has(bankId) || baseline.snapshots.has(bankId);
+
+  const tx = db.transaction(["pageMetadata", "padConfigurations"], "readwrite");
+  const pageStore = tx.objectStore("pageMetadata");
+  const padStore = tx.objectStore("padConfigurations");
+
+  let padCursor = await padStore.index("profileId").openCursor(profileId);
+  while (padCursor) {
+    if (undo(padCursor.value.bankId)) await padCursor.delete();
+    padCursor = await padCursor.continue();
+  }
+
+  let pageCursor = await pageStore.index("profileId").openCursor(profileId);
+  while (pageCursor) {
+    if (undo(pageCursor.value.bankId)) await pageCursor.delete();
+    pageCursor = await pageCursor.continue();
+  }
+
+  for (const snapshot of baseline.snapshots.values()) {
+    if (snapshot.page) await pageStore.put(snapshot.page);
+    for (const pad of snapshot.pads) await padStore.put(pad);
+  }
+
+  await tx.done;
 }
