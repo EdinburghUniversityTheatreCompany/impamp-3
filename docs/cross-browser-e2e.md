@@ -55,8 +55,11 @@ gives:
 An _empty_ Blob fails, so this is not about size, and not about the file-backed
 handle `setInputFiles` hands the page.
 
-impamp stores audio as `AudioFile.blob`, written through `addAudioFile` in
-`src/lib/db.ts`. So under WebKit no pad ever receives a sound, and that single
+impamp stores audio as `AudioFile.blob`, written through `addOrReuseAudioFile`
+in `src/lib/db.ts` (it was `addAudioFile` when this was measured; every inbound
+path moved when audio started being deduplicated by content hash, and both
+writers put the same `Blob` in the same store). So under WebKit no pad ever
+receives a sound, and that single
 failure cascaded into all 38 of the then-64: armed-tracks, audio-playback,
 edit-mode, pad-disable, search-modal and import-export all assume a pad with a
 sound on it. The 26 that passed are the ones that never touch audio. The split

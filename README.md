@@ -231,8 +231,10 @@ stuck on an old build.
    - Each profile has its own set of sounds and bank configurations
 7. **Importing/Exporting Profiles**:
    - Open the Profile Manager and go to the "Import / Export" tab.
-   - **Export:** Select one or more profiles from the list using the checkboxes, then click "Export Selected". A single JSON file containing all selected profiles will be downloaded. Exporting profiles updates their "last backed up" timestamp.
-   - **Import:** Click "Select File to Import" and choose a previously exported JSON file (supports single, multi-profile, and legacy ImpAmp2 formats).
+   - **Export:** Select one or more profiles from the list using the checkboxes, then click "Export Selected". A single `.iaz` archive containing all selected profiles will be downloaded. Exporting profiles updates their "last backed up" timestamp.
+   - **Import:** Click "Select File to Import" and choose a previously exported archive (supports `.iaz` profile and bank archives, and the older single, multi-profile and legacy ImpAmp2 JSON formats).
+   - **Export banks:** Under "Export Banks", pick a profile and tick the banks you want. The archive holds those banks and their sounds, storing a sound named by several banks only once. This is deliberately _not_ a backup of the profile and does not update the "last backed up" timestamp.
+   - **Import banks:** Selecting a bank archive opens a placement dialog: each bank in the file can be added as a new bank, used to replace one the active profile already has, or skipped. Banks always go into the active profile, so switch profiles first to import them somewhere else. The import is all-or-nothing — if any bank fails, every bank it touched is put back.
    - **Google Drive:** Use the "Import from Drive..." and "Export Active Profile to Drive" buttons within the Profile Manager (Import/Export tab) after signing in. See the [Google Drive Integration Guide](docs/google-drive-sync.md) for setup and usage details.
 
 ## Project Structure

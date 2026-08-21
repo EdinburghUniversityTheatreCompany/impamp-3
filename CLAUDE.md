@@ -129,6 +129,24 @@ IndexedDB abstraction in `src/lib/db.ts` with four object stores:
   than writing the members out again (it was duplicated in four places once).
   A layered pad stacks up to `MAX_LAYERS_PER_PAD` (16) overlapping sounds, and
   the 17th trigger steals the oldest so a press always makes a sound
+- **Audio deduplication** - every inbound path writes through
+  `addOrReuseAudioFile`, which returns `{ id, reused }` and hands back the row
+  already holding the same bytes. Identity is the SHA-256 of the blob and
+  nothing else, so two files differing only in name or type _do_ collapse —
+  everything perceptible (trim, gain, display name) lives on the
+  `PadConfiguration`. Three consequences keep catching people. Reuse **writes
+  nothing**, so a caller needing `driveFileIds` or `serverHosted` on the row it
+  got back must backfill them itself. A supplied hash is **trusted, not
+  verified**, which is exactly what lets an archive reuse a sound before
+  extracting its bytes, and is why a colliding hash cannot be defended against.
+  And rows are now shared **across profiles** (`audioFiles` has no
+  `profileId`), which makes `deleteProfile`'s cross-profile keep and the
+  `reused` flag load-bearing rather than incidental: the flag is the only thing
+  standing between an import rollback and deleting audio another profile
+  depends on. Do not fold reuse into `addAudioFile` — it has no production
+  callers left and survives as the one writer that can still make a duplicate,
+  which the dedup tests need. `src/lib/audioDedup.ts` collapses the duplicates
+  already in a library, behind a preview and a confirmation
 - **Offline / PWA** - `public/sw.js` caches the app shell so the board runs
   with no network; registered from `src/lib/serviceWorker/register.ts`, and in
   production builds only. The precache list is derived at install by walking
@@ -138,11 +156,37 @@ IndexedDB abstraction in `src/lib/db.ts` with four object stores:
 
 ### Import/Export System
 
-Multi-format support in `src/lib/importExport.ts`:
+Multi-format support in `src/lib/importExport.ts` and `src/lib/bankTransfer.ts`:
 
 - V2 format supports multi-sound pads with playback strategies
 - V1 legacy format migration from ImpAmp2
 - Multi-profile export/import functionality
+- `exportVersion: 3` is a profile archive, `exportVersion: 4` a bank archive.
+  Both are `.iaz`, and `readArchiveManifest` is the only place that decides
+  which a given file is. One bank archive holds N banks and **one shared
+  `audio/` folder**, so five banks naming the same sound carry its bytes once
+- **Subtractive export, whitelist import — that way round on purpose.** The
+  export copies the stored row and deletes the seven fields named in
+  `ROW_FIELDS_NOT_EXPORTED`, so a field added to `PadConfiguration` later
+  travels by default. The import goes back through `extractPadPlaybackSettings`,
+  a `Pick`, so `id`, `profileId`, `bankId` and a foreign device's sync stamps
+  cannot ride in. Reversing either half is a silent data bug: a whitelist
+  export drops the next `Record<audioFileId, …>` field the way both a plan and
+  a brief already dropped `audioTrimSettings`, and a spread import writes an
+  archive's own row id straight into `store.add`
+- **`sourceBankId` is a comparison key and is never adopted.** It is matched
+  against the ids the destination profile already holds, so the dialog can
+  offer "replace that bank"; an `add` mints its own id and a `replace` takes
+  the destination's. It is deliberately **not** sanitised, because a cleaned
+  id _looks_ adoptable — the fixtures use `"raid#7"`, the exact string that
+  would break `baseKeyOf`'s playback-key parsing. No type can enforce this (a
+  branded string is still assignable to `string`), so it is held by four
+  separate structural means that `writeBankIntoProfile`'s comment enumerates
+- **A bank import is all-or-nothing across the whole selection.** Capacity is
+  checked for every bank before the first write, and one failure restores every
+  bank the run touched. Half-applied is not an option: a `replace` has already
+  emptied a bank the user still has, and re-running after a partial success
+  mints fresh ids, so every bank that _did_ land is duplicated
 
 ### Keyboard Navigation
 
@@ -288,6 +332,25 @@ packages, none of them is fair game.
   label comes from the read that already settled, so a spec that waits for the
   name and then presses can land inside the next read's window and lose the
   press entirely
+- E2E audio fixtures are only distinct if the generator makes them so.
+  `createTestAudioFilePath` pitches its sine wave from an FNV-1a hash of the
+  file name, and `assertDistinct` refuses to hand identical bytes out under two
+  names. Before that the waveform came from the duration alone, so every
+  "distinct" fixture in the suite was byte-identical — and once audio rows are
+  reused by content hash, a spec called "Sequential mode plays sounds in order"
+  is asserting on a pad holding **one** row listed three times. It was equally
+  untrue before dedup for anything comparing content; dedup only made it
+  visible. A fixture needing two different sounds should also assert they got
+  different ids
+- `npm run test:e2e` is a bare `playwright test`, so it runs firefox and webkit
+  as well — both known-red below — exits 1, and lets the html reporter swallow
+  stdout. It looks exactly like your change breaking everything. Use
+  `npx playwright test --project=chromium --reporter=line`
+- `activatePad` returns **immediately if anything at all is playing**: its poll
+  opens `if (await nothingPlaying.isHidden()) return true;`, so a sound left
+  running by an earlier call lets the next call through **without pressing the
+  pad it was handed**, which then fails on a progress bar it never triggered.
+  Any spec activating a second pad must silence the first
 - E2E gates on **chromium only**. Firefox and WebKit are **on demand only** —
   they do not run on push or PR (Actions → ci → Run workflow, or
   `gh workflow run ci`). Both are known-red for reasons outside the app, so
@@ -309,7 +372,12 @@ packages, none of them is fair game.
 
 ### Profile System
 
-- Each profile is completely isolated
+- Each profile is isolated in everything **except audio bytes**. This used to
+  read "completely isolated" and stopped being true when audio started being
+  reused by content hash: `audioFiles` rows carry no `profileId`, so one row is
+  routinely named by pads in several profiles. Any code that deletes an audio
+  row must ask whether something else still references it —
+  `deleteUnreferencedAudioFiles`, never `deleteAudioFile`
 - `syncType` is one of `local`, `googleDrive`, or `server`
 - Profiles can be linked to Google Drive for sync
 - Export updates `lastBackedUpAt` timestamp
@@ -365,14 +433,45 @@ packages, none of them is fair game.
   the import cannot exist, because IndexedDB commits as soon as the event loop
   turns with no request outstanding and the importer awaits a network download
   between writes. The register is in memory, so it is one tab wide
-- `audioGainSettings` is keyed by audio file ID, and those IDs are remapped or
-  copied in **five** places, not the three this used to name: `importExport.ts`,
+- **A missing or empty hash must mean "no match", never "any match".**
+  `index.getAll(key)` returns **every row in the store** when `key` is
+  `undefined` — and also when it is an object, measured rather than assumed:
+  `getAll({ not: "one" })` over two rows hands back both. So an unguarded
+  lookup neither throws nor comes back empty; it silently answers with an
+  arbitrary unrelated sound. That shape has now been found three times on one
+  branch: `findAudioFileIdByHashIn`'s `if (!hash) return undefined`,
+  `addOrReuseAudioFile` using `||` rather than `??` so `""` counts as absent
+  instead of becoming a key every later hashless file collapses onto, and the
+  `typeof ref.hash === "string"` guard on the bank-import path, where removing
+  it made an archive's sound play as the destination profile's own. A declared
+  `string` is a type, not a runtime fact, and an archive supplies its hashes
+  unvalidated
+- **One pad can name one audio row twice** — add the same file to a pad twice,
+  or import a bank back into the profile it came from — so anything keyed on
+  `fileId` alone collides. `EditPadForm` mints one `rowId` of
+  `${fileId}-${occurrence}` per row and derives the dnd id, all four test ids
+  and the remove handler from it. This has shipped wrong twice: once as the
+  drag id (duplicate React keys, and removing one copy removed both), and again
+  when that was fixed and the four neighbours one line away were left behind.
+  `audioGainSettings` and `audioTrimSettings` stay keyed on `fileId`
+  deliberately, because two copies of one row genuinely share one gain and one
+  trim
+- `audioGainSettings` is keyed by audio file ID, and `audioTrimSettings` is the
+  second field of that shape — missed by a plan and a brief in turn, which is
+  the hazard in miniature. Those IDs are remapped or copied in **seven** places,
+  not the three this used to name: `importExport.ts`,
   `googleDrive/dataAccess.ts`, `syncUtils.ts`, `db.ts`'s
   `duplicateProfileLocally` (which was missing them, so duplicating a profile
-  silently dropped every gain setting) and `extractPadPlaybackSettings`, which
-  is the helper the copying sites should all go through. Treat the list as a
-  floor rather than a census: any new `Record<audioFileId, …>` field needs
-  hunting for, or it silently attaches to the wrong sounds
+  silently dropped every gain setting), `extractPadPlaybackSettings` (the
+  helper the copying sites should all go through), `audioDedup.ts`'s
+  `collapseDuplicateAudioGroups` and `bankTransfer.ts`'s bank writer. The last
+  two go through `remapAudioFileIdKeys` in opposite modes, and both are right:
+  **keep** for the collapse, because an id in no duplicate group is untouched
+  and "drop" there would delete every setting on every pad it rewrote; **drop**
+  for an import, because a setting keyed on an id the archive never delivered
+  must not survive. Treat the list as a floor rather than a census: any new
+  `Record<audioFileId, …>` field needs hunting for, or it silently attaches to
+  the wrong sounds
 - Gain resolution at trigger time is synchronous on purpose. The analysis cache
   is warmed on profile activation so the playback path never awaits a DB read
 - A bank's identity is `bankId` and its position is `pageIndex`. Every
