@@ -2,6 +2,12 @@
 # Rebuild the app and (re)start it on E2E_PORT with the e2e window hooks
 # compiled in, detached so it survives between test runs.
 #
+# Not started here: e2e-tests/fake-s3.js, the bucket the hosted-audio env in
+# e2e-tests/env.js points at. Playwright owns that one, because unlike the
+# database it holds nothing worth carrying between runs. Poking the app by hand
+# after running this script therefore has audio hosting configured but no
+# bucket behind it — start `node e2e-tests/fake-s3.js` yourself if that matters.
+#
 # Usage: scripts/e2e-server.sh [port]
 set -euo pipefail
 

@@ -4,7 +4,12 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
-import { E2E_SIGNIN_SECRET } from "../playwright.config";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  E2E_ADMIN_EMAIL,
+  E2E_S3_PORT,
+  E2E_SIGNIN_SECRET,
+} from "../playwright.config";
 import {
   gotoApp,
   openProfileManager,
@@ -51,8 +56,13 @@ const SESSION_COOKIE = "impamp_session";
 async function mintSession(
   request: APIRequestContext,
   who: string,
-): Promise<{ token: string; email: string }> {
-  const email = `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+  // Only the admin passes one: its identity is fixed because admin is decided
+  // by sign-in order rather than by a flag. See e2e-tests/global-setup.ts.
+  exactEmail?: string,
+): Promise<{ token: string; email: string; userId: number; isAdmin: boolean }> {
+  const email =
+    exactEmail ??
+    `${who}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
   const response = await request.post("/api/test/session", {
     headers: { "x-impamp-e2e-secret": E2E_SIGNIN_SECRET },
     data: { email },
@@ -61,7 +71,13 @@ async function mintSession(
     response.status(),
     "test sign-in route should be enabled during E2E",
   ).toBe(200);
-  return { token: (await response.json()).token as string, email };
+  const body = await response.json();
+  return {
+    token: body.token as string,
+    email,
+    userId: body.user.id as number,
+    isAdmin: body.user.isAdmin as boolean,
+  };
 }
 
 /** A throwaway account, signed in on both the page and the API client. */
@@ -232,6 +248,76 @@ test.describe("server sync API", () => {
       },
     );
     expect(write.status()).toBe(403);
+  });
+
+  /**
+   * A revoked link must stop reading. Nothing tested this: shares were created
+   * and read all over this file and never withdrawn, so a `DELETE` that
+   * answered `{ ok: true }` without touching the row would have left every
+   * issued link live forever. A share you believe you have recalled but which
+   * still serves the profile is a silent data leak, and the UI would report
+   * success either way.
+   */
+  test("revoking a share link stops it reading, and only the owner may", async ({
+    request,
+  }) => {
+    const { token } = await mintSession(request, "revoker");
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+    const { token: outsider } = await mintSession(request, "outsider");
+
+    const { id } = await (
+      await request.post("/api/profiles", {
+        headers: cookie,
+        data: { name: "Revocable", data: SAMPLE },
+      })
+    ).json();
+
+    const { share } = await (
+      await request.post(`/api/profiles/${id}/shares`, {
+        headers: cookie,
+        data: { role: "viewer" },
+      })
+    ).json();
+    const link = `/api/profiles/${id}?token=${share.linkToken}`;
+
+    expect((await request.get(link)).status()).toBe(200);
+
+    // Someone else's session cannot revoke it, and is told nothing about the
+    // profile's existence while being refused.
+    const byOutsider = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: { cookie: `${SESSION_COOKIE}=${outsider}` } },
+    );
+    expect(byOutsider.status()).toBe(404);
+    expect((await request.get(link)).status()).toBe(200);
+
+    // Nor does holding the link grant power over the link.
+    const bySelf = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}?token=${share.linkToken}`,
+    );
+    expect(bySelf.status()).toBe(403);
+    expect((await request.get(link)).status()).toBe(200);
+
+    const revoked = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: cookie },
+    );
+    expect(revoked.status()).toBe(200);
+
+    // The credential is dead, and answers as if the profile never existed.
+    expect((await request.get(link)).status()).toBe(404);
+    // And it is gone from the owner's listing, not merely disabled.
+    const listed = await (
+      await request.get(`/api/profiles/${id}/shares`, { headers: cookie })
+    ).json();
+    expect(listed.shares).toEqual([]);
+
+    // Revoking twice is a 404, not a second success.
+    const again = await request.delete(
+      `/api/profiles/${id}/shares/${share.id}`,
+      { headers: cookie },
+    );
+    expect(again.status()).toBe(404);
   });
 
   test("hides profiles the caller has no grant on", async ({ request }) => {
@@ -604,6 +690,140 @@ test.describe("connecting a profile", () => {
 });
 
 /**
+ * The SSE endpoint, which nothing opened before.
+ *
+ * `/api/profiles/:id/events` is what replaces Drive's fifteen-minute polling
+ * window with about a second, and it is also the reason the app must run as a
+ * single instance — the event bus is in-process. Every other spec here works
+ * around it: `reloadAndWaitForConflict` deliberately reloads rather than
+ * waiting for a push. So the live-collaboration promise rested on a route no
+ * test had ever connected to.
+ *
+ * These go through the browser rather than `request.get`, for two reasons: an
+ * APIRequestContext buffers the whole body, and this body does not end for
+ * thirty minutes; and `EventSource` is what the client actually uses, so the
+ * framing has to be right and not merely present.
+ */
+test.describe("live change notifications", () => {
+  test("streams the current version, then every change after it", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "sse-owner");
+    const id = await createServerProfile(request, cookie, "Live Board");
+
+    // Same origin, and a document to run in. Nothing about the page matters.
+    await gotoApp(page);
+
+    const opened = await page.evaluate(async (profileId) => {
+      const events: string[] = [];
+      const source = new EventSource(`/api/profiles/${profileId}/events`);
+      (window as unknown as { __sse: string[] }).__sse = events;
+      (window as unknown as { __sseClose: () => void }).__sseClose = () =>
+        source.close();
+      source.addEventListener("change", (event) => {
+        events.push((event as MessageEvent<string>).data);
+      });
+      return new Promise<string>((resolve, reject) => {
+        source.addEventListener("change", function first(event) {
+          source.removeEventListener("change", first);
+          resolve((event as MessageEvent<string>).data);
+        });
+        source.addEventListener("error", () => reject(new Error("sse error")));
+      });
+    }, id);
+
+    // The first frame arrives without anything having changed: a client that
+    // connects mid-session learns where the server is rather than waiting for
+    // the next write to find out.
+    expect(JSON.parse(opened)).toEqual({ profileId: id, version: 1 });
+
+    const written = await request.put(`/api/profiles/${id}`, {
+      headers: { ...cookie, "if-match": '"1"' },
+      data: { name: "Live Board", data: { ...SAMPLE, pushed: true } },
+    });
+    expect(written.status()).toBe(200);
+
+    // Pushed, not polled: the only thing that happened between the two reads
+    // is a write by a different client.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(
+            () => (window as unknown as { __sse: string[] }).__sse.length,
+          ),
+        { message: "the write should have been announced on the open stream" },
+      )
+      .toBeGreaterThan(1);
+
+    const all = await page.evaluate(
+      () => (window as unknown as { __sse: string[] }).__sse,
+    );
+    expect(JSON.parse(all[all.length - 1])).toEqual({
+      profileId: id,
+      version: 2,
+    });
+
+    // The payload carries the version and never the data — one code path reads
+    // a profile, so an event cannot deliver stale bytes.
+    expect(Object.keys(JSON.parse(all[all.length - 1])).sort()).toEqual([
+      "profileId",
+      "version",
+    ]);
+
+    await page.evaluate(() =>
+      (window as unknown as { __sseClose: () => void }).__sseClose(),
+    );
+  });
+
+  test("is a stream, and is closed to callers with no grant", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "sse-headers");
+    const id = await createServerProfile(request, cookie, "Framed");
+    await gotoApp(page);
+
+    // Read exactly one chunk and hang up, which is the only way to see the
+    // headers of a body that would otherwise run for half an hour.
+    const framing = await page.evaluate(async (profileId) => {
+      const controller = new AbortController();
+      const response = await fetch(`/api/profiles/${profileId}/events`, {
+        signal: controller.signal,
+      });
+      const reader = response.body!.getReader();
+      const { value } = await reader.read();
+      controller.abort();
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type"),
+        cacheControl: response.headers.get("cache-control"),
+        buffering: response.headers.get("x-accel-buffering"),
+        chunk: new TextDecoder().decode(value),
+      };
+    }, id);
+
+    expect(framing.status).toBe(200);
+    expect(framing.contentType).toBe("text/event-stream");
+    // A proxy that buffers or a cache that stores turns a push into nothing.
+    expect(framing.cacheControl).toContain("no-cache");
+    expect(framing.buffering).toBe("no");
+    expect(framing.chunk).toMatch(/^event: change\ndata: \{.*\}\n\n$/);
+
+    // A stranger gets the same 404 the read route gives, so the stream cannot
+    // be used to confirm a profile id either.
+    const { token: stranger } = await mintSession(request, "sse-stranger");
+    const refused = await request.get(`/api/profiles/${id}/events`, {
+      headers: { cookie: `${SESSION_COOKIE}=${stranger}` },
+    });
+    expect(refused.status()).toBe(404);
+    expect((await request.get(`/api/profiles/${id}/events`)).status()).toBe(
+      404,
+    );
+  });
+});
+
+/**
  * Following holds the push back, against the real server.
  *
  * The unit tests cover the decision; this covers the promise. A follower that
@@ -763,47 +983,311 @@ test.describe("the server account", () => {
 });
 
 /**
- * Hosted audio is opt-in infrastructure: the E2E server sets no IMPAMP_S3_*
- * variables, so this asserts the promise that a deployment which configures
- * nothing hosts nothing — and says so rather than half-working.
+ * Hosted audio, against a bucket that really answers HTTP.
+ *
+ * Everything here used to be asserted only in the negative: the E2E server set
+ * no `IMPAMP_S3_*` variables, so the whole feature could be checked for saying
+ * "off" and nothing else. The presigned PUT, the commit that charges quota
+ * from what the bucket reports, proof of possession and the download URL had
+ * no end-to-end exercise at all, and their unit cover ran against a fake in
+ * the same process — so nothing established that a URL this server mints is
+ * fetchable, that `Content-Length` comes back from the store rather than from
+ * the client, or that a Range read returns the bytes the proof compares.
+ *
+ * `e2e-tests/fake-s3.js` is that bucket now; `e2e-tests/env.js` points the
+ * deployment at it. What a deployment with no bucket answers moved to
+ * `audio.api.test.ts`, where it is checked route by route.
  */
-test.describe("hosted audio, unconfigured", () => {
-  test("every audio route reports the feature is off", async ({
+test.describe("hosted audio", () => {
+  /** Distinct bytes per test, so no two tests share a content-addressed key. */
+  function uniqueAudio(sizeBytes: number): {
+    bytes: Buffer;
+    hash: string;
+  } {
+    const bytes = randomBytes(sizeBytes);
+    return { bytes, hash: createHash("sha256").update(bytes).digest("hex") };
+  }
+
+  const audioFields = (hash: string) => ({
+    hash,
+    contentType: "audio/wav",
+    extension: "wav",
+  });
+
+  /** The admin account, which global setup guaranteed exists. */
+  async function adminCookie(request: APIRequestContext) {
+    const admin = await mintSession(request, "admin", E2E_ADMIN_EMAIL);
+    expect(
+      admin.isAdmin,
+      "global setup should have claimed the admin account",
+    ).toBe(true);
+    return { cookie: `${SESSION_COOKIE}=${admin.token}` };
+  }
+
+  /** A signed-in account an admin has approved for audio hosting. */
+  async function approvedAccount(request: APIRequestContext, who: string) {
+    const user = await mintSession(request, who);
+    const patched = await request.patch(`/api/admin/users/${user.userId}`, {
+      headers: await adminCookie(request),
+      data: { canUploadAudio: true },
+    });
+    expect(patched.status()).toBe(200);
+    expect((await patched.json()).canUploadAudio).toBe(true);
+    return { ...user, cookie: `${SESSION_COOKIE}=${user.token}` };
+  }
+
+  test("an approved account uploads to the bucket and reads the same bytes back", async ({
+    request,
+  }) => {
+    const { cookie } = await approvedAccount(request, "uploader");
+    const { bytes, hash } = uniqueAudio(4 * 1024);
+
+    const asked = await request.post("/api/audio/upload-url", {
+      headers: { cookie },
+      data: { ...audioFields(hash), sizeBytes: bytes.byteLength },
+    });
+    expect(asked.status()).toBe(200);
+    const ask = await asked.json();
+    expect(ask.alreadyStored).toBe(false);
+    // Presigned, and pointing at the bucket rather than at this server: the
+    // bytes never pass through the app.
+    expect(ask.uploadUrl).toContain("X-Amz-Signature=");
+    expect(ask.uploadUrl).toContain(`localhost:${E2E_S3_PORT}/`);
+
+    // Sent as HTML on purpose. The presigned PUT signs only `host`, so the
+    // uploader picks this header and the bucket keeps whatever it is told —
+    // which is exactly how an approved account could park a page in the
+    // bucket and have it served as HTML from the bucket's own origin. What
+    // stops that is the download URL pinning the type we recorded, asserted
+    // at the end of this test.
+    const put = await request.fetch(ask.uploadUrl, {
+      method: "PUT",
+      data: bytes,
+      headers: { "content-type": "text/html" },
+    });
+    expect(put.status(), "the presigned PUT should be accepted").toBe(200);
+
+    const committed = await request.post("/api/audio/commit", {
+      headers: { cookie },
+      data: { ...audioFields(hash), name: "e2e.wav" },
+    });
+    expect(committed.status()).toBe(200);
+    const commit = await committed.json();
+    expect(commit.sizeBytes).toBe(bytes.byteLength);
+    expect(commit.usage.usedBytes).toBe(bytes.byteLength);
+
+    const library = await request.get("/api/audio", { headers: { cookie } });
+    expect(library.status()).toBe(200);
+    const listed = (await library.json()).files.find(
+      (file: { hash: string }) => file.hash === hash,
+    );
+    expect(listed).toMatchObject({
+      name: "e2e.wav",
+      sizeBytes: bytes.byteLength,
+    });
+
+    const download = await request.get(`/api/audio/${hash}`, {
+      headers: { cookie },
+    });
+    expect(download.status()).toBe(200);
+    const { url } = await download.json();
+
+    const fetched = await request.fetch(url);
+    expect(fetched.status()).toBe(200);
+    // Served as what we recorded, not as the `text/html` the PUT above set.
+    expect(fetched.headers()["content-type"]).toBe("audio/wav");
+    expect(Buffer.compare(await fetched.body(), bytes)).toBe(0);
+  });
+
+  test("charges the size the bucket reports, not the size the client claimed", async ({
+    request,
+  }) => {
+    const { cookie } = await approvedAccount(request, "over-claimer");
+    // Asks permission for something small, then PUTs something over the
+    // deployment's per-object ceiling. A presigned PUT signs only `host`, so
+    // nothing in the URL could have stopped this — the commit is the only
+    // place it can be caught.
+    const { bytes, hash } = uniqueAudio(40 * 1024);
+
+    const asked = await request.post("/api/audio/upload-url", {
+      headers: { cookie },
+      data: { ...audioFields(hash), sizeBytes: 1024 },
+    });
+    expect(asked.status()).toBe(200);
+    const ask = await asked.json();
+
+    expect(
+      (
+        await request.fetch(ask.uploadUrl, {
+          method: "PUT",
+          data: bytes,
+          headers: { "content-type": "audio/wav" },
+        })
+      ).status(),
+    ).toBe(200);
+
+    const committed = await request.post("/api/audio/commit", {
+      headers: { cookie },
+      data: { ...audioFields(hash), name: "too-big.wav" },
+    });
+    expect(committed.status()).toBe(413);
+    expect((await committed.json()).reason).toBe("too_large");
+
+    // Nothing was charged…
+    const usage = await (
+      await request.get("/api/audio", { headers: { cookie } })
+    ).json();
+    expect(usage.usage.usedBytes).toBe(0);
+    expect(usage.files).toEqual([]);
+
+    // …and the bytes are gone from the bucket rather than sitting there
+    // unaccounted for. A second commit now finds no object at all, which is
+    // only true if the refusal deleted it.
+    const again = await request.post("/api/audio/commit", {
+      headers: { cookie },
+      data: { ...audioFields(hash), name: "too-big.wav" },
+    });
+    expect(again.status()).toBe(404);
+  });
+
+  test("makes a second claimant prove it holds the bytes", async ({
+    request,
+  }) => {
+    const first = await approvedAccount(request, "first-holder");
+    const second = await approvedAccount(request, "second-holder");
+    const { bytes, hash } = uniqueAudio(3 * 1024);
+
+    const ask = await (
+      await request.post("/api/audio/upload-url", {
+        headers: { cookie: first.cookie },
+        data: { ...audioFields(hash), sizeBytes: bytes.byteLength },
+      })
+    ).json();
+    await request.fetch(ask.uploadUrl, {
+      method: "PUT",
+      data: bytes,
+      headers: { "content-type": "audio/wav" },
+    });
+    expect(
+      (
+        await request.post("/api/audio/commit", {
+          headers: { cookie: first.cookie },
+          data: { ...audioFields(hash), name: "shared.wav" },
+        })
+      ).status(),
+    ).toBe(200);
+
+    // The hash is public — it travels in every profile blob a viewer can read
+    // — so knowing it must not be enough to be handed a reference to the file.
+    const secondAsk = await (
+      await request.post("/api/audio/upload-url", {
+        headers: { cookie: second.cookie },
+        data: { ...audioFields(hash), sizeBytes: bytes.byteLength },
+      })
+    ).json();
+    expect(secondAsk.alreadyStored).toBe(true);
+    expect(secondAsk.uploadUrl).toBeNull();
+    expect(secondAsk.proofRange).not.toBeNull();
+
+    const withoutProof = await request.post("/api/audio/commit", {
+      headers: { cookie: second.cookie },
+      data: { ...audioFields(hash), name: "claimed.wav" },
+    });
+    expect(withoutProof.status()).toBe(403);
+
+    const wrongProof = await request.post("/api/audio/commit", {
+      headers: { cookie: second.cookie },
+      data: {
+        ...audioFields(hash),
+        name: "claimed.wav",
+        proof: createHash("sha256").update("not the bytes").digest("hex"),
+      },
+    });
+    expect(wrongProof.status()).toBe(403);
+
+    // The range is read out of the bucket over real HTTP, so this is also the
+    // only exercise the client's `getRange` gets against a server that
+    // actually answers 206.
+    const { offset, length } = secondAsk.proofRange;
+    const proof = createHash("sha256")
+      .update(bytes.subarray(offset, offset + length))
+      .digest("hex");
+
+    const withProof = await request.post("/api/audio/commit", {
+      headers: { cookie: second.cookie },
+      data: { ...audioFields(hash), name: "claimed.wav", proof },
+    });
+    expect(withProof.status()).toBe(200);
+    // Charged to both, because both now hold a reference — but the bucket
+    // holds one object.
+    expect((await withProof.json()).usage.usedBytes).toBe(bytes.byteLength);
+  });
+
+  test("keeps the admin surface invisible to an ordinary account", async ({
+    request,
+  }) => {
+    const ordinary = await mintSession(request, "not-an-admin");
+    const cookie = `${SESSION_COOKIE}=${ordinary.token}`;
+
+    // 404 rather than 403, so an ordinary account cannot even learn that an
+    // admin surface exists.
+    expect(
+      (await request.get("/api/admin/audio", { headers: { cookie } })).status(),
+    ).toBe(404);
+
+    // Nor approve itself, which is the one thing this boundary is protecting.
+    const selfApproval = await request.patch(
+      `/api/admin/users/${ordinary.userId}`,
+      { headers: { cookie }, data: { canUploadAudio: true } },
+    );
+    expect(selfApproval.status()).toBe(404);
+
+    const stillRefused = await request.post("/api/audio/upload-url", {
+      headers: { cookie },
+      data: { ...audioFields("c".repeat(64)), sizeBytes: 1024 },
+    });
+    expect(stillRefused.status()).toBe(403);
+    expect((await stillRefused.json()).reason).toBe("not_approved");
+
+    // And the same account, seen by an admin, is exactly what it says it is.
+    const overview = await request.get("/api/admin/audio", {
+      headers: await adminCookie(request),
+    });
+    expect(overview.status()).toBe(200);
+    const body = await overview.json();
+    expect(body.global.capBytes).toBeGreaterThan(0);
+    expect(
+      body.users.find(
+        (user: { email: string }) => user.email === ordinary.email,
+      ),
+    ).toMatchObject({ canUploadAudio: false });
+  });
+
+  test("the storage page shows an approved account its allowance", async ({
     page,
     request,
   }) => {
-    const { token } = await mintSession(request, "audio-off");
+    const { token } = await approvedAccount(request, "storage-page");
     await signIn(page, token);
-    const cookie = `${SESSION_COOKIE}=${token}`;
+    await page.goto("/server/storage");
 
-    const library = await request.get("/api/audio", { headers: { cookie } });
-    expect(library.status()).toBe(501);
-
-    // 404, not 501: the admin check runs first, so an ordinary account cannot
-    // learn whether the deployment hosts audio — or that the surface exists.
-    const admin = await request.get("/api/admin/audio", {
-      headers: { cookie },
-    });
-    expect(admin.status()).toBe(404);
-
-    const upload = await request.post("/api/audio/upload-url", {
-      headers: { cookie },
-      data: {
-        hash: "a".repeat(64),
-        sizeBytes: 1024,
-        contentType: "audio/wav",
-        extension: "wav",
-      },
-    });
-    expect(upload.status()).toBe(501);
+    await expect(
+      page.getByRole("heading", { name: "Server audio storage" }),
+    ).toBeVisible();
+    // The allowance bar is the one thing on this page that only renders for an
+    // account the deployment will actually store audio for.
+    await expect(page.getByRole("progressbar").first()).toBeVisible();
   });
 
-  test("the storage page still loads and explains itself", async ({ page }) => {
+  test("the storage page tells an anonymous visitor nothing", async ({
+    page,
+  }) => {
     await page.goto("/server/storage");
     await expect(
       page.getByRole("heading", { name: "Server audio storage" }),
     ).toBeVisible();
-    // No allowance bar for a feature that is not switched on.
+    // Not signed in, so no allowance and no admin panel — whether or not this
+    // deployment hosts audio.
     await expect(page.getByRole("progressbar")).toHaveCount(0);
   });
 });

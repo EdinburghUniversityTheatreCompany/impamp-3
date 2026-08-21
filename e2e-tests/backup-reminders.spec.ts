@@ -94,6 +94,33 @@ async function setProfileBackupState(
   );
 }
 
+/**
+ * Re-read the profiles from IndexedDB into the store, without a reload.
+ *
+ * The helper above writes straight to the database, which nothing in the app
+ * is watching — so a test that wants the reminder rules re-evaluated either
+ * reloads (and gets a fresh page whose banner is absent for a moment whatever
+ * the rules say) or asks the store to re-read, which re-runs the sweep in a
+ * page that has already shown its answer once. The second is what lets a
+ * "the reminder does not appear" test assert a *transition* rather than a
+ * state that was already true.
+ */
+async function refetchProfiles(page: Page) {
+  await page.evaluate(async () => {
+    const store = (
+      window as unknown as {
+        __profileStore?: { getState(): { fetchProfiles(): Promise<void> } };
+      }
+    ).__profileStore;
+    if (!store) {
+      throw new Error(
+        "__profileStore hook is missing — the server under test must be built with NEXT_PUBLIC_E2E_HOOKS=1",
+      );
+    }
+    await store.getState().fetchProfiles();
+  });
+}
+
 // Backdates lastBackedUpAt past the reminder period and reloads, so the
 // backup-reminder banner is showing by the time the test's assertions run.
 async function makeBackupOverdueAndReload(
@@ -215,29 +242,66 @@ test.describe("Backup Reminders", () => {
     ).toBeVisible();
   });
 
+  /**
+   * The three "does not appear" cases below used to be
+   * `reload()` → `waitForAppReady()` → `toBeHidden()`.
+   *
+   * `waitForAppReady` returns as soon as a profile is active and one bank tab
+   * is visible; the reminder is decided after that, by an effect that reads
+   * `lastBackedUpAt` and then runs two IndexedDB scans. The banner is absent
+   * for that whole window whatever the rules say, and `toBeHidden` resolves on
+   * its first poll — so a regression that removed the suppression entirely and
+   * merely rendered the banner one frame later would have passed. These are
+   * exactly the tests that state the rules.
+   *
+   * So each starts from a *visible* banner, in the same page load, and then
+   * applies the thing that should suppress it. The banner going away is an
+   * observable transition; it cannot be satisfied by the sweep not having run.
+   */
   test("Reminder does not appear when recent", async ({ page }) => {
-    // --- Modify the profile in IndexedDB to make the backup recent ---
+    await makeBackupOverdueAndReload(
+      page,
+      profileName,
+      twoMonthsMs,
+      oneMonthMs,
+    );
+
+    const reminderBanner = page.locator(
+      '[data-testid="backup-reminder-banner"]',
+    );
+    // The sweep has run and this profile is in it, which is what makes the
+    // absence below mean "the rule fired" rather than "nothing has happened".
+    await expect(reminderBanner).toBeVisible();
+
+    // --- Now the backup is recent ---
     await setProfileBackupState(page, profileName, {
       lastBackedUpAt: Date.now() - 1000,
       backupReminderPeriod: oneMonthMs,
       updatedAt: new Date(),
     });
+    await refetchProfiles(page);
 
-    // Reload the page
-    await page.reload();
-    await waitForAppReady(page);
-
-    // --- Verify the reminder notification is NOT visible ---
-    const reminderBanner = page.locator(
-      '[data-testid="backup-reminder-banner"]',
-    ); // Use data-testid
     await expect(reminderBanner).toBeHidden();
   });
 
   test("Reminder does NOT appear when backup is overdue but no changes were made", async ({
     page,
   }) => {
-    // Simulate: user backed up, then nothing changed, but time has passed
+    await makeBackupOverdueAndReload(
+      page,
+      profileName,
+      twoMonthsMs,
+      oneMonthMs,
+    );
+
+    const reminderBanner = page.locator(
+      '[data-testid="backup-reminder-banner"]',
+    );
+    await expect(reminderBanner).toBeVisible();
+
+    // Same overdue backup, but nothing has been touched since it was taken.
+    // Only the second half of the rule has changed, so the banner going away
+    // isolates "and something changed since" from "and it is overdue".
     const backedUpAt = Date.now() - twoMonthsMs;
     await setProfileBackupState(
       page,
@@ -250,13 +314,8 @@ test.describe("Backup Reminders", () => {
       },
       { backdateFieldsModified: true },
     );
+    await refetchProfiles(page);
 
-    await page.reload();
-    await waitForAppReady(page);
-
-    const reminderBanner = page.locator(
-      '[data-testid="backup-reminder-banner"]',
-    );
     await expect(reminderBanner).toBeHidden();
   });
 
@@ -288,21 +347,29 @@ test.describe("Backup Reminders", () => {
   });
 
   test("Reminder appears/disappears on setting change", async ({ page }) => {
-    // --- Modify the profile in IndexedDB to make the backup overdue ---
-    await setProfileBackupState(page, profileName, {
-      lastBackedUpAt: Date.now() - twoMonthsMs, // Overdue
-      backupReminderPeriod: -1, // Start with 'Never'
-      updatedAt: new Date(),
-    });
-
-    // Reload page
-    await page.reload();
-    await waitForAppReady(page);
+    // Overdue and changed, so the banner is up — and the sweep has demonstrably
+    // run in this page load before anything is asserted about its absence.
+    await makeBackupOverdueAndReload(
+      page,
+      profileName,
+      twoMonthsMs,
+      oneMonthMs,
+    );
 
     const reminderBanner = page.locator(
       '[data-testid="backup-reminder-banner"]',
     );
-    await expect(reminderBanner).toBeHidden(); // Should initially be hidden (set to Never)
+    await expect(reminderBanner).toBeVisible();
+
+    // --- Now set the period to 'Never', still overdue ---
+    await setProfileBackupState(page, profileName, {
+      lastBackedUpAt: Date.now() - twoMonthsMs, // Overdue
+      backupReminderPeriod: -1, // 'Never'
+      updatedAt: new Date(),
+    });
+    await refetchProfiles(page);
+
+    await expect(reminderBanner).toBeHidden();
 
     // --- Set the reminder to 30 days, which the backup is well past ---
     await openProfileManager(page);

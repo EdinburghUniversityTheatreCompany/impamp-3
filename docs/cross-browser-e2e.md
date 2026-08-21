@@ -16,7 +16,7 @@ and in CI on 2026-08-13 (commit `f0486eb`).
 ## Summary
 
 **These counts are a measurement, not a running total.** They are what the three
-projects did on 2026-08-13 at `f0486eb`, when the suite was 64 tests. It is 127
+projects did on 2026-08-13 at `f0486eb`, when the suite was 64 tests. It is 177
 now, so treat the columns below as ratios rather than as figures to compare
 against a fresh run — in particular the WebKit cascade is certainly larger than
 38 today, because it scales with the number of tests that use a sound.

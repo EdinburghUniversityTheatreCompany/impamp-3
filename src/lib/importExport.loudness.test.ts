@@ -34,6 +34,31 @@ describe("loudness serialisation", () => {
     );
   });
 
+  /**
+   * Arrays that are views into a bigger buffer.
+   *
+   * `floatsToBase64` respects `byteOffset` and `byteLength` rather than
+   * encoding `values.buffer` whole, and its comment says why — but every
+   * fixture in this file is an exact-size `Float32Array.from(...)`, whose
+   * offset is 0 and whose length is its buffer's, so the branch had never run.
+   * A `subarray` is what a slice of a longer analysis actually is, and
+   * encoding the whole backing store would silently export a neighbour's
+   * numbers under this sound's name.
+   */
+  it("round-trips arrays that are views into a larger buffer", () => {
+    const backing = Float32Array.from([9, 9, 0.001, 0.002, 0.003, 9]);
+    const view = backing.subarray(2, 5);
+    expect(view.byteOffset).toBeGreaterThan(0);
+
+    const restored = deserialiseLoudness(
+      serialiseLoudness({ ...analysis(), blockMeanSquare: view }),
+    );
+
+    expect(Array.from(restored?.blockMeanSquare ?? [])).toEqual(
+      Array.from(view),
+    );
+  });
+
   // A stale measurement would produce confidently wrong levels, which is
   // worse than no measurement at all.
   it("drops an analysis from a different algorithm version", () => {

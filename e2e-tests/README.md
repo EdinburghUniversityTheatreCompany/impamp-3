@@ -52,7 +52,7 @@ in doubt, stop the stale server rather than trusting a green run.
 
 ## Known failures
 
-None. The chromium suite is 126/126.
+None. The chromium suite is 177/177.
 
 This section used to list five, and by the time anyone checked, four of them
 described causes that no longer existed in the specs at all — `select#exportProfile`,

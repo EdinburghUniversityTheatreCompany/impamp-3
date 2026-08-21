@@ -70,11 +70,19 @@ export default defineConfig({
       // The previous floor of 44 / 37 / 39 / 44 came from the bank-identity
       // branch and was set against a 45.51 run; layering added five test files
       // and left it five points behind.
+      //
+      // The test-quality branch then took it to 50.32 / 43.29 / 46.57 / 51.04,
+      // identical across two back-to-back runs — the additions are mostly
+      // whole branches that were unreachable before (the unconfigured audio
+      // deployment, the transaction rollback, the sub-block loudness
+      // fallback), which do not move between runs the way a partially covered
+      // module does. Floor raised to sit just under, keeping the same small
+      // deliberate gap.
       thresholds: {
-        statements: 48,
-        branches: 41,
-        functions: 44,
-        lines: 48,
+        statements: 50,
+        branches: 43,
+        functions: 46,
+        lines: 50,
       },
     },
   },

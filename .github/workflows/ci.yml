@@ -128,6 +128,22 @@ jobs:
         run: npm run test:coverage
       - name: Lint (eslint)
         run: npm run lint
+      # TypeScript, as a step with a name.
+      #
+      # It was already enforced, but only as a side effect of the slowest job
+      # in the pipeline: the `e2e` job's webServer runs `npm run build`, and
+      # `next.config.ts` sets no `typescript.ignoreBuildErrors`. Nothing said
+      # so, and a developer running the two commands this job otherwise runs —
+      # `npm test && npm run lint`, which is also what the pre-commit hook ran
+      # — saw green with a type error in the tree.
+      #
+      # That matters because some guards in this codebase are types.
+      # `profileWire.ts` exists so that adding a field to `Profile` does not
+      # put it on the wire, and the compile-time assertion holding the two
+      # lists exhaustive is the whole enforcement. Four seconds here, against a
+      # production build there.
+      - name: Type-check (tsc)
+        run: npm run typecheck
 
   # Playwright end-to-end suite. Chromium only for now: the Firefox and WebKit
   # projects have not been run green yet, so gating on them would land a red
@@ -136,6 +152,13 @@ jobs:
   # playwright.config.ts serves a production build rather than `next dev` —
   # on-demand Turbopack compilation was the source of this suite's timeouts and
   # all of its flakiness.
+  #
+  # It also runs two workers here rather than one, so this job is no longer the
+  # most forgiving configuration anyone runs — every flake this suite has had
+  # came from parallel load, and a serial run with retries could not see the
+  # class of bug the developers hit. Any test that needed a retry is listed in
+  # this job's summary by e2e-tests/flaky-reporter.ts, so a rising rate is
+  # visible without opening the report artifact.
   e2e:
     runs-on: ubuntu-latest
     steps:

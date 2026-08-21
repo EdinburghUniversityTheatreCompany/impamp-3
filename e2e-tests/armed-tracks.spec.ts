@@ -44,39 +44,54 @@ async function isPadArmed(page: Page, padIndex: number): Promise<boolean> {
 }
 
 /**
- * Helper to get the names of all armed tracks from the panel
+ * The names of the armed tracks, in panel order.
+ *
+ * `expected` is how many rows the caller believes are there, and passing it is
+ * what makes a *negative* assertion built on this mean anything. The panel-level
+ * wait landed earlier, but the row-level read did not: `count()` is the one
+ * Playwright call here with no auto-wait, so a panel that was visible before its
+ * rows painted yielded a short list, and every `not.toContain` and `toEqual([])`
+ * downstream passed for the wrong reason. `toHaveCount` retries; `count()` takes
+ * one sample.
+ *
+ * The rows are found by `armed-track-item`, the testid the component has
+ * shipped all along, rather than by `.font-medium.text-gray-800`. Bound to a
+ * Tailwind pair, a restyle made this return `[]` forever — at which point the
+ * positive assertions fail loudly, which is fine, and the negative ones go
+ * quietly green, which is not. The names come from the row's own
+ * `aria-label` (`Track: <name>`) for the same reason: it is the contract the
+ * component states, not markup that happens to hold the text today.
  */
-async function getArmedTrackNames(page: Page): Promise<string[]> {
-  // The panel disappears when nothing is armed, so "no panel" and "no tracks"
-  // are the same answer — but `isVisible()` is a single non-retrying sample, so
-  // it also returned [] when the panel simply had not rendered yet. Every
-  // negative assertion built on this therefore passed for two different
-  // reasons, one of them "the app had not caught up". `toHaveCount` retries, so
-  // the answer means what it says.
+async function getArmedTrackNames(
+  page: Page,
+  expected?: number,
+): Promise<string[]> {
   const panel = page.locator('[data-testid="armed-tracks-panel"]');
-  const trackItems = panel.locator(".font-medium.text-gray-800");
+  const trackItems = panel.getByTestId("armed-track-item");
 
-  try {
-    await expect(panel).toBeVisible({ timeout: 2_000 });
-  } catch {
-    // Genuinely absent after waiting: nothing is armed.
+  if (expected === 0) {
+    // The panel disappears when nothing is armed, so its absence is the
+    // assertion — and `toHaveCount` waits for it rather than sampling once.
     await expect(panel).toHaveCount(0);
     return [];
   }
 
-  const count = await trackItems.count();
-  const names: string[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const name = await trackItems.nth(i).textContent();
-    if (name) {
-      // Remove the "armed" text that appears next to the name
-      const cleanName = name.replace("armed", "").trim();
-      names.push(cleanName);
+  if (expected !== undefined) {
+    await expect(panel).toBeVisible();
+    await expect(trackItems).toHaveCount(expected);
+  } else {
+    try {
+      await expect(panel).toBeVisible({ timeout: 2_000 });
+    } catch {
+      await expect(panel).toHaveCount(0);
+      return [];
     }
   }
 
-  return names;
+  const labels = await trackItems.evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("aria-label") ?? ""),
+  );
+  return labels.map((label) => label.replace(/^Track:\s*/, "").trim());
 }
 
 /**
@@ -125,11 +140,9 @@ async function clickPlayOnArmedTrack(
   const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
   await expect(armedPanel).toBeVisible();
 
-  // Find the track item containing the name
-  const trackItem = armedPanel.locator(`:has-text("${trackName}")`).first();
-  await expect(trackItem).toBeVisible();
-
-  // Click the play button (green button with play icon)
+  // No `:has-text(name).first()` preamble: it resolved to the panel itself,
+  // which the line above already waited for, and read as though it had located
+  // the row. The button's accessible name is the locator that means something.
   const playButton = page.getByRole("button", { name: `Play ${trackName}` });
   await playButton.click();
   console.log(
@@ -147,12 +160,17 @@ async function clickRemoveOnArmedTrack(
   const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
   await expect(armedPanel).toBeVisible();
 
-  // Find the track item containing the name
-  const trackItem = armedPanel.locator(`:has-text("${trackName}")`).first();
-  await expect(trackItem).toBeVisible();
-
-  // Click the remove button (red button with X icon)
-  const removeButton = trackItem.locator("button.bg-red-500");
+  // By the button's own accessible name.
+  //
+  // This used to build `:has-text("<name>")` and take `.first()`, which
+  // resolves to the *outermost* matching ancestor — the panel itself, since it
+  // contains the text too — and then reached inside it for `button.bg-red-500`.
+  // With two tracks armed that is the first remove button in the panel rather
+  // than this track's, so a test could pass having removed the wrong one; and
+  // it is bound to a Tailwind class besides.
+  const removeButton = armedPanel.getByRole("button", {
+    name: `Remove ${trackName} from queue`,
+  });
   await removeButton.click();
   console.log(
     `[Test Helper] Clicked remove button for armed track: ${trackName}`,
@@ -195,7 +213,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await expect(armedPanel).toBeVisible();
 
     // Verify the track appears in the armed tracks panel
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).toContain(fileName);
 
     // Verify the pad has the armed indicator
@@ -238,7 +256,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await expect(
       page.locator('[data-testid="armed-tracks-panel"]'),
     ).toBeVisible();
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).toContain(fileName);
 
     // Press F9 to play the armed track
@@ -279,7 +297,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     // Verify both tracks are armed
     const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
     await expect(armedPanel).toBeVisible();
-    let armedTrackNames = await getArmedTrackNames(page);
+    let armedTrackNames = await getArmedTrackNames(page, 2);
     expect(armedTrackNames).toContain(fileNames[0]);
     expect(armedTrackNames).toContain(fileNames[1]);
 
@@ -293,7 +311,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await expect(activeTracksPanel.getByText(fileNames[0])).toBeVisible();
 
     // Verify first track was removed from armed tracks but second is still there
-    armedTrackNames = await getArmedTrackNames(page);
+    armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).not.toContain(fileNames[0]);
     expect(armedTrackNames).toContain(fileNames[1]);
   });
@@ -314,7 +332,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     // Verify track is armed
     const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
     await expect(armedPanel).toBeVisible();
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).toContain(fileName);
 
     // Remove the track using the remove button
@@ -354,7 +372,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     // Verify all tracks are armed in the correct order
     const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
     await expect(armedPanel).toBeVisible();
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, fileNames.length);
     expect(armedTrackNames.length).toBe(fileNames.length);
     expect(armedTrackNames[0]).toBe(fileNames[0]); // First armed track should be first in list
 
@@ -366,7 +384,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
       '[data-testid="active-tracks-panel"]',
     );
     await expect(activeTracksPanel.getByText(fileNames[0])).toBeVisible();
-    let remainingArmedTracks = await getArmedTrackNames(page);
+    let remainingArmedTracks = await getArmedTrackNames(page, 2);
     expect(remainingArmedTracks).not.toContain(fileNames[0]);
     expect(remainingArmedTracks).toContain(fileNames[1]);
 
@@ -375,7 +393,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
 
     // Verify the first and second tracks are playing, and third is still armed
     await expect(activeTracksPanel.getByText(fileNames[1])).toBeVisible();
-    remainingArmedTracks = await getArmedTrackNames(page);
+    remainingArmedTracks = await getArmedTrackNames(page, 1);
     expect(remainingArmedTracks).not.toContain(fileNames[0]);
     expect(remainingArmedTracks).not.toContain(fileNames[1]);
     expect(remainingArmedTracks).toContain(fileNames[2]);
@@ -453,7 +471,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     // Verify first track is armed
     const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
     await expect(armedPanel).toBeVisible();
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).toContain(fileNames[0]);
 
     // Play the second pad directly
@@ -466,7 +484,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await expect(activeTracksPanel.getByText(fileNames[1])).toBeVisible();
 
     // Verify first track is still armed
-    const updatedArmedTracks = await getArmedTrackNames(page);
+    const updatedArmedTracks = await getArmedTrackNames(page, 1);
     expect(updatedArmedTracks).toContain(fileNames[0]);
 
     // Now play the first pad directly
@@ -476,7 +494,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     await expect(activeTracksPanel.getByText(fileNames[0])).toBeVisible();
 
     // Verify first track is STILL armed (playing directly doesn't affect armed status)
-    const finalArmedTracks = await getArmedTrackNames(page);
+    const finalArmedTracks = await getArmedTrackNames(page, 1);
     expect(finalArmedTracks).toContain(fileNames[0]);
   });
 
@@ -498,7 +516,7 @@ test.describe("ImpAmp3 Track Arming Feature", () => {
     // Verify track is armed
     const armedPanel = page.locator('[data-testid="armed-tracks-panel"]');
     await expect(armedPanel).toBeVisible();
-    const armedTrackNames = await getArmedTrackNames(page);
+    const armedTrackNames = await getArmedTrackNames(page, 1);
     expect(armedTrackNames).toContain(fileName);
 
     // Play the armed track
@@ -666,7 +684,7 @@ test.describe("Armed tracks keep their sounds in the audio cache", () => {
     await expect(
       page.locator('[data-testid="armed-tracks-panel"]'),
     ).not.toBeVisible();
-    expect(await getArmedTrackNames(page)).toEqual([]);
+    expect(await getArmedTrackNames(page, 0)).toEqual([]);
 
     // F9 must have nothing left to fire
     await page.keyboard.press("F9");
