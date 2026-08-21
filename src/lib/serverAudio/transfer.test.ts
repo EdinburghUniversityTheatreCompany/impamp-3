@@ -16,10 +16,30 @@ const dbMocks = vi.hoisted(() => ({
   createHashlessAudioIndex: vi.fn(() => async () => new Map()),
   ensureAudioFileHash: vi.fn(),
   getAudioFile: vi.fn(),
-  getAudioFileByHash: vi.fn(),
   getAudioFileMetadata: vi.fn(),
   getDb: vi.fn(),
   markAudioFilesHosted: vi.fn(),
+}));
+
+/**
+ * What this browser already holds, as the pass's hash index reports it.
+ *
+ * The index is stubbed here rather than driven through the mocked `getDb`,
+ * because this suite replaces the whole of `@/lib/db` with functions that hold
+ * no data — there is no database behind it for a cursor to walk. What the real
+ * index does is covered against a real one in `lib/audioHashIndex.test.ts`.
+ */
+const indexMocks = vi.hoisted(() => ({
+  local: new Map<string, { id: number }>(),
+}));
+
+vi.mock("@/lib/audioHashIndex", () => ({
+  createStoredHashIndex: () => ({
+    lookup: async (hash: string) => indexMocks.local.get(hash),
+    remember: async (hash: string, ref: { id: number }) => {
+      indexMocks.local.set(hash, ref);
+    },
+  }),
 }));
 
 const apiMocks = vi.hoisted(() => ({
@@ -71,7 +91,7 @@ beforeEach(() => {
   dbMocks.getDb.mockResolvedValue({
     getAllKeys: vi.fn().mockResolvedValue([]),
   });
-  dbMocks.getAudioFileByHash.mockResolvedValue(undefined);
+  indexMocks.local.clear();
   // Mirrors whatever getAudioFile is stubbed to return, so a test that sets up
   // a local file gets a consistent answer from both without saying it twice.
   dbMocks.getAudioFileMetadata.mockImplementation(
@@ -306,7 +326,7 @@ describe("downloadProfileAudio", () => {
   });
 
   it("skips a file this browser already has", async () => {
-    dbMocks.getAudioFileByHash.mockResolvedValue({ id: 7 });
+    indexMocks.local.set(HASH_A, { id: 7 });
 
     const result = await downloadProfileAudio(
       "srv",

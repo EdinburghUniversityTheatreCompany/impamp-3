@@ -11,7 +11,6 @@ import {
   getAudioFileMetadata,
   addAudioFile,
   updateAudioFileDriveId,
-  getAudioFileByHash,
   computeBlobHash,
   createHashlessAudioIndex,
   withAudioImportInProgress,
@@ -47,6 +46,7 @@ import {
   ItemConflict,
 } from "./types";
 import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
+import { createStoredHashIndex } from "@/lib/audioHashIndex";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -307,6 +307,9 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
+  // One cursor for the whole pass instead of a transaction per reference.
+  const stored = createStoredHashIndex();
+
   // Built at most once per pass, and only if a reference actually misses the
   // hash index. See `createHashlessAudioIndex` for why it is a factory.
   const getHashlessIndex = createHashlessAudioIndex();
@@ -315,25 +318,23 @@ export async function downloadMissingAudioFiles(
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
 
     // Hash-first deduplication: check by content hash if available
-    let existingFile = ref.hash
-      ? await getAudioFileByHash(ref.hash)
-      : undefined;
+    let existingFile = ref.hash ? await stored.lookup(ref.hash) : undefined;
 
     // If no hash match, local files without a stored hash may still be the same
     // audio — hash them once and retry the lookup
     if (!existingFile && ref.hash) {
       const localId = (await getHashlessIndex()).get(ref.hash);
       if (localId !== undefined) {
-        existingFile = await getAudioFile(localId);
+        const record = await getAudioFile(localId);
+        if (record?.id !== undefined) {
+          existingFile = { id: record.id, driveFileIds: record.driveFileIds };
+        }
       }
     }
 
     if (existingFile) {
       // Backfill driveFileId for this profile if missing
-      if (
-        !existingFile.driveFileIds?.[profileId] &&
-        existingFile.id !== undefined
-      ) {
+      if (!existingFile.driveFileIds?.[profileId]) {
         await updateAudioFileDriveId(
           existingFile.id,
           ref.driveFileId,
@@ -374,11 +375,17 @@ export async function downloadMissingAudioFiles(
           continue;
         }
 
-        await addAudioFile({
+        const id = await addAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
           hash: actualHash,
+          driveFileIds: { [profileId]: ref.driveFileId },
+        });
+        // The pass now holds these bytes, and a blob may name them again — the
+        // per-reference lookup used to see the new record for free.
+        await stored.remember(actualHash, {
+          id,
           driveFileIds: { [profileId]: ref.driveFileId },
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
