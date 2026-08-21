@@ -1184,6 +1184,24 @@ describe("readArchiveManifest", () => {
     );
   });
 
+  it("names an empty bank entry rather than calling it missing", async () => {
+    // An entry that is present and empty is a different fault from an entry
+    // the archive does not hold, and the two have different fixes.
+    const archive = await oneBankArchive(LISTED_BANK, "");
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/0\/bank\.json .* not valid JSON/,
+    );
+  });
+
+  it("refuses a bank entry that is a list rather than a bank", async () => {
+    const archive = await oneBankArchive(LISTED_BANK, "[]");
+
+    await expect(readArchiveManifest(archive)).rejects.toThrow(
+      /banks\/0\/bank\.json does not describe a bank/,
+    );
+  });
+
   it("refuses a bank entry with no page", async () => {
     const archive = await oneBankArchive(
       LISTED_BANK,
