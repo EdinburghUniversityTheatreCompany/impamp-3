@@ -98,6 +98,74 @@ describe("measureRange", () => {
     expect(measureRange(analysis, 0, 2).truePeakDb).toBeCloseTo(-6, 0);
   });
 
+  /**
+   * The sub-block fallback picks the block that overlaps the range *most*, and
+   * until now that was only ever exercised on a constant tone — where every
+   * block holds the same level and any choice gives the same answer. Writing
+   * `Math.min(end, blockEnd) + Math.max(start, blockStart)` in place of the
+   * subtraction survived the whole suite: the sum grows with the block index,
+   * so the *last* block always wins.
+   *
+   * Hence a signal whose end is nothing like its middle. The range sits inside
+   * the loud half; the file ends quiet. Choosing by overlap answers -15, and
+   * choosing the last block answers about -45.
+   */
+  it("estimates from the block that overlaps the range, not the last one", () => {
+    const loudThenQuiet = concat(sine(1000, 2, -15), sine(1000, 2, -45));
+    const analysis = analyseLoudness(
+      [loudThenQuiet, loudThenQuiet],
+      SAMPLE_RATE,
+    );
+
+    // 200 ms, so shorter than a 400 ms gating block, and comfortably inside
+    // the loud half.
+    const result = measureRange(analysis, 0.5, 0.7);
+
+    expect(result.estimated).toBe(true);
+    expect(result.lufs).toBeCloseTo(-15, 0);
+  });
+
+  /**
+   * A range of exactly one gating block is measured, not estimated.
+   *
+   * `blockStart >= start && blockStart + BLOCK_SECONDS <= end` is the only
+   * place the fully-inside test is made, and both of its `=`s matter at
+   * exactly this range: relax either one and no block qualifies, the sub-block
+   * fallback runs instead, and a trim that is precisely 400 ms silently
+   * becomes an estimate.
+   */
+  it("measures a range exactly one gating block long", () => {
+    const analysis = analyseLoudness(
+      [sine(1000, 2, -23), sine(1000, 2, -23)],
+      SAMPLE_RATE,
+    );
+
+    const result = measureRange(analysis, 0, 0.4);
+
+    expect(result.estimated).toBe(false);
+    expect(result.lufs).toBeCloseTo(-23, 1);
+  });
+
+  /**
+   * Silence shorter than a gating block.
+   *
+   * The gate on the estimated path is `Number.isFinite(lufs) && lufs >
+   * ABSOLUTE_GATE_LUFS`, and it was only ever reached with a signal in it. The
+   * finite half is unkillable — `blockLufs(0)` is -Infinity, which the
+   * comparison already rejects — so it is defensive, but the branch as a whole
+   * decides whether a trimmed-to-silence pad reports a level or admits it has
+   * none.
+   */
+  it("returns null for a sub-block range of digital silence", () => {
+    const silence = new Float32Array(SAMPLE_RATE * 2);
+    const analysis = analyseLoudness([silence, silence], SAMPLE_RATE);
+
+    const result = measureRange(analysis, 0.5, 0.7);
+
+    expect(result.estimated).toBe(true);
+    expect(result.lufs).toBeNull();
+  });
+
   it("clamps an out-of-range request to the analysed duration", () => {
     const analysis = analyseLoudness(
       [sine(1000, 2, -23), sine(1000, 2, -23)],
