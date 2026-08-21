@@ -713,3 +713,32 @@ export async function openProfileManager(page: Page) {
     page.getByRole("heading", { name: "Profile Manager" }),
   ).toBeVisible();
 }
+
+/**
+ * How many rows the `audioFiles` store holds right now.
+ *
+ * Two specs count blobs — the pad editor's upload rollback and the duplicate
+ * collapse — and both are asking "did that write, or delete, what I think it
+ * did?". Written out twice it failed the jscpd gate, which is the gate working.
+ */
+export async function countAudioFiles(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const open = indexedDB.open("impamp3DB");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const request = db
+            .transaction("audioFiles", "readonly")
+            .objectStore("audioFiles")
+            .count();
+          request.onsuccess = () => {
+            resolve(request.result);
+            db.close();
+          };
+          request.onerror = () => reject(request.error);
+        };
+      }),
+  );
+}

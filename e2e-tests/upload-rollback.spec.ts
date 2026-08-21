@@ -1,34 +1,12 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import {
   gotoApp,
   openEditPadModal,
   addSoundsToPadModal,
   savePadEditModal,
   createTestAudioFilePath,
+  countAudioFiles,
 } from "./test-helpers";
-
-/** How many blobs are sitting in the audioFiles store right now. */
-async function countAudioFiles(page: Page): Promise<number> {
-  return page.evaluate(
-    () =>
-      new Promise<number>((resolve, reject) => {
-        const open = indexedDB.open("impamp3DB");
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const db = open.result;
-          const req = db
-            .transaction("audioFiles", "readonly")
-            .objectStore("audioFiles")
-            .count();
-          req.onsuccess = () => {
-            resolve(req.result);
-            db.close();
-          };
-          req.onerror = () => reject(req.error);
-        };
-      }),
-  );
-}
 
 /**
  * Adding a sound in the pad editor writes the blob to IndexedDB straight away,
