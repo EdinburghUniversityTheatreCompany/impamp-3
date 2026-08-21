@@ -218,10 +218,15 @@ describe("collectBankDataForZip", () => {
     // The fixture must actually carry what the export is meant to drop, or
     // the assertions below hold for the wrong reason.
     const db = await getDb();
-    const storedPad = (await db.getAll("padConfigurations"))[0];
-    expect(storedPad.id).toBeDefined();
-    expect(storedPad._modified).toBeDefined();
-    expect(storedPad._fieldsModified).toBeDefined();
+    for (const stored of [
+      (await db.getAll("padConfigurations"))[0],
+      (await db.getAll("pageMetadata"))[0],
+    ]) {
+      expect(stored.id).toBeDefined();
+      expect(stored._created).toBeDefined();
+      expect(stored._modified).toBeDefined();
+      expect(stored._fieldsModified).toBeDefined();
+    }
 
     const { bank } = await collectBankDataForZip(profileId, OPENERS_ID);
     const page = bank.page as Record<string, unknown>;
@@ -345,13 +350,19 @@ describe("collectBankDataForZip", () => {
     const bed = await addSound("bed");
     expect(sting).not.toBe(bed);
 
-    await seedBank(mine, OPENERS, [
-      { padIndex: 0, name: "Horn", audioFileIds: [sting] },
-    ]);
-    // The same bank id in a different profile. Bank ids are only unique
-    // within a profile: every default bank on every profile is "0".."9".
+    // The same bank id in two profiles. Bank ids are only unique *within* a
+    // profile: every default bank on every profile is "0".."9".
+    //
+    // The other profile's copy is written first on purpose. A lookup that
+    // ignored `profileId` and took the first row with a matching id would
+    // otherwise still find the right bank, because IndexedDB hands rows back
+    // in key order and this profile's was inserted first — a fixture that
+    // cannot exhibit the failure it is named for.
     await seedBank(theirs, { ...OPENERS, name: "Someone else's" }, [
       { padIndex: 4, name: "Rain", audioFileIds: [bed] },
+    ]);
+    await seedBank(mine, OPENERS, [
+      { padIndex: 0, name: "Horn", audioFileIds: [sting] },
     ]);
 
     const { bank, audioBlobs } = await collectBankDataForZip(mine, OPENERS_ID);
@@ -444,8 +455,12 @@ describe("collectBankDataForZip", () => {
   });
 
   it("refuses a profile that does not exist", async () => {
+    // Names the id, not merely the word "profile": the bank guard's message
+    // is "Bank <id> not found in profile 4242", so a bare /profile/i passes
+    // whether or not the profile is checked at all. Deleting the profile
+    // guard left this test green until it was tightened.
     await expect(collectBankDataForZip(4242, OPENERS_ID)).rejects.toThrow(
-      /profile/i,
+      /profile with id 4242/i,
     );
   });
 });
