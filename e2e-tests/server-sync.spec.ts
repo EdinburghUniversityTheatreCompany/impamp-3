@@ -674,6 +674,140 @@ test.describe("connecting a profile", () => {
 });
 
 /**
+ * The SSE endpoint, which nothing opened before.
+ *
+ * `/api/profiles/:id/events` is what replaces Drive's fifteen-minute polling
+ * window with about a second, and it is also the reason the app must run as a
+ * single instance — the event bus is in-process. Every other spec here works
+ * around it: `reloadAndWaitForConflict` deliberately reloads rather than
+ * waiting for a push. So the live-collaboration promise rested on a route no
+ * test had ever connected to.
+ *
+ * These go through the browser rather than `request.get`, for two reasons: an
+ * APIRequestContext buffers the whole body, and this body does not end for
+ * thirty minutes; and `EventSource` is what the client actually uses, so the
+ * framing has to be right and not merely present.
+ */
+test.describe("live change notifications", () => {
+  test("streams the current version, then every change after it", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "sse-owner");
+    const id = await createServerProfile(request, cookie, "Live Board");
+
+    // Same origin, and a document to run in. Nothing about the page matters.
+    await gotoApp(page);
+
+    const opened = await page.evaluate(async (profileId) => {
+      const events: string[] = [];
+      const source = new EventSource(`/api/profiles/${profileId}/events`);
+      (window as unknown as { __sse: string[] }).__sse = events;
+      (window as unknown as { __sseClose: () => void }).__sseClose = () =>
+        source.close();
+      source.addEventListener("change", (event) => {
+        events.push((event as MessageEvent<string>).data);
+      });
+      return new Promise<string>((resolve, reject) => {
+        source.addEventListener("change", function first(event) {
+          source.removeEventListener("change", first);
+          resolve((event as MessageEvent<string>).data);
+        });
+        source.addEventListener("error", () => reject(new Error("sse error")));
+      });
+    }, id);
+
+    // The first frame arrives without anything having changed: a client that
+    // connects mid-session learns where the server is rather than waiting for
+    // the next write to find out.
+    expect(JSON.parse(opened)).toEqual({ profileId: id, version: 1 });
+
+    const written = await request.put(`/api/profiles/${id}`, {
+      headers: { ...cookie, "if-match": '"1"' },
+      data: { name: "Live Board", data: { ...SAMPLE, pushed: true } },
+    });
+    expect(written.status()).toBe(200);
+
+    // Pushed, not polled: the only thing that happened between the two reads
+    // is a write by a different client.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(
+            () => (window as unknown as { __sse: string[] }).__sse.length,
+          ),
+        { message: "the write should have been announced on the open stream" },
+      )
+      .toBeGreaterThan(1);
+
+    const all = await page.evaluate(
+      () => (window as unknown as { __sse: string[] }).__sse,
+    );
+    expect(JSON.parse(all[all.length - 1])).toEqual({
+      profileId: id,
+      version: 2,
+    });
+
+    // The payload carries the version and never the data — one code path reads
+    // a profile, so an event cannot deliver stale bytes.
+    expect(Object.keys(JSON.parse(all[all.length - 1])).sort()).toEqual([
+      "profileId",
+      "version",
+    ]);
+
+    await page.evaluate(() =>
+      (window as unknown as { __sseClose: () => void }).__sseClose(),
+    );
+  });
+
+  test("is a stream, and is closed to callers with no grant", async ({
+    page,
+    request,
+  }) => {
+    const cookie = await signedInAs(page, request, "sse-headers");
+    const id = await createServerProfile(request, cookie, "Framed");
+    await gotoApp(page);
+
+    // Read exactly one chunk and hang up, which is the only way to see the
+    // headers of a body that would otherwise run for half an hour.
+    const framing = await page.evaluate(async (profileId) => {
+      const controller = new AbortController();
+      const response = await fetch(`/api/profiles/${profileId}/events`, {
+        signal: controller.signal,
+      });
+      const reader = response.body!.getReader();
+      const { value } = await reader.read();
+      controller.abort();
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type"),
+        cacheControl: response.headers.get("cache-control"),
+        buffering: response.headers.get("x-accel-buffering"),
+        chunk: new TextDecoder().decode(value),
+      };
+    }, id);
+
+    expect(framing.status).toBe(200);
+    expect(framing.contentType).toBe("text/event-stream");
+    // A proxy that buffers or a cache that stores turns a push into nothing.
+    expect(framing.cacheControl).toContain("no-cache");
+    expect(framing.buffering).toBe("no");
+    expect(framing.chunk).toMatch(/^event: change\ndata: \{.*\}\n\n$/);
+
+    // A stranger gets the same 404 the read route gives, so the stream cannot
+    // be used to confirm a profile id either.
+    const { token: stranger } = await mintSession(request, "sse-stranger");
+    const refused = await request.get(`/api/profiles/${id}/events`, {
+      headers: { cookie: `${SESSION_COOKIE}=${stranger}` },
+    });
+    expect(refused.status()).toBe(404);
+    expect((await request.get(`/api/profiles/${id}/events`)).status()).toBe(
+      404,
+    );
+  });
+});
+
+/**
  * Following holds the push back, against the real server.
  *
  * The unit tests cover the decision; this covers the promise. A follower that
