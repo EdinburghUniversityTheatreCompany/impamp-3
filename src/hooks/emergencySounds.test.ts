@@ -199,13 +199,14 @@ describe("emergency sound loading", () => {
 });
 
 /**
- * `EmergencySound` is a hand-built projection of `PadConfiguration` — it names
+ * `EmergencySound` was a hand-built projection of `PadConfiguration`, naming
  * its eight fields explicitly rather than going through
- * `extractPadPlaybackSettings` — and `playEmergencySound` then copies those
- * same fields into a trigger call a second time. Enter is a trigger path like
- * any other, so a pad's own `activePadBehavior` override has to survive both
- * copies, and neither produces a compiler error when it forgets one.
- * `useKeyboardListener.test.tsx` covers the second copy.
+ * `extractPadPlaybackSettings`, and `playEmergencySound` copied those same
+ * fields into a trigger call a second time. Enter is a trigger path like any
+ * other, so a pad's own `activePadBehavior` override has to survive the whole
+ * journey, and neither copy produced a compiler error when it forgot a field.
+ * It now embeds `PadPlaybackSettings` and is filled by the funnel;
+ * `useKeyboardListener.test.tsx` covers the hop after this one.
  */
 describe("what an emergency sound carries off its pad", () => {
   beforeEach(() => {

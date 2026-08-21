@@ -15,6 +15,7 @@ import { useSearch, type SearchResult } from "@/hooks/useSearch";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel, hasArmModifier } from "@/lib/platform";
+import { extractPadPlaybackSettings } from "@/lib/db";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -84,14 +85,12 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
       await triggerPad(
         {
+          // `SearchResult` embeds `PadPlaybackSettings`, so the one funnel
+          // takes it whole. This used to be an eight-field literal, one of
+          // three copies of the same list between a pad and this modal.
+          ...extractPadPlaybackSettings(result),
           padIndex: result.padIndex,
-          audioFileIds: result.audioFileIds,
-          playbackType: result.playbackType,
           name: result.name,
-          audioTrimSettings: result.audioTrimSettings,
-          audioGainSettings: result.audioGainSettings,
-          padGainDb: result.padGainDb,
-          activePadBehavior: result.activePadBehavior,
         },
         {
           activeProfileId: result.profileId,
@@ -115,6 +114,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
       // Add to armed tracks store
       playbackStoreActions.armTrack(armedKey, {
+        ...extractPadPlaybackSettings(result),
         key: armedKey,
         name: result.name,
         padInfo: {
@@ -122,12 +122,6 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
           bankId: result.bankId,
           padIndex: result.padIndex,
         },
-        audioFileIds: result.audioFileIds,
-        playbackType: result.playbackType,
-        audioTrimSettings: result.audioTrimSettings,
-        audioGainSettings: result.audioGainSettings,
-        padGainDb: result.padGainDb,
-        activePadBehavior: result.activePadBehavior,
       });
 
       console.log(`Armed track from search: ${result.name}`);

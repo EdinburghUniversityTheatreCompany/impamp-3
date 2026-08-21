@@ -2,12 +2,14 @@
 /**
  * What the search modal hands the trigger and the armed queue.
  *
- * Clicking a result plays it; the arm chord queues it. Both build their
- * payload by hand out of a `SearchResult` — a `TriggerablePad` in one case, an
- * `ArmedTrackState` in the other — so every playback field the pad carries has
- * to be named twice more here, in two literals that no compiler check ties to
- * each other or to `SearchResult`. Omitting an optional field from either is
- * silently legal.
+ * Clicking a result plays it; the arm chord queues it. Both used to build
+ * their payload by hand out of a `SearchResult` — a `TriggerablePad` in one
+ * case, an `ArmedTrackState` in the other — so every playback field the pad
+ * carries was named twice more here, in two literals that no compiler check
+ * tied to each other or to `SearchResult`, and omitting an optional field
+ * from either was silently legal. Both now spread
+ * `extractPadPlaybackSettings(result)`; these cases assert from the outside
+ * that the fields still arrive.
  *
  * The pad's own `activePadBehavior` override is the newest such field, and
  * this is the only gate that can tell whether the search path carries it.

@@ -1,7 +1,5 @@
 import { create } from "zustand";
 import {
-  type ActivePadBehavior,
-  PlaybackType,
   extractPadPlaybackSettings,
   getPadConfigurationsForProfileBank,
   type PadPlaybackSettings,
@@ -27,30 +25,25 @@ export interface PlaybackState {
 // Define the state structure for an armed track in the store
 //
 // An armed cue names a *pad*, not the sounds that pad happened to hold when it
-// was armed. The playback fields below are a snapshot, kept for three jobs that
-// all need an answer at arm time: pinning the buffers in the audio cache,
-// queueing them for preload, and labelling the row in the Armed Tracks panel.
-// They are deliberately *not* what gets played — see `playArmedTrackNow`.
-export interface ArmedTrackState {
+// was armed. The playback fields are a snapshot, kept for three jobs that all
+// need an answer at arm time: pinning the buffers in the audio cache, queueing
+// them for preload, and labelling the row in the Armed Tracks panel. They are
+// deliberately *not* what gets played — see `playArmedTrackNow`.
+//
+// The snapshot is `PadPlaybackSettings` rather than a hand-written copy of its
+// members, and both arm sites fill it with `extractPadPlaybackSettings`. It
+// used to name seven of the eight: `isDisabled` was missing, so the fallback
+// below — which reads the snapshot back through `extractPadPlaybackSettings` —
+// answered "enabled" for a pad switched off after it was armed.
+export interface ArmedTrackState extends PadPlaybackSettings {
   key: string; // Unique armed track key (e.g., `armed-${profileId}-${bankId}-${padIndex}`)
+  /** What the Armed Tracks panel labels the cue, never undefined. */
   name: string;
   padInfo: {
     profileId: number;
     bankId: string;
     padIndex: number;
   };
-  audioFileIds: number[];
-  playbackType: PlaybackType;
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  audioGainSettings?: Record<number, number>;
-  padGainDb?: number;
-  /**
-   * The pad's own activePadBehavior override, as it stood at arm time. Carried
-   * for the same reason as the fields above: `playArmedTrackNow` falls back to
-   * this snapshot when the pad cannot be re-read, and that fallback runs it
-   * through `extractPadPlaybackSettings`, which reads this key.
-   */
-  activePadBehavior?: ActivePadBehavior;
 }
 
 // Define the store's state and actions
