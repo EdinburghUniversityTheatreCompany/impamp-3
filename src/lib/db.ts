@@ -1,4 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import type {
   LoudnessAnalysis,
   NormalisationSettings,
@@ -736,7 +737,7 @@ export async function addAudioFile(
   // it is fired without awaiting. The file plays at 0 dB normalisation until
   // this lands, which is exactly how it behaved before this feature existed.
   if (typeof window !== "undefined") {
-    void import("@/lib/audio/loudness/pipeline")
+    void loadLoudnessPipeline()
       .then(({ analyseAndStore }) => analyseAndStore(id))
       .catch((error) => {
         // analyseAndStore already contains its own errors; this only guards

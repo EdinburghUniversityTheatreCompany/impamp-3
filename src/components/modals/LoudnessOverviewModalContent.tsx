@@ -12,6 +12,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import GainControl from "@/components/GainControl";
 import {
   getCachedLoudness,
@@ -198,7 +199,7 @@ export default function LoudnessOverviewModalContent() {
     let unsubscribe: (() => void) | undefined;
     let cancelled = false;
 
-    void import("@/lib/audio/loudness/pipeline")
+    void loadLoudnessPipeline()
       .then(({ subscribeToBackfillProgress }) => {
         if (cancelled) return;
         unsubscribe = subscribeToBackfillProgress(setBackfill);

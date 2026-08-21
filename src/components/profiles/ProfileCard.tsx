@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import { useProfileEdit } from "@/hooks/useProfileEdit";
 import { formatDistanceToNow } from "date-fns";
 import { useProfileStore } from "@/store/profileStore";
@@ -99,7 +100,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
     let unsubscribe: (() => void) | undefined;
     let cancelled = false;
 
-    void import("@/lib/audio/loudness/pipeline")
+    void loadLoudnessPipeline()
       .then(({ subscribeToBackfillProgress }) => {
         if (cancelled) return;
         unsubscribe = subscribeToBackfillProgress(setBackfill);
@@ -146,7 +147,7 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
       const audioFileIds = await getAudioFileIdsForProfile(profile.id);
       await clearAudioFileLoudness(audioFileIds);
       const { clearFailedAnalysis, refreshProfileLoudness } =
-        await import("@/lib/audio/loudness/pipeline");
+        await loadLoudnessPipeline();
       clearFailedAnalysis();
       await refreshProfileLoudness(profile.id);
     } catch (error) {
