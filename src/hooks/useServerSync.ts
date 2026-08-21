@@ -56,11 +56,27 @@ export function subscribeToProfileChanges(
     `/api/profiles/${serverProfileId}/events${query}`,
   );
 
-  // The highest version this stream has already acted on. The server greets
+  // The highest version this device is known to be holding. The server greets
   // every new connection with the current version and forces a reconnect every
   // half hour, so without this each stream re-announced a version it had
   // already reported and triggered a full sync for it.
-  let reportedVersion = 0;
+  //
+  // Seeded from the profile rather than starting at zero, because the greeting
+  // is news to a *stream* and almost never news to the *device*. Every page
+  // load opened a stream per server profile and every one of those greetings
+  // ran a full pull and merge for a version already applied — moments after
+  // the load-time sync of the same profiles. The push half of that is caught
+  // by `describesSameSyncState`, but the whole local profile is read and
+  // merged before anything gets as far as deciding not to write.
+  //
+  // Read here rather than passed in so a caller cannot forget it or hand over
+  // a stale one, and it is only ever a floor: an unknown profile, or one that
+  // has never pulled, starts at zero exactly as before.
+  let reportedVersion =
+    useProfileStore
+      .getState()
+      .profiles.find((p) => p.serverProfileId === serverProfileId)
+      ?.serverVersion ?? 0;
 
   const handler = (event: MessageEvent) => {
     try {
