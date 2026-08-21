@@ -2675,8 +2675,10 @@ describe("importBanksFromZip", () => {
   it("ignores a stated hash that is not a hash, rather than failing the bank", async () => {
     const db = await getDb();
     const { target } = await seedShowB();
-    // A hash is an IndexedDB key on the way in. An object here reaches
-    // `index.getAll` and takes the whole bank down with a DataError.
+    // A hash is an IndexedDB key on the way in, and an invalid one is not
+    // refused here: `index.getAll({…})` answers with every row in the
+    // library, so without the guard this pad ends up naming the destination
+    // profile's own sound instead of the one the archive carried.
     const archive = await oddBankArchive(
       [{ id: 1, name: "here.wav", type: "audio/wav", hash: { not: "one" } }],
       [1],

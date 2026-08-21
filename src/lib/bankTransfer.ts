@@ -965,11 +965,16 @@ function placementFor(
  * One archive sound, as the audio importer takes it — or nothing.
  *
  * Every field here is a value out of a file the user picked, so every field
- * is checked. `hash` matters most: it becomes an IndexedDB key on the way in,
- * so anything but a string reaches `index.getAll` and takes the whole bank
- * down with a `DataError`. It is *trusted rather than verified* on purpose —
- * that is what lets a sound already in the library be reused before its bytes
- * are extracted at all — which is exactly why its type has to be real.
+ * is checked. `hash` matters most, and not for the reason it first looks: it
+ * becomes an IndexedDB key on the way in, and the specification's answer to
+ * an invalid one is a `DataError` that would fail the bank — but measured
+ * here, `index.getAll({…})` answers with *every row in the library*, so the
+ * archive's sound is silently "reused" as whatever unrelated row comes back
+ * first and the pad plays someone else's audio. That is the same
+ * collapse-to-one-key shape `findAudioFileIdByHashIn`'s own empty-hash guard
+ * exists for. A hash is *trusted rather than verified* on purpose — it is
+ * what lets a sound already in the library be reused before its bytes are
+ * extracted at all — which is exactly why its type has to be real.
  *
  * A reference with no `audio/<id>` entry behind it is dropped rather than
  * fatal, and so is one that is not a reference at all. The first comes out of
