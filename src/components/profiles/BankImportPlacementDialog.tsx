@@ -217,6 +217,22 @@ export default function BankImportPlacementDialog({
       : `Deletes everything in ${bankLabel(target)} (${bankContents(target)}), and cannot be undone.`;
   };
 
+  /**
+   * Writes the banks, once the dialog is satisfied it can.
+   *
+   * The early return looks like a second copy of the button's `disabled`
+   * attribute, and today it is unreachable: React does not dispatch a click
+   * on a disabled button, so no test can get here with `canImport` false. It
+   * stays anyway, because the thing on the other side of it is irreversible —
+   * a `replace` clears a bank the user still has — and `disabled` is a
+   * *rendering* decision that a form submit, an Enter key, a keyboard
+   * shortcut or a differently rendered control would all walk straight past.
+   * This repo's recorded characteristic failure is exactly that: a call site
+   * adopting a shared helper without the guard that made the old call safe
+   * (`EditPadModalContent`, Task 4b, which deleted audio another profile was
+   * playing). A one-line early return in front of the dangerous operation is
+   * the cheap half of that trade.
+   */
   const handleImport = async () => {
     if (!canImport) return;
     setIsImporting(true);

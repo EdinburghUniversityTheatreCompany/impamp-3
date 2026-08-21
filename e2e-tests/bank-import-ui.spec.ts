@@ -117,11 +117,20 @@ test.describe("Import banks", () => {
       "Deletes everything in 2: Bank 3 (1 pad, 1 sound), and cannot be undone.",
     );
 
-    await page.getByTestId("confirm-bank-import").click();
+    // By the button's *name*, not its test id. The Import / Export tab is
+    // crowded — a profile export, a bank export and a file picker all live
+    // above this — and Task 14 shipped a bank button whose accessible name
+    // was already taken by the profile export directly above it, which turned
+    // two existing specs into strict-mode violations. Playwright's strict
+    // mode is the check: these two lines fail if anything else on the page
+    // answers to the same name.
+    const confirm = page.getByRole("button", { name: "Import 1 Bank" });
+    await expect(confirm).toBeVisible();
+    await confirm.click();
     await expect(page.getByTestId("bank-import-result")).toContainText(
       /Imported 1 bank into /,
     );
-    await page.getByTestId("dismiss-bank-import").click();
+    await page.getByRole("button", { name: "Done" }).click();
     await expect(dialog).toHaveCount(0);
 
     await page.getByRole("button", { name: "Close" }).first().click();
