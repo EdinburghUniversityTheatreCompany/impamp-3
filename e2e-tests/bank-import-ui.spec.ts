@@ -3,11 +3,9 @@ import {
   activatePad,
   bankTabs,
   createTestAudioFilePath,
+  dragTabLeft,
   gotoApp,
-  keyboardDragTab,
-  latchEditMode,
-  openProfileManager,
-  unlatchEditMode,
+  openImportExportTab,
 } from "./test-helpers";
 
 /**
@@ -69,14 +67,11 @@ test.describe("Import banks", () => {
 
     // Pull bank 3 to position 1. From here on its position is 1 and its
     // identity is still the third bank's.
-    await latchEditMode(page);
-    await keyboardDragTab(page, 2, "ArrowLeft");
+    await dragTabLeft(page, 2);
     await expect(tabs.nth(1)).toHaveText("2: Bank 3");
     await expect(tabs.nth(2)).toHaveText("3: Bank 2");
-    await unlatchEditMode(page);
 
-    await openProfileManager(page);
-    await page.getByRole("button", { name: "Import / Export" }).click();
+    await openImportExportTab(page);
 
     // Send bank 1 out ...
     const options = page.locator('[data-testid="export-bank-option"]');

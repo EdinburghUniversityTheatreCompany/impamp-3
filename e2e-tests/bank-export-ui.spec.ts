@@ -6,12 +6,10 @@ import {
   activatePad,
   bankTabs,
   createTestAudioFilePath,
+  dragTabLeft,
   gotoApp,
   importBankArchive,
-  keyboardDragTab,
-  latchEditMode,
-  openProfileManager,
-  unlatchEditMode,
+  openImportExportTab,
 } from "./test-helpers";
 
 /**
@@ -65,14 +63,11 @@ test.describe("Export banks", () => {
 
     // Now pull it to the front. Bank 2 is at position 0 from here on, while
     // its identity is still the second bank's.
-    await latchEditMode(page);
-    await keyboardDragTab(page, 1, "ArrowLeft");
+    await dragTabLeft(page, 1);
     await expect(tabs.nth(0)).toHaveText("1: Bank 2");
     await expect(tabs.nth(1)).toHaveText("2: Bank 1");
-    await unlatchEditMode(page);
 
-    await openProfileManager(page);
-    await page.getByRole("button", { name: "Import / Export" }).click();
+    await openImportExportTab(page);
 
     // The panel numbers banks the way the board does. If these two ever
     // disagree, "the third one" means two different banks in one app.

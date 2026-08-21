@@ -691,6 +691,27 @@ export async function keyboardDragTab(
   await page.keyboard.press("Space");
 }
 
+/**
+ * Drags the tab at `position` one slot to the left, edit mode latched around
+ * it.
+ *
+ * Three bank specs need a board whose positions and identities disagree, and
+ * this is how they get one. The latch rather than a held Shift: a drag is
+ * several keystrokes long and a key held across them is the fixture this
+ * suite has already been bitten by.
+ */
+export async function dragTabLeft(page: Page, position: number) {
+  await latchEditMode(page);
+  await keyboardDragTab(page, position, "ArrowLeft");
+  await unlatchEditMode(page);
+}
+
+/** Opens the profile manager and switches to its Import / Export tab. */
+export async function openImportExportTab(page: Page) {
+  await openProfileManager(page);
+  await page.getByRole("button", { name: "Import / Export" }).click();
+}
+
 // --- Helper for Bank Creation ---
 
 // Enters edit mode, clicks "Add new bank", confirms the default name in the
