@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeProfileRequest, isErrorResponse } from "./apiAuth";
 import { getProfileMeta, type ProfileMeta } from "./profiles";
 import { redactProfileBlob } from "./profileBlob";
+import { readBodyText, tooLargeResponse } from "./requestBody";
 import type { Access, UserRow } from "./db";
 
 export interface AuthorizedProfileMeta {
@@ -64,78 +65,24 @@ export interface ProfileWriteBody {
  * Generous for a soundboard — the audio itself never travels this way, only
  * names, hashes and pad layout — and small enough that one request cannot
  * occupy the single instance this app runs as. There was no bound at all.
+ *
+ * A hundred and twenty-eight times `MAX_JSON_BODY_BYTES`, which is the point of
+ * having both: this is the one route where a large body is expected, and it is
+ * not a reason for every other route to accept one. The reader is the same.
  */
 const MAX_PROFILE_BODY_BYTES = 8 * 1024 * 1024;
 
+const TOO_LARGE = "That profile is too large to store";
+
 function tooLarge(): NextResponse {
-  return NextResponse.json(
-    { error: "That profile is too large to store" },
-    { status: 413 },
-  );
-}
-
-/**
- * The request body as text, or the response to send instead.
- *
- * Read through a counting reader rather than `await request.json()`, which
- * buffers and parses whatever arrives with no ceiling of its own — Next 16 App
- * Router handlers have no body-size limit (`api.bodyParser.sizeLimit` was
- * Pages-only, and `next.config.ts` sets nothing). The `content-length` check
- * below is not a substitute: a chunked request carries no such header, and
- * `Number(null ?? "")` is 0, which is finite and comfortably under the cap. So
- * the guard passed and the whole body was buffered anyway.
- *
- * That matters because of who can reach it. `PUT /api/profiles/:id` resolves
- * access before parsing, and a bare editor link token grants `editor` with no
- * session at all — and the body is buffered before `If-Match` is compared, so
- * the request need not write anything to cost the memory. On a single instance
- * with a synchronous SQLite layer, that is the whole service.
- */
-async function readBodyText(
-  request: NextRequest,
-): Promise<string | NextResponse> {
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (
-    Number.isFinite(declaredLength) &&
-    declaredLength > MAX_PROFILE_BODY_BYTES
-  ) {
-    return tooLarge();
-  }
-
-  const body = request.body;
-  if (!body) return "";
-
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let received = 0;
-  let text = "";
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > MAX_PROFILE_BODY_BYTES) {
-        // Abort rather than drain: nothing further is going to be stored, and
-        // reading it to the end is the cost this exists to avoid.
-        await reader.cancel().catch(() => {});
-        return tooLarge();
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  return text;
+  return tooLargeResponse(TOO_LARGE);
 }
 
 /** Validate the JSON body shared by profile create and update. */
 export async function parseProfileBody(
   request: NextRequest,
 ): Promise<ProfileWriteBody | NextResponse> {
-  const text = await readBodyText(request);
+  const text = await readBodyText(request, MAX_PROFILE_BODY_BYTES, TOO_LARGE);
   if (text instanceof NextResponse) return text;
 
   // `JSON.parse` happily yields null, a number or an array; narrowed here so

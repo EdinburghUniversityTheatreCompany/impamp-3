@@ -13,6 +13,7 @@ import {
 } from "./s3/client";
 import type { AudioObjectRow, UserRow } from "./db";
 import type { UploadDecision } from "./audio";
+import { parseJsonBody } from "./requestBody";
 
 /**
  * Test seam. Route handlers call `resolveObjectStore()`; tests swap in the
@@ -178,17 +179,6 @@ function parseAudioFields(body: AudioBody): AudioFileFields | NextResponse {
     contentType: body.contentType,
     extension: typeof body.extension === "string" ? body.extension : "",
   };
-}
-
-/** Parse a JSON body, or the 400 to send instead. */
-async function parseJsonBody<T extends object>(
-  request: NextRequest,
-): Promise<T | NextResponse> {
-  try {
-    return (await request.json()) as T;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
 }
 
 /**
