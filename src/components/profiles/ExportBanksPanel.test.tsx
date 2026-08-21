@@ -417,8 +417,8 @@ describe("selecting banks", () => {
         '[data-testid="export-bank-checkbox"]',
       )?.checked,
     ).toBe(false);
-    expect(panel.required("export-selected-banks").textContent).toContain(
-      "(0)",
+    expect(panel.required("export-selected-banks").textContent).toBe(
+      "Export 0 Banks",
     );
 
     await tick("0");
@@ -430,7 +430,7 @@ describe("selecting banks", () => {
   it("will not export with nothing ticked", async () => {
     const button = panel.required("export-selected-banks") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(button.textContent).toContain("(0)");
+    expect(button.textContent).toBe("Export 0 Banks");
 
     await exportSelected();
     expect(exportBanksToZip).not.toHaveBeenCalled();
@@ -438,8 +438,8 @@ describe("selecting banks", () => {
 
   it("selects every bank at once, and clears them again", async () => {
     await panel.click("bank-export-select-all");
-    expect(panel.required("export-selected-banks").textContent).toContain(
-      "(5)",
+    expect(panel.required("export-selected-banks").textContent).toBe(
+      "Export 5 Banks",
     );
     await exportSelected();
     expect(exported().ids).toEqual(DISPLAY_ORDER);
@@ -465,8 +465,8 @@ describe("exporting", () => {
     await tick(OPENERS);
     await exportSelected();
 
-    expect(panel.required("export-selected-banks").textContent).toContain(
-      "(0)",
+    expect(panel.required("export-selected-banks").textContent).toBe(
+      "Export 0 Banks",
     );
   });
 
@@ -475,8 +475,8 @@ describe("exporting", () => {
     await tick(OPENERS);
     await exportSelected();
 
-    expect(panel.required("export-selected-banks").textContent).toContain(
-      "(1)",
+    expect(panel.required("export-selected-banks").textContent).toBe(
+      "Export 1 Bank",
     );
     expect(panel.testId("bank-export-error")).toBeNull();
   });
@@ -493,8 +493,8 @@ describe("exporting", () => {
       "Bank 9 not found",
     );
     // And the selection is still there to try again with.
-    expect(panel.required("export-selected-banks").textContent).toContain(
-      "(1)",
+    expect(panel.required("export-selected-banks").textContent).toBe(
+      "Export 1 Bank",
     );
     consoleError.mockRestore();
   });

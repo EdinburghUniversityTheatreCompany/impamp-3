@@ -405,7 +405,15 @@ export default function ExportBanksPanel({
           isExporting || nothingSelected ? "cursor-not-allowed" : ""
         }`}
       >
-        {isExporting ? "Exporting..." : `Export Selected (${selected.length})`}
+        {/*
+         * Not "Export Selected", which is what the profile export above this
+         * one is called: two buttons with one accessible name on one tab is
+         * ambiguous to anybody reading the page rather than looking at it,
+         * and Playwright's strict mode refused to click either.
+         */}
+        {isExporting
+          ? "Exporting..."
+          : `Export ${count(selected.length, "Bank", "Banks")}`}
       </button>
 
       {error && (
