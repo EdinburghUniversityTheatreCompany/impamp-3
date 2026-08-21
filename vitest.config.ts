@@ -78,11 +78,17 @@ export default defineConfig({
       // fallback), which do not move between runs the way a partially covered
       // module does. Floor raised to sit just under, keeping the same small
       // deliberate gap.
+      // Raised again after all five lanes merged. The 50/43/46/50 above it was
+      // set from the test-quality branch alone, against its own 50.32 run; the
+      // other four lanes then added the server redaction, the sync download
+      // paths, the import register and the keyboard work, and the combined
+      // tree measures 54.43 / 46.32 / 51.25 / 55.14. A floor four points below
+      // what the suite actually does is not a ratchet, it is decoration.
       thresholds: {
-        statements: 50,
-        branches: 43,
-        functions: 46,
-        lines: 50,
+        statements: 53,
+        branches: 45,
+        functions: 50,
+        lines: 54,
       },
     },
   },
