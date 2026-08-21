@@ -136,6 +136,13 @@ jobs:
   # playwright.config.ts serves a production build rather than `next dev` —
   # on-demand Turbopack compilation was the source of this suite's timeouts and
   # all of its flakiness.
+  #
+  # It also runs two workers here rather than one, so this job is no longer the
+  # most forgiving configuration anyone runs — every flake this suite has had
+  # came from parallel load, and a serial run with retries could not see the
+  # class of bug the developers hit. Any test that needed a retry is listed in
+  # this job's summary by e2e-tests/flaky-reporter.ts, so a rising rate is
+  # visible without opening the report artifact.
   e2e:
     runs-on: ubuntu-latest
     steps:

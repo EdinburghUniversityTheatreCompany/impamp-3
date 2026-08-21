@@ -38,8 +38,25 @@ export default defineConfig({
   globalSetup: "./e2e-tests/global-setup.ts",
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: "html",
+  // Two workers in CI, not one.
+  //
+  // Every flake this suite has had came from parallel load — the comments
+  // above and in the specs say so repeatedly — and the developer who reports
+  // one is running ten workers with no retries. A single-worker CI run with
+  // two retries is therefore the most forgiving configuration anyone runs, and
+  // a green result from it says the suite passes when nothing competes with
+  // it, which is not the claim anyone wants from CI. The last real bug found
+  // this way spent weeks being read as noise, because CI could not see it.
+  //
+  // Two rather than four: a GitHub runner has 4 vCPUs, and this suite decodes
+  // audio and writes blobs to IndexedDB, so it is not cheap per worker. Two
+  // roughly halves the wall clock as well, which pays for the contention it
+  // buys. Anything that now flakes at two workers would have flaked on a
+  // developer's machine at ten, so it is a real report, not new noise.
+  workers: process.env.CI ? 2 : undefined,
+  // The HTML report is the artifact; the flaky reporter makes retries visible
+  // without opening it. See e2e-tests/flaky-reporter.ts.
+  reporter: [["html"], ["./e2e-tests/flaky-reporter.ts"]],
   use: {
     baseURL,
     trace: "on-first-retry",
