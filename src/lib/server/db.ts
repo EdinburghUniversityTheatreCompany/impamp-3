@@ -75,8 +75,18 @@ export interface ShareRow {
  * Schema migrations, applied in order. The array index + 1 is the resulting
  * `PRAGMA user_version`, so append only — never edit or reorder an existing
  * entry once it has run anywhere.
+ *
+ * That rule had nothing behind it but this comment, and it is not the kind of
+ * rule a reviewer reliably catches: editing an existing entry looks exactly
+ * like fixing a migration, passes every other test in the suite, and produces
+ * a *correct* schema on a fresh database. It is wrong only on databases that
+ * already ran the old text — which is every deployed one, and none of the ones
+ * anybody develops against. `migrations.test.ts` holds a hash of each entry
+ * that has shipped and fails if one of them changes.
+ *
+ * Exported for that test. Nothing else should read it.
  */
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: readonly string[] = [
   // 1 — initial schema
   `
   CREATE TABLE users (
