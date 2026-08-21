@@ -5,50 +5,29 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeProfileRequest, isErrorResponse } from "./apiAuth";
-import { getProfileById, getProfileMeta, type ProfileMeta } from "./profiles";
-import type { Access, ProfileRow, UserRow } from "./db";
+import { getProfileMeta, type ProfileMeta } from "./profiles";
+import { redactProfileBlob } from "./profileBlob";
+import { readBodyText, tooLargeResponse } from "./requestBody";
+import type { Access, UserRow } from "./db";
 
-export interface AuthorizedProfile {
-  profile: ProfileRow;
+export interface AuthorizedProfileMeta {
+  profile: ProfileMeta;
   access: Access;
   user: UserRow | null;
 }
 
 /**
- * Resolve the caller's access to a profile and load the row, or return the
- * response to send instead.
+ * Resolve the caller's access to a profile, without reading the blob.
  *
  * A profile the caller may not see and a profile that does not exist both
  * answer 404, so profile IDs stay unenumerable.
- */
-export function loadAuthorizedProfile(
-  request: NextRequest,
-  id: string,
-): AuthorizedProfile | NextResponse {
-  const auth = authorizeProfileRequest(request, id);
-  if (isErrorResponse(auth)) return auth;
-
-  const profile = getProfileById(id);
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  return { profile, access: auth.access, user: auth.user };
-}
-
-export interface AuthorizedProfileMeta {
-  profile: ProfileMeta;
-  access: Access;
-  user: AuthorizedProfile["user"];
-}
-
-/**
- * The same authorisation, without reading the blob.
  *
- * For callers that only need `version` or `owner_id`: the 304 branch of GET,
- * DELETE, and the SSE connect and heartbeat. Those were each pulling up to
- * MAX_PROFILE_BODY_BYTES off disk and turning it into a JS string, once per
- * call — and the heartbeat runs every 25 seconds for every open stream.
+ * There is deliberately no blob-loading twin any more. Every route here needs
+ * `version` or `owner_id` to authorise and nothing else — including PUT, whose
+ * blob-loading version read up to MAX_PROFILE_BODY_BYTES off disk to check who
+ * was allowed to *overwrite* it. GET is the one caller that wants the row, and
+ * it asks `getProfileById` for it explicitly, after the 304 branch has had its
+ * chance to answer without one.
  */
 export function loadAuthorizedProfileMeta(
   request: NextRequest,
@@ -86,78 +65,24 @@ export interface ProfileWriteBody {
  * Generous for a soundboard — the audio itself never travels this way, only
  * names, hashes and pad layout — and small enough that one request cannot
  * occupy the single instance this app runs as. There was no bound at all.
+ *
+ * A hundred and twenty-eight times `MAX_JSON_BODY_BYTES`, which is the point of
+ * having both: this is the one route where a large body is expected, and it is
+ * not a reason for every other route to accept one. The reader is the same.
  */
 const MAX_PROFILE_BODY_BYTES = 8 * 1024 * 1024;
 
+const TOO_LARGE = "That profile is too large to store";
+
 function tooLarge(): NextResponse {
-  return NextResponse.json(
-    { error: "That profile is too large to store" },
-    { status: 413 },
-  );
-}
-
-/**
- * The request body as text, or the response to send instead.
- *
- * Read through a counting reader rather than `await request.json()`, which
- * buffers and parses whatever arrives with no ceiling of its own — Next 16 App
- * Router handlers have no body-size limit (`api.bodyParser.sizeLimit` was
- * Pages-only, and `next.config.ts` sets nothing). The `content-length` check
- * below is not a substitute: a chunked request carries no such header, and
- * `Number(null ?? "")` is 0, which is finite and comfortably under the cap. So
- * the guard passed and the whole body was buffered anyway.
- *
- * That matters because of who can reach it. `PUT /api/profiles/:id` resolves
- * access before parsing, and a bare editor link token grants `editor` with no
- * session at all — and the body is buffered before `If-Match` is compared, so
- * the request need not write anything to cost the memory. On a single instance
- * with a synchronous SQLite layer, that is the whole service.
- */
-async function readBodyText(
-  request: NextRequest,
-): Promise<string | NextResponse> {
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (
-    Number.isFinite(declaredLength) &&
-    declaredLength > MAX_PROFILE_BODY_BYTES
-  ) {
-    return tooLarge();
-  }
-
-  const body = request.body;
-  if (!body) return "";
-
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let received = 0;
-  let text = "";
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > MAX_PROFILE_BODY_BYTES) {
-        // Abort rather than drain: nothing further is going to be stored, and
-        // reading it to the end is the cost this exists to avoid.
-        await reader.cancel().catch(() => {});
-        return tooLarge();
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  return text;
+  return tooLargeResponse(TOO_LARGE);
 }
 
 /** Validate the JSON body shared by profile create and update. */
 export async function parseProfileBody(
   request: NextRequest,
 ): Promise<ProfileWriteBody | NextResponse> {
-  const text = await readBodyText(request);
+  const text = await readBodyText(request, MAX_PROFILE_BODY_BYTES, TOO_LARGE);
   if (text instanceof NextResponse) return text;
 
   // `JSON.parse` happily yields null, a number or an array; narrowed here so
@@ -171,13 +96,21 @@ export async function parseProfileBody(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // Whatever the client believed it was withholding, decided here as well.
+  // See `profileBlob` for why the server needs its own answer; the short
+  // version is that a client is not a trustworthy filter of what the server
+  // hands a third party. Done before serialising, so the string below — the
+  // one the row stores — is already the redacted one and there is no second
+  // pass over 8 MB.
+  const data = redactProfileBlob(body.data);
+
   // Content-length can be absent or wrong, so the parsed size is what decides.
   // Kept rather than discarded: this is the exact string the row will store.
   //
   // Measured in bytes, not `.length`: that counts UTF-16 code units, so a blob
   // of astral-plane characters — an emoji-named pad, at scale — could be two
   // to three times the intended byte ceiling and still pass.
-  const serialisedData = JSON.stringify(body.data ?? null);
+  const serialisedData = JSON.stringify(data ?? null);
   if (Buffer.byteLength(serialisedData, "utf8") > MAX_PROFILE_BODY_BYTES) {
     return tooLarge();
   }
@@ -188,14 +121,14 @@ export async function parseProfileBody(
       { status: 400 },
     );
   }
-  if (!body.data || typeof body.data !== "object") {
+  if (!data || typeof data !== "object") {
     return NextResponse.json(
       { error: "Profile data must be an object" },
       { status: 400 },
     );
   }
 
-  return { name: body.name.trim(), data: body.data as object, serialisedData };
+  return { name: body.name.trim(), data: data as object, serialisedData };
 }
 
 /** The version a profile is at, in ETag form. Used by `If-Match` on writes. */

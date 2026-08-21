@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upsertUserFromGoogle } from "@/lib/server/users";
 import { createSession } from "@/lib/server/session";
+import { parseJsonBody } from "@/lib/server/requestBody";
 
 /**
  * Test-only sign-in, for the E2E suite.
@@ -33,12 +34,10 @@ export async function POST(request: NextRequest) {
   if (!expected) return notFound;
   if (request.headers.get(SECRET_HEADER) !== expected) return notFound;
 
-  let email: unknown;
-  try {
-    ({ email } = await request.json());
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ email?: unknown }>(request);
+  if (body instanceof NextResponse) return body;
+
+  const { email } = body;
   if (typeof email !== "string" || !email.includes("@")) {
     return NextResponse.json(
       { error: "An email is required" },

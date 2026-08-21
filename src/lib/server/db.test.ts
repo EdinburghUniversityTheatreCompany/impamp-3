@@ -83,7 +83,10 @@ describe("profiles", () => {
     });
 
     expect(profile.version).toBe(1);
-    expect(JSON.parse(profile.data)).toEqual({
+    // Read back rather than taken from the return value: an accepted write
+    // reports what it decided (`ProfileMeta`) and does not hand the blob back,
+    // so the row itself is the only thing that can say what was stored.
+    expect(JSON.parse(getProfileById(profile.id)!.data)).toEqual({
       padConfigurations: [{ padIndex: 0 }],
     });
   });
