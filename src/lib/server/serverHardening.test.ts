@@ -97,10 +97,19 @@ describe("the Drive proxy's same-origin gate", () => {
     );
   });
 
-  it("falls back to Referer for clients that send no Sec-Fetch-Site", () => {
+  it("refuses a caller that sends no Sec-Fetch-Site, whatever its Referer", () => {
+    // The gate used to fall back to Origin/Referer here, which meant it
+    // stopped nothing it was built to stop: `Sec-Fetch-Site` cannot be set by
+    // page script, but `Referer` can be set by anything, so one
+    // `curl -H "Referer: https://impamp.test/"` satisfied it. A check an
+    // attacker can satisfy at will is not a check; it only cost the honest
+    // caller a header.
     expect(
       isSameHostRequest(proxyRequest({ referer: "https://impamp.test/app" })),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isSameHostRequest(proxyRequest({ origin: "https://impamp.test" })),
+    ).toBe(false);
     expect(
       isSameHostRequest(proxyRequest({ referer: "https://elsewhere.test/" })),
     ).toBe(false);
