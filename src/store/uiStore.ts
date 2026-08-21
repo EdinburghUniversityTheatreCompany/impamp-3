@@ -45,11 +45,3 @@ export const useUIStore = create<UIState>((set) => ({
     set({ isModalOpen: false, modalConfig: null });
   },
 }));
-
-// Selector hook for convenience
-export const selectModalState = (state: UIState) => ({
-  isModalOpen: state.isModalOpen,
-  modalConfig: state.modalConfig,
-  openModal: state.openModal,
-  closeModal: state.closeModal,
-});

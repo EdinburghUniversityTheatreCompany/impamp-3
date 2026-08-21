@@ -547,9 +547,6 @@ export function useKeyboardListener() {
         console.log(
           `[KeyboardListener] Matched pad ${matchedPadIndex} for key ${event.key}, but it has no audio files.`,
         );
-      } else {
-        // This log might be redundant given previous logs, but can be useful
-        // console.log(`[KeyboardListener] No matching pad with audio found for key: ${event.key}`);
       }
     },
     [

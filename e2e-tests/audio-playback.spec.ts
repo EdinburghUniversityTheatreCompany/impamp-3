@@ -169,8 +169,41 @@ test.describe("ImpAmp3 Audio Playback", () => {
     await expect(secondPad.locator(".bg-green-500")).toBeVisible();
   });
 
-  // TODO: Test fadeout
-  // YOu can get the fadeout button once it's playing using (getByRole('button', { name: 'Fade out test-audio' }))
+  test("A track's own fade out button fades that track and then ends it", async ({
+    page,
+  }) => {
+    const expectedFileName = "fade-one-track";
+    const audioFilePath = await createTestAudioFilePath(expectedFileName);
+
+    const firstPad = page.locator('[id^="pad-"]').first();
+    await page
+      .locator('[data-testid="pad-drop-input-0"]')
+      .setInputFiles(audioFilePath);
+    await expect(firstPad).toContainText(expectedFileName);
+
+    await firstPad.click();
+    const activeTracksPanel = page.locator(
+      '[data-testid="active-tracks-panel"]',
+    );
+    await expect(activeTracksPanel.getByText(expectedFileName)).toBeVisible();
+
+    // The per-track control, as distinct from Space / Fade Out All: this one
+    // must take the track it belongs to and leave any other alone.
+    await page
+      .getByRole("button", { name: `Fade out ${expectedFileName}` })
+      .click();
+
+    await expect(activeTracksPanel.getByText("fading out...")).toBeVisible();
+    // The button is replaced while the track is on its way out, so a second
+    // click cannot restart the fade.
+    await expect(
+      page.getByRole("button", { name: `Fade out ${expectedFileName}` }),
+    ).toBeHidden();
+
+    // And the fade finishes: the track leaves the panel on its own.
+    await expect(page.getByText("Nothing playing")).toBeVisible();
+    await expect(firstPad.locator(".bg-green-500")).not.toBeVisible();
+  });
 
   test("Can load audio file onto pad using file input", async ({ page }) => {
     const expectedFileName = "test-audio";
