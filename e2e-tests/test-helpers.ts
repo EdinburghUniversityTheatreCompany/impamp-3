@@ -600,6 +600,97 @@ export async function removeSoundFromModal(page: Page, soundName: string) {
   await expect(removeButton).not.toBeVisible();
 }
 
+// --- Bank archives ---------------------------------------------------------
+
+/** Placement instructions keyed by the archive folder, as the dialog builds. */
+export type BankPlacements = Record<string, { kind: string; bankId?: string }>;
+
+interface BankStoreHook {
+  getState(): {
+    activeProfileId: number | null;
+    importBanksFromArchive(
+      file: Blob,
+      profileId: number,
+      placements: BankPlacements,
+    ): Promise<{ written: { name: string }[] }>;
+  };
+}
+
+/**
+ * Imports a `.iaz` bank archive from disk into the active profile.
+ *
+ * There is no import UI yet (Task 15 adds the placement dialog), so this goes
+ * through `window.__profileStore`, the read/write hook the sync specs already
+ * use. The bytes go across as base64 because that is the only thing that
+ * survives `page.evaluate`'s structured clone in both directions.
+ *
+ * @returns the names of the banks that were written
+ */
+export async function importBankArchive(
+  page: Page,
+  archivePath: string,
+  placements: BankPlacements,
+): Promise<string[]> {
+  const archiveBase64 = (await fs.promises.readFile(archivePath)).toString(
+    "base64",
+  );
+  return page.evaluate(
+    async ({ base64, where }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const store = (window as unknown as { __profileStore: BankStoreHook })
+        .__profileStore;
+      const { activeProfileId, importBanksFromArchive } = store.getState();
+      const result = await importBanksFromArchive(
+        new Blob([bytes]),
+        activeProfileId!,
+        where,
+      );
+      return result.written.map((bank) => bank.name);
+    },
+    { base64: archiveBase64, where: placements },
+  );
+}
+
+// --- Bank tabs and reordering ----------------------------------------------
+
+/** Every bank tab, in the order the strip renders them. */
+export function bankTabs(page: Page): Locator {
+  return page.locator('[role="tab"]');
+}
+
+/** Latches edit mode with the button, so no key has to stay down mid-drag. */
+export async function latchEditMode(page: Page) {
+  await page.getByRole("button", { name: "Toggle edit mode" }).click();
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
+}
+
+/** Unlatches edit mode again. */
+export async function unlatchEditMode(page: Page) {
+  await page.getByRole("button", { name: "Toggle edit mode" }).click();
+  await expect(page.getByText("EDIT MODE", { exact: true })).toBeHidden();
+}
+
+/**
+ * Lifts the tab at `position` with the keyboard and drops it one slot over.
+ *
+ * The keyboard sensor rather than the mouse: a pointer drag against a
+ * horizontal list, mid-animation, is the flakiest thing this suite could
+ * contain, and `@hello-pangea/dnd` gives the keyboard path for free. The
+ * focus() is what makes the lift work at all — the sensor only starts a drag
+ * when the Space keydown's target is a drag handle, which the tab is only
+ * because it spreads `provided.dragHandleProps`.
+ */
+export async function keyboardDragTab(
+  page: Page,
+  position: number,
+  direction: "ArrowLeft" | "ArrowRight",
+) {
+  await bankTabs(page).nth(position).focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press(direction);
+  await page.keyboard.press("Space");
+}
+
 // --- Helper for Bank Creation ---
 
 // Enters edit mode, clicks "Add new bank", confirms the default name in the

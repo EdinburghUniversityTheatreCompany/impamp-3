@@ -7,6 +7,7 @@ import {
   addSoundsToPadModal,
   createTestAudioFilePath,
   gotoApp,
+  importBankArchive,
   openEditPadModal,
   savePadEditModal,
 } from "./test-helpers";
@@ -39,11 +40,6 @@ interface BankStoreHook {
       bankIds: string[],
       bankNames: string[],
     ): Promise<boolean>;
-    importBanksFromArchive(
-      file: Blob,
-      profileId: number,
-      placements: Record<string, { kind: string; bankId?: string }>,
-    ): Promise<{ written: { name: string }[]; skipped: string[] }>;
   };
 }
 
@@ -101,21 +97,9 @@ test.describe("Bank export and import through the store", () => {
     // The sound is in there, not just the metadata.
     expect((await fs.promises.stat(archivePath)).size).toBeGreaterThan(10_000);
 
-    const archiveBase64 = (await fs.promises.readFile(archivePath)).toString(
-      "base64",
-    );
-    const written = await page.evaluate(async (base64) => {
-      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-      const store = (window as unknown as { __profileStore: BankStoreHook })
-        .__profileStore;
-      const { activeProfileId, importBanksFromArchive } = store.getState();
-      const result = await importBanksFromArchive(
-        new Blob([bytes]),
-        activeProfileId!,
-        { "0": { kind: "add" } },
-      );
-      return result.written.map((bank) => bank.name);
-    }, archiveBase64);
+    const written = await importBankArchive(page, archivePath, {
+      "0": { kind: "add" },
+    });
     expect(written).toEqual(["Bank 1"]);
 
     // Nothing below reloads the page. The tab strip renders from

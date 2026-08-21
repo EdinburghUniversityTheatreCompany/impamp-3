@@ -1,9 +1,13 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
-  gotoApp,
-  waitForAppReady,
-  prepareAudioContext,
+  bankTabs,
   createTestAudioFilePath,
+  gotoApp,
+  keyboardDragTab,
+  latchEditMode,
+  prepareAudioContext,
+  unlatchEditMode,
+  waitForAppReady,
 } from "./test-helpers";
 
 /**
@@ -24,11 +28,6 @@ import {
  * file listens for the real thing.
  */
 
-/** Every bank tab, in the order the strip renders them. */
-function bankTabs(page: Page): Locator {
-  return page.locator('[role="tab"]');
-}
-
 /**
  * The bank NAME shown at a position, with the position prefix stripped.
  *
@@ -46,36 +45,6 @@ async function bankNameAt(page: Page, position: number): Promise<string> {
     `bank tab ${position} should be labelled "<number>: <name>", got ${JSON.stringify(label)}`,
   ).not.toBeNull();
   return match![2].trim();
-}
-
-/** Latches edit mode with the button, so no key has to stay down mid-drag. */
-async function latchEditMode(page: Page) {
-  await page.getByRole("button", { name: "Toggle edit mode" }).click();
-  await expect(page.getByText("EDIT MODE", { exact: true })).toBeVisible();
-}
-
-/** Unlatches edit mode again. */
-async function unlatchEditMode(page: Page) {
-  await page.getByRole("button", { name: "Toggle edit mode" }).click();
-  await expect(page.getByText("EDIT MODE", { exact: true })).toBeHidden();
-}
-
-/**
- * Lifts the tab at `position` with the keyboard and drops it one slot over.
- *
- * The focus() is what makes the lift work at all: dnd's keyboard sensor only
- * starts a drag when the Space keydown's target is a drag handle, which the
- * tab is only because it spreads `provided.dragHandleProps`.
- */
-async function keyboardDragTab(
-  page: Page,
-  position: number,
-  direction: "ArrowLeft" | "ArrowRight",
-) {
-  await bankTabs(page).nth(position).focus();
-  await page.keyboard.press("Space");
-  await page.keyboard.press(direction);
-  await page.keyboard.press("Space");
 }
 
 test.describe("Bank reorder", () => {
