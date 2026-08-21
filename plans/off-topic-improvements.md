@@ -270,25 +270,3 @@ repo's characteristic regression.
 
 Noticed while checking whether Task 8 of the audio-dedup plan still needed to
 add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
-
-## A pad drop can be refused without a word
-
-`PadGrid` decides per render whether a pad accepts a drop, through
-`usePadDrop`'s `isDropAllowed`, and when the answer is no its `onDropAudio`
-returns `Promise.resolve()`. The dropzone itself is only `disabled` for
-special pads and delete/move mode, so react-dropzone still fires, the handler
-still runs, and nothing is written, logged or shown. Every other refusal on
-that path says something — `console.error` for no profile, `console.warn` for
-a profile that takes no changes, an `alert` for a write that threw.
-
-It is reachable: a file dropped in the few milliseconds after a profile
-switch, while that answer is still settling, is silently lost. Measured while
-writing `e2e-tests/bank-transfer.spec.ts` — the first drop into a
-just-created profile was dropped every run, and the same drop moments later
-took every run, which is why `dropOnPad` there re-issues the way
-`activatePad` does. A human cannot hit a window that small, so this is a
-diagnosability complaint rather than a live bug: the fix is a `console.warn`
-in the refusal branch, saying which pad and why.
-
-Noticed while writing the cross-profile bank transfer spec (Task 16 of the
-audio-dedup plan).

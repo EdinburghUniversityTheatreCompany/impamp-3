@@ -97,40 +97,50 @@ export function usePadDrop(currentBankId: string) {
   );
 
   /**
-   * Checks if file dropping is allowed for a pad
+   * Why a pad refuses a dropped file, or null when it accepts one.
    *
-   * @param padIndex - Index of the pad to check
+   * A reason rather than a boolean because the refusal has to be *said*. The
+   * dropzone is only `disabled` for special pads and delete/move mode, so
+   * react-dropzone still fires for every other refusal, the handler still
+   * runs, and the file used to go nowhere without a word — while every other
+   * refusal on this path logs or alerts. A drop in the few milliseconds after
+   * a profile switch, while `canEdit` is still settling, lands here.
+   *
+   * One function rather than a predicate beside a message: the same rule
+   * written twice is this repo's characteristic regression, and a refusal that
+   * named the wrong reason would be worse than the silence it replaced.
+   *
    * @param audioFileCount - Number of audio files currently assigned to the pad
    * @param isSpecialPad - Whether the pad is a special control pad
-   * @returns True if dropping is allowed, false otherwise
+   * @returns A sentence fragment naming the reason, or null if the drop is allowed
    */
-  const isDropAllowed = useCallback(
-    (
-      padIndex: number,
-      audioFileCount: number,
-      isSpecialPad: boolean,
-    ): boolean => {
+  const dropRefusalReason = useCallback(
+    (audioFileCount: number, isSpecialPad: boolean): string | null => {
       // Cannot drop onto special pads (Stop All, Fade Out All)
       if (isSpecialPad) {
-        return false;
+        return "it is a control pad";
       }
 
       // A followed or view-only profile takes no new sounds. Said here as well
       // as in the handler so the drop overlay never invites a drop that is
       // going to be refused.
       if (!canEdit) {
-        return false;
+        return "this profile does not accept changes";
       }
 
       // Only allow drops on empty pads or pads with exactly one sound
       // (for pads with multiple sounds, use the edit modal instead)
-      return audioFileCount <= 1;
+      if (audioFileCount > 1) {
+        return `it already holds ${audioFileCount} sounds — use the pad editor to add another`;
+      }
+
+      return null;
     },
     [canEdit],
   );
 
   return {
     handleDropAudio,
-    isDropAllowed,
+    dropRefusalReason,
   };
 }

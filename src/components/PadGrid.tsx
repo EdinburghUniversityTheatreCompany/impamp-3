@@ -42,7 +42,8 @@ interface PadWithLoadingProps {
   isEditMode: boolean;
   isDeleteMoveMode: boolean;
   isArmed: boolean;
-  dropAllowed: boolean;
+  /** Why this pad refuses a drop, or null when it accepts one. */
+  dropRefusal: string | null;
   handlePadClick: (padIndex: number) => void;
   handleArmTrack: (padIndex: number) => void;
   handleDropAudio: (files: File[], padIndex: number) => Promise<void>;
@@ -61,7 +62,7 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
     isEditMode,
     isDeleteMoveMode,
     isArmed,
-    dropAllowed,
+    dropRefusal,
     handlePadClick,
     handleArmTrack,
     handleDropAudio,
@@ -82,12 +83,22 @@ const PadWithLoading: React.FC<PadWithLoadingProps> = React.memo(
     );
     const onDropAudio = useCallback(
       (files: File[]) => {
-        if (dropAllowed) {
+        if (dropRefusal === null) {
           return handleDropAudio(files, padIndex);
         }
-        return Promise.resolve(); // Return empty promise when drop not allowed
+        // The dropzone is only `disabled` for special pads and delete/move
+        // mode, so react-dropzone fires here for every other refusal and the
+        // file goes nowhere. Every other refusal on this path says something;
+        // this one used to say nothing at all, which made a drop lost to the
+        // few milliseconds after a profile switch indistinguishable from a
+        // drop the browser never delivered. A warning rather than an alert on
+        // purpose: an operator must not be interrupted mid-show.
+        console.warn(
+          `[PadGrid] Refused a drop of ${files.length} file(s) on pad ${padIndex}: ${dropRefusal}.`,
+        );
+        return Promise.resolve();
       },
-      [dropAllowed, handleDropAudio, padIndex],
+      [dropRefusal, handleDropAudio, padIndex],
     );
     const onRemoveSound = useCallback(
       () => handleRemoveInteraction(padIndex),
@@ -185,7 +196,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
     specialPadIndices: SPECIAL_PAD_INDICES,
   });
 
-  const { handleDropAudio, isDropAllowed } = usePadDrop(bankId);
+  const { handleDropAudio, dropRefusalReason } = usePadDrop(bankId);
 
   useEffect(() => {
     if (configError) {
@@ -402,7 +413,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
       }
 
       // --- Regular Pad Logic ---
-      const dropAllowed = isDropAllowed(padIndex, soundCount, isSpecialPad);
+      const dropRefusal = dropRefusalReason(soundCount, isSpecialPad);
 
       return (
         <PadWithLoading
@@ -416,7 +427,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
           isEditMode={isEditMode}
           isDeleteMoveMode={isDeleteMoveMode}
           isArmed={isArmed}
-          dropAllowed={dropAllowed}
+          dropRefusal={dropRefusal}
           handlePadClick={handlePadClick}
           handleArmTrack={handleArmTrack}
           handleDropAudio={handleDropAudio}
@@ -435,7 +446,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
     handleRemoveInteraction,
     handleArmTrack,
     handleDropAudio,
-    isDropAllowed,
+    dropRefusalReason,
     handleSwapPads,
     handlePadClick,
     handleStopAllClick,
