@@ -161,6 +161,21 @@ const HelpModalContent: React.FC = () => {
                 + Click
               </li>
               <li>
+                Or without leaving the search box: type, then{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  {modifier}
+                </kbd>{" "}
+                +{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  Enter
+                </kbd>{" "}
+                arms the first result and{" "}
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+                  Enter
+                </kbd>{" "}
+                plays it
+              </li>
+              <li>
                 Armed tracks appear in the Armed Tracks panel at the bottom of
                 the screen
               </li>

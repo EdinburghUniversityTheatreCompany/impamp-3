@@ -147,6 +147,28 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  // The keyboard route from Ctrl+F to a cue, with no Tab in it.
+  //
+  // The chord below hangs off the result `<button>`, but the input keeps focus
+  // after typing — so arming meant typing, tabbing past whatever lay between,
+  // and only then holding the chord. Plain Enter in the input did nothing at
+  // all, because nothing activated the first result. Under pressure the
+  // fastest path has to be: type, then Enter to play or the chord to arm.
+  //
+  // `preventDefault` fires only on a key this actually consumed. It is what
+  // `useKeyboardListener` reads to know something nearer the target claimed
+  // the press, so claiming Enter with no result to activate would swallow the
+  // emergency cue behind an open, empty search box.
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+
+    const first = results[0];
+    if (!first) return;
+
+    e.preventDefault();
+    activateResult(first, hasArmModifier(e));
+  };
+
   // Ctrl+Enter — or Cmd+Enter on a Mac — arms, mirroring the click chord.
   //
   // A <button> already fires its onClick from Enter and Space, so the plain
@@ -196,6 +218,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={handleInputKeyDown}
             placeholder="Search sounds..."
             className="w-full p-2 bg-transparent border-0 focus:ring-0 text-gray-900 dark:text-white text-lg"
             autoComplete="off"
@@ -222,6 +245,22 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             </svg>
           </button>
         </div>
+
+        {/* Outside the scrolling list on purpose: a hint that scrolls away
+            with the results is not a hint. Said here rather than in a tooltip
+            on one result, because the chord is only reachable without a Tab
+            thanks to the *input* listening for it, which an operator has no
+            way to guess from a list of pads. */}
+        {!isLoading && results.length > 0 && (
+          <div className="flex items-center justify-between gap-2 px-4 pt-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 pb-2">
+            <span>
+              {results.length} {results.length === 1 ? "result" : "results"}
+            </span>
+            <span data-testid="search-activation-hint">
+              Enter plays the first result, {modifier}+Enter arms it
+            </span>
+          </div>
+        )}
 
         <div className="overflow-y-auto flex-1 p-2">
           {isLoading ? (
