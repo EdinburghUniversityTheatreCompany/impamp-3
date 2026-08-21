@@ -1258,8 +1258,8 @@ export async function deleteUnreferencedAudioFiles(
  * to delete. A cleanup landing in that window took sounds out from under an
  * import that then wrote pads naming files that were already gone.
  *
- * So an import declares itself here (`withAudioImportInProgress`) and the two
- * orphan sweeps wait for it to finish before they look. That is a guarantee
+ * So an import declares itself here (`withAudioImportInProgress`) and every
+ * deleter waits for it to finish before it looks. That is a guarantee
  * rather than a guess: no timer, nothing to tune, and no dependence on how
  * long the import takes. The alternatives do not survive contact with the
  * code. A grace period on recently-created audio cannot work at all —
@@ -1311,8 +1311,20 @@ export function withAudioImportInProgress<T>(
  * sweep's overlapping readwrite scope, so the sweep never sees the new
  * records at all — but one that registers in a turn between the two would be
  * missed.
+ *
+ * **Exported because the rule is repo-wide, not db.ts-wide.** Anything that
+ * deletes audio rows it did not itself create has to call this immediately
+ * before opening its transaction. It was private, and the one such deleter
+ * written outside this file — `collapseDuplicateAudioGroups` — shipped
+ * without the guard because there was no way to reach it. Being unreachable
+ * is not the same as being unnecessary.
+ *
+ * `deleteUnreferencedAudioFiles` is the deliberate exception: it only ever
+ * considers ids its own caller just created, so an unrelated import's rows
+ * are not in range and waiting for one would only make a failed import
+ * slower to clean up after.
  */
-async function settleAudioImports(): Promise<void> {
+export async function settleAudioImports(): Promise<void> {
   while (audioImportsInFlight.size > 0) {
     await Promise.all([...audioImportsInFlight]);
   }

@@ -419,9 +419,15 @@ packages, none of them is fair game.
   table and the playback path both call `resolveGain`; a second implementation
   would let the table disagree with what is heard
 - Anything that writes an audio file and the pad naming it in **separate
-  transactions** must run inside `withAudioImportInProgress` (`db.ts`), and both
-  orphan sweeps must `await settleAudioImports()` as the **last** thing before
-  they open their transaction. Between the two writes the audio exists with
+  transactions** must run inside `withAudioImportInProgress` (`db.ts`), and
+  **every deleter of audio rows it did not itself create** must
+  `await settleAudioImports()` as the **last** thing before it opens its
+  transaction — the two orphan sweeps and `collapseDuplicateAudioGroups`.
+  `deleteUnreferencedAudioFiles` is the deliberate exception: it only considers
+  ids its own caller just created, so no other import's rows are in range.
+  `settleAudioImports` is exported for exactly this reason; it was private, and
+  the one deleter written outside `db.ts` shipped without the guard because
+  there was no way to reach it. Between the two writes the audio exists with
   nothing referencing it, and `cleanupOrphanedAudioFiles` is entitled to delete
   exactly that — an import racing the cleanup button deterministically left a
   pad naming a sound that was gone. The ordering is load-bearing: work that

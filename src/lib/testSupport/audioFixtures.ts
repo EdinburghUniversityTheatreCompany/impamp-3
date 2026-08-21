@@ -8,6 +8,25 @@
  */
 
 import { getDb } from "@/lib/db";
+import type { LoudnessAnalysis } from "@/lib/audio/loudness/types";
+
+/**
+ * A loudness analysis, in the smallest shape the type accepts.
+ *
+ * For suites that only care *whether* a row carries an analysis — which row
+ * the dedup collapse elects as canonical, whether a reused row kept the one it
+ * had. A fresh object each call, because callers store it and the two typed
+ * arrays are mutable.
+ */
+export function someAnalysis(): LoudnessAnalysis {
+  return {
+    algoVersion: 1,
+    sampleRate: 48000,
+    duration: 1,
+    blockMeanSquare: new Float32Array([0.5]),
+    hopTruePeak: new Float32Array([0.5]),
+  };
+}
 
 export async function addAudioFiles(
   files: { name: string; hash: string; type?: string }[],

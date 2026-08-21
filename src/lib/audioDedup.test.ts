@@ -14,6 +14,7 @@
 
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
+import { someAnalysis } from "@/lib/testSupport/audioFixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // Type-only, so it is erased before runtime and cannot defeat the ordering
 // the comment above describes.
@@ -52,17 +53,6 @@ function horn(): Blob {
 /** Bytes that are not the horn's, so grouping the two would be visible. */
 function stab(): Blob {
   return new Blob(["a completely different stab"], { type: "audio/wav" });
-}
-
-/** A loudness analysis, in the smallest shape the type accepts. */
-function someAnalysis() {
-  return {
-    algoVersion: 1,
-    sampleRate: 48000,
-    duration: 1,
-    blockMeanSquare: new Float32Array([0.5]),
-    hopTruePeak: new Float32Array([0.5]),
-  };
 }
 
 /**
