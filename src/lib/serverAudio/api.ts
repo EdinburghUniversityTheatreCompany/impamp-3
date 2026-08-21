@@ -2,7 +2,9 @@
  * HTTP client for hosted audio.
  *
  * Same shape as `serverSync/api.ts`: same-origin, session cookie carried
- * automatically, link-share token in a header rather than the query string.
+ * automatically, link-share token in a header rather than the query string —
+ * including the same exception, which is the change stream and only the
+ * change stream. See that module's comment.
  *
  * The bytes themselves never go through these calls — the server hands back a
  * presigned URL and the browser talks to the bucket directly.

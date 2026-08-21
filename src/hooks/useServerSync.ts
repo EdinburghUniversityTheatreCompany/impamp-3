@@ -51,6 +51,19 @@ export function subscribeToProfileChanges(
   shareToken: string | null,
   onChange: (version: number) => void,
 ): () => void {
+  // The one place in the app a share token travels in a URL, and the only one
+  // where it has to. Both HTTP clients send it as `x-impamp-share-token`
+  // precisely so a bearer credential stays out of access logs; `EventSource`
+  // sends a URL and the cookies and has no API for a request header, so that
+  // is not available here. The cookie alone will not do either: a signed-in
+  // link-share holder has no membership row, so `resolveAccess` grants them
+  // nothing without the token and the stream would 404 — silently, since
+  // `onerror` only logs.
+  //
+  // So it is a real, accepted cost — the token reaches this app's own access
+  // log — rather than an oversight, and it stops here.
+  // `serverSync/shareTokenChannel.test.ts` pins the header rule for every call
+  // that can honour it, and this exception, together.
   const query = shareToken ? `?token=${encodeURIComponent(shareToken)}` : "";
   const source = new EventSource(
     `/api/profiles/${serverProfileId}/events${query}`,
