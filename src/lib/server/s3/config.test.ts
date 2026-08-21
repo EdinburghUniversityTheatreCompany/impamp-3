@@ -9,11 +9,17 @@ const REQUIRED = {
   IMPAMP_S3_SECRET_ACCESS_KEY: "secret",
 };
 
+// Every variable `getAudioHostingConfig` reads, because `beforeEach` clears
+// exactly this list. The two URL TTLs were missing, so a developer with either
+// exported saw different defaults from CI and the tests below said nothing
+// about them either way.
 const TOUCHED = [
   ...Object.keys(REQUIRED),
   "IMPAMP_AUDIO_GLOBAL_CAP_BYTES",
   "IMPAMP_AUDIO_USER_QUOTA_BYTES",
   "IMPAMP_AUDIO_MAX_OBJECT_BYTES",
+  "IMPAMP_AUDIO_UPLOAD_URL_TTL",
+  "IMPAMP_AUDIO_DOWNLOAD_URL_TTL",
 ];
 
 let saved: Record<string, string | undefined>;
@@ -59,6 +65,32 @@ describe("getAudioHostingConfig", () => {
 
     expect(config.globalCapBytes).toBe(100 * 1024 ** 3);
     expect(config.defaultUserQuotaBytes).toBe(2 * 1024 ** 3);
+    expect(config.maxObjectBytes).toBe(100 * 1024 * 1024);
+  });
+
+  it("keeps the download URL short-lived, because the TTL is the revocation lag", () => {
+    // Five minutes, not an hour, and not a day. A presigned URL is a bearer
+    // credential that can be forwarded, and revoking a share cannot recall one
+    // already issued — so this number is how long access outlives access.
+    // Nothing asserted it, and `config.ts` argues for it at length: the default
+    // could have been raised to 24 hours with the whole suite green.
+    Object.assign(process.env, REQUIRED);
+    const config = getAudioHostingConfig()!;
+
+    expect(config.downloadUrlTtlSeconds).toBe(5 * 60);
+    // Longer, deliberately: an upload has to survive the transfer itself.
+    expect(config.uploadUrlTtlSeconds).toBe(15 * 60);
+  });
+
+  it("honours overridden TTLs", () => {
+    Object.assign(process.env, REQUIRED, {
+      IMPAMP_AUDIO_UPLOAD_URL_TTL: "60",
+      IMPAMP_AUDIO_DOWNLOAD_URL_TTL: "30",
+    });
+    const config = getAudioHostingConfig()!;
+
+    expect(config.uploadUrlTtlSeconds).toBe(60);
+    expect(config.downloadUrlTtlSeconds).toBe(30);
   });
 
   it("honours overridden limits", () => {
