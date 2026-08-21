@@ -126,8 +126,22 @@ export async function createTestAudioFilePath(
   }
   // --- End WAV Buffer Creation ---
 
-  // Create a temporary file path
-  const tempDir = os.tmpdir();
+  // One directory per worker process, and the basename left alone.
+  //
+  // These used to go straight into os.tmpdir() under `${fileName}.wav`, which
+  // is a fixed path shared by every worker: `Accordion_BassNote_01` belongs to
+  // two specs that run concurrently at ten workers, each writing the file the
+  // other is handing to `setInputFiles`. The contents are deterministic, so a
+  // torn read is the only way it bites — and it bites as a decode failure or a
+  // pad that stays empty, neither of which points anywhere near this line.
+  //
+  // The name, not the directory, is what a pad displays and what the specs
+  // assert on, so the uniquifier has to go above it.
+  const tempDir = path.join(
+    os.tmpdir(),
+    `impamp-e2e-${process.pid}-${process.env.TEST_WORKER_INDEX ?? "0"}`,
+  );
+  await fs.promises.mkdir(tempDir, { recursive: true });
   const tempFilePath = path.join(tempDir, fileName + ".wav");
 
   // Write the buffer to the temporary file
@@ -164,51 +178,67 @@ export async function activatePad(
 ) {
   console.log("Activating pad...");
 
-  // First, ensure AudioContext is resumed
-  await page.evaluate(() => {
-    // Resume any AudioContext instances
-    const resumeAllAudioContexts = () => {
-      // Define a type for window that includes our test property
-      interface WindowWithAudioContextInstances extends Window {
-        _audioContextInstances?: AudioContext[];
-      }
+  // There used to be a `page.evaluate` here headed "First, ensure AudioContext
+  // is resumed", which walked `window._audioContextInstances` and resumed
+  // every suspended context in it. No such property exists: nothing in `src/`
+  // writes it, so the list was always `[]` and the step always resumed
+  // nothing. It read as the thing standing between this helper and the browser
+  // autoplay policy, and it was a round trip to the page and back for an empty
+  // loop. What actually unlocks the context is the click or keypress below,
+  // through `ensureAudioContextActive` in the app's own handlers.
 
-      // Check if AudioContext exists on window
-      if (typeof window.AudioContext !== "undefined") {
-        // Cast to our specific type and access the property safely
-        const instances =
-          (window as WindowWithAudioContextInstances)._audioContextInstances ||
-          [];
-        // Ensure the return type is Promise<void>
-        return Promise.all(
-          instances
-            .filter((ctx: AudioContext) => ctx.state !== "running")
-            .map((ctx: AudioContext) => ctx.resume()),
-        ).then(() => {}); // Chain .then to discard the void[] result
-      }
-      return Promise.resolve(); // This already returns Promise<void>
-    };
+  const activate = async () => {
+    if (keyBinding) {
+      console.log(`Pressing key: ${keyBinding}`);
+      await page.keyboard.press(keyBinding);
+    } else {
+      console.log("Clicking pad");
+      await padLocator.click({ force: true });
+    }
+  };
 
-    return resumeAllAudioContexts();
-  });
+  const nothingPlaying = page.locator("text=Nothing playing");
 
-  // If key binding is provided, use keyboard activation. Otherwise, click.
-  if (keyBinding) {
-    console.log(`Pressing key: ${keyBinding}`);
-    await page.keyboard.press(keyBinding);
-  } else {
-    console.log("Clicking pad");
-    await padLocator.click({ force: true });
-  }
-
-  // No sleep here. The assertion below already retries for 30 seconds, so a
-  // flat 300ms bought nothing and cost 300ms on every call, across four spec
-  // files.
-
-  // Verify the active tracks panel shows something is playing
-  await expect(page.locator("text=Nothing playing")).toBeHidden({
-    timeout: 30000,
-  });
+  // Activate until something plays, rather than once and then wait.
+  //
+  // One press is not guaranteed delivery, and this was the whole of the
+  // "activatePad fails with playback never starting within 30 s" flake. The
+  // keyboard listener reads its pad configurations through
+  // `actionablePadConfigs`, which deliberately hands back an EMPTY map while a
+  // read is in flight — otherwise a key pressed just after a bank switch plays
+  // the previous bank's pad, which is far worse on a live board than a key
+  // that does nothing. Assigning a sound starts such a read, and the pad's
+  // *label* comes from the read that already settled, so a spec that waits for
+  // the name and then presses the key can land inside the next read's window.
+  // The page log at the moment of failure says so in as many words:
+  //
+  //     [KeyboardListener] Key q maps to default pad index: 0
+  //     [KeyboardListener] No configuration found for default pad index: 0
+  //
+  // and the press after it works. Nothing observable distinguishes "the read
+  // is in flight" from outside the app, so the honest fix here is to re-issue
+  // the activation rather than to wait longer for a press that was dropped.
+  //
+  // This cannot hide a broken key: every attempt would be dropped and the
+  // whole poll would fail. The intervals are generous so that a press which
+  // did land is given time to produce a sound before another is sent — with
+  // the default `continue` retrigger behaviour a second press on a playing pad
+  // is a documented no-op, but a pad configured to `stop` or `restart` would
+  // notice, so this helper stays for freshly-assigned default pads.
+  await expect
+    .poll(
+      async () => {
+        if (await nothingPlaying.isHidden()) return true;
+        await activate();
+        return nothingPlaying.isHidden();
+      },
+      {
+        timeout: 30000,
+        intervals: [2000, 2000, 3000, 5000],
+        message: "the pad should have started playing",
+      },
+    )
+    .toBe(true);
 
   // Look for the progress bar on the pad
   const progressBar = padLocator.locator(".bg-green-500");
