@@ -31,8 +31,14 @@ Report: `plans/repo-review-2026-08-21.md`. Fourteen findings.
       (`dccd616`, with the regression test that fails against `a0923a6`)
 - [x] 🔴 2 — `test:coverage` exits 1 on a green suite (`58a4fc6`, five clean
       `--coverage` runs against two failures in three before)
-- [ ] 🟡 3 — every `RadioGroup` has no accessible name, and `FormField`'s
-      `<label for>` points at nothing
+- [x] 🟡 3 — every `RadioGroup` has no accessible name (merged from
+      `p1/a11y`). Fixed better than the report proposed: `FormField` publishes
+      its label's real id through a context and `RadioGroup` consumes it, so
+      outside a `FormField` a group carries no `aria-labelledby` at all rather
+      than one that dangles. `htmlFor` dropped for group children — `<label
+    for>` is defined only against a labelable element. Descriptions wired
+      with `aria-describedby`. Verified independently with the same probe that
+      proved it broken: name resolves, no dangling `for`
 - [ ] 🟡 4 — CLAUDE.md's "three outdated packages" rule is false; land the
       seven pending patch bumps
 - [ ] 🟡 5 — README tells the reader to run the one e2e command CLAUDE.md
@@ -43,7 +49,8 @@ Report: `plans/repo-review-2026-08-21.md`. Fourteen findings.
 - [ ] 🟡 8 — `ProfileManager.tsx`, 1682 lines and 0 % unit coverage
 - [ ] 🟡 9 — `.claude/worktrees/` ignored only by `.git/info/exclude`
 - [x] 🟢 10 — stale worktrees (removed, 2.3 GB; branches deliberately kept)
-- [ ] 🟢 11 — the dedup confirmation does not say a pad can lose a slot
+- [x] 🟢 11 — the dedup confirmation now says a pad naming both copies comes
+      out a sound shorter (merged from `p1/a11y`)
 - [ ] 🟢 12 — `collectAudioForPads` opens one transaction per audio row
 - [ ] 🟢 13 — Drive sync coverage. **Not fixable as a task** — it is a note
       about where risk sits, and the path cannot be exercised outside
