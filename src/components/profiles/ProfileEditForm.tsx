@@ -74,6 +74,7 @@ const ProfileEditForm: React.FC<FormModalRenderProps<ProfileFormValues>> = ({
         id="activePadBehavior"
         label="When a pad is triggered while already playing:"
         error={errors.activePadBehavior as string}
+        labelsGroup
       >
         <RadioGroup
           id="activePadBehavior"

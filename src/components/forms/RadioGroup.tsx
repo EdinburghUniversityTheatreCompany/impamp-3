@@ -6,7 +6,9 @@
  * @module components/forms/RadioGroup
  */
 
-import React from "react";
+import React, { useContext } from "react";
+
+import { FormFieldLabelContext } from "./FormField";
 
 interface RadioOption<T extends string> {
   value: T;
@@ -52,12 +54,17 @@ export const RadioGroup = <T extends string>({
   "data-testid": dataTestId,
   optionTestIdPrefix,
 }: RadioGroupProps<T>) => {
+  // Undefined outside a FormField, which is the point: a group with no label
+  // to point at carries no `aria-labelledby` rather than one that resolves to
+  // nothing. See FormFieldLabelContext.
+  const labelledBy = useContext(FormFieldLabelContext);
+
   return (
     <div className={className}>
       <div
         className={`${horizontal ? "space-x-4 flex items-center" : "space-y-4"}`}
         role="radiogroup"
-        aria-labelledby={`${id}-label`}
+        aria-labelledby={labelledBy}
         data-testid={dataTestId}
       >
         {options.map((option) => (
@@ -68,6 +75,13 @@ export const RadioGroup = <T extends string>({
             <div className="flex items-center h-5">
               <input
                 id={`${id}-${option.value}`}
+                // Only when there is one, so a radio without an explanation
+                // does not point at an empty element.
+                aria-describedby={
+                  option.description
+                    ? `${id}-${option.value}-description`
+                    : undefined
+                }
                 data-testid={
                   optionTestIdPrefix
                     ? `${optionTestIdPrefix}-${option.value}`
@@ -91,7 +105,10 @@ export const RadioGroup = <T extends string>({
                 {option.label || option.value.replace("-", " ")}
               </label>
               {option.description && (
-                <p className="text-gray-500 dark:text-gray-400">
+                <p
+                  id={`${id}-${option.value}-description`}
+                  className="text-gray-500 dark:text-gray-400"
+                >
                   {option.description}
                 </p>
               )}

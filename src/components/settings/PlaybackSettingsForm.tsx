@@ -53,6 +53,7 @@ const PlaybackSettingsForm: React.FC<
         id="activePadBehavior"
         label="Behavior when a pad is triggered while already playing:"
         error={errors.activePadBehavior as string}
+        labelsGroup
       >
         <RadioGroup
           id="activePadBehavior"
