@@ -57,24 +57,25 @@ export default defineConfig({
         "src/lib/server/s3/fakeObjectStore.ts",
       ],
       reporter: ["text-summary", "html"],
-      // Three back-to-back runs after the layered-retrigger work all measured
-      // 49.65 / 42.80 / 46.37 / 50.45; two earlier runs during that work
-      // measured 49.72 / 42.70 / 46.32 / 50.48. The floor sits under the
-      // *lowest* figure seen for each metric across all five, because the
+      // Two back-to-back runs after the audio-deduplication work measured
+      // 51.90 / 44.58 / 48.36 / 52.78 and 51.86 / 44.61 / 48.41 / 52.77. The
+      // floor sits under the *lowest* figure seen for each metric, because the
       // numbers move by a few tenths between runs and a ratchet set against a
       // single run's figure would fail the next one. The gap below that is
       // deliberate but small — enough that an ordinary refactor moving a few
       // uncovered lines around does not fail the build, not enough for a whole
       // untested module to land unnoticed.
       //
-      // The previous floor of 44 / 37 / 39 / 44 came from the bank-identity
-      // branch and was set against a 45.51 run; layering added five test files
-      // and left it five points behind.
+      // The previous floor of 48 / 41 / 44 / 48 came from the layered-retrigger
+      // branch, which measured around 49.7 / 42.8 / 46.3 / 50.5. Reuse on the
+      // inbound audio paths needed the pad drop, the pad editor and the bulk
+      // import driven for real, and rendering those pulled a lot of previously
+      // unexercised component code in with them.
       thresholds: {
-        statements: 48,
-        branches: 41,
-        functions: 44,
-        lines: 48,
+        statements: 50,
+        branches: 43,
+        functions: 47,
+        lines: 51,
       },
     },
   },
