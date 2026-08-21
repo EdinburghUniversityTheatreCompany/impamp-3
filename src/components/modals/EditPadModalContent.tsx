@@ -11,7 +11,7 @@ import React from "react";
 import EditPadForm from "./EditPadForm";
 import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
-import { deleteAudioFile } from "@/lib/db";
+import { deleteUnreferencedAudioFiles } from "@/lib/db";
 
 /**
  * Bookkeeping for one open pad editor, shared between this component and the
@@ -49,15 +49,19 @@ const EditPadModalContent: React.FC<EditPadModalContentProps> = ({
   React.useEffect(() => {
     return () => {
       const kept = new Set(session.savedFileIds ?? []);
-      for (const fileId of session.provisionalFileIds) {
-        if (kept.has(fileId)) continue;
-        deleteAudioFile(fileId).catch((error) =>
-          console.error(
-            `Failed to discard unsaved audio file ${fileId}:`,
-            error,
-          ),
-        );
-      }
+      const discardable = [...session.provisionalFileIds].filter(
+        (fileId) => !kept.has(fileId),
+      );
+      // Not `deleteAudioFile`, which deletes by id and checks nothing. Adds
+      // reuse by content hash, so a "provisional" id is routinely the id of a
+      // row that already existed and that some pad — this profile's or
+      // another's, since audio rows are global — still names. Deleting it
+      // takes that pad's sound with it. This helper decides and deletes in one
+      // transaction, keeping anything still referenced, so what goes is only
+      // what this edit actually created.
+      deleteUnreferencedAudioFiles(discardable).catch((error) =>
+        console.error("Failed to discard unsaved audio files:", error),
+      );
     };
   }, [session]);
 
