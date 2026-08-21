@@ -13,10 +13,8 @@
 import {
   addOrReuseAudioFile,
   computeBlobHash,
-  ensureAudioFileHash,
+  createHashlessAudioIndex,
   getAudioFile,
-  getAudioFileByHash,
-  getDb,
   markAudioFilesHosted,
   type AudioFile,
 } from "@/lib/db";
@@ -29,6 +27,7 @@ import {
   requestProfileDownloadUrl,
   requestUploadUrl,
 } from "./api";
+import { createStoredHashIndex } from "@/lib/audioHashIndex";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getAudioFileMetadata } from "@/lib/db";
@@ -252,22 +251,15 @@ export async function downloadProfileAudio(
   );
   if (hostedRefs.length === 0) return { warnings, retryable, downloaded };
 
-  // Local files that predate hashing may still be the same audio. Built once,
-  // and only if a reference actually misses the hash index.
-  let hashlessIndex: Map<string, number> | null = null;
-  const getHashlessIndex = async (): Promise<Map<string, number>> => {
-    if (hashlessIndex) return hashlessIndex;
-    hashlessIndex = new Map();
-    const db = await getDb();
-    for (const localId of await db.getAllKeys("audioFiles")) {
-      const computed = await ensureAudioFileHash(localId);
-      if (computed) hashlessIndex.set(computed, localId);
-    }
-    return hashlessIndex;
-  };
+  // One cursor for the whole pass instead of a transaction per reference.
+  const stored = createStoredHashIndex();
+
+  // Built at most once per pass, and only if a reference actually misses the
+  // hash index. See `createHashlessAudioIndex` for why it is a factory.
+  const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of hostedRefs) {
-    if (await getAudioFileByHash(ref.hash)) continue;
+    if (await stored.lookup(ref.hash)) continue;
     if ((await getHashlessIndex()).has(ref.hash)) continue;
 
     try {
@@ -288,7 +280,7 @@ export async function downloadProfileAudio(
       }
 
       const blob = await response.blob();
-      const stored: Omit<AudioFile, "id" | "createdAt"> = {
+      const record: Omit<AudioFile, "id" | "createdAt"> = {
         name: ref.name,
         type: ref.type || ticket.contentType,
         blob,
@@ -296,18 +288,22 @@ export async function downloadProfileAudio(
         // It came from the object store, so that is where it lives.
         serverHosted: true,
       };
-      // Reuse by content hash. The check at the top of this loop is a
-      // separate transaction from this write, and a browser runs several
-      // syncs at once — one per connected profile, plus a second tab — so two
-      // of them can both miss it and both fetch the same shared sound. Only a
-      // lookup inside the writing transaction collapses that pair.
-      const { reused } = await addOrReuseAudioFile(stored);
+      // Reuse by content hash rather than adding unconditionally. The lookup
+      // at the top of this loop is a separate transaction from this write, and
+      // a browser runs several syncs at once — one per connected profile, plus
+      // a second tab — so two of them can both miss it and both fetch the same
+      // shared sound. Only a lookup inside the writing transaction collapses
+      // that pair.
+      const { id, reused } = await addOrReuseAudioFile(record);
       if (reused) {
         // Reuse returns the row exactly as it found it, so it still does not
         // say the bucket holds these bytes — and that field is what decides
         // whether the next push uploads them all over again.
         await markAudioFilesHosted([ref.hash]);
       }
+      // The pass now holds these bytes, and a blob may name them again — the
+      // per-reference lookup used to see the new record for free.
+      await stored.remember(ref.hash, { id });
       downloaded++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -1,8 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_DB_PATH, E2E_SIGNIN_SECRET, e2eServerEnv } from "./e2e-tests/env";
+import {
+  E2E_ADMIN_EMAIL,
+  E2E_DB_PATH,
+  E2E_S3_PORT,
+  E2E_SIGNIN_SECRET,
+  e2eServerEnv,
+} from "./e2e-tests/env";
 
 // Re-exported because the specs import them from here.
-export { E2E_DB_PATH, E2E_SIGNIN_SECRET };
+export { E2E_ADMIN_EMAIL, E2E_DB_PATH, E2E_S3_PORT, E2E_SIGNIN_SECRET };
 
 // Port is configurable so a git worktree (or a second checkout) can build and
 // serve its own copy of the app without colliding with the 3000 a developer
@@ -27,10 +33,30 @@ export default defineConfig({
   // what made these tests flaky. Only pass a timeout to raise it above this.
   timeout: 60_000,
   expect: { timeout: 15_000 },
+  // Claims the admin account, which is whichever account signs in first. See
+  // e2e-tests/global-setup.ts.
+  globalSetup: "./e2e-tests/global-setup.ts",
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: "html",
+  // Two workers in CI, not one.
+  //
+  // Every flake this suite has had came from parallel load — the comments
+  // above and in the specs say so repeatedly — and the developer who reports
+  // one is running ten workers with no retries. A single-worker CI run with
+  // two retries is therefore the most forgiving configuration anyone runs, and
+  // a green result from it says the suite passes when nothing competes with
+  // it, which is not the claim anyone wants from CI. The last real bug found
+  // this way spent weeks being read as noise, because CI could not see it.
+  //
+  // Two rather than four: a GitHub runner has 4 vCPUs, and this suite decodes
+  // audio and writes blobs to IndexedDB, so it is not cheap per worker. Two
+  // roughly halves the wall clock as well, which pays for the contention it
+  // buys. Anything that now flakes at two workers would have flaked on a
+  // developer's machine at ten, so it is a real report, not new noise.
+  workers: process.env.CI ? 2 : undefined,
+  // The HTML report is the artifact; the flaky reporter makes retries visible
+  // without opening it. See e2e-tests/flaky-reporter.ts.
+  reporter: [["html"], ["./e2e-tests/flaky-reporter.ts"]],
   use: {
     baseURL,
     trace: "on-first-retry",
@@ -65,14 +91,26 @@ export default defineConfig({
   // holds the file open, and unlinking it would leave the server writing to an
   // orphaned inode instead. See e2e-tests/reset-db.js; scripts/e2e-server.sh
   // runs the same step for the detached local server.
-  webServer: {
-    command: process.env.E2E_DEV_SERVER
-      ? `node e2e-tests/reset-db.js && npm run dev -- --port ${port}`
-      : `node e2e-tests/reset-db.js && npm run build && npm start -- --port ${port}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 300 * 1000, // 5 minutes — a cold production build is included
-    // Shared with scripts/e2e-server.sh — see e2e-tests/env.js.
-    env: { PORT: port, ...e2eServerEnv },
-  },
+  webServer: [
+    {
+      command: process.env.E2E_DEV_SERVER
+        ? `node e2e-tests/reset-db.js && npm run dev -- --port ${port}`
+        : `node e2e-tests/reset-db.js && npm run build && npm start -- --port ${port}`,
+      url: baseURL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 300 * 1000, // 5 minutes — a cold production build is included
+      // Shared with scripts/e2e-server.sh — see e2e-tests/env.js.
+      env: { PORT: port, ...e2eServerEnv },
+    },
+    // The bucket the app's presigned URLs point at. Playwright owns its
+    // lifetime rather than scripts/e2e-server.sh, because unlike the database
+    // it holds nothing worth carrying between runs — every object in it is
+    // named by the hash of bytes a single test invented.
+    {
+      command: `node e2e-tests/fake-s3.js ${E2E_S3_PORT}`,
+      url: `http://localhost:${E2E_S3_PORT}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30 * 1000,
+    },
+  ],
 });

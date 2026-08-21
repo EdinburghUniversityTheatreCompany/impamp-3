@@ -6,14 +6,14 @@
 import {
   updateProfile,
   getProfile,
-  getDb,
   getAudioFileIdsForProfile,
   getAudioFile,
   getAudioFileMetadata,
   addOrReuseAudioFile,
   updateAudioFileDriveId,
-  getAudioFileByHash,
-  ensureAudioFileHash,
+  computeBlobHash,
+  createHashlessAudioIndex,
+  withAudioImportInProgress,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
@@ -45,7 +45,8 @@ import {
   TokenInfo,
   ItemConflict,
 } from "./types";
-import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
+import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
+import { createStoredHashIndex } from "@/lib/audioHashIndex";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -306,45 +307,34 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
-  // Hashes for local files that predate hashing, built once and only if a
-  // reference actually misses the hash index — the blobs are read one at a
-  // time so the whole audio library never sits in memory at once.
-  let hashlessIndex: Map<string, number> | null = null;
-  const getHashlessIndex = async (): Promise<Map<string, number>> => {
-    if (hashlessIndex) return hashlessIndex;
-    hashlessIndex = new Map();
-    const db = await getDb();
-    const localIds = await db.getAllKeys("audioFiles");
-    for (const localId of localIds) {
-      const computedHash = await ensureAudioFileHash(localId);
-      if (computedHash) hashlessIndex.set(computedHash, localId);
-    }
-    return hashlessIndex;
-  };
+  // One cursor for the whole pass instead of a transaction per reference.
+  const stored = createStoredHashIndex();
+
+  // Built at most once per pass, and only if a reference actually misses the
+  // hash index. See `createHashlessAudioIndex` for why it is a factory.
+  const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
 
     // Hash-first deduplication: check by content hash if available
-    let existingFile = ref.hash
-      ? await getAudioFileByHash(ref.hash)
-      : undefined;
+    let existingFile = ref.hash ? await stored.lookup(ref.hash) : undefined;
 
     // If no hash match, local files without a stored hash may still be the same
     // audio — hash them once and retry the lookup
     if (!existingFile && ref.hash) {
       const localId = (await getHashlessIndex()).get(ref.hash);
       if (localId !== undefined) {
-        existingFile = await getAudioFile(localId);
+        const record = await getAudioFile(localId);
+        if (record?.id !== undefined) {
+          existingFile = { id: record.id, driveFileIds: record.driveFileIds };
+        }
       }
     }
 
     if (existingFile) {
       // Backfill driveFileId for this profile if missing
-      if (
-        !existingFile.driveFileIds?.[profileId] &&
-        existingFile.id !== undefined
-      ) {
+      if (!existingFile.driveFileIds?.[profileId]) {
         await updateAudioFileDriveId(
           existingFile.id,
           ref.driveFileId,
@@ -364,25 +354,56 @@ export async function downloadMissingAudioFiles(
         refreshCallback,
       );
       if (blob) {
-        // Reuse by content hash. The check above is a separate transaction
-        // from this write, and a browser runs several syncs at once — one per
-        // connected profile, plus a second tab — so two of them can both miss
-        // it and both download the same shared sound. Only a lookup inside
-        // the writing transaction collapses that pair.
+        // Hash what arrived, not what was claimed.
+        //
+        // The audio writers compute a hash only when none is supplied, so
+        // passing `ref.hash` straight through short-circuited the check and
+        // stored the bytes under whatever name the *sender* chose. Reuse
+        // sharpens that: a lying hash would not merely file the bytes wrongly,
+        // it would drop them onto whatever row already answers to that hash. In a content-addressed
+        // store that is the one unrecoverable mistake: the hash is the
+        // identity, so bytes filed under a hash they do not have make every
+        // later lookup for it return the wrong sound, and deduplication then
+        // adopts that sound for anyone who asks. Nothing downstream can notice,
+        // because there is nothing left to compare against.
+        //
+        // The server-side twin of this is SV1, which likewise hashes what the
+        // bucket holds rather than what the client said it uploaded.
+        const actualHash = await computeBlobHash(blob);
+        if (ref.hash && ref.hash !== actualHash) {
+          warnings.push(
+            `Audio file "${ref.name}" did not match the hash the profile gave for it, and was not imported`,
+          );
+          continue;
+        }
+
+        // Reuse by content hash rather than adding unconditionally. The
+        // lookups above are separate transactions from this write, and a
+        // browser runs several syncs at once — one per connected profile,
+        // plus a second tab — so two of them can both miss and both download
+        // the same shared sound. Only a lookup inside the writing transaction
+        // collapses that pair.
         const { id, reused } = await addOrReuseAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
-          hash: ref.hash,
+          hash: actualHash,
           driveFileIds: { [profileId]: ref.driveFileId },
         });
         if (reused) {
           // Reuse returns the row exactly as it found it, so the Drive id
           // this profile knows for these bytes is still not on it. The
           // `existingFile` branch above does the same thing for the same
-          // reason.
+          // reason. Before the index is told, so what it remembers is the
+          // row as it now stands.
           await updateAudioFileDriveId(id, ref.driveFileId, profileId);
         }
+        // The pass now holds these bytes, and a blob may name them again — the
+        // per-reference lookup used to see the new record for free.
+        await stored.remember(actualHash, {
+          id,
+          driveFileIds: { [profileId]: ref.driveFileId },
+        });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
       } else {
         // Gone from Drive for good — pads referencing it lose the reference
@@ -495,20 +516,12 @@ interface SyncStatusCallbacks {
  * debounce, the periodic timer and manual syncs can all fire at once; without
  * this the last writer would clobber the others both locally and in Drive.
  */
-const inFlightSyncs = new Map<number, Promise<SyncResult>>();
-
-/**
- * Everyone waiting on each run, so a caller that joins one still hears how it
- * went. Joining used to hand back the promise and nothing else: the joiner's
- * own callbacks were never invoked, so a card that pressed Sync now during a
- * background sync sat on "syncing" with its button disabled until the panel
- * was closed and reopened.
- */
-const inFlightListeners = new Map<number, Set<SyncStatusCallbacks>>();
+const runs = createSyncRunRegistry<SyncResult, SyncStatusCallbacks>();
 
 /**
  * Synchronize a profile with Google Drive.
- * Concurrent calls for the same profile share the in-flight run.
+ * Concurrent calls for the same profile share the in-flight run, and a caller
+ * that joins one still hears how it went.
  * @param profileId The profile ID to sync
  * @param tokenInfo Current token information
  * @param callbacks Status update callbacks
@@ -520,41 +533,18 @@ export const syncProfile = (
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,
   refreshCallback: (token: TokenInfo) => void,
-): Promise<SyncResult> => {
-  const inFlight = inFlightSyncs.get(profileId);
-  if (inFlight) {
-    console.log(
-      `Sync already running for profile ${profileId} — joining in-flight run`,
-    );
-    const listeners = inFlightListeners.get(profileId);
-    listeners?.add(callbacks);
-    return inFlight.then((result) => {
-      listeners?.delete(callbacks);
-      replaySyncOutcome(result, callbacks);
-      return result;
-    });
-  }
-
-  const listeners = new Set<SyncStatusCallbacks>([callbacks]);
-  inFlightListeners.set(profileId, listeners);
-
-  // The run reports to whoever is waiting at the time, not only to whoever
-  // started it.
-  const fanOut = fanOutSyncCallbacks(listeners);
-
-  const run = performProfileSync(
-    profileId,
-    tokenInfo,
-    fanOut,
-    refreshCallback,
-  ).finally(() => {
-    inFlightSyncs.delete(profileId);
-    inFlightListeners.delete(profileId);
-  });
-
-  inFlightSyncs.set(profileId, run);
-  return run;
-};
+): Promise<SyncResult> =>
+  coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
+    // A sync writes audio several steps before the pads that name it, which is
+    // the window `cleanupOrphanedAudioFiles` is entitled to delete in — the
+    // same one an import opens, for the same unavoidable reason: a pad names
+    // its sounds by the ids the store assigns on write. Declaring the whole
+    // run rather than just the download pass, because the pads are written at
+    // the far end of the merge and there is no smaller region that spans both.
+    withAudioImportInProgress(() =>
+      performProfileSync(profileId, tokenInfo, fanOut, refreshCallback),
+    ),
+  );
 
 const performProfileSync = async (
   profileId: number,

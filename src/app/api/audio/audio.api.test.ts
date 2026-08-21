@@ -207,8 +207,14 @@ describe("POST /api/audio/upload-url", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.uploadUrl).toContain("upload=1");
     expect(body.key).toBe(objectKeyForHash(hashOf("a", KB), "wav"));
+    // `toContain("upload=1")` used to stand here, which asserts on a query
+    // parameter `fakeObjectStore` invents — it says the fake was called and
+    // nothing about what was asked of it. The decision this route makes is
+    // *which key* gets a PUT URL, so assert that instead, and that it was the
+    // upload presign rather than the download one.
+    expect(body.uploadUrl).toContain(body.key);
+    expect(store.uploadUrls).toEqual([body.uploadUrl]);
     expect(body.alreadyStored).toBe(false);
   });
 
@@ -716,8 +722,12 @@ describe("GET /api/audio/:hash", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.url).toContain("download=1");
     expect(body.contentType).toBe("audio/wav");
+    // The type is pinned onto the URL, not merely reported beside it. That is
+    // what stops an object being served as whatever the uploader's PUT
+    // claimed — `toContain("download=1")` was an assertion about the fake's
+    // own URL shape and could not tell the two apart.
+    expect(body.url).toContain("response-content-type=audio%2Fwav");
   });
 
   it("404s for a user who holds no reference, rather than 403", async () => {
@@ -841,7 +851,9 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((await response.json()).url).toContain("download=1");
+    expect((await response.json()).url).toContain(
+      "response-content-type=audio%2Fwav",
+    );
   });
 
   it("answers from the profile_audio index rather than re-reading the blob", async () => {
@@ -1338,5 +1350,215 @@ describe("admin surface", () => {
       routeParams({ id: String(user.user.id) }),
     );
     expect(response.status).toBe(400);
+  });
+});
+
+/**
+ * What a deployment that configures no bucket answers.
+ *
+ * This is the *default* deployment — hosted audio is off unless all five
+ * `IMPAMP_S3_*` variables are set — and no test reached it at any level. Every
+ * other test in this file installs a fake store through
+ * `setObjectStoreForTests`, which short-circuits `resolveObjectStore` before it
+ * ever consults the environment, so both the production branch and the 501
+ * these routes exist to return were dead code as far as the suite was
+ * concerned.
+ */
+describe("a deployment that hosts nothing", () => {
+  const S3_VARS = [
+    "IMPAMP_S3_ENDPOINT",
+    "IMPAMP_S3_REGION",
+    "IMPAMP_S3_BUCKET",
+    "IMPAMP_S3_ACCESS_KEY_ID",
+    "IMPAMP_S3_SECRET_ACCESS_KEY",
+  ];
+  const saved = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    // Drop the seam the rest of the file relies on, so these routes go the way
+    // a real process goes: through `getAudioHostingConfig`.
+    setObjectStoreForTests(null);
+    for (const name of S3_VARS) {
+      saved.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  });
+
+  afterEach(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    saved.clear();
+  });
+
+  const hash = "b".repeat(64);
+  const audioBody = { hash, contentType: "audio/wav", extension: "wav" };
+
+  it("answers 501 from every route that would need a bucket", async () => {
+    const { token } = signIn(1, { approved: true });
+
+    expect(
+      (await listAudio(makeRequest("/api/audio", { sessionToken: token })))
+        .status,
+    ).toBe(501);
+
+    expect(
+      (
+        await uploadUrl(
+          makeRequest("/api/audio/upload-url", {
+            method: "POST",
+            sessionToken: token,
+            body: { ...audioBody, sizeBytes: KB },
+          }),
+        )
+      ).status,
+    ).toBe(501);
+
+    expect(
+      (
+        await commit(
+          makeRequest("/api/audio/commit", {
+            method: "POST",
+            sessionToken: token,
+            body: { ...audioBody, name: "nothing.wav" },
+          }),
+        )
+      ).status,
+    ).toBe(501);
+
+    expect(
+      (
+        await downloadUrl(
+          makeRequest(`/api/audio/${hash}`, { sessionToken: token }),
+          routeParams({ hash }),
+        )
+      ).status,
+    ).toBe(501);
+
+    expect(
+      (
+        await deleteAudio(
+          makeRequest(`/api/audio/${hash}`, {
+            method: "DELETE",
+            sessionToken: token,
+          }),
+          routeParams({ hash }),
+        )
+      ).status,
+    ).toBe(501);
+  });
+
+  it("tells an ordinary account nothing, and an admin the truth", async () => {
+    const admin = signIn(1, { admin: true });
+    const ordinary = signIn(2);
+
+    // 404 before 501: the admin check runs first, so an ordinary account
+    // cannot learn whether this deployment hosts audio, or that the surface
+    // exists at all.
+    expect(
+      (
+        await adminAudio(
+          makeRequest("/api/admin/audio", { sessionToken: ordinary.token }),
+        )
+      ).status,
+    ).toBe(404);
+
+    expect(
+      (
+        await adminAudio(
+          makeRequest("/api/admin/audio", { sessionToken: admin.token }),
+        )
+      ).status,
+    ).toBe(501);
+
+    expect(
+      (
+        await patchUser(
+          makeRequest(`/api/admin/users/${ordinary.user.id}`, {
+            method: "PATCH",
+            sessionToken: admin.token,
+            body: { canUploadAudio: true },
+          }),
+          routeParams({ id: String(ordinary.user.id) }),
+        )
+      ).status,
+    ).toBe(501);
+  });
+
+  it("comes back to life once the five variables are set", async () => {
+    const { token } = signIn(1, { approved: true });
+    process.env.IMPAMP_S3_ENDPOINT = "https://s3.example.invalid";
+    process.env.IMPAMP_S3_REGION = "eu-central-2";
+    process.env.IMPAMP_S3_BUCKET = "impamp-audio";
+    process.env.IMPAMP_S3_ACCESS_KEY_ID = "key";
+    process.env.IMPAMP_S3_SECRET_ACCESS_KEY = "secret";
+
+    // The one call in this file that builds a real S3 client out of the
+    // environment. Listing reads only the database, so nothing is fetched —
+    // what is under test is that the config path resolves to a store at all,
+    // rather than to the `null` that means "off".
+    const response = await listAudio(
+      makeRequest("/api/audio", { sessionToken: token }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).canUploadAudio).toBe(true);
+  });
+
+  it("refuses one missing variable as firmly as five", async () => {
+    const { token } = signIn(1, { approved: true });
+    process.env.IMPAMP_S3_ENDPOINT = "https://s3.example.invalid";
+    process.env.IMPAMP_S3_REGION = "eu-central-2";
+    process.env.IMPAMP_S3_BUCKET = "impamp-audio";
+    process.env.IMPAMP_S3_ACCESS_KEY_ID = "key";
+    // …and no secret key. Half-configured has to be off, not half-working.
+
+    expect(
+      (await listAudio(makeRequest("/api/audio", { sessionToken: token })))
+        .status,
+    ).toBe(501);
+  });
+});
+
+/**
+ * The global ceiling, which is a different refusal from the per-user one: it
+ * is the whole deployment that is full rather than anyone's allowance, and it
+ * is the one an admin has to act on. Changing its 507 to a 200 used to leave
+ * the entire suite green.
+ */
+describe("the deployment's storage ceiling", () => {
+  it("refuses with 507 when the bucket as a whole is full", async () => {
+    // Below `maxObjectBytes` and inside the user's allowance, so this can only
+    // be refused by the global cap.
+    setObjectStoreForTests({
+      store,
+      config: { ...config, globalCapBytes: KB },
+    });
+    const { token } = signIn(1, { approved: true });
+
+    const refused = await storeAudio(token, "global", 2 * KB);
+
+    expect(refused.status).toBe(507);
+    expect(refused.ask.reason).toBe("global_cap");
+    expect(refused.ask.limitBytes).toBe(KB);
+    // No URL was minted, so nothing was uploaded: a full bucket is refused
+    // before a byte moves rather than after.
+    expect(store.keys()).toEqual([]);
+  });
+
+  it("still lets a second user claim audio the bucket already holds", async () => {
+    const first = signIn(1, { approved: true });
+    const stored = await storeAudio(first.token, "shared", 2 * KB);
+    expect(stored.status).toBe(200);
+
+    // Now the deployment is over its ceiling — but these exact bytes are
+    // already there, so a second holder adds nothing to the global total.
+    setObjectStoreForTests({
+      store,
+      config: { ...config, globalCapBytes: KB },
+    });
+    const second = signIn(2, { approved: true });
+
+    expect((await storeAudio(second.token, "shared", 2 * KB)).status).toBe(200);
   });
 });

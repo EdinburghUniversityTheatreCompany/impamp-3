@@ -4,7 +4,7 @@ import {
   establishSession,
 } from "@/lib/server/establishSession";
 import { getSessionUser, SESSION_COOKIE } from "@/lib/server/session";
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { requestGoogleToken } from "@/lib/server/googleTokenRequest";
 
 /**
  * Refreshes a Google OAuth access token using a refresh token.
@@ -20,77 +20,30 @@ import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
  * Returns: { access_token, expires_in }
  */
 export async function POST(request: NextRequest) {
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  // Shared with the exchange route — see `lib/server/googleTokenRequest`. A
+  // revoked or invalid refresh token comes back as a 400 and the user signs in
+  // again; an unreachable Google comes back as a 503 and they do not, which is
+  // the distinction worth keeping on a route that runs on every token expiry.
+  const tokens = await requestGoogleToken(request, {
+    field: "refresh_token",
+    grantType: "refresh_token",
+    failureMessage: "Token refresh failed",
+  });
+  if (tokens instanceof NextResponse) return tokens;
 
-  if (!clientId || !clientSecret) {
-    return NextResponse.json(
-      { error: "Google OAuth not configured on server" },
-      { status: 500 },
-    );
+  const result = NextResponse.json({
+    access_token: tokens.access_token,
+    expires_in: tokens.expires_in,
+  });
+
+  // Only mint a session when there isn't a working one — this route runs
+  // every time a token expires, and re-signing each time would pile up
+  // session rows for no gain.
+  const existing = getSessionUser(request.cookies.get(SESSION_COOKIE)?.value);
+  if (!existing) {
+    const session = await establishSession(tokens.access_token);
+    if (session) attachSessionCookie(result, session);
   }
 
-  let refreshToken: string;
-  try {
-    const body = await request.json();
-    refreshToken = body.refresh_token;
-    if (!refreshToken) throw new Error("Missing refresh_token");
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const params = new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "refresh_token",
-    });
-
-    const response = await fetchWithTimeout(
-      "https://oauth2.googleapis.com/token",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params,
-      },
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      // Token revoked or invalid — the user needs to sign in again
-      return NextResponse.json(
-        {
-          error: data.error_description || data.error || "Token refresh failed",
-        },
-        { status: 400 },
-      );
-    }
-
-    const result = NextResponse.json({
-      access_token: data.access_token,
-      expires_in: data.expires_in,
-    });
-
-    // Only mint a session when there isn't a working one — this route runs
-    // every time a token expires, and re-signing each time would pile up
-    // session rows for no gain.
-    const existing = getSessionUser(request.cookies.get(SESSION_COOKIE)?.value);
-    if (!existing) {
-      const session = await establishSession(data.access_token);
-      if (session) attachSessionCookie(result, session);
-    }
-
-    return result;
-  } catch {
-    // Network failure — don't log the user out, let caller retry later
-    return NextResponse.json(
-      { error: "Could not reach Google. Check your connection." },
-      { status: 503 },
-    );
-  }
+  return result;
 }

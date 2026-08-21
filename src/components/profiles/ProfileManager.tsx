@@ -94,7 +94,6 @@ export default function ProfileManager() {
   const {
     profiles,
     activeProfileId,
-    isProfileManagerOpen,
     closeProfileManager,
     createProfile,
     importProfileFromJSON,
@@ -110,7 +109,6 @@ export default function ProfileManager() {
     useShallow((s) => ({
       profiles: s.profiles,
       activeProfileId: s.activeProfileId,
-      isProfileManagerOpen: s.isProfileManagerOpen,
       closeProfileManager: s.closeProfileManager,
       createProfile: s.createProfile,
       importProfileFromJSON: s.importProfileFromJSON,
@@ -128,7 +126,11 @@ export default function ProfileManager() {
   // Escape dismisses the manager. `ProfileCard` opens modals from inside this
   // panel, and the hook's stack is what makes that safe: a dialog opened from
   // here keeps its own Escape, and closing it hands Escape back to this.
-  useEscapeToClose(isProfileManagerOpen, closeProfileManager);
+  //
+  // `true`, not the store's flag: `ProfileManagerHost` mounts this component
+  // only while the manager is open, so being rendered at all *is* being open.
+  // `WaveformTrimmer` passes a literal for the same reason.
+  useEscapeToClose(true, closeProfileManager);
 
   const router = useRouter();
 
@@ -577,10 +579,6 @@ export default function ProfileManager() {
     setDriveAudioRepairProgress(null);
     setIsRepairingDriveAudio(false);
   };
-
-  if (!isProfileManagerOpen) {
-    return null;
-  }
 
   return (
     <div className="fixed inset-0 flex items-center justify-center z-50 bg-black/50">

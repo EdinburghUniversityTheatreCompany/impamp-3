@@ -12,6 +12,11 @@ const dbMocks = vi.hoisted(() => ({
   updateProfile: vi.fn(),
   getAudioFileIdsForProfile: vi.fn(),
   hasProfileChangedSince: vi.fn(),
+  // The guard that holds the orphan sweeps off while a sync is midway between
+  // writing audio and writing the pads that name it. This mock replaces the
+  // whole of `@/lib/db`, so it has to carry it; what it actually does is
+  // covered against a real database in `googleDrive/sync.orphanWindow.test.ts`.
+  withAudioImportInProgress: vi.fn(<T>(run: () => Promise<T>) => run()),
 }));
 const dataAccessMocks = vi.hoisted(() => ({
   getLocalProfileSyncData: vi.fn(),

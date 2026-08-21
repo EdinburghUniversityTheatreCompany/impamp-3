@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/server/apiAuth";
 import { setAudioPermissions } from "@/lib/server/users";
 import { getUserUsage } from "@/lib/server/audio";
+import { parseJsonBody } from "@/lib/server/requestBody";
 import {
   audioHostingDisabled,
   resolveObjectStore,
@@ -31,12 +32,11 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let body: { canUploadAudio?: unknown; audioQuotaBytes?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    canUploadAudio?: unknown;
+    audioQuotaBytes?: unknown;
+  }>(request);
+  if (body instanceof NextResponse) return body;
 
   if (
     body.canUploadAudio !== undefined &&

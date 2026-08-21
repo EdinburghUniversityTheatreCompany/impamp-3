@@ -7,6 +7,14 @@
  * Imports write their audio records *before* the pads that name them, so a
  * cleanup running in that window saw a pile of unreferenced files and removed
  * sounds the import was about to point at.
+ *
+ * One transaction closed the gap between the decision and the delete. It could
+ * not close the gap inside an import, which opens before the cleanup is even
+ * called, so an import now declares itself (`withAudioImportInProgress`) and
+ * the sweeps wait for it. The last test here drives a real import rather than
+ * a stand-in for one, because the fix is only worth anything if the import
+ * path actually takes the guard — a unit test of the register alone would
+ * stay green if `importProfileCore` stopped calling it.
  */
 
 // Must be the first import: it installs `window` before `db.ts` can read it.
@@ -21,7 +29,10 @@ const {
   cleanupOrphanedAudioFiles,
   getAudioFile,
   getPadConfigurationsForProfileBank,
+  getDb,
 } = await import("./db");
+const { importProfileFromSyncData } = await import("./importExport");
+type ProfileSyncData = import("./syncUtils").ProfileSyncData;
 
 let profileId: number;
 
@@ -64,12 +75,11 @@ describe("orphaned audio cleanup", () => {
   });
 
   /**
-   * The import order — audio first, pads after — raced against a cleanup.
+   * A pad write landing while the cleanup is deciding what to delete.
    *
-   * Faithful to what an import really does: `importAudioSources` commits each
-   * audio file in a transaction of its own and the pads that name them are
-   * written later, so this window is open in production and not an artefact of
-   * the harness.
+   * Not an import — nothing here declares itself to the sweep — so this is
+   * only about the cleanup surviving a concurrent write to the store it holds
+   * open. What happens to an import's audio is the test below.
    */
   async function raceCleanupAgainstPadWrite() {
     const arriving = await soundNamed("mid-import.wav");
@@ -102,42 +112,106 @@ describe("orphaned audio cleanup", () => {
     expect(named).toContain(arriving);
   });
 
-  it.fails(
-    "does not delete audio a concurrent import is still attaching",
-    async () => {
-      // KNOWN DEFECT, deliberately recorded rather than asserted away.
-      //
-      // This test used to branch on `cleanup.deletedCount` — "if something was
-      // deleted the file must be gone, otherwise it must be there" — which is
-      // satisfiable either way and never looked at the pad at all. Its comment
-      // stated the real invariant and the code checked neither half of it.
-      // Reading the pads back shows what was actually happening: the pad
-      // deterministically ends up naming a file the cleanup deleted, and the
-      // test called that a pass.
-      //
-      // Making the scan and the delete one transaction, which is what the
-      // file's header describes, closes a different window — nothing can start
-      // referencing a file *between* the decision and the delete. It does not
-      // close this one: the cleanup transaction is created first, so it scans
-      // before the pad exists, deletes, and the pad write lands afterwards
-      // naming nothing.
-      //
-      // Closing it is a product decision rather than a test one (a grace
-      // period on recently-created audio, one transaction spanning an import's
-      // audio and pads, or a lock while an import runs), so it is out of scope
-      // here. `it.fails` keeps the invariant written down, keeps the suite
-      // honest about it, and turns red the moment the defect is fixed — at
-      // which point delete this marker.
-      const { named } = await raceCleanupAgainstPadWrite();
+  /**
+   * Puts a real import in the gap the defect lived in, and sweeps from inside
+   * it.
+   *
+   * The import reports progress once each sound is committed, which is
+   * precisely the moment the bug needs: that record exists and the pad that
+   * will name it is two steps away. Firing the sweep from the first of those
+   * reports is not a simulation of the window — the import really is in it,
+   * which is why this drives the import path rather than a hand-rolled
+   * stand-in for one. A unit test of the register alone would stay green if
+   * `importProfileCore` ever stopped declaring itself.
+   *
+   * The progress hook rather than the download hook, because this path
+   * downloads four sounds at a time: from inside a download, the first record
+   * may not be written yet, and the sweep then finds an empty store and proves
+   * nothing.
+   *
+   * The cleanup is started and deliberately not awaited here: it now waits for
+   * the import, and the import is not waiting for it.
+   */
+  async function sweepFromInsideAnImport() {
+    const db = await getDb();
+    let sweep: ReturnType<typeof cleanupOrphanedAudioFiles> | undefined;
 
-      for (const audioFileId of named) {
-        expect(
-          await getAudioFile(audioFileId),
-          `pad names audio ${audioFileId}, which cleanup deleted`,
-        ).toBeDefined();
-      }
-    },
-  );
+    const newProfileId = await importProfileFromSyncData(
+      db,
+      {
+        _syncFormatVersion: 2,
+        profile: { id: 7, name: "Restored board", syncType: "local" },
+        pageMetadata: [],
+        padConfigurations: [
+          {
+            profileId: 7,
+            pageIndex: 0,
+            padIndex: 3,
+            name: "Doorbell",
+            playbackType: "round-robin",
+            audioFileIds: [11, 12],
+          },
+        ],
+        audioFiles: [
+          { id: 11, name: "ding.mp3", type: "audio/mpeg", driveFileId: "d-11" },
+          { id: 12, name: "dong.mp3", type: "audio/mpeg", driveFileId: "d-12" },
+        ],
+      } as unknown as ProfileSyncData,
+      async (driveFileId) => new Blob([driveFileId], { type: "audio/mpeg" }),
+      () => {
+        sweep ??= cleanupOrphanedAudioFiles();
+      },
+    );
+
+    const pads = await getPadConfigurationsForProfileBank(newProfileId, "0");
+    return {
+      sweep: await sweep!,
+      named: pads.flatMap((pad) => pad.audioFileIds ?? []),
+    };
+  }
+
+  it("does not delete audio a concurrent import is still attaching", async () => {
+    const { sweep, named } = await sweepFromInsideAnImport();
+
+    // Guards the setup: the invariant below is vacuous on a run where the pad
+    // never landed, and both sounds have to be on it or the deleted half is
+    // the half nobody looks at.
+    expect(named).toHaveLength(2);
+    expect(sweep.errors).toEqual([]);
+
+    for (const audioFileId of named) {
+      expect(
+        await getAudioFile(audioFileId),
+        `pad names audio ${audioFileId}, which cleanup deleted`,
+      ).toBeDefined();
+    }
+  });
+
+  it("sweeps again once a failed import has released it", async () => {
+    // The register is emptied on the way out, not on the way to success: an
+    // import that throws must not leave the button dead for the session.
+    const db = await getDb();
+    await expect(
+      importProfileFromSyncData(
+        db,
+        {
+          _syncFormatVersion: 2,
+          profile: { id: 8, name: "Doomed", syncType: "local" },
+          pageMetadata: [],
+          padConfigurations: [],
+          audioFiles: [
+            { id: 21, name: "gone.mp3", type: "audio/mpeg", driveFileId: "x" },
+          ],
+        } as unknown as ProfileSyncData,
+        async () => null,
+      ),
+    ).rejects.toThrow();
+
+    const orphan = await soundNamed("left-over.wav");
+
+    expect((await cleanupOrphanedAudioFiles()).deletedCount).toBe(1);
+    expect(await getAudioFile(orphan)).toBeUndefined();
+  });
 
   it("reports the same set the scan reports", async () => {
     const orphan = await soundNamed("orphan.wav");

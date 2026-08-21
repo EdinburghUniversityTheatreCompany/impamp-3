@@ -28,7 +28,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport = {
-  themeColor: "#000000",
+  // The same colour `manifest.ts` declares. These are two declarations of one
+  // fact — the browser UI colour — and they disagreed, black here against the
+  // manifest's brand orange, so which one a user saw depended on whether the
+  // app was installed.
+  themeColor: "#f2801f",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,

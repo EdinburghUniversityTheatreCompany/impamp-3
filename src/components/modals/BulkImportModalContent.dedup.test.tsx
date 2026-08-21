@@ -24,9 +24,15 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
   analyseAndStore: vi.fn(async () => null),
 }));
 
+// The importer's tail now goes through `padWrites`, which reads *both* store
+// actions — the version bump as well as the sync request — so a mock offering
+// only one of them throws on the announcement rather than on the write.
 const requestSync = vi.fn();
+const incrementPadConfigsVersion = vi.fn();
 vi.doMock("@/store/profileStore", () => ({
-  useProfileStore: { getState: () => ({ requestSync }) },
+  useProfileStore: {
+    getState: () => ({ requestSync, incrementPadConfigsVersion }),
+  },
 }));
 
 const BulkImportModalContent = (

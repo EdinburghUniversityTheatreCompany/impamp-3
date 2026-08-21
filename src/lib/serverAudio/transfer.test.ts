@@ -10,12 +10,36 @@ import { NotSignedInError } from "@/lib/serverSync/types";
 const dbMocks = vi.hoisted(() => ({
   addOrReuseAudioFile: vi.fn(),
   computeBlobHash: vi.fn(),
+  // Returns the getter the real factory returns. These suites never exercise
+  // the pre-hashing fallback — every reference carries a hash — so an empty
+  // index is the honest stand-in for "nothing matched by content".
+  createHashlessAudioIndex: vi.fn(() => async () => new Map()),
   ensureAudioFileHash: vi.fn(),
   getAudioFile: vi.fn(),
-  getAudioFileByHash: vi.fn(),
   getAudioFileMetadata: vi.fn(),
   getDb: vi.fn(),
   markAudioFilesHosted: vi.fn(),
+}));
+
+/**
+ * What this browser already holds, as the pass's hash index reports it.
+ *
+ * The index is stubbed here rather than driven through the mocked `getDb`,
+ * because this suite replaces the whole of `@/lib/db` with functions that hold
+ * no data — there is no database behind it for a cursor to walk. What the real
+ * index does is covered against a real one in `lib/audioHashIndex.test.ts`.
+ */
+const indexMocks = vi.hoisted(() => ({
+  local: new Map<string, { id: number }>(),
+}));
+
+vi.mock("@/lib/audioHashIndex", () => ({
+  createStoredHashIndex: () => ({
+    lookup: async (hash: string) => indexMocks.local.get(hash),
+    remember: async (hash: string, ref: { id: number }) => {
+      indexMocks.local.set(hash, ref);
+    },
+  }),
 }));
 
 const apiMocks = vi.hoisted(() => ({
@@ -67,10 +91,10 @@ beforeEach(() => {
   dbMocks.getDb.mockResolvedValue({
     getAllKeys: vi.fn().mockResolvedValue([]),
   });
-  dbMocks.getAudioFileByHash.mockResolvedValue(undefined);
+  indexMocks.local.clear();
   // A resolved shape, not the default `undefined`: the downloader reads
   // `reused` off it to decide whether the row it got back still needs
-  // marking as hosted.
+  // marking as hosted, and `id` to tell the pass's index about it.
   dbMocks.addOrReuseAudioFile.mockResolvedValue({ id: 1, reused: false });
   // Mirrors whatever getAudioFile is stubbed to return, so a test that sets up
   // a local file gets a consistent answer from both without saying it twice.
@@ -306,7 +330,7 @@ describe("downloadProfileAudio", () => {
   });
 
   it("skips a file this browser already has", async () => {
-    dbMocks.getAudioFileByHash.mockResolvedValue({ id: 7 });
+    indexMocks.local.set(HASH_A, { id: 7 });
 
     const result = await downloadProfileAudio(
       "srv",

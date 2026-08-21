@@ -21,6 +21,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const profileState = {
   activeProfileId: 1,
   requestSync: vi.fn(),
+  // `savePadConfiguration` reads this off the store too — it is the shared
+  // tail's other half, and the grid's only invalidation signal.
+  incrementPadConfigsVersion: vi.fn(),
   canEditActiveProfile: () => true,
 };
 const useProfileStore = Object.assign(
@@ -68,7 +71,7 @@ let drop: (files: File[], padIndex: number) => Promise<void>;
  * under StrictMode.
  */
 function Harness() {
-  const { handleDropAudio } = usePadDrop(BANK_ID, () => {});
+  const { handleDropAudio } = usePadDrop(BANK_ID);
   useEffect(() => {
     drop = handleDropAudio;
   }, [handleDropAudio]);

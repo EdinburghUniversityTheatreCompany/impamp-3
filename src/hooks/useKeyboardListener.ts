@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { PadConfiguration } from "@/lib/db";
+import { extractPadPlaybackSettings, PadConfiguration } from "@/lib/db";
 import {
   EmergencySound,
   hasLoadedEmergencySounds,
@@ -11,17 +11,12 @@ import {
   ensureAudioContextActive,
   stopAllAudio,
   fadeOutAllAudio,
-  triggerAudioForPadInstant,
-  LoadingState,
+  triggerPad,
 } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import {
-  loadingStoreActions,
-  generatePadLoadingKey,
-} from "@/store/loadingStore";
 import { useSearchContext } from "@/components/search";
 import { useUIStore } from "@/store/uiStore";
-import { getPadIndexForKey } from "@/lib/keyboardUtils";
+import { isControlActivationKey, getPadIndexForKey } from "@/lib/keyboardUtils";
 import { openHelpModal } from "@/lib/uiUtils";
 import {
   usePadConfigurations,
@@ -33,7 +28,19 @@ import { useIsAnyOverlayOpen } from "@/hooks/useIsAnyOverlayOpen";
 const keyDebounceMap = new Map<string, boolean>();
 const DEBOUNCE_TIME_MS = 100; // Adjust as needed
 
-// Function to play an emergency sound
+/**
+ * Plays one emergency cue.
+ *
+ * Through `triggerPad`, like every other trigger in the app: this used to
+ * build `triggerAudioForPadInstant`'s four callbacks by hand, recomputing the
+ * loading key inside three of them, and so carried its own answer to what
+ * happens when a trigger is cancelled mid-load.
+ *
+ * `sound` is passed whole rather than field by field. `EmergencySound` is
+ * `TriggerablePad` plus the profile and bank it lives on, and enumerating that
+ * overlap is exactly how a field comes to be dropped in silence — TypeScript
+ * exempts a spread from excess-property checking.
+ */
 async function playEmergencySound(sound: EmergencySound): Promise<void> {
   // Check for valid audioFileIds array
   if (!sound || !sound.audioFileIds || sound.audioFileIds.length === 0) {
@@ -48,58 +55,11 @@ async function playEmergencySound(sound: EmergencySound): Promise<void> {
     `[KeyboardListener] Triggering emergency sound: Pad ${sound.padIndex}, AudioIDs: ${sound.audioFileIds.join(",")}`,
   );
 
-  // Call the instant trigger function for emergency sounds
-  await triggerAudioForPadInstant({
-    padIndex: sound.padIndex,
-    audioFileIds: sound.audioFileIds,
-    playbackType: sound.playbackType,
-    activeProfileId: sound.profileId,
-    currentBankId: sound.bankId, // Use the bank identity from the sound object
-    name: sound.name,
-    audioTrimSettings: sound.audioTrimSettings,
-    audioGainSettings: sound.audioGainSettings,
-    padGainDb: sound.padGainDb,
-    activePadBehavior: sound.activePadBehavior,
-    onInstantFeedback: () => {
-      console.log(
-        `[KeyboardListener] Emergency sound triggered for pad ${sound.padIndex}`,
-      );
-    },
-    onLoadingStateChange: (state: LoadingState) => {
-      console.log(
-        `[KeyboardListener] Emergency sound loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.setPadLoadingState(loadingKey, state);
-    },
-    onAudioReady: () => {
-      console.log(
-        `[KeyboardListener] Emergency sound ready for pad ${sound.padIndex}`,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.clearPadLoadingState(loadingKey);
-    },
-    onError: (error) => {
-      console.error(
-        `[KeyboardListener] Emergency sound error for pad ${sound.padIndex}:`,
-        error,
-      );
-      const loadingKey = generatePadLoadingKey(
-        sound.profileId,
-        sound.bankId,
-        sound.padIndex,
-      );
-      loadingStoreActions.clearPadLoadingState(loadingKey);
-    },
-  });
+  await triggerPad(
+    sound,
+    { activeProfileId: sound.profileId, currentBankId: sound.bankId },
+    { logPrefix: "[KeyboardListener] emergency sound" },
+  );
 }
 
 export function useKeyboardListener() {
@@ -124,7 +84,11 @@ export function useKeyboardListener() {
   const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
-  const { openSearchModal, isSearchModalOpen } = useSearchContext();
+  // Only the opener. Whether search is *open* is asked through
+  // `useIsAnyOverlayOpen` below, which ORs the same flag in — this hook used
+  // to ask both, so "who owns the keyboard while search is up" had two
+  // answers 43 lines apart and the second could never be reached.
+  const { openSearchModal } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
   // Everything that should own the keyboard while it is up — including the
@@ -134,6 +98,32 @@ export function useKeyboardListener() {
   const modalConfig = useUIStore((state) => state.modalConfig);
 
   const hasInteracted = useRef(false); // Track interaction for AudioContext resume
+
+  // Whether whatever holds focus was put there by Tab rather than by a
+  // pointer. It is what decides if a focused control may keep Enter and Space
+  // for itself, so it is tracked explicitly rather than asked of the browser:
+  // `:focus-visible` answers the same question and answers it wrong here,
+  // flipping a click-focused button to focus-visible on the very keydown
+  // being judged.
+  //
+  // Its own capture-phase listeners, not a branch of `handleKeyDown`, because
+  // that handler stands down for overlays and text fields — and a Tab pressed
+  // inside a text field still moves focus.
+  const focusReachedByTabRef = useRef(false);
+  useEffect(() => {
+    const noteTab = (event: KeyboardEvent) => {
+      if (event.key === "Tab") focusReachedByTabRef.current = true;
+    };
+    const notePointer = () => {
+      focusReachedByTabRef.current = false;
+    };
+    window.addEventListener("keydown", noteTab, { capture: true });
+    window.addEventListener("pointerdown", notePointer, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", noteTab, { capture: true });
+      window.removeEventListener("pointerdown", notePointer, { capture: true });
+    };
+  }, []);
 
   // The pad configurations for the active page, from the same hook the grid
   // uses. This used to be a second, private fetch into a ref — the old comment
@@ -226,20 +216,42 @@ export function useKeyboardListener() {
       // every sound in the room.
       //
       // Below the early-outs rather than at the top of the handler, because
-      // Ctrl+S must stay live behind an overlay. Covering Tab and Ctrl+F as
-      // well is deliberate and inert: dnd never claims "f", and the Tab
-      // branch only preventDefaults a key whose default is already prevented.
+      // Ctrl+S must stay live behind an overlay. Covering Ctrl+F as well is
+      // deliberate and inert: dnd never claims "f".
       if (event.defaultPrevented) {
         return;
       }
 
-      // Prevent default browser tabbing behavior outside of inputs and modals
-      if (event.key === "Tab") {
-        event.preventDefault();
-        return; // Stop further processing for Tab key
+      // Tab is deliberately *not* suppressed here any more.
+      //
+      // It used to be — `event.preventDefault(); return;` for every Tab
+      // outside an input or an overlay — so that a stray Tab mid-show could
+      // not walk focus onto a pad, where Enter and Space would then fire that
+      // pad instead of the emergency bank and Fade Out All. The cost was that
+      // Search, Help, the mode toggles, the bank tabs and the profile
+      // selector could not be reached without a mouse at all.
+      //
+      // The two halves are now separated. `Pad` carries `tabIndex={-1}`, so
+      // Tab walks the chrome and can never land on the board; and the guard
+      // below hands Enter and Space to a control only when the operator
+      // tabbed to it, so a pointer click still leaves both keys with the
+      // transport. Escape blurs, so panic is also the way back to the
+      // instrument.
+      if (
+        focusReachedByTabRef.current &&
+        isControlActivationKey(event.key, event.target)
+      ) {
+        console.log(
+          "[KeyboardListener] Leaving the key to the control Tab focused.",
+        );
+        return;
       }
 
       // --- Specific Shortcut Handling ---
+      //
+      // Everything from here on runs only when no overlay is open: the
+      // `isAnyOverlayOpen` early-out above covers the modal system, the
+      // profile manager and search alike.
 
       // Handle Ctrl+F — Cmd+F on a Mac — to open search modal
       if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
@@ -256,14 +268,6 @@ export function useKeyboardListener() {
         event.preventDefault();
         console.log("[KeyboardListener] Shift+? detected, opening help modal.");
         openHelpModal(); // Use the centralized utility function
-        return;
-      }
-
-      // If search modal is open, only allow Escape (handled within modal component)
-      if (isSearchModalOpen) {
-        console.log(
-          "[KeyboardListener] Ignoring key press while search modal is open.",
-        );
         return;
       }
 
@@ -324,6 +328,16 @@ export function useKeyboardListener() {
           "[KeyboardListener] Escape key pressed - stopping all audio playback.",
         );
         stopAllAudio(); // Use the imported function
+        // Panic is also the way out of the chrome. Tab can now reach the
+        // header and the bank tabs, and a control that holds focus keeps
+        // Enter and Space for itself — so the operator needs one key that
+        // both stops the room and hands the instrument back, without hunting
+        // for the mouse.
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused !== document.body) {
+          focused.blur();
+        }
+        focusReachedByTabRef.current = false;
         return;
       }
 
@@ -394,8 +408,12 @@ export function useKeyboardListener() {
 
       // --- Start of Pad Activation Logic ---
 
-      // Nothing to act on until the store has resolved the bank on screen.
-      if (currentBankId === null) {
+      // Nothing to act on until the store has resolved the bank on screen,
+      // and nothing to key the loading state by without a profile. The second
+      // half used to be an `activeProfileId as number` at the trigger call and
+      // a `=== null` check inside three of its callbacks — a cast that said
+      // the value could not be null next to three guards saying it could.
+      if (currentBankId === null || activeProfileId === null) {
         return;
       }
 
@@ -507,71 +525,28 @@ export function useKeyboardListener() {
           hasInteracted.current = true;
         }
 
-        console.log(
-          `[KeyboardListener] Calling triggerAudioForPadInstant for pad index ${matchedPadIndex}`,
+        // Through `triggerPad`, like every other trigger in the app. This
+        // branch used to build `triggerAudioForPadInstant`'s four callbacks by
+        // hand — a second copy of the loading-key bookkeeping that had already
+        // drifted from the shared one, and that never cleared the overlay for
+        // a trigger cancelled mid-load.
+        //
+        // `extractPadPlaybackSettings` rather than a hand-written field list,
+        // for the reason spelled out on `TriggerablePad`: a spread is exempt
+        // from excess-property checking, so an enumerated field that goes
+        // missing goes missing in silence.
+        await triggerPad(
+          {
+            ...extractPadPlaybackSettings(matchedConfig),
+            padIndex: matchedConfig.padIndex,
+          },
+          { activeProfileId, currentBankId },
+          { logPrefix: "[KeyboardListener] keyboard shortcut" },
         );
-        // Call instant trigger function for keyboard shortcuts
-        triggerAudioForPadInstant({
-          padIndex: matchedConfig.padIndex,
-          audioFileIds: matchedConfig.audioFileIds,
-          playbackType: matchedConfig.playbackType,
-          activeProfileId: activeProfileId as number,
-          currentBankId: currentBankId,
-          name: matchedConfig.name,
-          audioTrimSettings: matchedConfig.audioTrimSettings,
-          audioGainSettings: matchedConfig.audioGainSettings,
-          padGainDb: matchedConfig.padGainDb,
-          activePadBehavior: matchedConfig.activePadBehavior,
-          onInstantFeedback: () => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut triggered for pad ${matchedConfig.padIndex}`,
-            );
-          },
-          onLoadingStateChange: (state: LoadingState) => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut loading: ${state.status} ${Math.round((state.progress || 0) * 100)}%`,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.setPadLoadingState(loadingKey, state);
-          },
-          onAudioReady: () => {
-            console.log(
-              `[KeyboardListener] Keyboard shortcut ready for pad ${matchedConfig.padIndex}`,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.clearPadLoadingState(loadingKey);
-          },
-          onError: (error) => {
-            console.error(
-              `[KeyboardListener] Keyboard shortcut error for pad ${matchedConfig.padIndex}:`,
-              error,
-            );
-            if (activeProfileId === null) return;
-            const loadingKey = generatePadLoadingKey(
-              activeProfileId,
-              currentBankId,
-              matchedConfig.padIndex,
-            );
-            loadingStoreActions.clearPadLoadingState(loadingKey);
-          },
-        });
       } else if (matchedConfig) {
         console.log(
           `[KeyboardListener] Matched pad ${matchedPadIndex} for key ${event.key}, but it has no audio files.`,
         );
-      } else {
-        // This log might be redundant given previous logs, but can be useful
-        // console.log(`[KeyboardListener] No matching pad with audio found for key: ${event.key}`);
       }
     },
     [
@@ -580,7 +555,6 @@ export function useKeyboardListener() {
       setCurrentPageIndex,
       setEditMode,
       openSearchModal,
-      isSearchModalOpen,
       isModalOpen,
       isAnyOverlayOpen,
       modalConfig,

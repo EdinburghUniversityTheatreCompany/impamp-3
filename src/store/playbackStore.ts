@@ -8,7 +8,6 @@ import {
 } from "@/lib/db";
 import { pinAudioBuffer, unpinAudioBuffer } from "@/lib/audio/cache";
 import { baseKeyOf, layerIndexOf } from "@/lib/audio/types";
-// import { ActiveTrack } from '@/lib/audio'; // Removed unused import
 
 // Define the state structure for a single playing track in the store
 export interface PlaybackState {
@@ -300,9 +299,6 @@ export const usePlaybackStore = create<PlaybackStoreState>((set, get) => ({
 export const playbackStoreActions = usePlaybackStore.getState().actions;
 
 // Selector hooks
-export const useActivePlayback = () =>
-  usePlaybackStore((state) => state.activePlayback);
-
 export const useArmedTracks = () =>
   usePlaybackStore((state) => state.armedTracks);
 

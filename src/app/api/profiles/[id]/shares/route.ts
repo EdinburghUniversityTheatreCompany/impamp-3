@@ -6,6 +6,7 @@ import {
   upsertEmailShare,
 } from "@/lib/server/shares";
 import type { Role, ShareRow } from "@/lib/server/db";
+import { parseJsonBody } from "@/lib/server/requestBody";
 
 /**
  * Collaborators on a profile.
@@ -64,12 +65,10 @@ export async function POST(
     );
   }
 
-  let body: { role?: unknown; email?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ role?: unknown; email?: unknown }>(
+    request,
+  );
+  if (body instanceof NextResponse) return body;
 
   const role = body.role;
   if (typeof role !== "string" || !ROLES.includes(role as Role)) {

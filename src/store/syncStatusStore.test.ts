@@ -87,10 +87,21 @@ describe("syncStatusStore", () => {
     },
   );
 
-  it("starts every profile idle", () => {
+  it("starts every profile idle, and returns to it when cleared", () => {
+    // The `toBeUndefined` on its own read a map `beforeEach` had just emptied,
+    // and the two lines under it asserted literals off a frozen constant. So
+    // put something in first: what this is really about is that `clearAll`
+    // empties the store rather than leaving a stale activity behind on a card.
     expect(read(1)).toBeUndefined();
-    expect(IDLE_SYNC_STATUS.activity).toBe("idle");
-    expect(IDLE_SYNC_STATUS.lastSyncedAt).toBeNull();
+
+    syncStatusActions.patch(1, { activity: "syncing" });
+    expect(read(1)?.activity).toBe("syncing");
+
+    syncStatusActions.clearAll();
+    expect(read(1)).toBeUndefined();
+    expect(selectProfileSyncStatus(useSyncStatusStore.getState(), 1)).toBe(
+      IDLE_SYNC_STATUS,
+    );
   });
 
   it("hands out the same idle record every time", () => {

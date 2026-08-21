@@ -170,7 +170,11 @@ describe("BankTabStrip", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("enables the drag handle in edit mode", () => {
+  it("renders the tabs immediately in edit mode, before the drag chunk arrives", () => {
+    // Synchronous render: `BankTabsDraggable` is `React.lazy`, so this is the
+    // Suspense fallback — and the claim is that the fallback is the strip
+    // itself. The board must never wait on the drag library to draw its own
+    // bank tabs, however slow the network is.
     act(() => {
       root.render(
         <BankTabStrip
@@ -184,9 +188,46 @@ describe("BankTabStrip", () => {
       );
     });
 
+    expect(tabs()).toHaveLength(2);
+    expect(tabs()[1].getAttribute("data-bank-id")).toBe("vault-3");
+    expect(
+      tabs()[0].getAttribute("data-rfd-drag-handle-draggable-id"),
+    ).toBeNull();
+  });
+
+  it("enables the drag handle in edit mode once the drag chunk has loaded", async () => {
+    // Resolve the chunk before rendering. `React.lazy` calls the same dynamic
+    // import, so this leaves its factory returning an already-settled promise
+    // — otherwise this test is really measuring how long Vite takes to
+    // transform a module, which varies with what else the suite is doing.
+    await import("@/components/BankTabsDraggable");
+
+    await act(async () => {
+      root.render(
+        <BankTabStrip
+          banks={banks}
+          currentBankId="banner-hall"
+          isEditMode={true}
+          onSelect={vi.fn()}
+          onEdit={vi.fn()}
+          onReorder={vi.fn()}
+        />,
+      );
+    });
+    // Flushed until the swap lands. The strip schedules its own load through
+    // requestIdleCallback (or a timer where jsdom has none), so the wait is
+    // for a real elapsed moment, not just a microtask turn.
+    for (let i = 0; i < 40; i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+      if (tabs()[0].getAttribute("data-rfd-drag-handle-draggable-id")) break;
+    }
+
     // `@hello-pangea/dnd` only attaches this attribute (via
     // `dragHandleProps`) when the Draggable is enabled, so its presence is
-    // the observable proxy for `isDragDisabled={false}`.
+    // the observable proxy for `isDragDisabled={false}` — and, now, for the
+    // drag strip having replaced the plain one at all.
     expect(tabs()[0].getAttribute("data-rfd-drag-handle-draggable-id")).toBe(
       "banner-hall",
     );

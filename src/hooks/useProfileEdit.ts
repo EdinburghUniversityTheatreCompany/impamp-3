@@ -12,6 +12,7 @@ import ProfileEditForm from "@/components/profiles/ProfileEditForm";
 import { useProfileStore } from "@/store/profileStore";
 import type { ProfileFormValues, FormErrors } from "@/types/forms";
 import type { Profile } from "@/lib/db";
+import { DEFAULT_BACKUP_REMINDER_PERIOD_MS } from "@/lib/db";
 
 /**
  * Hook that provides functionality to open and manage profile edit forms
@@ -33,15 +34,13 @@ export function useProfileEdit() {
       return;
     }
 
-    // Default values if not set
-    const MS_IN_DAY = 1000 * 60 * 60 * 24;
-    const DEFAULT_REMINDER_PERIOD = 30 * MS_IN_DAY;
-
-    // Set up initial values with defaults for missing properties
+    // Set up initial values with defaults for missing properties. The
+    // fallback is the database's own default rather than a second `30 *
+    // MS_IN_DAY` written here, which is what it used to be.
     const initialValues: ProfileFormValues = {
       name: profile.name,
       backupReminderPeriod:
-        profile.backupReminderPeriod ?? DEFAULT_REMINDER_PERIOD,
+        profile.backupReminderPeriod ?? DEFAULT_BACKUP_REMINDER_PERIOD_MS,
       activePadBehavior: profile.activePadBehavior ?? "continue",
     };
 

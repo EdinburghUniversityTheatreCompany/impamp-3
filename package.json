@@ -9,6 +9,8 @@
     "dev": "next dev --turbopack",
     "start": "node scripts/start-standalone.js",
     "lint": "eslint .",
+    "pretypecheck": "node scripts/generate-build-info.js",
+    "typecheck": "tsc --noEmit",
     "analyze": "ANALYZE=true npm run build",
     "generate-favicon": "node scripts/generate-favicon.js",
     "test": "vitest run",

@@ -55,6 +55,15 @@ builder:
     # fnox.toml. The Picker's app-id is the Cloud project number. Set it and the
     # picker gets one; leave it and behaviour is exactly as it has been.
     NEXT_PUBLIC_GOOGLE_APP_ID: <%= ENV["NEXT_PUBLIC_GOOGLE_APP_ID"] %>
+    # The commit being shipped, so the running app can say which one it is.
+    # Kamal tags the image with the full SHA and sets KAMAL_VERSION in the
+    # container, but neither reaches the browser: the Help modal reads a JSON
+    # file baked into the client bundle at build time. Without this the file
+    # says "nogit", because .dockerignore keeps .git out of the build context.
+    # The `-dirty` suffix mirrors what Kamal itself does when it ships a tree
+    # with uncommitted changes — the image would not match the commit, and the
+    # version it reports should say so.
+    GIT_SHA: "<%= %x(git rev-parse --short HEAD).strip %><%= %x(git status --porcelain).strip.empty? ? '' : '-dirty' %>"
   #   RUBY_VERSION: <%= ENV["RBENV_VERSION"] || ENV["rvm_ruby_string"] || "#{RUBY_ENGINE}-#{RUBY_ENGINE_VERSION}" %>
 
 # Inject ENV variables into containers (secrets come from .kamal/secrets or .kamal/env files).

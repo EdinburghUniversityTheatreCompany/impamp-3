@@ -50,22 +50,21 @@ export function getProxyRequestParams(
  * everything else. It cannot be set by page script, so a caller that wants to
  * claim same-origin has to actually be same-origin.
  *
- * Origin/Referer stay as a fallback for anything that does not send it, and a
- * request with no signal at all is now refused rather than trusted.
+ * There is deliberately no Origin/Referer fallback. It used to be here, for
+ * clients that send no `Sec-Fetch-Site` — but it stopped nothing this gate
+ * exists to stop, because `Referer` is set by the caller: one
+ * `curl -H "Referer: https://this-host/"` satisfied it. A check an attacker
+ * satisfies at will is not a check; it only costs the honest caller a header,
+ * while leaving the quota and the bandwidth as open as before.
+ *
+ * The cost is browsers too old to send the header — Safari before 16.4, which
+ * shipped in March 2023. They lose the *public share* proxies only: the
+ * soundboard itself needs none of this, because its audio lives in IndexedDB,
+ * and the failure is a clean 403 rather than a silent empty pad. That is a
+ * better trade than a gate which reads as protection and is not.
  */
 export function isSameHostRequest(request: NextRequest): boolean {
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if (fetchSite) return fetchSite === "same-origin";
-
-  const source =
-    request.headers.get("origin") ?? request.headers.get("referer");
-  if (!source) return false;
-
-  try {
-    return new URL(source).host === request.nextUrl.host;
-  } catch {
-    return false;
-  }
+  return request.headers.get("sec-fetch-site") === "same-origin";
 }
 
 /**

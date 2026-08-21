@@ -13,6 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `next start` is unsupported with `output: standalone`. Reads `PORT`; a
   `--port` argument is translated to it.
 - `npm run lint` - Run ESLint
+- `npm run typecheck` - `tsc --noEmit`. A gate with a name, in the CI `unit`
+  job and in `hk.pkl`: TypeScript used to be enforced only as a side effect of
+  `npm run build` inside the e2e job's webServer, so `npm test && npm run lint`
+  went green with a type error in the tree. Some guards here **are** types —
+  `profileWire.ts`'s exhaustiveness assertion is the whole of "adding a field
+  to `Profile` does not put it on the wire"
 
 ### Testing
 
@@ -147,9 +153,19 @@ Comprehensive keyboard system (`src/lib/keyboardUtils.ts`):
 - Banks 11-19: Ctrl+1 through Ctrl+9 (Ctrl on every platform: Cmd+digit is the
   browser's tab switcher and cannot be cancelled from the page)
 - Bank 20: Ctrl+0
-- ESC: Stop all sounds (panic button)
+- ESC: Stop all sounds (panic button), and hand focus back to the board
 - F9: Play next armed track
 - Shift: Enter edit mode
+- Tab: walks the chrome only. `Pad` is `tabIndex={-1}`, so Tab can never park
+  focus on the board — which is what would turn Enter and Space into "replay
+  the pad Tab stopped on". A control Tab focused keeps Enter and Space for
+  itself; a control a _pointer_ focused does not, so clicking Help never costs
+  the operator Fade Out All. `useKeyboardListener` tracks that difference in a
+  ref fed by capture-phase `keydown`/`pointerdown` listeners rather than
+  asking `:focus-visible`, which flips a click-focused button to focus-visible
+  on the very keydown being judged. Tab used to be suppressed app-wide
+  instead, which cost the header, the bank tabs and the profile selector every
+  keyboard route in
 
 A digit names a **position**, not a bank. `setCurrentPageIndex` indexes into
 `profileStore.banks` — already in display order, see `src/lib/bankOrder.ts` —
@@ -237,6 +253,41 @@ packages, none of them is fair game.
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
+- The E2E run brings up **two** servers and one global setup, all from
+  `playwright.config.ts`. `e2e-tests/fake-s3.js` is a real HTTP bucket — path
+  style, presigned PUT, HEAD, ranged GET, DELETE, ListObjectsV2 — that
+  `e2e-tests/env.js` points the five `IMPAMP_S3_*` variables at, so hosted
+  audio is **on** during E2E and the presigned PUT, the commit that charges
+  quota from what the bucket reports, proof of possession and the download URL
+  are all exercised for real. It does not verify signatures on purpose;
+  `src/lib/server/s3/sigv4.test.ts` does that against the specification's
+  vectors. What an _unconfigured_ deployment answers lives in
+  `audio.api.test.ts` instead. `scripts/e2e-server.sh` does not start the
+  bucket — Playwright owns it — so poking the app by hand after that script has
+  hosting configured with nothing behind it.
+  `e2e-tests/global-setup.ts` claims the admin account before any worker
+  starts, because admin is not a flag anything can set: the first user written
+  to the database bootstraps as one. Without it the bit lands on whichever
+  throwaway account signed in first, which changes with the worker count and
+  the filter
+- CI runs e2e with **two workers**, not one. Every flake this suite has had
+  came from parallel load, so a single-worker run with two retries was the most
+  forgiving configuration anyone ran and could not see the class of bug
+  developers hit. Any test that needed a retry is listed in the job summary by
+  `e2e-tests/flaky-reporter.ts`; `E2E_FAIL_ON_FLAKE=1` turns that into a gate
+- Generated test WAVs go in a **per-worker** temp directory, keeping the
+  basename — a pad displays the file name and specs assert on it. They used to
+  share one path in `os.tmpdir()`, and two specs using the same name wrote the
+  file the other was handing to `setInputFiles`
+- `activatePad` **re-issues** the click or keypress until something plays,
+  rather than pressing once and waiting. A single press is not guaranteed
+  delivery: the keyboard listener reads its pad configurations through
+  `actionablePadConfigs`, which hands back an empty map while a read is in
+  flight — deliberately, so a key pressed after a bank switch cannot play the
+  previous bank's pad — and assigning a sound starts such a read. The pad's
+  label comes from the read that already settled, so a spec that waits for the
+  name and then presses can land inside the next read's window and lose the
+  press entirely
 - E2E gates on **chromium only**. Firefox and WebKit are **on demand only** —
   they do not run on push or PR (Actions → ci → Run workflow, or
   `gh workflow run ci`). Both are known-red for reasons outside the app, so
@@ -299,6 +350,21 @@ packages, none of them is fair game.
 - All level arithmetic lives in `src/lib/audio/loudness/gain.ts`. The overview
   table and the playback path both call `resolveGain`; a second implementation
   would let the table disagree with what is heard
+- Anything that writes an audio file and the pad naming it in **separate
+  transactions** must run inside `withAudioImportInProgress` (`db.ts`), and both
+  orphan sweeps must `await settleAudioImports()` as the **last** thing before
+  they open their transaction. Between the two writes the audio exists with
+  nothing referencing it, and `cleanupOrphanedAudioFiles` is entitled to delete
+  exactly that — an import racing the cleanup button deterministically left a
+  pad naming a sound that was gone. The ordering is load-bearing: work that
+  registers _after_ the sweep's transaction exists is already serialised behind
+  that scope, which is what closes the other half of the window. Two things this
+  is not: a grace period cannot work, because every record carries the single
+  `now` taken at the start of the import, so after a long download the first
+  files are already older than any useful window; and one transaction spanning
+  the import cannot exist, because IndexedDB commits as soon as the event loop
+  turns with no request outstanding and the importer awaits a network download
+  between writes. The register is in memory, so it is one tab wide
 - `audioGainSettings` is keyed by audio file ID, and those IDs are remapped or
   copied in **five** places, not the three this used to name: `importExport.ts`,
   `googleDrive/dataAccess.ts`, `syncUtils.ts`, `db.ts`'s

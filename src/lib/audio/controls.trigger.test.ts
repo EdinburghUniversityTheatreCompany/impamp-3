@@ -147,6 +147,49 @@ describe("falling back to another sound on a pad", () => {
     expect(params.trimStart).toBe(5);
     // -12 dB, the chosen sound's own setting.
     expect(params.volume).toBeLessThan(0.3);
+    expect(params.multiSoundState.currentAudioIndex).toBe(0);
+  });
+
+  /**
+   * The fallback landing on index 0, which is the one case that separates
+   * `playingIndex >= 0` from `playingIndex > 0`.
+   *
+   * Everywhere else the two agree: when the first sound plays, `playingIndex`
+   * and the strategy's `index` are both 0, so the fallback expression returns
+   * 0 either way. It takes a strategy that chose a *later* sound and a
+   * fallback that landed on the first one for `> 0` to answer with the index
+   * of the sound that did not play — which is what the Active Tracks panel
+   * would then show, and what a "next sound" would advance from.
+   */
+  it("reports index 0 when the fallback is the pad's first sound", async () => {
+    const padIndex = nextPadIndex++;
+    // First sound good, second broken — the reverse of the pad above.
+    const play = () =>
+      triggerAudioForPadInstant({
+        padIndex,
+        audioFileIds: [GOOD, BROKEN],
+        playbackType: "sequential",
+        activeProfileId: 1,
+        currentBankId: "0",
+        name: "Pad",
+        audioGainSettings: {},
+        padGainDb: 0,
+      });
+
+    // First press takes the sequential cursor to the second sound.
+    await play();
+    expect(
+      playbackMocks.playBuffer.mock.calls[0][2].multiSoundState
+        .currentAudioIndex,
+    ).toBe(0);
+
+    // Second press chooses index 1, which fails, and falls back to index 0.
+    playbackMocks.isTrackPlaying.mockReturnValue(false);
+    await play();
+
+    const params = playbackMocks.playBuffer.mock.calls[1][2];
+    expect(params.multiSoundState.currentAudioFileId).toBe(GOOD);
+    expect(params.multiSoundState.currentAudioIndex).toBe(0);
   });
 });
 

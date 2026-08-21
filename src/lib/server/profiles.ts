@@ -89,21 +89,31 @@ function reindexProfileAudio(
   writerId: number | null,
 ): void {
   const wanted = new Set(hashesNamedBy(data));
+  const existing = new Set(
+    queryAll<{ hash: string }>(
+      "SELECT hash FROM profile_audio WHERE profile_id = ?",
+      profileId,
+    ).map((row) => row.hash),
+  );
 
-  for (const row of queryAll<{ hash: string }>(
-    "SELECT hash FROM profile_audio WHERE profile_id = ?",
-    profileId,
-  )) {
-    if (!wanted.has(row.hash)) {
+  for (const hash of existing) {
+    if (!wanted.has(hash)) {
       execute(
         "DELETE FROM profile_audio WHERE profile_id = ? AND hash = ?",
         profileId,
-        row.hash,
+        hash,
       );
     }
   }
 
+  // Only the ones that are not already there. The rows were previously
+  // re-inserted unconditionally — `INSERT OR IGNORE` makes that correct but
+  // not free: it is a statement per sound per save, inside `BEGIN IMMEDIATE`,
+  // for a write that in the overwhelmingly common case changes nothing at all
+  // (a pad moved, a bank renamed, the same sounds). The read that decides is
+  // the one above, which had to happen anyway.
   for (const hash of wanted) {
+    if (existing.has(hash)) continue;
     execute(
       "INSERT OR IGNORE INTO profile_audio (profile_id, hash, added_by) VALUES (?, ?, ?)",
       profileId,
@@ -134,7 +144,16 @@ export function profileNamesHash(profileId: string, hash: string): boolean {
   );
 }
 
-export function createProfile(input: CreateProfileInput): ProfileRow {
+/**
+ * Store a new profile, and describe it without reading it back.
+ *
+ * `ProfileMeta` rather than `ProfileRow` deliberately: every field below was
+ * just written by this function, so a `SELECT *` to recover them would read
+ * the blob straight back off disk — up to MAX_PROFILE_BODY_BYTES, through the
+ * overflow chain, into a UTF-16 string — to learn a version number this code
+ * chose. A caller that genuinely wants the blob asks `getProfileById` for it.
+ */
+export function createProfile(input: CreateProfileInput): ProfileMeta {
   const id = randomUUID();
   const now = Date.now();
 
@@ -151,12 +170,21 @@ export function createProfile(input: CreateProfileInput): ProfileRow {
     );
     reindexProfileAudio(id, input.data, input.ownerId);
 
-    return getProfileById(id)!;
+    return {
+      id,
+      owner_id: input.ownerId,
+      name: input.name,
+      version: 1,
+      created_at: now,
+      updated_at: now,
+    };
   });
 }
 
 export type UpdateProfileResult =
-  | { status: "ok"; profile: ProfileRow }
+  /** No blob: an accepted write already knows everything about its own result. */
+  | { status: "ok"; profile: ProfileMeta }
+  /** With the blob, which is the whole point of a 409 here. */
   | { status: "conflict"; profile: ProfileRow }
   | { status: "not_found" };
 
@@ -181,13 +209,20 @@ export function updateProfile(
   },
 ): UpdateProfileResult {
   return transaction(() => {
-    const current = getProfileById(id);
+    // Meta, not the row: the only thing the accept/reject decision needs is
+    // the version. Reading the blob to find it meant a full-body read under
+    // `BEGIN IMMEDIATE` — holding the single instance's write lock across it —
+    // for a write whose whole job is to replace that blob.
+    const current = getProfileMeta(id);
     if (!current) return { status: "not_found" as const };
 
     if (current.version !== input.expectedVersion) {
-      return { status: "conflict" as const, profile: current };
+      // Now the blob is worth reading, because handing it back is what lets
+      // the caller merge and retry without another round trip.
+      return { status: "conflict" as const, profile: getProfileById(id)! };
     }
 
+    const updatedAt = Date.now();
     execute(
       `UPDATE profiles
           SET name = ?, data = ?, version = version + 1, updated_at = ?
@@ -197,12 +232,24 @@ export function updateProfile(
       // used to run under BEGIN IMMEDIATE, holding the write lock for the
       // length of an 8 MB stringify.
       input.serialisedData ?? JSON.stringify(input.data),
-      Date.now(),
+      updatedAt,
       id,
     );
     reindexProfileAudio(id, input.data, input.writerId ?? null);
 
-    return { status: "ok" as const, profile: getProfileById(id)! };
+    // Composed from what the UPDATE above just set, rather than read back.
+    // That was the third full-body read of one PUT, and the second one taken
+    // while holding the write lock — to recover a name, a timestamp and a
+    // version this transaction had itself decided.
+    return {
+      status: "ok" as const,
+      profile: {
+        ...current,
+        name: input.name,
+        version: current.version + 1,
+        updated_at: updatedAt,
+      },
+    };
   });
 }
 

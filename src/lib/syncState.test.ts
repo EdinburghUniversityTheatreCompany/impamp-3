@@ -31,7 +31,13 @@ function profile(overrides: Partial<Profile> = {}): Profile {
   };
 }
 
-/** A profile in each of the six legal, healthy states. */
+/**
+ * A profile in each of the four legal, healthy states.
+ *
+ * The comment said six, above four entries, since the map was written. There
+ * are four: `syncType` is local, googleDrive or server, and only the server
+ * one has a choice of where audio lives.
+ */
 const HEALTHY: Record<string, Profile> = {
   "local / device": profile({ syncType: "local", audioLocation: "local" }),
   "drive / drive": profile({

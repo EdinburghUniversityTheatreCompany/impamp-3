@@ -39,8 +39,10 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
 const EditPadModalContent = (
   await import("@/components/modals/EditPadModalContent")
 ).default;
+// From `padEditSession`, not the component: the session moved into its own
+// module so that opening the editor does not mean importing it.
 const { createPadEditSession } =
-  await import("@/components/modals/EditPadModalContent");
+  await import("@/components/modals/padEditSession");
 type PadEditSession = ReturnType<typeof createPadEditSession>;
 const { getDb, addOrReuseAudioFile, addProfile, upsertPadConfiguration } =
   await import("@/lib/db");

@@ -107,8 +107,21 @@ describe("audio buffer cache pinning", () => {
   });
 
   it("ignores an unpin for a file that was never pinned", () => {
-    expect(() => unpinAudioBuffer(99)).not.toThrow();
+    unpinAudioBuffer(99);
     expect(isAudioBufferPinned(99)).toBe(false);
+
+    // `not.toThrow()` says nothing on its own, but the line under it is not
+    // vacuous the way it looks: `isAudioBufferPinned` is `has()`, so a stray
+    // unpin that inserted *anything* — a zero, a negative, a NaN — would be
+    // caught. Removing the `count === undefined` guard does exactly that, and
+    // this test fails.
+    //
+    // The two lines below are for the reimplementation rather than the
+    // implementation: if pinning ever became count-based, a stray unpin
+    // reaching -1 would be silent until the next pin failed to hold, and this
+    // is where that would show up.
+    pinAudioBuffer(99);
+    expect(isAudioBufferPinned(99)).toBe(true);
   });
 
   it("reports pinned entries in the cache stats", () => {

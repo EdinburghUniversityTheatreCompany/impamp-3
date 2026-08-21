@@ -9,28 +9,38 @@
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { useUIStore } from "@/store/uiStore";
-import {
-  PadConfiguration,
-  DEFAULT_PLAYBACK_TYPE,
-  upsertPadConfiguration,
-} from "@/lib/db";
+import { PadConfiguration, DEFAULT_PLAYBACK_TYPE } from "@/lib/db";
+import { savePadConfiguration } from "./padWrites";
 import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import EditPadModalContent, {
-  createPadEditSession,
-} from "@/components/modals/EditPadModalContent";
+import { createPadEditSession } from "@/components/modals/padEditSession";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import type { FormErrors } from "@/hooks/modal/useFormModal";
 import type { PadFormValues } from "@/types/forms";
 import { DEFAULT_PAD_NAME } from "@/lib/constants";
 import ConfirmModalContent from "@/components/modals/ConfirmModalContent";
+import ModalLoadingSpinner from "@/components/modals/ModalLoadingSpinner";
 import React from "react";
+
+// Loaded when a pad is actually edited, not when the board is drawn.
+//
+// The editor's subtree reaches `EditPadForm`, which imports
+// `@hello-pangea/dnd`; a static import from this hook put that whole library
+// into the page's first-load graph — a `<script async>` on the prerendered
+// document — for a modal most sessions never open. This is the `React.lazy`
+// pattern `modalRegistry` already uses for the four large modals, not the
+// `next/dynamic` one measured and rejected for `ProfileManager`
+// (see `ProfileManagerHost`).
+const EditPadModalContent = React.lazy(
+  () => import("@/components/modals/EditPadModalContent"),
+);
+const EditPadModalFallback = () =>
+  React.createElement(ModalLoadingSpinner, null);
 import { extractPadPlaybackSettings } from "@/lib/db";
 
 interface PadInteractionsParams {
   currentBankId: string;
   padConfigs: Map<number, PadConfiguration>;
-  refreshPadConfigs: () => void;
   hasInteractedRef: React.RefObject<boolean>;
 }
 
@@ -41,10 +51,8 @@ interface PadInteractionsParams {
  * @returns Object containing handlers for pad interactions
  */
 export function usePadInteractions(params: PadInteractionsParams) {
-  const { currentBankId, padConfigs, refreshPadConfigs, hasInteractedRef } =
-    params;
+  const { currentBankId, padConfigs, hasInteractedRef } = params;
   const activeProfileId = useProfileStore((state) => state.activeProfileId);
-  const requestSync = useProfileStore((state) => state.requestSync);
   // Consumed by PadGrid, so a bare subscription meant opening *any* modal
   // re-rendered the grid's whole handler tree.
   const openModal = useUIStore((s) => s.openModal);
@@ -78,11 +86,18 @@ export function usePadInteractions(params: PadInteractionsParams) {
           isDisabled: padConfig?.isDisabled ?? false,
           activePadBehavior: padConfig?.activePadBehavior,
         },
+        // `renderForm`'s output is rendered as the modal's `content`, which
+        // `ModalRenderer` does not wrap in a Suspense boundary — that one is
+        // on the `modalType` path. So the boundary comes with the component.
         renderForm: (props) =>
-          React.createElement(EditPadModalContent, {
-            ...props,
-            session,
-          }),
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement(EditPadModalFallback) },
+            React.createElement(EditPadModalContent, {
+              ...props,
+              session,
+            }),
+          ),
         validate: (values) => {
           const errors: FormErrors<PadFormValues> = {};
           if (!values.name.trim()) {
@@ -107,7 +122,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           };
 
           try {
-            await upsertPadConfiguration(updatedPadConfigData);
+            await savePadConfiguration(updatedPadConfigData);
           } catch (error) {
             console.error(`Failed to save changes for pad ${padIndex}:`, error);
             alert(
@@ -130,22 +145,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
               `armed-${activeProfileId}-${currentBankId}-${padIndex}`,
             );
           }
-
-          // Reaches the grid, the keyboard and the emergency set alike —
-          // they all watch the one version counter.
-          refreshPadConfigs();
-          requestSync(activeProfileId);
         },
       });
     },
-    [
-      activeProfileId,
-      currentBankId,
-      padConfigs,
-      refreshPadConfigs,
-      requestSync,
-      openFormModal,
-    ],
+    [activeProfileId, currentBankId, padConfigs, openFormModal],
   );
 
   /**
@@ -188,7 +191,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           }
 
           // Update config to have empty audioFileIds and default playbackType
-          await upsertPadConfiguration({
+          await savePadConfiguration({
             profileId: activeProfileId,
             bankId: currentBankId,
             padIndex: padIndex,
@@ -203,8 +206,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
             activePadBehavior: undefined,
             keyBinding: config.keyBinding, // Keep existing keybinding
           });
-          refreshPadConfigs();
-          requestSync(activeProfileId);
           console.log(`Removed single sound from pad ${padIndex}`);
         } catch (error) {
           console.error(`Failed to remove sound from pad ${padIndex}:`, error);
@@ -228,8 +229,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
       activeProfileId,
       currentBankId,
       padConfigs,
-      refreshPadConfigs,
-      requestSync,
       openModal,
       closeModal,
       handleEditInteraction,

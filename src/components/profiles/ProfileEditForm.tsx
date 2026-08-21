@@ -12,6 +12,7 @@ import { activePadBehaviorOptions } from "@/components/forms/activePadBehaviorOp
 import type { ProfileFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
 import type { ActivePadBehavior } from "@/lib/db";
+import { MS_IN_DAY } from "@/lib/constants";
 
 /**
  * Form component for editing profile properties
@@ -23,7 +24,6 @@ const ProfileEditForm: React.FC<FormModalRenderProps<ProfileFormValues>> = ({
   isSubmitting,
 }) => {
   // Calculate days from milliseconds for display in the form
-  const MS_IN_DAY = 1000 * 60 * 60 * 24;
   const reminderDays =
     values.backupReminderPeriod === -1
       ? "30" // Default value when disabled

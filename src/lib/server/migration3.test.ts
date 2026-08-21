@@ -98,11 +98,22 @@ describe("migrating a populated database to user_version 3", () => {
     migrate();
 
     const version = queryOne<{ user_version: number }>("PRAGMA user_version");
+    const indexed = queryAll<{ profile_id: string }>(
+      "SELECT DISTINCT profile_id FROM profile_audio ORDER BY profile_id",
+    ).map((row) => row.profile_id);
     closeDb();
 
     // At least 3, not exactly: later migrations append, and the point here is
-    // that the backfill completed rather than throwing partway.
+    // that the backfill completed rather than throwing partway. On its own
+    // that is barely more than "it did not throw", though — the chain runs to
+    // head, so any migration at all satisfies it.
     expect(version?.user_version).toBeGreaterThanOrEqual(3);
+
+    // This is the claim the test is named for: the three malformed blobs
+    // skipped themselves, and the profiles either side of them were still
+    // indexed. A migration that gave up at the first bad row would leave
+    // `p-shares` — seeded after `p-broken`'s neighbours — out.
+    expect(indexed).toEqual(["p-normal", "p-shares"]);
   });
 
   it("adds migration 5's added_by as null on every row it backfilled", () => {

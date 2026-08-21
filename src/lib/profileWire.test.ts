@@ -32,6 +32,35 @@ function fullProfile(overrides: Partial<Profile> = {}): Profile {
 }
 
 describe("toWireProfile", () => {
+  /**
+   * The whole shape, not a sample of it.
+   *
+   * The field-by-field assertions below cover ten of the allow-list's
+   * twenty-one entries, and the other eleven leaned entirely on the
+   * compile-time `_everyProfileFieldIsClassified` assertion in `profileWire.ts`.
+   * Deleting `readOnly`, `audioLocation`, `followOnly` and `serverVersion` from
+   * the allow-list left the whole suite green — the compiler catches a field
+   * that is on *neither* list, and says nothing about one quietly moved off the
+   * wire, which is the same silent-data-loss shape the module exists to
+   * prevent in the other direction.
+   *
+   * Derived from the fixture rather than from `SHAREABLE_PROFILE_FIELDS`:
+   * asserting against the list the implementation iterates would only prove it
+   * can read its own list. `fullProfile` is a hand-written census of every
+   * field a stored profile can carry, so this says "everything a profile has,
+   * except what we deliberately withhold".
+   */
+  it("carries every profile field except the withheld ones", () => {
+    const profile = fullProfile();
+    const withheld: string[] = [...WITHHELD_PROFILE_FIELDS];
+
+    expect(Object.keys(toWireProfile(profile)).sort()).toEqual(
+      Object.keys(profile)
+        .filter((field) => !withheld.includes(field))
+        .sort(),
+    );
+  });
+
   it.each(WITHHELD_PROFILE_FIELDS)("never carries %s", (field) => {
     // Driven off the list itself, so a field added to it is covered the moment
     // it is added rather than whenever someone remembers to write a case.

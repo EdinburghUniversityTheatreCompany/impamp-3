@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 /**
- * The two trigger calls in `useKeyboardListener` that bypass `triggerPad`.
+ * The two trigger paths in `useKeyboardListener`, from key to engine.
  *
- * A pad key and the Enter key both call `triggerAudioForPadInstant` directly,
- * each hand-enumerating the pad's playback fields into its own object literal.
- * They are the only trigger paths that do not go through `triggerPad`, so
- * nothing that fixes a missing field there fixes it here, and `TriggerAudioArgs`
- * declares every one of those fields optional — so a literal that omits one
- * type-checks perfectly and the pad simply plays wrong.
+ * A pad key and the Enter key used to call `triggerAudioForPadInstant`
+ * directly, each hand-enumerating the pad's playback fields into its own
+ * object literal — the only two trigger paths that did not go through
+ * `triggerPad`, so nothing that fixed a missing field there fixed it here.
+ * They now go through it, and these cases run the real one over a mocked
+ * engine rather than stubbing it: `TriggerAudioArgs` declares every one of
+ * those fields optional, so a field lost anywhere along the way type-checks
+ * perfectly and the pad simply plays wrong.
  *
  * Enter goes one hop further: it reads an `EmergencySound`, itself a hand-built
  * projection of the pad (see `emergencySounds.test.ts`), so the field has to
@@ -30,11 +32,23 @@ const mocks = vi.hoisted(() => ({
   padConfigs: new Map<number, PadConfiguration>(),
 }));
 
-vi.mock("@/lib/audio", () => ({
+// The barrel, with the *real* `triggerPad` over a mocked engine. Both keyboard
+// trigger paths go through it, so stubbing it out would leave the assertions
+// below watching the test's own stand-in rather than the pad's fields making
+// the journey.
+vi.mock("@/lib/audio", async () => {
+  const { triggerPad } = await vi.importActual<
+    typeof import("@/lib/audio/triggerPad")
+  >("@/lib/audio/triggerPad");
+  return {
+    triggerPad,
+    ensureAudioContextActive: mocks.ensureAudioContextActive,
+    stopAllAudio: mocks.stopAllAudio,
+    fadeOutAllAudio: mocks.fadeOutAllAudio,
+  };
+});
+vi.mock("@/lib/audio/controls", () => ({
   triggerAudioForPadInstant: mocks.triggerAudioForPadInstant,
-  ensureAudioContextActive: mocks.ensureAudioContextActive,
-  stopAllAudio: mocks.stopAllAudio,
-  fadeOutAllAudio: mocks.fadeOutAllAudio,
 }));
 vi.mock("@/hooks/emergencySounds", () => ({
   takeNextEmergencySound: mocks.takeNextEmergencySound,

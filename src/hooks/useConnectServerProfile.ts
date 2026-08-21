@@ -20,6 +20,7 @@ import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { fetchServerProfile } from "@/lib/serverSync/api";
 import type { ImportAudioProgress } from "@/lib/importExport";
 import { requestProfileDownloadUrl } from "@/lib/serverAudio/api";
+import { preferHostedAudio } from "@/lib/serverAudio/hostedPreference";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 export type ConnectServerOutcome =
@@ -69,8 +70,18 @@ export function useConnectServerProfile() {
         throw new Error("The server returned no profile data.");
       }
 
+      // Prefer the route this device can actually use. A profile migrated to
+      // hosted audio names both, and the importer takes the Drive one
+      // whenever it is there — but that file is the *owner's*, and a
+      // recipient reaches it only with a Google grant on it or a folder the
+      // owner opened to anyone with the link. On a deployment that hosts
+      // audio the owner had no reason to do either, so those downloads failed
+      // and every migrated sound was skipped: pads arrived empty, with no
+      // second chance, because the import runs once.
+      const { data, driveFallbacks } = preferHostedAudio(payload.data);
+
       const localProfileId = await importProfileFromSyncData(
-        payload.data,
+        data,
         downloadAudioFile,
         options.onProgress,
         // Explicitly *not* the Drive ids the payload carries: they are the
@@ -91,20 +102,36 @@ export function useConnectServerProfile() {
         // with hosted audio configured every pad arrived empty — and then the
         // first sync offered to publish the emptiness back.
         async ({ hash }) => {
-          const ticket = await requestProfileDownloadUrl(
-            serverProfileId,
-            hash,
-            shareToken,
-          );
-          const response = await fetchWithTimeout(ticket.url, {
-            timeoutKind: "transfer",
-          });
-          if (!response.ok) {
-            throw new Error(
-              `Could not download hosted audio (${response.status}).`,
+          try {
+            const ticket = await requestProfileDownloadUrl(
+              serverProfileId,
+              hash,
+              shareToken,
             );
+            const response = await fetchWithTimeout(ticket.url, {
+              timeoutKind: "transfer",
+            });
+            if (!response.ok) {
+              throw new Error(
+                `Could not download hosted audio (${response.status}).`,
+              );
+            }
+            return response.blob();
+          } catch (error) {
+            // The blob said the server has these bytes and it does not — a
+            // half-finished migration, or an object lost since. Preferring the
+            // hosted route must not *remove* the Drive one, so try what it
+            // displaced before giving up on the sound.
+            const driveFileId = driveFallbacks.get(hash);
+            const blob = driveFileId
+              ? await downloadAudioFile(driveFileId).catch(() => null)
+              : null;
+            if (!blob) throw error;
+            console.warn(
+              `Hosted audio for ${hash} was unavailable; fell back to Drive.`,
+            );
+            return blob;
           }
-          return response.blob();
         },
       );
 

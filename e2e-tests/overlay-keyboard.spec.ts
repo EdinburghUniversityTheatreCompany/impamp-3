@@ -1,10 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   gotoApp,
   prepareAudioContext,
   createTestAudioFilePath,
   openProfileManager,
-  expectNothingPlaying,
+  getActiveSounds,
   activatePad,
 } from "./test-helpers";
 
@@ -18,6 +18,33 @@ import {
  * focus anywhere that is not a text field, every soundboard key was still
  * live behind the overlay.
  */
+/**
+ * Press Escape with the profile manager on top, and check what it did.
+ *
+ * The two assertions are in this order deliberately. Escape has to *do*
+ * something — the guard once shipped without the dismissal, and between the two
+ * changes Escape was a dead key that neither stopped the audio nor closed the
+ * thing that had taken it, leaving the × in the corner as the only way out. The
+ * overlay closing is also the observable consequence of this exact keypress, so
+ * waiting for it first puts the "still playing" check *after* the press has
+ * been handled. The other order asserted a state that was already true:
+ * playback was running before Escape, so `toBeHidden` succeeded on its first
+ * poll and a panic stop a few hundred milliseconds late — the speed this suite
+ * runs at under load — went unnoticed.
+ */
+async function escapeDismissesOnlyTheOverlay(page: Page) {
+  await page.keyboard.press("Escape");
+
+  await expect(
+    page.getByRole("heading", { name: "Profile Manager" }),
+  ).toBeHidden();
+
+  // Escape belongs to whatever is on top. Reaching the soundboard means it
+  // silenced a sound the user could not see they were stopping — the worst
+  // version of this for a live board.
+  await expect(page.locator("text=Nothing playing")).toBeHidden();
+}
+
 test.describe("the profile manager owns the keyboard", () => {
   test("a pad key does not fire a sound behind the overlay", async ({
     page,
@@ -25,13 +52,23 @@ test.describe("the profile manager owns the keyboard", () => {
     await gotoApp(page);
     await prepareAudioContext(page);
 
-    const fileName = "overlay-guard";
+    // Two pads, because "nothing is playing" was already true before the key
+    // was pressed. `toBeVisible()` on "Nothing playing" then succeeded on its
+    // first poll, and a leak that started playback a few hundred milliseconds
+    // later — which is the speed this suite runs at under load — passed. The
+    // second pad is a barrier: its sound cannot be audible until after the key
+    // press being tested has been processed, so by the time it plays a leaked
+    // first sound would be playing too.
+    const guarded = "overlay-guard";
+    const barrier = "overlay-barrier";
     await page
       .locator('[data-testid="pad-drop-input-0"]')
-      .setInputFiles(await createTestAudioFilePath(fileName));
-    await expect(page.locator('[id^="pad-"][id$="-0"]')).toContainText(
-      fileName,
-    );
+      .setInputFiles(await createTestAudioFilePath(guarded));
+    await expect(page.locator('[id^="pad-"][id$="-0"]')).toContainText(guarded);
+    await page
+      .locator('[data-testid="pad-drop-input-1"]')
+      .setInputFiles(await createTestAudioFilePath(barrier));
+    await expect(page.locator('[id^="pad-"][id$="-1"]')).toContainText(barrier);
 
     await openProfileManager(page);
     await expect(page.getByText(/Profile Manager/i)).toBeVisible();
@@ -41,7 +78,23 @@ test.describe("the profile manager owns the keyboard", () => {
     await page.getByRole("heading", { name: "Profile Manager" }).click();
     await page.keyboard.press("q");
 
-    await expectNothingPlaying(page);
+    // Close the overlay and fire the *other* pad. Clicked rather than keyed,
+    // so the barrier does not depend on the listener this test is accusing.
+    await page.getByLabel("Close").click();
+    await expect(
+      page.getByRole("heading", { name: "Profile Manager" }),
+    ).toBeHidden();
+    await page.locator('[id^="pad-"][id$="-1"]').click();
+
+    await expect
+      .poll(async () => (await getActiveSounds(page)).map((s) => s.name), {
+        message: "the second pad should be playing",
+      })
+      .toContain(barrier);
+
+    // Only the pad pressed with nothing on top is playing.
+    const names = (await getActiveSounds(page)).map((sound) => sound.name);
+    expect(names).not.toContain(guarded);
   });
 
   test("Escape does not run the panic stop behind the overlay", async ({
@@ -63,21 +116,8 @@ test.describe("the profile manager owns the keyboard", () => {
 
     await openProfileManager(page);
     await page.getByRole("heading", { name: "Profile Manager" }).click();
-    await page.keyboard.press("Escape");
 
-    // Escape belongs to whatever is on top. Reaching the soundboard means it
-    // silenced a sound the user could not see they were stopping — the worst
-    // version of this for a live board.
-    await expect(page.locator("text=Nothing playing")).toBeHidden();
-
-    // But swallowing it is only half an answer. Escape has to *do* something,
-    // and for an overlay that something is closing. The guard shipped without
-    // this, so between the two Escape was a dead key: it neither stopped the
-    // audio nor dismissed the thing that had taken it, and the only way out was
-    // the × in the corner.
-    await expect(
-      page.getByRole("heading", { name: "Profile Manager" }),
-    ).toBeHidden();
+    await escapeDismissesOnlyTheOverlay(page);
   });
 
   test("Escape is the panic stop again once the overlay has closed", async ({
@@ -99,11 +139,7 @@ test.describe("the profile manager owns the keyboard", () => {
     await page.getByRole("heading", { name: "Profile Manager" }).click();
 
     // First Escape: the overlay's, and only the overlay's.
-    await page.keyboard.press("Escape");
-    await expect(
-      page.getByRole("heading", { name: "Profile Manager" }),
-    ).toBeHidden();
-    await expect(page.locator("text=Nothing playing")).toBeHidden();
+    await escapeDismissesOnlyTheOverlay(page);
 
     // Second Escape: nothing is on top any more, so it is the panic button
     // the app documents it as.

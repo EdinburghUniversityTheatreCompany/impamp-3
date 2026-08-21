@@ -16,7 +16,6 @@ interface PadProps {
   bankId: string; // Identity of the current bank
   keyBinding?: string;
   name?: string;
-  isConfigured: boolean; // Still useful for basic styling/remove button
   soundCount: number; // Number of sounds configured for this pad
   audioFileIds?: number[]; // Audio file IDs for intelligent preloading
   isDisabled?: boolean; // Whether the pad is disabled (configured, but refuses to play)
@@ -41,7 +40,6 @@ const Pad: React.FC<PadProps> = ({
   padIndex,
   keyBinding,
   name = "Empty Pad",
-  isConfigured,
   isDisabled = false,
   isEditMode,
   isDeleteMoveMode = false,
@@ -83,6 +81,16 @@ const Pad: React.FC<PadProps> = ({
       ? Math.max(0, Math.round(playbackState.remainingTime))
       : null;
 
+  // Whether the pad reads as filled rather than empty. Derived, because
+  // `soundCount` already answers it: this arrived as its own `isConfigured`
+  // prop as well, so a caller could tell the same component that a pad was
+  // configured *and* that it held no sounds — which is exactly what the two
+  // special pads did, passing `isConfigured={true}` beside a fabricated
+  // `soundCount={2}` to switch off drop handling that `isSpecialPad` already
+  // switches off. Only styling asks this question; every behavioural branch
+  // below asks `soundCount` directly.
+  const isConfigured = soundCount > 0 || isSpecialPad;
+
   // Get the default key binding for this pad position if no custom binding is set
   const displayKeyBinding = useMemo(() => {
     // Pass cols to the key mapping function
@@ -112,7 +120,7 @@ const Pad: React.FC<PadProps> = ({
   const handleMouseEnter = React.useCallback(() => {
     // Only preload if pad is configured, enabled, and we have audio file IDs
     if (
-      isConfigured &&
+      soundCount > 0 &&
       !isDisabled &&
       audioFileIds &&
       audioFileIds.length > 0 &&
@@ -124,7 +132,7 @@ const Pad: React.FC<PadProps> = ({
         padIndex,
       });
     }
-  }, [isConfigured, isDisabled, audioFileIds, profileId, bankId, padIndex]);
+  }, [soundCount, isDisabled, audioFileIds, profileId, bankId, padIndex]);
 
   // Drag and drop handlers for delete/move mode
   const handleDragStart = (e: React.DragEvent) => {
@@ -309,13 +317,13 @@ const Pad: React.FC<PadProps> = ({
   const activate = React.useCallback(
     (withArmModifier: boolean) => {
       // The arm chord queues the track instead of playing it
-      if (withArmModifier && isConfigured && onArm && soundCount > 0) {
+      if (withArmModifier && onArm && soundCount > 0) {
         onArm();
       }
       // In Delete/Move mode, activating deletes the pad (but not special pads)
       else if (
         isDeleteMoveMode &&
-        isConfigured &&
+        soundCount > 0 &&
         onRemoveSound &&
         !isSpecialPad
       ) {
@@ -331,7 +339,6 @@ const Pad: React.FC<PadProps> = ({
       }
     },
     [
-      isConfigured,
       onArm,
       soundCount,
       isDeleteMoveMode,
@@ -403,22 +410,23 @@ const Pad: React.FC<PadProps> = ({
         handleDrop(e);
       }}
       role="button"
-      // Focusable, but reaching it is not the intended keyboard route and a
-      // deliberate deviation from the usual advice.
+      // Focusable, but out of the Tab ring — a deliberate deviation from the
+      // usual advice, and the narrower half of what used to be an app-wide Tab
+      // suppression in `useKeyboardListener`.
       //
       // Every pad prints its own hotkey and the aria-label repeats it (", key
-      // q"), which is a better interaction than tabbing past 63 siblings — and
-      // it is why `useKeyboardListener` suppresses Tab outside inputs and
-      // overlays, so a stray Tab mid-show cannot walk focus off the board.
-      // Removing tabIndex would be the tidier-looking answer and the wrong one:
-      // it would make the pads unreachable by assistive tech even when focus is
-      // moved programmatically, and would leave onKeyDown above dead code.
+      // q"), which is a better interaction than tabbing past 63 siblings. It is
+      // also the safe one: this element claims Enter and Space for itself in
+      // `onKeyDown` above, so focus landing here mid-show is exactly what would
+      // turn the emergency bank and Fade Out All into "replay whichever pad Tab
+      // stopped on". `-1` keeps that impossible while leaving the header, the
+      // bank tabs and the profile selector reachable, which a blanket Tab
+      // suppression could not.
       //
-      // Not fixed here, because it lives in `useKeyboardListener.ts`: that Tab
-      // suppression is app-wide, so the header controls (Help, Search, the
-      // bank tabs, the profile selector) cannot be reached by keyboard either.
-      // Narrowing it is the other half of this.
-      tabIndex={0}
+      // `-1` and not "no tabIndex at all": the tidier-looking answer would make
+      // the pads unreachable by assistive tech even when focus is moved
+      // programmatically, and would leave onKeyDown above dead code.
+      tabIndex={-1}
       // Only inert in the modes where the click would have played the pad. In
       // edit / delete-move mode the pad is still an actionable target — that is
       // how it gets re-enabled — so it must not report itself as disabled.
@@ -546,7 +554,7 @@ const Pad: React.FC<PadProps> = ({
       )}
 
       {/* Delete/move mode - Show deletion icon or drag handle (except for special pads) */}
-      {isDeleteMoveMode && isConfigured && !isSpecialPad && (
+      {isDeleteMoveMode && soundCount > 0 && !isSpecialPad && (
         <div className="absolute inset-0 flex items-center justify-center z-20">
           <span className="text-red-500 dark:text-red-400 text-2xl">
             {isDragging ? "•••" : "×"}
