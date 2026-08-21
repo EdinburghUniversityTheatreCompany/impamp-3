@@ -336,3 +336,21 @@ in the refusal branch, saying which pad and why.
 
 Noticed while writing the cross-profile bank transfer spec (Task 16 of the
 audio-dedup plan).
+
+## A radio group's validation error is rendered twice
+
+All four `RadioGroup` sites pass the same `error` to the wrapping `FormField`
+as well as to the group itself — `EditPadForm.tsx:337,359`,
+`ProfileEditForm.tsx:76`, `PlaybackSettingsForm.tsx:55` — and both components
+render it in their own `<p>`. A validation failure on one of these groups
+therefore shows the same sentence twice, one line apart. Nothing validates
+`playbackType` or `activePadBehavior` today, so it has never been seen; it
+would appear the moment a validator did.
+
+The fix is to pick one owner. `FormField` is the better one — it already owns
+the label and the field's spacing — which would mean dropping `error` from the
+`RadioGroup` call sites rather than from the component, since a standalone
+group still needs somewhere to say it.
+
+Noticed while giving the four groups an accessible name (🟡 3 of the 08-21
+review).
