@@ -71,6 +71,8 @@ vi.mock("@/store/uiStore", () => ({
 }));
 vi.mock("@/components/modals/EditPadModalContent", () => ({
   default: () => null,
+}));
+vi.mock("@/components/modals/padEditSession", () => ({
   createPadEditSession: () => ({ savedFileIds: [] }),
 }));
 vi.mock("@/components/modals/ConfirmModalContent", () => ({

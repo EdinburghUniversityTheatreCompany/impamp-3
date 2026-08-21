@@ -13,15 +13,29 @@ import { PadConfiguration, DEFAULT_PLAYBACK_TYPE } from "@/lib/db";
 import { savePadConfiguration } from "./padWrites";
 import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
-import EditPadModalContent, {
-  createPadEditSession,
-} from "@/components/modals/EditPadModalContent";
+import { createPadEditSession } from "@/components/modals/padEditSession";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import type { FormErrors } from "@/hooks/modal/useFormModal";
 import type { PadFormValues } from "@/types/forms";
 import { DEFAULT_PAD_NAME } from "@/lib/constants";
 import ConfirmModalContent from "@/components/modals/ConfirmModalContent";
+import ModalLoadingSpinner from "@/components/modals/ModalLoadingSpinner";
 import React from "react";
+
+// Loaded when a pad is actually edited, not when the board is drawn.
+//
+// The editor's subtree reaches `EditPadForm`, which imports
+// `@hello-pangea/dnd`; a static import from this hook put that whole library
+// into the page's first-load graph — a `<script async>` on the prerendered
+// document — for a modal most sessions never open. This is the `React.lazy`
+// pattern `modalRegistry` already uses for the four large modals, not the
+// `next/dynamic` one measured and rejected for `ProfileManager`
+// (see `ProfileManagerHost`).
+const EditPadModalContent = React.lazy(
+  () => import("@/components/modals/EditPadModalContent"),
+);
+const EditPadModalFallback = () =>
+  React.createElement(ModalLoadingSpinner, null);
 import { extractPadPlaybackSettings } from "@/lib/db";
 
 interface PadInteractionsParams {
@@ -72,11 +86,18 @@ export function usePadInteractions(params: PadInteractionsParams) {
           isDisabled: padConfig?.isDisabled ?? false,
           activePadBehavior: padConfig?.activePadBehavior,
         },
+        // `renderForm`'s output is rendered as the modal's `content`, which
+        // `ModalRenderer` does not wrap in a Suspense boundary — that one is
+        // on the `modalType` path. So the boundary comes with the component.
         renderForm: (props) =>
-          React.createElement(EditPadModalContent, {
-            ...props,
-            session,
-          }),
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement(EditPadModalFallback) },
+            React.createElement(EditPadModalContent, {
+              ...props,
+              session,
+            }),
+          ),
         validate: (values) => {
           const errors: FormErrors<PadFormValues> = {};
           if (!values.name.trim()) {
