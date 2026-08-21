@@ -9,7 +9,7 @@
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import {
-  addAudioFile,
+  addOrReuseAudioFile,
   DEFAULT_PLAYBACK_TYPE,
   upsertPadConfiguration,
 } from "@/lib/db";
@@ -67,8 +67,11 @@ export function usePadDrop(
       }
 
       try {
-        // Add the audio file to the database and get its ID
-        const audioFileId = await addAudioFile({
+        // Reuse by content hash rather than adding unconditionally: the same
+        // sting dropped on a second pad, or on a second bank, must name one
+        // row. A board built by dragging a folder onto it pad by pad used to
+        // store every repeated sound again.
+        const { id: audioFileId } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,
           type: file.type,

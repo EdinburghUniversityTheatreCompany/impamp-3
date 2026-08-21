@@ -19,21 +19,30 @@
 
 import "fake-indexeddb/auto";
 
-globalThis.window = globalThis as unknown as Window & typeof globalThis;
+// Only what is missing. A suite that renders React asks for the jsdom
+// environment and so already has both of these — and jsdom's `localStorage`
+// is a getter-only accessor, so assigning over it throws rather than being
+// ignored. `fake-indexeddb/auto` above is still wanted either way: jsdom has
+// no IndexedDB of its own.
+if (!globalThis.window) {
+  globalThis.window = globalThis as unknown as Window & typeof globalThis;
+}
 
 // The Drive sync path stamps a sync timestamp on the way out. Nothing under
 // test reads it back, so the smallest thing satisfying the calls will do.
-const storage = new Map<string, string>();
-globalThis.localStorage = {
-  getItem: (key: string) => storage.get(key) ?? null,
-  setItem: (key: string, value: string) => void storage.set(key, value),
-  removeItem: (key: string) => void storage.delete(key),
-  clear: () => storage.clear(),
-  key: (index: number) => [...storage.keys()][index] ?? null,
-  get length() {
-    return storage.size;
-  },
-} as Storage;
+if (!globalThis.localStorage) {
+  const storage = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => void storage.set(key, value),
+    removeItem: (key: string) => void storage.delete(key),
+    clear: () => storage.clear(),
+    key: (index: number) => [...storage.keys()][index] ?? null,
+    get length() {
+      return storage.size;
+    },
+  } as Storage;
+}
 
 /**
  * Empties every object store.
