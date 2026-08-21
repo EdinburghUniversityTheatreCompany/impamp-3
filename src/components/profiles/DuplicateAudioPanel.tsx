@@ -89,7 +89,8 @@ export default function DuplicateAudioPanel() {
         `Remove ${count(copies, "duplicate audio file", "duplicate audio files")}?\n\n` +
           "This permanently deletes the audio from this browser and cannot be " +
           "undone. Every pad that uses a removed copy will be pointed at the " +
-          "copy that stays.",
+          "copy that stays. A pad that listed both copies is left listing it " +
+          "once, so it plays one sound fewer.",
       )
     ) {
       return;
@@ -171,10 +172,12 @@ export default function DuplicateAudioPanel() {
                   permanently. There is no undo, and an export you have already
                   taken is the only way back. Your pads keep working: every pad
                   that used a removed copy is pointed at the copy that stays,
-                  and keeps its trim and its volume. The one thing that cannot
-                  be kept is a pad holding the same sound twice with two
-                  different trims — those become one sound, and the trim on the
-                  copy that stays is the one kept.
+                  and keeps its trim and its volume. One case changes what you
+                  hear. A pad that listed the same sound twice — once from each
+                  copy — is left listing it once, so a pad set to play A, then
+                  B, then A again becomes a two-sound pad. If those two entries
+                  had different trims or volumes, the ones on the copy that
+                  stays are what is kept.
                 </p>
                 <button
                   onClick={handleCollapse}
