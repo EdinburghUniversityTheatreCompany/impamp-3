@@ -264,7 +264,32 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the production image
-        run: docker build --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID=ci-placeholder -t impamp3:ci .
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID=ci-placeholder \
+            --build-arg GIT_SHA="$GIT_SHA" \
+            -t impamp3:ci .
+        env:
+          GIT_SHA: ${{ github.sha }}
+      # The build arg above is the only thing standing between a deployed image
+      # and reporting its own version as "nogit": .dockerignore excludes .git,
+      # so the generator's `git rev-parse` cannot run in the build container.
+      # That failure is silent — the file is written, the app boots, only the
+      # hash is useless — so it needs an assertion rather than a code review.
+      # The hash is inlined into the client bundle, which is why this greps the
+      # built chunks rather than reading a file.
+      - name: The image must know which commit it was built from
+        env:
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          short=$(printf '%s' "$GIT_SHA" | cut -c1-7)
+          if docker run --rm --entrypoint sh impamp3:ci -c "grep -rq $short .next/static"; then
+            echo "image reports commit $short"
+          else
+            echo "The image does not carry its own commit hash — GIT_SHA did not reach the build."
+            docker run --rm --entrypoint sh impamp3:ci -c "grep -ro 'nogit' .next/static | head -3"
+            exit 1
+          fi
       - name: Boot it the way README.md documents, with no volume and no env
         run: docker run -d --name impamp-ci -p 3000:3000 impamp3:ci
       - name: Wait for the health endpoint

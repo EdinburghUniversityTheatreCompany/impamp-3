@@ -7,7 +7,10 @@ export default defineConfig({
     // Server code talks to node:sqlite and node:crypto — it needs a real Node
     // environment, not jsdom.
     environment: "node",
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // scripts/ is in here for generate-build-info.test.ts: that script
+    // decides what commit the deployed app reports, and it is the one
+    // build-time script whose output the app itself reads.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.test.ts"],
     // Playwright specs live in e2e-tests/ and are driven by `npm run test:e2e`.
     // Both worktree spellings: `.worktrees/` is the manual convention,
     // `.claude/worktrees/` is where the agent tooling puts them.

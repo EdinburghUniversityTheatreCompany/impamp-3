@@ -33,6 +33,18 @@ ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
 ENV NEXT_PUBLIC_GOOGLE_API_KEY=${NEXT_PUBLIC_GOOGLE_API_KEY}
 ENV NEXT_PUBLIC_GOOGLE_APP_ID=${NEXT_PUBLIC_GOOGLE_APP_ID}
 
+# The commit this image was built from.
+#
+# `.dockerignore` excludes .git, so the `git rev-parse` in
+# scripts/generate-build-info.js cannot work in here and returns its "nogit"
+# fallback. That is baked into the client bundle, so every deployed build
+# reported its version as "0.42.0-nogit" in the Help modal and nobody could
+# tell which commit was live without asking the host over SSH. Passed by
+# config/deploy.yml and by CI's image build; unset elsewhere, which leaves the
+# old fallback rather than failing a local `docker build`.
+ARG GIT_SHA
+ENV GIT_SHA=${GIT_SHA}
+
 # Build the application
 RUN npm run build
 
