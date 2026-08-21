@@ -364,3 +364,159 @@ describe("replaceMissingAudioFile", () => {
     expect(await db.getAll("audioFiles")).toHaveLength(2);
   });
 });
+
+/**
+ * Deleting one profile must not take another profile's audio with it.
+ *
+ * `audioFiles` has no `profileId` and `addOrReuseAudioFile` takes no profile
+ * argument, so reuse is unconditionally global: profile B's pad happily names
+ * the row profile A created. Every path that removes an audio row therefore
+ * has to decide by reference rather than by ownership, and each of them
+ * already does — incidentally, because before reuse a row could only ever have
+ * one profile's pads pointing at it. These tests are what turn that accident
+ * into a rule, because the failure mode is a user deleting one show and losing
+ * the sounds out of another.
+ */
+describe("audio shared between profiles", () => {
+  /**
+   * Two profiles whose pads name the very same audio row, plus one row only
+   * the first profile names.
+   *
+   * The exclusive row is not decoration. Without it, "the shared row survived"
+   * is also what a `deleteProfile` that deleted no audio at all would produce,
+   * and the assertion could not tell the two apart.
+   */
+  async function twoProfilesOneSound() {
+    const shared = await addOrReuseAudioFile({
+      name: "horn.wav",
+      type: "audio/wav",
+      blob: horn(),
+    });
+    const exclusive = await addOrReuseAudioFile({
+      name: "stab.wav",
+      type: "audio/wav",
+      blob: stab(),
+    });
+    // Different bytes must mean different rows, or every assertion below is
+    // about one row wearing two names. A fixture whose two sounds are
+    // byte-identical is this plan's recurring trap: reuse collapses them, and
+    // every "the other row went" assertion silently becomes a no-op.
+    expect(exclusive.id).not.toBe(shared.id);
+
+    const profileIds: number[] = [];
+    for (const name of ["Show A", "Show B"]) {
+      const profileId = await addProfile({ name, syncType: "local" });
+      await upsertPadConfiguration({
+        profileId,
+        bankId: "0",
+        padIndex: 0,
+        name: "Horn",
+        audioFileIds: [shared.id],
+        playbackType: "sequential",
+      });
+      profileIds.push(profileId);
+    }
+
+    // Only Show A names the stab.
+    await upsertPadConfiguration({
+      profileId: profileIds[0],
+      bankId: "0",
+      padIndex: 1,
+      name: "Stab",
+      audioFileIds: [exclusive.id],
+      playbackType: "sequential",
+    });
+
+    return {
+      audioFileId: shared.id,
+      exclusiveAudioFileId: exclusive.id,
+      profileIds,
+    };
+  }
+
+  it("keeps the sound when one of the two profiles is deleted", async () => {
+    const { deleteProfile } = await import("./db");
+    const db = await getDb();
+    const { audioFileId, exclusiveAudioFileId, profileIds } =
+      await twoProfilesOneSound();
+
+    await deleteProfile(profileIds[0]);
+
+    expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+    // The other half, so that "kept everything" cannot pass as "kept the right
+    // thing": the row only the deleted profile named is gone.
+    expect(await db.get("audioFiles", exclusiveAudioFileId)).toBeUndefined();
+  });
+
+  it("deletes the sound when the last profile that names it goes", async () => {
+    const { deleteProfile } = await import("./db");
+    const db = await getDb();
+    const { audioFileId, profileIds } = await twoProfilesOneSound();
+
+    await deleteProfile(profileIds[0]);
+    await deleteProfile(profileIds[1]);
+
+    expect(await db.get("audioFiles", audioFileId)).toBeUndefined();
+  });
+
+  it("keeps a referenced row out of a rollback sweep", async () => {
+    const { deleteUnreferencedAudioFiles } = await import("./db");
+    const db = await getDb();
+    const { audioFileId } = await twoProfilesOneSound();
+
+    const removed = await deleteUnreferencedAudioFiles([audioFileId]);
+
+    expect(removed).toBe(0);
+    expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+  });
+
+  it("keeps a row that only another profile names out of a rollback sweep", async () => {
+    // The shape a failed import actually has: the import into Show B reused a
+    // row Show A had put there, then rolled back and handed the sweep every id
+    // it touched. Nothing in Show B references the row by then — its pads are
+    // gone — so a sweep that asked "does the profile I was importing into
+    // still name this?" would delete Show A's sound.
+    const { deleteProfile, deleteUnreferencedAudioFiles } =
+      await import("./db");
+    const db = await getDb();
+    const { audioFileId, profileIds } = await twoProfilesOneSound();
+    await deleteProfile(profileIds[1]);
+
+    const removed = await deleteUnreferencedAudioFiles([audioFileId]);
+
+    expect(removed).toBe(0);
+    expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+  });
+
+  it("keeps a row that only another profile names out of the orphan sweep", async () => {
+    // The "clean up unused audio" button scans every pad in the database, not
+    // the open profile's. With reuse, the sound on screen may well be one
+    // another profile put there.
+    const { cleanupOrphanedAudioFiles, deleteProfile } = await import("./db");
+    const db = await getDb();
+    const { audioFileId, profileIds } = await twoProfilesOneSound();
+    await deleteProfile(profileIds[1]);
+
+    const result = await cleanupOrphanedAudioFiles();
+
+    expect(result.deletedCount).toBe(0);
+    expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+  });
+
+  it("keeps the sounds of a profile that was duplicated when the original goes", async () => {
+    // A duplicate shares its rows rather than copying them — that is why it is
+    // instant and costs no storage — so the copy is a second profile naming
+    // the original's audio, made without any import or sync.
+    const { deleteProfile, duplicateProfileLocally } = await import("./db");
+    const db = await getDb();
+    const { audioFileId, exclusiveAudioFileId, profileIds } =
+      await twoProfilesOneSound();
+
+    await duplicateProfileLocally(profileIds[0], "Show A (copy)");
+    await deleteProfile(profileIds[0]);
+
+    expect(await db.get("audioFiles", audioFileId)).toBeDefined();
+    // The one only Show A named is now named by the copy, so it survives too.
+    expect(await db.get("audioFiles", exclusiveAudioFileId)).toBeDefined();
+  });
+});
