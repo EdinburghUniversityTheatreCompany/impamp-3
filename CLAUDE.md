@@ -238,14 +238,26 @@ Prettier 3.9, Vitest 4.1 with `@vitest/coverage-v8` on the same version (the
 coverage provider is released in lockstep with Vitest, so bump the two
 together).
 
-Three upgrades are deliberately held back, with the reasons and retry
-conditions in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint
-refuses the TS 7 API), ESLint 10 (eslint-plugin-react has no ESLint 10 release)
-and file-selector 5 (react-dropzone 20 depends on `^4.1.0`, so bumping the top
-level installs a second copy and `fromEvent` stops being the one react-dropzone
-calls internally). These are exactly the three `npm outdated` reports, and
-exactly the three `.github/dependabot.yml` ignores — if you see three outdated
-packages, none of them is fair game.
+Two upgrades are deliberately held back, with the reasons and retry conditions
+in `plans/deferred-upgrades.md`: **TypeScript 7** (typescript-eslint refuses the
+TS 7 API) and **ESLint 10** (eslint-plugin-react has no ESLint 10 release). They
+are also the two `.github/dependabot.yml` ignores, and the ignores are scoped to
+majors, so a TypeScript 6 or ESLint 9 patch is still fair game.
+
+**The rule is those names, not a count.** This paragraph used to end "if you see
+three outdated packages, none of them is fair game", which read as a standing
+instruction to leave everything alone — and by the time anyone checked,
+`npm outdated` had ten rows, seven of them ordinary in-range patches nobody had
+taken, including a Next.js one. A rule stated as a count goes stale the moment
+the count changes, so: anything `npm outdated` lists that is not a TypeScript or
+ESLint major is fair game, and the count is whatever it happens to be today.
+
+Two things to check before taking one, both learned the hard way on 2026-08-22.
+Read the release notes even for a patch — react-dropzone 20.1.1 was a docs fix
+that also swapped `file-selector` from `^4.1.0` to `^5.0.0`, which silently
+forked a dependency `Pad.tsx` hands data across. And `npm update` is the tool,
+not `npm install pkg@version`: the latter rewrites the range in `package.json`,
+and the ranges are floors that should move only when something requires it.
 
 ### Code Style
 
