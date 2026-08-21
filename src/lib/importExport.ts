@@ -1756,6 +1756,61 @@ export interface ZipManifest {
 }
 
 /**
+ * The audio a set of pads names, as export references plus their blobs.
+ *
+ * Shared by the profile export and the bank export, so a bank archive can
+ * never disagree with a profile archive about what an audio reference holds.
+ *
+ * Collection is per *row*, not per reference: `collectReferencedAudioFileIds`
+ * returns a Set, so a pad naming one row twice — which audio deduplication by
+ * content hash makes an ordinary thing — carries those bytes once, and so do
+ * two pads sharing a sound. The pads themselves are left alone; the duplicate
+ * reference is a slot in a sequential pad or a layer in a layered one.
+ *
+ * A reference whose row is gone is warned about and skipped rather than
+ * failing the export: the alternative is that one orphaned reference makes a
+ * board unexportable.
+ */
+export async function collectAudioForPads(
+  padConfigurations: PadConfiguration[],
+): Promise<{
+  audioFiles: AudioFileRef[];
+  audioBlobs: Map<number, { blob: Blob; name: string; type: string }>;
+}> {
+  const audioFiles: AudioFileRef[] = [];
+  const audioBlobs = new Map<
+    number,
+    { blob: Blob; name: string; type: string }
+  >();
+
+  for (const audioFileId of collectReferencedAudioFileIds(padConfigurations)) {
+    const audioFile = await getAudioFile(audioFileId);
+    if (!audioFile) {
+      console.warn(
+        `Audio file ID ${audioFileId} referenced but not found in DB.`,
+      );
+      continue;
+    }
+    audioFiles.push({
+      id: audioFileId,
+      name: audioFile.name,
+      type: audioFile.type,
+      loudness: audioFile.loudness
+        ? serialiseLoudness(audioFile.loudness)
+        : undefined,
+      hash: audioFile.hash,
+    });
+    audioBlobs.set(audioFileId, {
+      blob: audioFile.blob,
+      name: audioFile.name,
+      type: audioFile.type,
+    });
+  }
+
+  return { audioFiles, audioBlobs };
+}
+
+/**
  * Collects profile data without converting audio to base64.
  * Returns lean profile data plus a map of audioFileId → Blob for ZIP storage.
  */
@@ -1771,37 +1826,8 @@ async function collectProfileDataForZip(profileId: number): Promise<{
   const padConfigurations = await getAllPadConfigurationsForProfile(profileId);
   const pageMetadata = await getAllPageMetadataForProfile(profileId);
 
-  const audioFileIds = collectReferencedAudioFileIds(padConfigurations);
-
-  const audioFiles: AudioFileRef[] = [];
-  const audioBlobs = new Map<
-    number,
-    { blob: Blob; name: string; type: string }
-  >();
-
-  for (const audioFileId of audioFileIds) {
-    const audioFile = await getAudioFile(audioFileId);
-    if (audioFile) {
-      audioFiles.push({
-        id: audioFileId,
-        name: audioFile.name,
-        type: audioFile.type,
-        loudness: audioFile.loudness
-          ? serialiseLoudness(audioFile.loudness)
-          : undefined,
-        hash: audioFile.hash,
-      });
-      audioBlobs.set(audioFileId, {
-        blob: audioFile.blob,
-        name: audioFile.name,
-        type: audioFile.type,
-      });
-    } else {
-      console.warn(
-        `Audio file ID ${audioFileId} referenced but not found in DB.`,
-      );
-    }
-  }
+  const { audioFiles, audioBlobs } =
+    await collectAudioForPads(padConfigurations);
 
   // Sync carries `lastBackedUpAt`; an export must not. Importing this file
   // stamps its own, and inheriting the donor's would claim a backup the

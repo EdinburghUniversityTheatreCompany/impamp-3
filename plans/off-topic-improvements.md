@@ -298,3 +298,19 @@ Task 7 rather than bolted on.
 
 Noticed while building the duplicate-audio panel (Task 7 of the audio-dedup
 plan).
+
+## `bankUtils.ts` spells the 20-bank cap out three times
+
+`MAX_BANKS` lives in `db.ts:139` and is read by `addBank`, `page.tsx` and
+`profileStore.ts`. `convertBankNumberToIndex` and `convertIndexToBankNumber`
+in `src/lib/bankUtils.ts` still carry the number as literals — `bankNumber <= 20`
+and `index <= 19` — alongside the 9/10 boundary the keyboard's "0-for-10"
+quirk needs.
+
+They are correct today and they are genuinely a keyboard mapping rather than a
+capacity rule, so this is not urgent. But raising the cap would mean editing
+`db.ts` and then finding these, and "the same rule written twice" is this
+repo's characteristic regression.
+
+Noticed while checking whether Task 8 of the audio-dedup plan still needed to
+add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
