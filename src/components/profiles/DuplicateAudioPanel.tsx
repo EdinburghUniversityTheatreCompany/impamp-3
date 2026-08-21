@@ -30,12 +30,8 @@
 import { useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { formatBytes } from "@/lib/serverAudio/format";
+import { count } from "@/lib/plural";
 import type { DuplicateAudioGroup } from "@/lib/audioDedup";
-
-/** `1 copy` / `2 copies`, without a plural rule at every call site. */
-function count(n: number, singular: string, plural: string): string {
-  return `${n} ${n === 1 ? singular : plural}`;
-}
 
 /** How many rows a preview would delete, and how many bytes that gives back. */
 function totals(groups: DuplicateAudioGroup[]): {

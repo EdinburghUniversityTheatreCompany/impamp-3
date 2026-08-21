@@ -1992,6 +1992,23 @@ export async function swapPadConfigurations(
   }
 }
 
+/**
+ * Every pad row of one profile, across all of its banks.
+ *
+ * The `profileId` index, not a filter over `profileBankPad`: a caller that
+ * wants per-bank counts would otherwise have to range the composite index once
+ * per bank, and a caller that grouped the whole store by `bankId` would fold
+ * another profile's bank of the same id into the answer — two profiles both
+ * holding a bank called "0" is the ordinary case, not a corner, because that
+ * is the id `ensureDefaultBanks` gives every profile's first bank.
+ */
+export async function getPadConfigurationsForProfile(
+  profileId: number,
+): Promise<PadConfiguration[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("padConfigurations", "profileId", profileId);
+}
+
 // Get all pad configurations for a specific profile and bank
 export async function getPadConfigurationsForProfileBank(
   profileId: number,

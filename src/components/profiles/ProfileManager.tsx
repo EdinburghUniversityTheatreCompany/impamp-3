@@ -9,6 +9,7 @@ import ProfileCard from "./ProfileCard";
 import ServerAccountPanel from "./ServerAccountPanel";
 import ConnectProfileList from "./ConnectProfileList";
 import DuplicateAudioPanel from "./DuplicateAudioPanel";
+import TransferProgressBar from "./TransferProgressBar";
 import { googleLogout } from "@react-oauth/google";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { ProfileSyncData } from "@/lib/syncUtils";
@@ -18,51 +19,6 @@ import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useShallow } from "zustand/react/shallow";
-
-/**
- * Progress bar shown while a ZIP export/import streams audio files.
- */
-function TransferProgressBar({
-  progress,
-  verb,
-}: {
-  progress: TransferProgress;
-  verb: string;
-}) {
-  const percent =
-    progress.totalBytes > 0
-      ? Math.min(
-          100,
-          Math.round((progress.processedBytes / progress.totalBytes) * 100),
-        )
-      : progress.phase === "finalizing"
-        ? 100
-        : 0;
-  const label =
-    progress.phase === "preparing"
-      ? "Preparing…"
-      : progress.phase === "finalizing"
-        ? "Finalizing…"
-        : `${verb} ${progress.fileName ?? "audio"} (${Math.min(
-            progress.processedFiles + 1,
-            progress.totalFiles,
-          )}/${progress.totalFiles})`;
-
-  return (
-    <div className="mt-3" data-testid="transfer-progress">
-      <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-        <span className="truncate pr-2">{label}</span>
-        <span className="shrink-0">{percent}%</span>
-      </div>
-      <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-blue-500 rounded-full transition-[width] duration-150"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-    </div>
-  );
-}
 
 /**
  * An ImpAmp share link, if that is what this is.

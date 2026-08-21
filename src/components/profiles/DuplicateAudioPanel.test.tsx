@@ -27,8 +27,8 @@
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import * as React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mountPanel, type MountedPanel } from "@/lib/testSupport/reactPanel";
 // Type-only, so it is erased and cannot defeat the import ordering above.
 import type { DuplicateAudioGroup } from "@/lib/audioDedup";
 
@@ -121,38 +121,16 @@ function craftedGroup(
   return { hash, canonicalId: 1, duplicateIds, reclaimableBytes };
 }
 
-let container: HTMLDivElement;
-let root: Root;
+let panel: MountedPanel;
 let confirmSpy: ReturnType<typeof vi.spyOn>;
 
-function testId(id: string): HTMLElement | null {
-  return container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-}
-
-/** The element with this test id, failing loudly rather than on `null.x`. */
-function required(id: string): HTMLElement {
-  const found = testId(id);
-  if (!found) throw new Error(`no element with data-testid="${id}"`);
-  return found;
-}
-
-/**
- * Presses a button and lets the work it starts settle.
- *
- * `act` alone returns while the handler is still in flight: it awaits
- * microtasks, and the handler's dynamic import and every IndexedDB callback
- * under it are macrotasks. Ticking the timer queue inside the `act` scope is
- * what gets the resulting state into the DOM. A handler that is *meant* to
- * stay pending — the double-press guard below — simply stays pending.
- */
-async function click(id: string): Promise<void> {
-  await act(async () => {
-    required(id).click();
-    for (let tick = 0; tick < 40; tick++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-  });
-}
+// Thin names over the shared harness, which is where the reasons live: `act`
+// alone returns while a handler is still in flight, so `click` ticks the timer
+// queue inside the `act` scope. A handler *meant* to stay pending — the
+// double-press guard below — simply stays pending.
+const testId = (id: string) => panel.testId(id);
+const required = (id: string) => panel.required(id);
+const click = (id: string) => panel.click(id);
 
 beforeEach(async () => {
   await clearAllStores();
@@ -164,19 +142,11 @@ beforeEach(async () => {
     realDedup.collapseDuplicateAudioGroups,
   );
   confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-  await act(async () => {
-    root.render(<DuplicateAudioPanel />);
-  });
+  panel = await mountPanel(<DuplicateAudioPanel />);
 });
 
 afterEach(async () => {
-  await act(async () => {
-    root.unmount();
-  });
-  container.remove();
+  await panel.unmount();
   confirmSpy.mockRestore();
 });
 
