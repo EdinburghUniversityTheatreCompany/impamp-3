@@ -14,6 +14,7 @@ import {
   updateAudioFileDriveId,
   getAudioFileByHash,
   ensureAudioFileHash,
+  computeBlobHash,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
@@ -364,11 +365,32 @@ export async function downloadMissingAudioFiles(
         refreshCallback,
       );
       if (blob) {
+        // Hash what arrived, not what was claimed.
+        //
+        // `addAudioFile` computes a hash only when none is supplied, so passing
+        // `ref.hash` straight through short-circuited the check and stored the
+        // bytes under whatever name the *sender* chose. In a content-addressed
+        // store that is the one unrecoverable mistake: the hash is the
+        // identity, so bytes filed under a hash they do not have make every
+        // later lookup for it return the wrong sound, and deduplication then
+        // adopts that sound for anyone who asks. Nothing downstream can notice,
+        // because there is nothing left to compare against.
+        //
+        // The server-side twin of this is SV1, which likewise hashes what the
+        // bucket holds rather than what the client said it uploaded.
+        const actualHash = await computeBlobHash(blob);
+        if (ref.hash && ref.hash !== actualHash) {
+          warnings.push(
+            `Audio file "${ref.name}" did not match the hash the profile gave for it, and was not imported`,
+          );
+          continue;
+        }
+
         await addAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
-          hash: ref.hash,
+          hash: actualHash,
           driveFileIds: { [profileId]: ref.driveFileId },
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
