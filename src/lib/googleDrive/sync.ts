@@ -11,9 +11,9 @@ import {
   getAudioFileMetadata,
   addAudioFile,
   updateAudioFileDriveId,
-  getAudioFileByHash,
   computeBlobHash,
   createHashlessAudioIndex,
+  withAudioImportInProgress,
 } from "@/lib/db";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
@@ -45,7 +45,8 @@ import {
   TokenInfo,
   ItemConflict,
 } from "./types";
-import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
+import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
+import { createStoredHashIndex } from "@/lib/audioHashIndex";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -306,6 +307,9 @@ export async function downloadMissingAudioFiles(
   const retryable: string[] = [];
   if (!audioRefs || audioRefs.length === 0) return { warnings, retryable };
 
+  // One cursor for the whole pass instead of a transaction per reference.
+  const stored = createStoredHashIndex();
+
   // Built at most once per pass, and only if a reference actually misses the
   // hash index. See `createHashlessAudioIndex` for why it is a factory.
   const getHashlessIndex = createHashlessAudioIndex();
@@ -314,25 +318,23 @@ export async function downloadMissingAudioFiles(
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
 
     // Hash-first deduplication: check by content hash if available
-    let existingFile = ref.hash
-      ? await getAudioFileByHash(ref.hash)
-      : undefined;
+    let existingFile = ref.hash ? await stored.lookup(ref.hash) : undefined;
 
     // If no hash match, local files without a stored hash may still be the same
     // audio — hash them once and retry the lookup
     if (!existingFile && ref.hash) {
       const localId = (await getHashlessIndex()).get(ref.hash);
       if (localId !== undefined) {
-        existingFile = await getAudioFile(localId);
+        const record = await getAudioFile(localId);
+        if (record?.id !== undefined) {
+          existingFile = { id: record.id, driveFileIds: record.driveFileIds };
+        }
       }
     }
 
     if (existingFile) {
       // Backfill driveFileId for this profile if missing
-      if (
-        !existingFile.driveFileIds?.[profileId] &&
-        existingFile.id !== undefined
-      ) {
+      if (!existingFile.driveFileIds?.[profileId]) {
         await updateAudioFileDriveId(
           existingFile.id,
           ref.driveFileId,
@@ -373,11 +375,17 @@ export async function downloadMissingAudioFiles(
           continue;
         }
 
-        await addAudioFile({
+        const id = await addAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
           hash: actualHash,
+          driveFileIds: { [profileId]: ref.driveFileId },
+        });
+        // The pass now holds these bytes, and a blob may name them again — the
+        // per-reference lookup used to see the new record for free.
+        await stored.remember(actualHash, {
+          id,
           driveFileIds: { [profileId]: ref.driveFileId },
         });
         console.log(`Downloaded audio file "${ref.name}" from Drive`);
@@ -492,20 +500,12 @@ interface SyncStatusCallbacks {
  * debounce, the periodic timer and manual syncs can all fire at once; without
  * this the last writer would clobber the others both locally and in Drive.
  */
-const inFlightSyncs = new Map<number, Promise<SyncResult>>();
-
-/**
- * Everyone waiting on each run, so a caller that joins one still hears how it
- * went. Joining used to hand back the promise and nothing else: the joiner's
- * own callbacks were never invoked, so a card that pressed Sync now during a
- * background sync sat on "syncing" with its button disabled until the panel
- * was closed and reopened.
- */
-const inFlightListeners = new Map<number, Set<SyncStatusCallbacks>>();
+const runs = createSyncRunRegistry<SyncResult, SyncStatusCallbacks>();
 
 /**
  * Synchronize a profile with Google Drive.
- * Concurrent calls for the same profile share the in-flight run.
+ * Concurrent calls for the same profile share the in-flight run, and a caller
+ * that joins one still hears how it went.
  * @param profileId The profile ID to sync
  * @param tokenInfo Current token information
  * @param callbacks Status update callbacks
@@ -517,41 +517,18 @@ export const syncProfile = (
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,
   refreshCallback: (token: TokenInfo) => void,
-): Promise<SyncResult> => {
-  const inFlight = inFlightSyncs.get(profileId);
-  if (inFlight) {
-    console.log(
-      `Sync already running for profile ${profileId} — joining in-flight run`,
-    );
-    const listeners = inFlightListeners.get(profileId);
-    listeners?.add(callbacks);
-    return inFlight.then((result) => {
-      listeners?.delete(callbacks);
-      replaySyncOutcome(result, callbacks);
-      return result;
-    });
-  }
-
-  const listeners = new Set<SyncStatusCallbacks>([callbacks]);
-  inFlightListeners.set(profileId, listeners);
-
-  // The run reports to whoever is waiting at the time, not only to whoever
-  // started it.
-  const fanOut = fanOutSyncCallbacks(listeners);
-
-  const run = performProfileSync(
-    profileId,
-    tokenInfo,
-    fanOut,
-    refreshCallback,
-  ).finally(() => {
-    inFlightSyncs.delete(profileId);
-    inFlightListeners.delete(profileId);
-  });
-
-  inFlightSyncs.set(profileId, run);
-  return run;
-};
+): Promise<SyncResult> =>
+  coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
+    // A sync writes audio several steps before the pads that name it, which is
+    // the window `cleanupOrphanedAudioFiles` is entitled to delete in — the
+    // same one an import opens, for the same unavoidable reason: a pad names
+    // its sounds by the ids the store assigns on write. Declaring the whole
+    // run rather than just the download pass, because the pads are written at
+    // the far end of the merge and there is no smaller region that spans both.
+    withAudioImportInProgress(() =>
+      performProfileSync(profileId, tokenInfo, fanOut, refreshCallback),
+    ),
+  );
 
 const performProfileSync = async (
   profileId: number,

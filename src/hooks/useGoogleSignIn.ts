@@ -53,9 +53,6 @@ export function useGoogleSignIn({
   onError,
 }: UseGoogleSignInOptions = {}) {
   const setGoogleAuthDetails = useProfileStore((s) => s.setGoogleAuthDetails);
-  const clearGoogleAuthDetails = useProfileStore(
-    (s) => s.clearGoogleAuthDetails,
-  );
 
   const report = useCallback(
     (error: unknown, fallback: string) => {
@@ -122,8 +119,11 @@ export function useGoogleSignIn({
       onError?.(
         `Login failed: ${errorResponse.error_description || errorResponse.error || "Unknown error"}`,
       );
-      // The popup failing mid-flow can leave a half-written slice behind.
-      clearGoogleAuthDetails();
+      // Nothing else. There is no half-written slice to tidy up: the store is
+      // written once, at the end of `onSuccess`, by a single `set()` with all
+      // six fields — and `useGoogleLogin` calls either `onSuccess` or this,
+      // never both. Clearing here only ever destroyed a session the user
+      // already had.
     },
   });
 }

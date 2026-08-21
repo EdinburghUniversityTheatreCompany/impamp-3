@@ -128,3 +128,74 @@ export const shouldAttemptTokenRefresh = (
 
   return true;
 };
+
+/**
+ * The one refresh in flight, whoever asked for it, and the newest token it
+ * produced.
+ *
+ * A sync captures its `TokenInfo` once and threads that object through every
+ * Drive call it makes. When the token expires part-way through, each call gets
+ * its own 401 — and each 401 handler used to call `checkAndRefreshAuth`
+ * itself, so a sync uploading twenty sounds could fire twenty
+ * `POST /api/auth/google/refresh` requests. Worse, none of them helped the
+ * next one: the sync's local `tokenInfo` is never rewritten, so a call made
+ * *after* a successful refresh still presented the dead token and refreshed
+ * all over again, and Google issued a fresh access token every time.
+ *
+ * `useGoogleDriveSync` already had this dedupe for its five-minute validation
+ * poll. It lived in the hook, which is exactly one of the five places that
+ * refresh; here it covers all of them.
+ */
+let refreshInFlight: Promise<{
+  isValid: boolean;
+  refreshedTokenInfo: TokenInfo | null;
+}> | null = null;
+let latestRefreshed: TokenInfo | null = null;
+
+/**
+ * `checkAndRefreshAuth`, but a caller holding a token someone else has already
+ * replaced is handed the replacement instead of asking Google again.
+ *
+ * The in-flight promise coalesces callers that race; `latestRefreshed` covers
+ * the ones that arrive afterwards still carrying the token they captured
+ * before the sync started. Both are needed — a sequential sync loop never
+ * races, and it was the worst offender.
+ */
+export const sharedCheckAndRefresh = async (
+  tokenInfo: TokenInfo | null,
+): Promise<{ isValid: boolean; refreshedTokenInfo: TokenInfo | null }> => {
+  if (!tokenInfo) return { isValid: false, refreshedTokenInfo: null };
+
+  // Deliberately the same first question `checkAndRefreshAuth` asks, so a
+  // caller whose token is merely rejected rather than expired still gets
+  // "valid, nothing refreshed" and reports it as needing a new sign-in.
+  if (isTokenValid(tokenInfo.accessToken, tokenInfo.expiresAt)) {
+    return { isValid: true, refreshedTokenInfo: null };
+  }
+
+  if (
+    latestRefreshed &&
+    latestRefreshed.accessToken !== tokenInfo.accessToken &&
+    isTokenValid(latestRefreshed.accessToken, latestRefreshed.expiresAt)
+  ) {
+    return { isValid: true, refreshedTokenInfo: latestRefreshed };
+  }
+
+  refreshInFlight ??= checkAndRefreshAuth(tokenInfo)
+    .then((result) => {
+      if (result.refreshedTokenInfo)
+        latestRefreshed = result.refreshedTokenInfo;
+      return result;
+    })
+    .finally(() => {
+      refreshInFlight = null;
+    });
+
+  return refreshInFlight;
+};
+
+/** Test seam: forget the in-flight refresh and the token it produced. */
+export const resetSharedTokenRefresh = (): void => {
+  refreshInFlight = null;
+  latestRefreshed = null;
+};

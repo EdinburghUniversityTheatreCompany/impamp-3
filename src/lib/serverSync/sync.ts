@@ -20,6 +20,7 @@ import {
   getProfile,
   hasProfileChangedSince,
   updateProfile,
+  withAudioImportInProgress,
   type Profile,
 } from "@/lib/db";
 import {
@@ -62,7 +63,7 @@ import {
   type ServerSyncStatus,
   type ServerRole,
 } from "./types";
-import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
+import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
 
 export interface ServerSyncCallbacks {
   onStatusChange: (status: ServerSyncStatus) => void;
@@ -103,50 +104,25 @@ const NO_DRIVE: DriveAccess = { tokenInfo: null, onTokenRefresh: () => {} };
 
 /**
  * Concurrent syncs for one profile share a single run — sign-in, the SSE
- * notification, the edit debounce and a manual sync can all fire at once.
+ * notification, the edit debounce and a manual sync can all fire at once — and
+ * a caller that joins one still hears how it went.
  */
-const inFlight = new Map<number, Promise<ServerSyncResult>>();
-
-/**
- * Everyone waiting on each run, so a caller that joins one still hears how it
- * went.
- *
- * Joining used to hand back the promise and nothing else, discarding the
- * joiner's callbacks entirely: a card that pressed "Sync now" during a
- * background sync sat on "syncing" with its button disabled until the panel
- * was closed and reopened. The Drive backend got this fix; this one did not.
- */
-const inFlightListeners = new Map<number, Set<ServerSyncCallbacks>>();
+const runs = createSyncRunRegistry<ServerSyncResult, ServerSyncCallbacks>();
 
 export function syncServerProfile(
   profileId: number,
   callbacks: ServerSyncCallbacks,
   drive: DriveAccess = NO_DRIVE,
 ): Promise<ServerSyncResult> {
-  const running = inFlight.get(profileId);
-  if (running) {
-    const listeners = inFlightListeners.get(profileId);
-    listeners?.add(callbacks);
-    return running.then((result) => {
-      listeners?.delete(callbacks);
-      replaySyncOutcome(result, callbacks);
-      return result;
-    });
-  }
-
-  const listeners = new Set<ServerSyncCallbacks>([callbacks]);
-  inFlightListeners.set(profileId, listeners);
-
-  // The run reports to whoever is waiting at the time, not only to whoever
-  // started it.
-  const fanOut = fanOutSyncCallbacks(listeners);
-
-  const run = performServerSync(profileId, fanOut, drive).finally(() => {
-    inFlight.delete(profileId);
-    inFlightListeners.delete(profileId);
-  });
-  inFlight.set(profileId, run);
-  return run;
+  return coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
+    // Held off from the orphan sweeps for the whole run, for the reason spelt
+    // out on the Drive backend's matching call: this downloads audio — from
+    // the bucket and from Drive — several steps before `updateLocalData`
+    // writes the pads that name it, and in between nothing references it.
+    withAudioImportInProgress(() =>
+      performServerSync(profileId, fanOut, drive),
+    ),
+  );
 }
 
 async function performServerSync(

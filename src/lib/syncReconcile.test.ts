@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profile } from "@/lib/db";
+import { getSyncState } from "@/lib/syncState";
 
 const dbMocks = vi.hoisted(() => ({
   getAllProfiles: vi.fn(),
@@ -57,14 +58,34 @@ describe("hasBorrowedDriveLink", () => {
     ).toBe(false);
   });
 
-  it("leaves an email-invited editor alone", () => {
-    // No share token, and on a profile predating serverRole they are
-    // indistinguishable from an owner. Guessing here could strip a real
-    // owner's folder, so this one waits for the user to decide.
+  it("spots an email-invited editor, who has no share token", () => {
+    // The server said "editor", which is as provable as a share token, and it
+    // is already what `ownsDriveFolder` refuses to publish on. Demanding a
+    // token as well left this profile holding ids it can never write to — and
+    // showing the banner for them forever, a defect with no fix button that
+    // the code describes as cleared on load.
     expect(
       hasBorrowedDriveLink(
         profile({ serverRole: "editor", googleDriveFolderId: "folder" }),
       ),
+    ).toBe(true);
+  });
+
+  it("spots a viewer the server marked read-only", () => {
+    expect(
+      hasBorrowedDriveLink(
+        profile({ readOnly: true, googleDriveFolderId: "folder" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a profile written before serverRole existed alone", () => {
+    // No role, no token, not read-only: indistinguishable from an owner, and
+    // guessing wrong strips a real owner's folder, so the next sync builds a
+    // new one and re-uploads every sound into it. This is the case the token
+    // requirement was protecting, and it still is.
+    expect(
+      hasBorrowedDriveLink(profile({ googleDriveFolderId: "folder" })),
     ).toBe(false);
   });
 
@@ -78,6 +99,52 @@ describe("hasBorrowedDriveLink", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("the sweep and the banner", () => {
+  /**
+   * They answer one question — "does this profile hold someone else's Drive
+   * ids?" — and answered it with two rules. The banner's reads `ownership`,
+   * which prefers the server's `serverRole` and only falls back to a share
+   * token; the sweep's demanded a share token outright. So an email-invited
+   * editor, or anyone the server marked read-only, was shown a defect that
+   * `SyncDefectBanner` describes as "cleared on load" and which never was.
+   */
+  const cases: Array<[string, Profile]> = [
+    ["a share-link recipient", BORROWED],
+    [
+      "an email-invited editor",
+      profile({ serverRole: "editor", googleDriveFolderId: "folder" }),
+    ],
+    [
+      "a read-only viewer",
+      profile({ readOnly: true, googleDriveFolderId: "folder" }),
+    ],
+    [
+      "an owner who opened their own share link",
+      profile({
+        serverRole: "owner",
+        serverShareToken: "tok",
+        googleDriveFolderId: "mine",
+      }),
+    ],
+    [
+      "a profile written before serverRole",
+      profile({ googleDriveFolderId: "f" }),
+    ],
+    ["one with no Drive ids at all", profile({ serverShareToken: "tok" })],
+    [
+      "a Drive-synced profile",
+      profile({ syncType: "googleDrive", googleDriveFolderId: "mine" }),
+    ],
+    ["a local profile", profile({ syncType: "local" })],
+  ];
+
+  it.each(cases)("agree about %s", (_name, p) => {
+    expect(hasBorrowedDriveLink(p)).toBe(
+      getSyncState(p).defects.includes("borrowed-drive-folder"),
+    );
   });
 });
 

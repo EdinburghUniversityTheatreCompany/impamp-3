@@ -3,7 +3,14 @@
  *
  * Every call is same-origin and carries the session cookie automatically.
  * A link-share token, when the profile was opened from a share URL, travels
- * in a header so it never ends up in a server access log's query string.
+ * in a header so it does not end up in a server access log's query string.
+ *
+ * Every call *here* does, at least. The change stream in `useServerSync` is
+ * the one exception in the app, and it is a forced one — `EventSource` sends
+ * a URL and the cookies and offers no way to add a header — so the token is
+ * in its query string and does reach the access log. It is documented at the
+ * subscription, and `shareTokenChannel.test.ts` holds both halves of the rule
+ * so the exception cannot quietly become the pattern.
  */
 
 import {

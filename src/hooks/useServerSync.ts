@@ -10,7 +10,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import type { TokenInfo } from "@/lib/googleDrive/types";
+import {
+  applyDriveTokenRefresh,
+  currentDriveToken,
+} from "@/lib/googleDrive/storeToken";
 import { applySyncedProfile } from "./applySyncedProfile";
 import { mirrorToProfile, syncStatusActions } from "@/store/syncStatusStore";
 import {
@@ -48,16 +51,45 @@ export function subscribeToProfileChanges(
   shareToken: string | null,
   onChange: (version: number) => void,
 ): () => void {
+  // The one place in the app a share token travels in a URL, and the only one
+  // where it has to. Both HTTP clients send it as `x-impamp-share-token`
+  // precisely so a bearer credential stays out of access logs; `EventSource`
+  // sends a URL and the cookies and has no API for a request header, so that
+  // is not available here. The cookie alone will not do either: a signed-in
+  // link-share holder has no membership row, so `resolveAccess` grants them
+  // nothing without the token and the stream would 404 — silently, since
+  // `onerror` only logs.
+  //
+  // So it is a real, accepted cost — the token reaches this app's own access
+  // log — rather than an oversight, and it stops here.
+  // `serverSync/shareTokenChannel.test.ts` pins the header rule for every call
+  // that can honour it, and this exception, together.
   const query = shareToken ? `?token=${encodeURIComponent(shareToken)}` : "";
   const source = new EventSource(
     `/api/profiles/${serverProfileId}/events${query}`,
   );
 
-  // The highest version this stream has already acted on. The server greets
+  // The highest version this device is known to be holding. The server greets
   // every new connection with the current version and forces a reconnect every
   // half hour, so without this each stream re-announced a version it had
   // already reported and triggered a full sync for it.
-  let reportedVersion = 0;
+  //
+  // Seeded from the profile rather than starting at zero, because the greeting
+  // is news to a *stream* and almost never news to the *device*. Every page
+  // load opened a stream per server profile and every one of those greetings
+  // ran a full pull and merge for a version already applied — moments after
+  // the load-time sync of the same profiles. The push half of that is caught
+  // by `describesSameSyncState`, but the whole local profile is read and
+  // merged before anything gets as far as deciding not to write.
+  //
+  // Read here rather than passed in so a caller cannot forget it or hand over
+  // a stale one, and it is only ever a floor: an unknown profile, or one that
+  // has never pulled, starts at zero exactly as before.
+  let reportedVersion =
+    useProfileStore
+      .getState()
+      .profiles.find((p) => p.serverProfileId === serverProfileId)
+      ?.serverVersion ?? 0;
 
   const handler = (event: MessageEvent) => {
     try {
@@ -217,15 +249,7 @@ export function useServerSync(): ServerSyncHook {
       // long way round and a write React reserves for effects and handlers.
       const driveAccess: DriveAccess = {
         tokenInfo: currentDriveToken(),
-        onTokenRefresh: (token: TokenInfo) => {
-          const store = useProfileStore.getState();
-          store.setGoogleAuthDetails(
-            store.googleUser ?? { name: "", email: "" },
-            token.accessToken,
-            token.refreshToken ?? null,
-            token.expiresAt,
-          );
-        },
+        onTokenRefresh: applyDriveTokenRefresh,
       };
 
       const result = await syncServerProfile(
@@ -290,15 +314,5 @@ export function useServerSync(): ServerSyncHook {
     listShares: listServerShares,
     addShare: createServerShare,
     revokeShare: deleteServerShare,
-  };
-}
-
-function currentDriveToken(): TokenInfo | null {
-  const state = useProfileStore.getState();
-  if (!state.isGoogleSignedIn || !state.googleAccessToken) return null;
-  return {
-    accessToken: state.googleAccessToken,
-    refreshToken: state.googleRefreshToken,
-    expiresAt: state.tokenExpiresAt || 0,
   };
 }

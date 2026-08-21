@@ -15,7 +15,6 @@ import {
   computeBlobHash,
   createHashlessAudioIndex,
   getAudioFile,
-  getAudioFileByHash,
   markAudioFilesHosted,
   type AudioFile,
 } from "@/lib/db";
@@ -28,6 +27,7 @@ import {
   requestProfileDownloadUrl,
   requestUploadUrl,
 } from "./api";
+import { createStoredHashIndex } from "@/lib/audioHashIndex";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getAudioFileMetadata } from "@/lib/db";
@@ -251,12 +251,15 @@ export async function downloadProfileAudio(
   );
   if (hostedRefs.length === 0) return { warnings, retryable, downloaded };
 
+  // One cursor for the whole pass instead of a transaction per reference.
+  const stored = createStoredHashIndex();
+
   // Built at most once per pass, and only if a reference actually misses the
   // hash index. See `createHashlessAudioIndex` for why it is a factory.
   const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of hostedRefs) {
-    if (await getAudioFileByHash(ref.hash)) continue;
+    if (await stored.lookup(ref.hash)) continue;
     if ((await getHashlessIndex()).has(ref.hash)) continue;
 
     try {
@@ -277,7 +280,7 @@ export async function downloadProfileAudio(
       }
 
       const blob = await response.blob();
-      const stored: Omit<AudioFile, "id" | "createdAt"> = {
+      const record: Omit<AudioFile, "id" | "createdAt"> = {
         name: ref.name,
         type: ref.type || ticket.contentType,
         blob,
@@ -285,7 +288,10 @@ export async function downloadProfileAudio(
         // It came from the object store, so that is where it lives.
         serverHosted: true,
       };
-      await addAudioFile(stored);
+      const id = await addAudioFile(record);
+      // The pass now holds these bytes, and a blob may name them again — the
+      // per-reference lookup used to see the new record for free.
+      await stored.remember(ref.hash, { id });
       downloaded++;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

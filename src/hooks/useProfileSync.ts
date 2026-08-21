@@ -37,7 +37,10 @@ import {
   type TransitionPlan,
 } from "@/lib/syncTransitions";
 import { applyTransition, type TransitionOutcome } from "@/lib/applyTransition";
-import type { TokenInfo } from "@/lib/googleDrive/types";
+import {
+  applyDriveTokenRefresh,
+  currentDriveToken,
+} from "@/lib/googleDrive/storeToken";
 
 /**
  * Whether something is possible, and — the part that was missing — why not.
@@ -245,7 +248,7 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
             id,
             profile.name,
             token,
-            onDriveTokenRefresh,
+            applyDriveTokenRefresh,
           );
         },
         // A transition's whole point is to establish the profile at its new
@@ -327,27 +330,6 @@ export function useProfileSync(profile: Profile): ProfileSyncView {
     planChange,
     commit,
   };
-}
-
-/** The Drive token as it is *now*, not as it was when this hook last rendered. */
-function currentDriveToken(): TokenInfo | null {
-  const s = useProfileStore.getState();
-  if (!s.isGoogleSignedIn || !s.googleAccessToken) return null;
-  return {
-    accessToken: s.googleAccessToken,
-    refreshToken: s.googleRefreshToken,
-    expiresAt: s.tokenExpiresAt || 0,
-  };
-}
-
-function onDriveTokenRefresh(token: TokenInfo): void {
-  const store = useProfileStore.getState();
-  store.setGoogleAuthDetails(
-    store.googleUser ?? { name: "", email: "" },
-    token.accessToken,
-    token.refreshToken ?? null,
-    token.expiresAt,
-  );
 }
 
 /**
