@@ -70,6 +70,17 @@ local linters = new Mapping<String, Step> {
         glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx")
         check = "npx vitest run"
     }
+    // TypeScript. Enforced before this only as a side effect of `npm run build`
+    // inside the e2e job's webServer, which is the slowest thing in the
+    // pipeline and says nothing about why it is type-checking. Some guards in
+    // this codebase *are* types — profileWire.ts's exhaustiveness assertion is
+    // the whole of "adding a field to Profile does not put it on the wire" —
+    // and a developer running vitest and eslint saw green with one broken.
+    // Whole-project like vitest, and about four seconds.
+    ["tsc"] {
+        glob = List("**/*.ts", "**/*.tsx")
+        check = "npx tsc --noEmit"
+    }
     ["jscpd"] {
         glob = List("**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.css", "**/*.scss")
         check = "bash scripts/run-jscpd.sh javascript,typescript,css,scss"
