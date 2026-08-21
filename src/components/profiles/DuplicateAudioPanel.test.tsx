@@ -338,6 +338,25 @@ describe("collapsing", () => {
     expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
   });
 
+  it("bumps it even when the collapse deleted nothing", async () => {
+    // "Deleted nothing" is not "rewrote no pad". The collapse repoints every
+    // pad in the group before it deletes anything, and its last pass refuses
+    // to delete a row something still names — so a run that reclaims no bytes
+    // can still have changed which id every pad on the board is holding.
+    findDuplicateAudioGroups.mockResolvedValueOnce([
+      craftedGroup("a".repeat(64), [2], 4_000_000),
+    ]);
+    collapseDuplicateAudioGroups.mockResolvedValueOnce({
+      removedFiles: 0,
+      reclaimedBytes: 0,
+    });
+
+    await click("duplicate-audio-scan");
+    await click("duplicate-audio-collapse");
+
+    expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
+  });
+
   it("reports the real count when a survivor went between scan and confirm", async () => {
     const [hornFirst] = await storedTwice(horn, "horn");
     const [stabFirst, stabSecond] = await storedTwice(stab, "stab");
@@ -380,6 +399,9 @@ describe("collapsing", () => {
       "transaction aborted",
     );
     expect(testId("duplicate-audio-result")).toBeNull();
+    // A throw can land after the transaction committed — the cache work runs
+    // outside it — so the failure path has to invalidate too.
+    expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
   });
 
   it("cannot be pressed twice while the first removal is still running", async () => {
