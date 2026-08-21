@@ -180,28 +180,19 @@ and differ only in whether they return the record or its id.
 
 Noticed while adding `addOrReuseAudioFile` (Task 1 of the audio-dedup plan).
 
-## Drive's legacy import still matches audio by _name_
+## The `audioFiles` `name` index has no readers left
 
-`googleDrive/dataAccess.ts`'s `updateLocalData` reuses an existing audio row
-through `findLocalAudioMatch`, which tries the content hash first and then
-falls back to the `name` index. The name fallback merges two genuinely
-different recordings that happen to share a filename — `horn.wav` from one
-library and `horn.wav` from another become one row, and every pad on both
-sides plays whichever arrived first. Nothing can undo that afterwards.
+`db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
+nothing looks anything up in it any more: the Drive reader's name fallback was
+the last reader, and it is gone. The only surviving `index("name")` in the
+codebase is on `profiles`, where import uses it to make a unique profile name.
 
-The rest of the codebase now identifies audio by its bytes and nothing else
-(`addOrReuseAudioFile`, `findAudioFileIdByHashIn`, `importAudioSources`). This
-is the one place left that does not. It survives because it is the legacy
-base64 path — a modern blob carries a hash — so the fallback fires only for
-old data, which is also exactly the data most likely to collide.
+It costs an index write per audio row and, more to the point, it is a loaded
+gun — the shape of "match a sound by its name" is one lookup away for as long
+as the index exists. Removing it needs a schema version bump and a migration,
+which is why it was not done alongside the fallback.
 
-Left alone by Task 3 of the audio-dedup plan on purpose: converting it to
-`addOrReuseAudioFile` would drop the name fallback (a behaviour change for old
-profiles) _and_ the `driveFileIds` backfill sitting in the same branch. Worth
-doing deliberately, with a test for each half, rather than as a side effect.
-
-Noticed while enumerating the inbound audio paths (Task 3 of the audio-dedup
-plan).
+Noticed while making the Drive reader identify audio by content hash only.
 
 ## Two sound rows in the pad editor can share a `data-testid`
 
