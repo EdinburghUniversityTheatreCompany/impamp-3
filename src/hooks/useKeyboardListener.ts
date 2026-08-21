@@ -84,7 +84,11 @@ export function useKeyboardListener() {
   const padConfigsVersion = useProfileStore((state) => state.padConfigsVersion);
 
   // Get search context
-  const { openSearchModal, isSearchModalOpen } = useSearchContext();
+  // Only the opener. Whether search is *open* is asked through
+  // `useIsAnyOverlayOpen` below, which ORs the same flag in — this hook used
+  // to ask both, so "who owns the keyboard while search is up" had two
+  // answers 43 lines apart and the second could never be reached.
+  const { openSearchModal } = useSearchContext();
   // Get modal state and actions from UI store individually to prevent unnecessary re-renders
   const isModalOpen = useUIStore((state) => state.isModalOpen);
   // Everything that should own the keyboard while it is up — including the
@@ -244,6 +248,10 @@ export function useKeyboardListener() {
       }
 
       // --- Specific Shortcut Handling ---
+      //
+      // Everything from here on runs only when no overlay is open: the
+      // `isAnyOverlayOpen` early-out above covers the modal system, the
+      // profile manager and search alike.
 
       // Handle Ctrl+F — Cmd+F on a Mac — to open search modal
       if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
@@ -260,14 +268,6 @@ export function useKeyboardListener() {
         event.preventDefault();
         console.log("[KeyboardListener] Shift+? detected, opening help modal.");
         openHelpModal(); // Use the centralized utility function
-        return;
-      }
-
-      // If search modal is open, only allow Escape (handled within modal component)
-      if (isSearchModalOpen) {
-        console.log(
-          "[KeyboardListener] Ignoring key press while search modal is open.",
-        );
         return;
       }
 
@@ -558,7 +558,6 @@ export function useKeyboardListener() {
       setCurrentPageIndex,
       setEditMode,
       openSearchModal,
-      isSearchModalOpen,
       isModalOpen,
       isAnyOverlayOpen,
       modalConfig,
