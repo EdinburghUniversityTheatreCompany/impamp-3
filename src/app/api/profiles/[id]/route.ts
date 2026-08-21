@@ -6,6 +6,7 @@ import {
   updateProfile,
 } from "@/lib/server/profiles";
 import { publishProfileChange } from "@/lib/server/events";
+import { redactStoredProfileBlob } from "@/lib/server/profileBlob";
 import {
   loadAuthorizedProfile,
   loadAuthorizedProfileMeta,
@@ -67,11 +68,16 @@ export async function GET(
   // than parsed into an object graph for `NextResponse.json` to serialise
   // straight back — three full traversals of up to 8 MB, synchronously, on the
   // thread serving every other request.
+  //
+  // Redacted on the way past, because this is the leak: the caller may be a
+  // viewer, and a blob written before the client-side withholding still names
+  // an editor's share token. See `profileBlob` — a row written since costs a
+  // scan and nothing else.
   const body = `{"id":${JSON.stringify(profile.id)},"name":${JSON.stringify(
     profile.name,
   )},"version":${profile.version},"updatedAt":${profile.updated_at},"access":${JSON.stringify(
     access,
-  )},"data":${profile.data}}`;
+  )},"data":${redactStoredProfileBlob(profile.data)}}`;
 
   return new NextResponse(body, {
     headers: { "content-type": "application/json", ETag: etag },
@@ -128,7 +134,7 @@ export async function PUT(
       result.profile.version
     },"updatedAt":${result.profile.updated_at},"name":${JSON.stringify(
       result.profile.name,
-    )},"data":${result.profile.data}}`;
+    )},"data":${redactStoredProfileBlob(result.profile.data)}}`;
 
     return new NextResponse(body, {
       status: 409,

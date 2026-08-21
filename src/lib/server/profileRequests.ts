@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeProfileRequest, isErrorResponse } from "./apiAuth";
 import { getProfileById, getProfileMeta, type ProfileMeta } from "./profiles";
+import { redactProfileBlob } from "./profileBlob";
 import type { Access, ProfileRow, UserRow } from "./db";
 
 export interface AuthorizedProfile {
@@ -171,13 +172,21 @@ export async function parseProfileBody(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // Whatever the client believed it was withholding, decided here as well.
+  // See `profileBlob` for why the server needs its own answer; the short
+  // version is that a client is not a trustworthy filter of what the server
+  // hands a third party. Done before serialising, so the string below — the
+  // one the row stores — is already the redacted one and there is no second
+  // pass over 8 MB.
+  const data = redactProfileBlob(body.data);
+
   // Content-length can be absent or wrong, so the parsed size is what decides.
   // Kept rather than discarded: this is the exact string the row will store.
   //
   // Measured in bytes, not `.length`: that counts UTF-16 code units, so a blob
   // of astral-plane characters — an emoji-named pad, at scale — could be two
   // to three times the intended byte ceiling and still pass.
-  const serialisedData = JSON.stringify(body.data ?? null);
+  const serialisedData = JSON.stringify(data ?? null);
   if (Buffer.byteLength(serialisedData, "utf8") > MAX_PROFILE_BODY_BYTES) {
     return tooLarge();
   }
@@ -188,14 +197,14 @@ export async function parseProfileBody(
       { status: 400 },
     );
   }
-  if (!body.data || typeof body.data !== "object") {
+  if (!data || typeof data !== "object") {
     return NextResponse.json(
       { error: "Profile data must be an object" },
       { status: 400 },
     );
   }
 
-  return { name: body.name.trim(), data: body.data as object, serialisedData };
+  return { name: body.name.trim(), data: data as object, serialisedData };
 }
 
 /** The version a profile is at, in ETag form. Used by `If-Match` on writes. */
