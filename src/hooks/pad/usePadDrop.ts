@@ -67,10 +67,8 @@ export function usePadDrop(
       }
 
       try {
-        // Reuse by content hash rather than adding unconditionally: the same
-        // sting dropped on a second pad, or on a second bank, must name one
-        // row. A board built by dragging a folder onto it pad by pad used to
-        // store every repeated sound again.
+        // The same sting dropped on a second pad, or a second bank, must name
+        // one row.
         const { id: audioFileId } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,

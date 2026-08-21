@@ -416,9 +416,8 @@ interface AudioImportOutcome {
    * Only the rows this import created.
    *
    * The rollback deletes from this list, so a row that was merely reused
-   * stays. `audioIdMap.values()` used to fill that role, and once reuse exists
-   * it names rows that were here before the import and that nothing but a
-   * pad — possibly none at all — is keeping.
+   * stays. Filling it from `audioIdMap.values()` instead would name rows that
+   * predate the import, and delete audio another profile depends on.
    */
   createdIds: number[];
   failures: AudioImportFailure[];
@@ -566,9 +565,9 @@ async function importAudioSources(
             type: source.type,
             createdAt: now,
             loudness: deserialiseLoudness(source.loudness) ?? undefined,
-            // Always the resolved hash, never `source.hash` — a source that
-            // arrived without one used to produce a row invisible to this
-            // very index, so nothing could ever reuse it.
+            // The resolved hash, never `source.hash`: a source that arrives
+            // without one would produce a row invisible to the hash index,
+            // which nothing could ever reuse.
             hash,
             serverHosted: source.serverHosted,
           });
@@ -1082,10 +1081,8 @@ async function importProfileCore(
       onAudioProgress,
       audioConcurrency,
     );
-    // Only what this import wrote. `audioIdMap.values()` used to fill this,
-    // and now that a value can be a row the import merely reused, that would
-    // hand the rollback bytes another profile — or nothing at all — is
-    // keeping, and delete them irrecoverably.
+    // Only what this import wrote — never `audioIdMap.values()`, which also
+    // names reused rows. See `createdIds`.
     createdAudioIds.push(...createdIds);
     console.log(`Imported ${audioIdMap.size} audio files`);
 

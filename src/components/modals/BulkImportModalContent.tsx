@@ -312,10 +312,9 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
         const file = fileMap.get(assignment.fileId);
         if (!file) continue;
 
-        // Reuse by content hash rather than adding unconditionally. A folder
-        // routinely holds one sting twice — `horn.wav` and the `horn (1).wav`
-        // a browser download made — and the same folder imported onto a
-        // second bank used to store every sound in it again.
+        // A folder routinely holds one sting twice — `horn.wav` and the
+        // `horn (1).wav` a browser download made — so reuse by content hash
+        // rather than adding unconditionally.
         const { id: audioFileId } = await addOrReuseAudioFile({
           blob: file,
           name: file.name,

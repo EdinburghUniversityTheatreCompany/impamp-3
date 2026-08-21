@@ -144,9 +144,9 @@ describe("importing bytes the library already holds", () => {
   });
 
   it("hashes a source that arrives without one", async () => {
-    // The writer used to store `hash: source.hash` straight through, so an
-    // archive with no hash produced a row invisible to the hash index — and
-    // the next sync that needed one SHA-256'd every blob in the library.
+    // Storing `hash: source.hash` straight through leaves an archive with no
+    // hash producing a row invisible to the hash index — and the next sync
+    // that needs one then SHA-256s every blob in the library.
     const db = await getDb();
     const profileId = await importProfileFromSyncData(
       db,
