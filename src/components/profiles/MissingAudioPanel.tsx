@@ -26,6 +26,17 @@ import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
 import { useProfileStore } from "@/store/profileStore";
 
+/**
+ * What the panel's per-row state is keyed on.
+ *
+ * Written once because the two places that need it — the replace handler and
+ * the row it re-renders — have to agree exactly, and the same rule written
+ * twice is this repo's characteristic regression.
+ */
+function rowKeyOf(entry: MissingAudioFile): string {
+  return `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
+}
+
 export default function MissingAudioPanel() {
   // Missing audio files state
   const [isScanningMissing, setIsScanningMissing] = useState(false);
@@ -55,7 +66,7 @@ export default function MissingAudioPanel() {
     entry: MissingAudioFile,
     file: File,
   ) => {
-    const key = `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
+    const key = rowKeyOf(entry);
     setReplacingIds((prev) => new Set(prev).add(key));
     try {
       const { replaceMissingAudioFile } = await import("@/lib/db");
@@ -164,7 +175,7 @@ export default function MissingAudioPanel() {
                       {missingScanResult
                         .filter((e) => e.profileId === profileId)
                         .map((entry) => {
-                          const key = `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
+                          const key = rowKeyOf(entry);
                           const isReplacing = replacingIds.has(key);
                           const isReplaced = replacedIds.has(key);
                           return (
