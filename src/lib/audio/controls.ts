@@ -161,9 +161,11 @@ async function recoverFromLoadError(
   );
 
   try {
-    // Clear any cached failure state for this file before retry
-    const { clearCachedAudioBuffer } = await import("./cache");
-    clearCachedAudioBuffer(audioFileId);
+    // Clear any cached failure state for this file before retry. Invalidate,
+    // not forget: the row is still there and an armed cue may still be
+    // holding a pin on it.
+    const { invalidateCachedAudioBuffer } = await import("./cache");
+    invalidateCachedAudioBuffer(audioFileId);
 
     // Attempt to load again using enhanced method
     const buffer = await loadAndDecodeAudioEnhanced(audioFileId, onStateChange);

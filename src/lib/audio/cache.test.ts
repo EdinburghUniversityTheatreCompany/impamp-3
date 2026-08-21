@@ -3,7 +3,9 @@ import {
   cacheAudioBuffer,
   clearAudioBufferPins,
   clearAudioCache,
+  clearCachedAudioBuffer,
   getAudioCacheStats,
+  invalidateCachedAudioBuffer,
   isAudioBufferCached,
   isAudioBufferPinned,
   pinAudioBuffer,
@@ -131,6 +133,70 @@ describe("audio buffer cache pinning", () => {
 
     const stats = getAudioCacheStats();
     expect(stats.pinnedEntries).toBe(1);
+  });
+
+  it("drops the pin with the row it was protecting", () => {
+    // `clearCachedAudioBuffer` is what every deletion path calls once the row
+    // is gone from IndexedDB. It used to delete from the buffer map only, so
+    // the pin outlived the row it named: `isAudioBufferPinned` answered true
+    // for it forever and nothing could ever collect it, because nothing could
+    // still name the id to unpin it.
+    cacheAudioBuffer(1, fakeBuffer(1));
+    pinAudioBuffer(1);
+
+    clearCachedAudioBuffer(1);
+
+    expect(isAudioBufferCached(1)).toBe(false);
+    expect(isAudioBufferPinned(1)).toBe(false);
+  });
+
+  it("drops a pin held for a row that was never decoded", () => {
+    // Arming pins immediately and the decode lands later, so a row deleted
+    // between the two leaves a pin with no cache entry beside it. The early
+    // return on "nothing was cached" is exactly where that used to be missed.
+    pinAudioBuffer(1);
+
+    expect(clearCachedAudioBuffer(1)).toBe(false);
+    expect(isAudioBufferPinned(1)).toBe(false);
+  });
+
+  it("drops every holder's pin at once, not one of them", () => {
+    // The pin is reference counted, but a deleted row is not one holder
+    // releasing its claim — there is nothing left to hold. Decrementing here
+    // would leave two armed pads' shared sound pinned to a row that is gone.
+    pinAudioBuffer(1);
+    pinAudioBuffer(1);
+
+    clearCachedAudioBuffer(1);
+
+    expect(isAudioBufferPinned(1)).toBe(false);
+  });
+
+  it("keeps the pin when a buffer is only invalidated for a retry", () => {
+    // The other half of the same distinction, and the reason the two cannot
+    // be one function. A failed decode is invalidated before it is retried,
+    // and the row is still there — so an armed cue's claim on it has to
+    // survive, or the very first failed decode would unprotect the sound the
+    // operator has cued.
+    cacheAudioBuffer(1, null);
+    pinAudioBuffer(1);
+
+    invalidateCachedAudioBuffer(1);
+
+    expect(isAudioBufferCached(1)).toBe(false);
+    expect(isAudioBufferPinned(1)).toBe(true);
+  });
+
+  it("leaves every pin alone when the whole cache is emptied", () => {
+    // Same rule as the case above, wholesale: emptying the buffer map deletes
+    // no rows, so every holder's claim is still live and still owed an unpin.
+    cacheAudioBuffer(1, fakeBuffer(1));
+    pinAudioBuffer(1);
+
+    clearAudioCache();
+
+    expect(isAudioBufferCached(1)).toBe(false);
+    expect(isAudioBufferPinned(1)).toBe(true);
   });
 
   it("drops pins when they are cleared wholesale", () => {

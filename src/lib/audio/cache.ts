@@ -368,12 +368,19 @@ export function clearAudioBufferPins(): void {
 }
 
 /**
- * Clear a specific audio buffer from the cache
+ * Drop the decoded buffer for an audio file, leaving any pin in place.
  *
- * @param audioFileId - ID of the audio file to remove from cache
+ * For invalidation, not deletion: the row is still there, its decoded form is
+ * simply no longer worth keeping — a failed decode about to be retried is the
+ * only caller today. A pin is a holder's claim on a *file*, deliberately
+ * independent of whether that file happens to be decoded right now (see
+ * `pinnedAudioFileIds`), so dropping it here would unprotect an armed cue
+ * every time its first decode failed.
+ *
+ * @param audioFileId - ID of the audio file whose buffer should be re-decoded
  * @returns True if an entry was removed, false otherwise
  */
-export function clearCachedAudioBuffer(audioFileId: number): boolean {
+export function invalidateCachedAudioBuffer(audioFileId: number): boolean {
   const entry = audioBufferCache.get(audioFileId);
   const wasRemoved = audioBufferCache.delete(audioFileId);
 
@@ -394,7 +401,38 @@ export function clearCachedAudioBuffer(audioFileId: number): boolean {
 }
 
 /**
- * Clear the entire audio buffer cache
+ * Forget an audio file entirely: its decoded buffer *and* any pin on it.
+ *
+ * What every deletion path calls once the row is gone from IndexedDB — the
+ * orphan sweep, the duplicate collapse and profile deletion. It used to delete
+ * from the buffer map alone, which left a pin under an id nothing could name
+ * any more: `isAudioBufferPinned` answered true for it forever, and no unpin
+ * could ever arrive to collect it, because the holder's own release is keyed
+ * by that same dead id.
+ *
+ * The pin goes wholesale rather than by one reference. A deleted row is not
+ * one holder letting go; there is nothing left for any of them to hold. It
+ * also goes whether or not a buffer was cached, because arming pins a file
+ * immediately and its decode lands later — a row deleted in between leaves a
+ * pin with no cache entry beside it, which is precisely the case an early
+ * return on `wasRemoved` would skip.
+ *
+ * @param audioFileId - ID of the audio file that no longer exists
+ * @returns True if a cache entry was removed, false otherwise
+ */
+export function clearCachedAudioBuffer(audioFileId: number): boolean {
+  pinnedAudioFileIds.delete(audioFileId);
+  return invalidateCachedAudioBuffer(audioFileId);
+}
+
+/**
+ * Clear the entire audio buffer cache.
+ *
+ * Pins deliberately survive this. They are holders' claims on files, not
+ * cache bookkeeping — a file can be pinned before it is ever decoded — and
+ * emptying the buffer map deletes no rows, so every claim is still live and
+ * still owed an `unpinAudioBuffer`. `clearAudioBufferPins` is the reset hatch
+ * for the pins themselves.
  */
 export function clearAudioCache(): void {
   const count = audioBufferCache.size;
