@@ -1,8 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_DB_PATH, E2E_SIGNIN_SECRET, e2eServerEnv } from "./e2e-tests/env";
+import {
+  E2E_ADMIN_EMAIL,
+  E2E_DB_PATH,
+  E2E_S3_PORT,
+  E2E_SIGNIN_SECRET,
+  e2eServerEnv,
+} from "./e2e-tests/env";
 
 // Re-exported because the specs import them from here.
-export { E2E_DB_PATH, E2E_SIGNIN_SECRET };
+export { E2E_ADMIN_EMAIL, E2E_DB_PATH, E2E_S3_PORT, E2E_SIGNIN_SECRET };
 
 // Port is configurable so a git worktree (or a second checkout) can build and
 // serve its own copy of the app without colliding with the 3000 a developer
@@ -27,6 +33,9 @@ export default defineConfig({
   // what made these tests flaky. Only pass a timeout to raise it above this.
   timeout: 60_000,
   expect: { timeout: 15_000 },
+  // Claims the admin account, which is whichever account signs in first. See
+  // e2e-tests/global-setup.ts.
+  globalSetup: "./e2e-tests/global-setup.ts",
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
@@ -65,14 +74,26 @@ export default defineConfig({
   // holds the file open, and unlinking it would leave the server writing to an
   // orphaned inode instead. See e2e-tests/reset-db.js; scripts/e2e-server.sh
   // runs the same step for the detached local server.
-  webServer: {
-    command: process.env.E2E_DEV_SERVER
-      ? `node e2e-tests/reset-db.js && npm run dev -- --port ${port}`
-      : `node e2e-tests/reset-db.js && npm run build && npm start -- --port ${port}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 300 * 1000, // 5 minutes — a cold production build is included
-    // Shared with scripts/e2e-server.sh — see e2e-tests/env.js.
-    env: { PORT: port, ...e2eServerEnv },
-  },
+  webServer: [
+    {
+      command: process.env.E2E_DEV_SERVER
+        ? `node e2e-tests/reset-db.js && npm run dev -- --port ${port}`
+        : `node e2e-tests/reset-db.js && npm run build && npm start -- --port ${port}`,
+      url: baseURL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 300 * 1000, // 5 minutes — a cold production build is included
+      // Shared with scripts/e2e-server.sh — see e2e-tests/env.js.
+      env: { PORT: port, ...e2eServerEnv },
+    },
+    // The bucket the app's presigned URLs point at. Playwright owns its
+    // lifetime rather than scripts/e2e-server.sh, because unlike the database
+    // it holds nothing worth carrying between runs — every object in it is
+    // named by the hash of bytes a single test invented.
+    {
+      command: `node e2e-tests/fake-s3.js ${E2E_S3_PORT}`,
+      url: `http://localhost:${E2E_S3_PORT}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30 * 1000,
+    },
+  ],
 });
