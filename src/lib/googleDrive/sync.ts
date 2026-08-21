@@ -45,7 +45,7 @@ import {
   TokenInfo,
   ItemConflict,
 } from "./types";
-import { fanOutSyncCallbacks, replaySyncOutcome } from "@/lib/syncReplay";
+import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -492,20 +492,12 @@ interface SyncStatusCallbacks {
  * debounce, the periodic timer and manual syncs can all fire at once; without
  * this the last writer would clobber the others both locally and in Drive.
  */
-const inFlightSyncs = new Map<number, Promise<SyncResult>>();
-
-/**
- * Everyone waiting on each run, so a caller that joins one still hears how it
- * went. Joining used to hand back the promise and nothing else: the joiner's
- * own callbacks were never invoked, so a card that pressed Sync now during a
- * background sync sat on "syncing" with its button disabled until the panel
- * was closed and reopened.
- */
-const inFlightListeners = new Map<number, Set<SyncStatusCallbacks>>();
+const runs = createSyncRunRegistry<SyncResult, SyncStatusCallbacks>();
 
 /**
  * Synchronize a profile with Google Drive.
- * Concurrent calls for the same profile share the in-flight run.
+ * Concurrent calls for the same profile share the in-flight run, and a caller
+ * that joins one still hears how it went.
  * @param profileId The profile ID to sync
  * @param tokenInfo Current token information
  * @param callbacks Status update callbacks
@@ -517,41 +509,10 @@ export const syncProfile = (
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,
   refreshCallback: (token: TokenInfo) => void,
-): Promise<SyncResult> => {
-  const inFlight = inFlightSyncs.get(profileId);
-  if (inFlight) {
-    console.log(
-      `Sync already running for profile ${profileId} — joining in-flight run`,
-    );
-    const listeners = inFlightListeners.get(profileId);
-    listeners?.add(callbacks);
-    return inFlight.then((result) => {
-      listeners?.delete(callbacks);
-      replaySyncOutcome(result, callbacks);
-      return result;
-    });
-  }
-
-  const listeners = new Set<SyncStatusCallbacks>([callbacks]);
-  inFlightListeners.set(profileId, listeners);
-
-  // The run reports to whoever is waiting at the time, not only to whoever
-  // started it.
-  const fanOut = fanOutSyncCallbacks(listeners);
-
-  const run = performProfileSync(
-    profileId,
-    tokenInfo,
-    fanOut,
-    refreshCallback,
-  ).finally(() => {
-    inFlightSyncs.delete(profileId);
-    inFlightListeners.delete(profileId);
-  });
-
-  inFlightSyncs.set(profileId, run);
-  return run;
-};
+): Promise<SyncResult> =>
+  coalesceSyncRun(runs, profileId, callbacks, (fanOut) =>
+    performProfileSync(profileId, tokenInfo, fanOut, refreshCallback),
+  );
 
 const performProfileSync = async (
   profileId: number,
