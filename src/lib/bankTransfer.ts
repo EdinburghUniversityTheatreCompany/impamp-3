@@ -8,6 +8,52 @@
  * The import is two-phase, because a bank has to be given a slot before
  * anything is written: `readArchiveManifest` answers "what is in this file",
  * the UI asks the user where each bank goes, and `importBanksFromZip` writes.
+ *
+ * ## What the writer guarantees, and what a reader may assume
+ *
+ * `exportBanksToZip` writes exactly these entries and no others:
+ *
+ * - `manifest.json` — a {@link BankZipManifest}. `folder` is the decimal
+ *   index of the bank in the selection, so the entries are `banks/0`,
+ *   `banks/1`, … in the order the user picked.
+ * - `banks/<folder>/bank.json` — a {@link BankExport}, one per manifest
+ *   entry, carrying no row identity and no sync stamps.
+ * - `audio/<id>` — the raw bytes, STOREd rather than DEFLATEd, named by the
+ *   audio row id of the *exporting* device. Every id any bank's `audioFiles`
+ *   lists has one, and a sound several banks name has exactly one while each
+ *   of those banks keeps its own reference to it.
+ *
+ * **A reader may assume none of that.** An archive arrives from a file
+ * picker, so it is whatever the user dropped on the app — a profile archive,
+ * a zip of holiday photos, a bank archive some later version wrote, or one
+ * edited by hand. Everything below has to be checked rather than trusted:
+ *
+ * - that the file is a zip at all, that `manifest.json` exists, that it
+ *   parses, and that `exportVersion` is 4 (a profile archive's manifest is
+ *   version 3 and lists `profiles`);
+ * - that `banks` is an array, and that each `folder` names an entry that
+ *   exists — a manifest may list a folder with no `bank.json` behind it, and
+ *   a `folder` is a *string from the file*, so `"../../.."` and a 4 MB name
+ *   are both things it may say;
+ * - that two manifest entries do not name one folder, and that no entry name
+ *   is repeated — zip permits duplicate names;
+ * - that `page`, `padConfigurations` and `audioFiles` are the shapes
+ *   {@link BankExport} claims, that `padIndex` and every numeric field is a
+ *   finite number in range, and that `name` is a string;
+ * - that `sourceBankId` is a *comparison* key only. It is matched against ids
+ *   the destination profile already holds and never adopted, which is what
+ *   keeps a `#` in it out of a playback key;
+ * - that an id in a pad's `audioFileIds` appears in that bank's `audioFiles`,
+ *   and that an id in `audioFiles` has an `audio/<id>` entry — neither is
+ *   guaranteed, and the importer already drops references it cannot map;
+ * - that an entry is a plausible size before reading it into memory. The
+ *   profile importer's `MAX_ZIP_METADATA_BYTES` is the existing answer for
+ *   the JSON; audio is streamed, but `uncompressedSize` is still the
+ *   archive's own claim rather than a measurement.
+ *
+ * An `audio/<id>` entry also says nothing about its own content: the media
+ * type comes from the matching `audioFiles` reference, and the id in the
+ * entry name is the exporting device's key, which the importer remaps.
  */
 
 import {

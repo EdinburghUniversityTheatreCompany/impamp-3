@@ -132,6 +132,22 @@ const CLOSERS = {
 } as const;
 
 /**
+ * A third bank, so that "the order asked for" is testable at all.
+ *
+ * With two banks there are only two possible orders, and the positional one
+ * and the sorted one are the two — so every mutation of the ordering rule
+ * lands on an order some other rule also produces. Three banks whose ids sort
+ * as `"0"` < the UUID < `"9"` while their positions run UUID, `"0"`, `"9"`
+ * give an argument order that is neither.
+ */
+const WALKS = {
+  bankId: "9",
+  pageIndex: 2,
+  name: "Walks",
+  isEmergency: false,
+} as const;
+
+/**
  * The standard pair, one pad and one sound each.
  *
  * Returns the two audio ids, having first proved they are two: the sounds'
@@ -570,14 +586,15 @@ describe("exportBanksToZip", () => {
   it("writes the banks in the order asked for, not the order they sit in", async () => {
     const profileId = await addProfile({ name: "Show A", syncType: "local" });
     await seedTwoBanks(profileId);
+    await seedBank(profileId, WALKS);
 
-    // "0" sits at position 1 and the UUID at position 0, so this argument
-    // order is neither the positional order nor the sorted one. A writer that
-    // collected by position, or sorted, or numbered its folders independently
-    // of the manifest, disagrees with all three assertions below.
+    // Neither the positional order (Stings, Beds, Walks) nor the sorted one
+    // (Beds, Stings, Walks). A writer that collected by position, sorted the
+    // selection, or numbered its folders independently of the manifest
+    // disagrees with the assertions below.
     const archive = await exportBanksToZip(
       profileId,
-      ["0", OPENERS_ID],
+      ["9", OPENERS_ID, "0"],
       "blob",
     );
     const entries = await readArchive(archive!);
@@ -590,25 +607,29 @@ describe("exportBanksToZip", () => {
     expect(manifest.exportVersion).toBe(4);
     expect(Date.parse(manifest.exportDate)).not.toBeNaN();
     expect(manifest.banks).toEqual([
-      { name: "Beds", folder: "0", sourceProfileName: "Show A" },
+      { name: "Walks", folder: "0", sourceProfileName: "Show A" },
       { name: "Stings", folder: "1", sourceProfileName: "Show A" },
+      { name: "Beds", folder: "2", sourceProfileName: "Show A" },
     ]);
 
+    // The manifest is the only route to a bank entry, so the folder it names
+    // has to be the folder that bank was written to.
     for (const listed of manifest.banks) {
       const bank = parseEntry(entries, `banks/${listed.folder}/bank.json`) as {
         page: { name: string };
-        sourceBankId: string;
       };
       expect(bank.page.name).toBe(listed.name);
     }
     expect(
-      (parseEntry(entries, "banks/0/bank.json") as { sourceBankId: string })
-        .sourceBankId,
-    ).toBe("0");
-    expect(
-      (parseEntry(entries, "banks/1/bank.json") as { sourceBankId: string })
-        .sourceBankId,
-    ).toBe(OPENERS_ID);
+      ["0", "1", "2"].map(
+        (folder) =>
+          (
+            parseEntry(entries, `banks/${folder}/bank.json`) as {
+              sourceBankId: string;
+            }
+          ).sourceBankId,
+      ),
+    ).toEqual(["9", OPENERS_ID, "0"]);
   });
 
   it("stores a sound two banks share once, and leaves both banks naming it", async () => {
