@@ -8,15 +8,14 @@
  * on every pass that finds nothing to do, and a sync makes up to six passes.
  *
  * The question is the same one every time and the answer is a single index, so
- * this measures transactions rather than milliseconds: a wall-clock threshold
- * would be a flake on a loaded machine, and the count is what the timing was
- * made of. The counter wraps the native `IDBDatabase.prototype.transaction`, so
- * it sees every transaction the code under test opens, whichever helper opened
- * it.
+ * this measures transactions rather than milliseconds — see
+ * `testSupport/idbTransactionCounter` for why, and for what else the counter
+ * can see.
  */
 
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
+import { countIdbTransactions } from "@/lib/testSupport/idbTransactionCounter";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
@@ -65,24 +64,7 @@ const PROFILE_ID = 1;
 /** Enough that a per-reference cost is unmistakable next to a fixed one. */
 const SOUNDS = 30;
 
-let transactions = 0;
-let restore: () => void;
-
-/** Counts every IndexedDB transaction opened while it is installed. */
-function countTransactions(): () => void {
-  const proto = IDBDatabase.prototype;
-  const original = proto.transaction;
-  proto.transaction = function (
-    this: IDBDatabase,
-    ...args: Parameters<IDBDatabase["transaction"]>
-  ) {
-    transactions += 1;
-    return original.apply(this, args);
-  };
-  return () => {
-    proto.transaction = original;
-  };
-}
+let counter: ReturnType<typeof countIdbTransactions> | undefined;
 
 /** Sounds this device already has, and the refs a remote sends for them. */
 async function seedLocalLibrary(): Promise<ProfileSyncData["audioFiles"]> {
@@ -124,38 +106,37 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  restore?.();
+  counter?.restore();
+  counter = undefined;
 });
 
 describe("a pass over audio this device already holds", () => {
   it("asks the database once, not once per sound (Drive)", async () => {
     const refs = await seedLocalLibrary();
 
-    transactions = 0;
-    restore = countTransactions();
+    counter = countIdbTransactions();
     const result = await downloadMissingAudioFiles(
       refs,
       PROFILE_ID,
       { accessToken: "t", refreshToken: null, expiresAt: Date.now() + 1e6 },
       () => {},
     );
-    restore();
+    counter.restore();
 
     // Guards the measurement: a pass that downloaded, or failed, would be
     // counting something else entirely.
     expect(result).toEqual({ warnings: [], retryable: [] });
-    expect(transactions).toBeLessThanOrEqual(2);
+    expect(counter.count()).toBeLessThanOrEqual(2);
   });
 
   it("asks the database once, not once per sound (hosted audio)", async () => {
     const refs = await seedLocalLibrary();
 
-    transactions = 0;
-    restore = countTransactions();
+    counter = countIdbTransactions();
     const result = await downloadProfileAudio("server-profile", refs);
-    restore();
+    counter.restore();
 
     expect(result).toEqual({ warnings: [], retryable: [], downloaded: 0 });
-    expect(transactions).toBeLessThanOrEqual(2);
+    expect(counter.count()).toBeLessThanOrEqual(2);
   });
 });
