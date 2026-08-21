@@ -1,4 +1,5 @@
 import { getProfile } from "@/lib/db";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import { useProfileStore } from "@/store/profileStore";
 
 /**
@@ -30,7 +31,7 @@ export async function applySyncedProfile(profileId: number): Promise<void> {
   // IndexedDB and analysis, and the sync flow this function completes for
   // should not sit through however long a backfill takes.
   if (useProfileStore.getState().activeProfileId === profileId) {
-    void import("@/lib/audio/loudness/pipeline")
+    void loadLoudnessPipeline()
       .then(({ refreshProfileLoudness }) => refreshProfileLoudness(profileId))
       .catch((error) => {
         console.warn(

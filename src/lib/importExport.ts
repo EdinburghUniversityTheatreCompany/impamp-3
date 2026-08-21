@@ -1,4 +1,5 @@
 import { IDBPDatabase } from "idb";
+import { loadLoudnessPipeline } from "./audio/loudness/loadPipeline";
 import {
   AudioLocation,
   Profile,
@@ -1213,7 +1214,7 @@ async function runProfileImport(
     // re-analyse, or reloads. Dynamic import keeps the Web-Audio-only
     // pipeline out of every caller of importExport.ts; fire-and-forget since
     // the import itself must not sit through a full-board decode.
-    void import("./audio/loudness/pipeline")
+    void loadLoudnessPipeline()
       .then(({ runBackfill }) => runBackfill())
       .catch((error) => {
         console.warn(

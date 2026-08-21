@@ -1,75 +1,68 @@
-# State of play — 2026-08-17 (evening)
+# State of play — 2026-08-21
 
-Both whole-repo reviews are answered. `plans/repo-review-2026-08-17.md` is the
-report; `plans/review-2026-08-17/` holds the per-axis detail.
+The 2026-08-17 whole-repo review is **fully answered**: every 🔴 and the
+🟡 tail are closed. `plans/repo-review-2026-08-17.md` is the report and
+`plans/review-2026-08-17/` the per-axis detail; both are now history rather
+than a worklist.
 
-**Every 🔴 in that review is closed.** What remains is 🟡/🟢 plus a handful of
-items discovered while fixing, and four decisions that are Mick's.
+**This is deployed.** `impamp.bedlamtheatre.co.uk` runs the current `main`,
+and the Help modal reports its own commit (`0.42.0-<sha>`), so what is live
+can be read off the app rather than asked of the host over SSH.
 
 ## Gates on `main`
 
-802 unit tests + 1 expected failure · 152 chromium e2e · line coverage 38.5%
-with a CI ratchet · typecheck, eslint, prettier, jscpd 0%, version-sync,
-action-pins, actionlint, zizmor all clean · production image builds and runs.
+1167 unit tests in 128 files · 182 chromium e2e in 37 files · coverage
+54.48 / 46.39 / 51.27 / 55.19 against a 53 / 45 / 50 / 54 ratchet ·
+typecheck, eslint, prettier, jscpd 0%, version-sync, action-pins, actionlint,
+zizmor, gitleaks all clean · the production image builds, boots, and is
+asserted to carry its own commit hash.
 
 **Running e2e:** always `E2E_PORT=<free port>`. Port 3000 is often held by
 another project of Mick's, and `reuseExistingServer` does not check _what_ is
-listening — a collision reports every test failing. And never read a piped
-`tail`/`grep` as the verdict; redirect to a file and echo `$?`.
+listening — a collision reports every test failing. Never read a piped
+`tail`/`grep` as the verdict; redirect to a file and echo `$?`. A passing run
+prints almost nothing now that `flaky-reporter.ts` is the reporter, so
+"no output" and "nothing ran" look identical.
 
-## Open, by size of the thread
+## Open
 
-1. **Duplication tail — D2, D3, D4, D5, D6, D7, D9, D11, D13, D14, D15, D19.**
-   Verified still present: `getHashlessIndex` is two copies (`googleDrive/sync.ts`,
-   `serverAudio/transfer.ts`); Drive-token construction is spread across three
-   hooks; the pad-save sequence is open-coded at six sites; `Pad` still takes
-   both `isConfigured` and `soundCount`. This is the repo's signature failure
-   mode and the largest remaining block.
-2. **Test 🟡 tail — T19, T20, T22, T23, T25, T28, T30, T31, T32, T33.** Mostly
-   assertions that are weaker than they look, plus T31 (no e2e at all for hosted
-   audio, SSE, share revocation, trimming, admin authz) and T30 (CI is the most
-   forgiving config, so it cannot see this suite's flake class).
-3. **Sync — SY4, SY7, SY8, SY9.** SY4 matters most: audio downloaded from Drive
-   is stored under the hash the _sender_ claimed, never verified. The hosted
-   path computes a hash (`serverAudio/transfer.ts:139`); the Drive path does not.
-4. **Performance — P2, P3, P4, P5, P8.** P3 is measured: `@hello-pangea/dnd` is
-   28.3 KB gzipped of a 326.5 KB first load, for a library reachable only after
-   the pad editor opens. The fix is in `usePadInteractions` / `modalRegistry`.
-   **P6 is a correction, not a task** — the `structuredClone` fix the earlier
-   review prescribed measures 18% worse. Do not apply it.
-5. **Server — SV5, SV6, SV14.** SV6 verified still live: the Drive proxy's
-   origin gate keeps a `Referer` fallback, which is one `curl -H` away.
-6. **R6** — `/drive/open` signs you out of Google when the sign-in popup fails,
-   because the shared hook clears auth and the three copies it replaced did not.
-   Verified present; whether it is wrong is a judgement call.
+1. **A teardown-flake class, and it can redden CI.** `npm run test:coverage`
+   exited 1 once today with three
+   `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`
+   from `db.hashlessIndex.test.ts`, while all 1167 tests passed. Cause is the
+   family this session already fixed twice: `addAudioFile` fires loudness
+   analysis fire-and-forget, and its console output outlives the test file.
+   Seven suites call `addAudioFile` without mocking the pipeline —
+   `db.hashlessIndex`, `db.orphanCleanup`, `importExport.zip`,
+   `importExport.hostedAudio`, `googleDrive/sync.hashVerification`,
+   `googleDrive/dataAccess.gain`, `googleDrive/dataAccess.hashKeyed`. Three
+   others already mock it, which is the fix. Not reproducible in isolation
+   (0/5), so treat frequency as unknown rather than low.
+2. **The 145 commits since the review have never been reviewed.** Much of it
+   was written fast and in parallel. Two real bugs surfaced from it today by
+   accident, not by looking. A **diff review against the review's baseline**
+   is the high-yield move; another whole-repo sweep is not.
+3. **`plans/off-topic-improvements.md`** — 8 items, none urgent. Two are real
+   bugs: a renamed profile never converges and the conflict modal misreports
+   it; `RadioGroup`'s `aria-labelledby` points at an id nothing renders.
+4. **Deferred upgrades** stay deferred, with conditions in
+   `plans/deferred-upgrades.md`: TypeScript 7, ESLint 10, file-selector 5.
+   These are exactly the three `npm outdated` rows and the three dependabot
+   ignores — if you see three outdated packages, none is fair game.
 
-## Found while fixing, not in the review
+## Not ours to touch
 
-- **T8 is a live product bug.** An import racing an orphan cleanup
-  deterministically leaves a pad naming a deleted audio file:
-  `importAudioSources` commits each file in its own transaction and writes pads
-  later. Recorded as an expected failure that goes red when fixed. **The fix is
-  a design choice** — grace period on recent audio, one transaction spanning the
-  import, or a lock.
-- **Tab is suppressed app-wide**, so Help, Search, the bank tabs and the profile
-  selector are keyboard-unreachable. This is C2's other half.
-- **`useSearch` hard-codes `Bank N`**, contradicting the review's own premise
-  for C9.
-- **The "N of M pads failed" import message is unreachable**: a rejected
-  IndexedDB request aborts the transaction before the message is assembled. The
-  outcome is still right; the wording is dead.
-- **Theme-colour drift**: `layout.tsx` `#000000` vs `manifest.ts` `#f2801f`.
-- **A pre-existing audio-start flake** in `activatePad`, seen once and not
-  catalogued by the review.
-- Analysing a _newly added_ sound while offline runs on the main thread — an
-  accepted cost of never caching worker scripts.
+- **`feat/audio-dedup-and-bank-transfer`** is another session's live work
+  (`addOrReuseAudioFile`, absent from `main`). It was 57 commits behind and is
+  now 1, so that session is actively merging. Leave it alone; it merges itself.
+- Several stale `origin/claude/*` branches from cloud sessions. No open PRs.
 
 ## Mick's calls
 
-- **`IMPAMP_ALLOWED_EMAILS`** on the public host.
+- **`IMPAMP_ALLOWED_EMAILS`** is still commented out in `config/deploy.yml`,
+  so **any** Google account can sign in and store profiles on the public host.
+  Unchanged by any deploy this session — it has always been this way — but it
+  is the one open item with a security consequence.
 - **SV8 / SV9** — rate limiting and per-account quotas. Declined deliberately:
-  the quota numbers are the policy, and a per-IP limiter has to know which proxy
-  header to trust behind Kamal.
-- **T8's design choice**, above.
-- **Deploy.** Nothing has shipped. The production `impamp_data` volume was
-  chowned to uid 1000 in an earlier session, with a verified backup first.
+  the quota numbers _are_ the policy, and a per-IP limiter has to know which
+  proxy header to trust behind Kamal.

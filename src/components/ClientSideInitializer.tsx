@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 
 const AUTO_SYNC_DEBOUNCE_MS = 10_000; // 10 seconds after the last edit
 const REMOTE_CHECK_INTERVAL_MS = 30_000; // light remote-change poll cadence
@@ -199,8 +200,7 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
 
     let cancelled = false;
     void (async () => {
-      const { refreshProfileLoudness } =
-        await import("@/lib/audio/loudness/pipeline");
+      const { refreshProfileLoudness } = await loadLoudnessPipeline();
       if (cancelled) return;
       await refreshProfileLoudness(activeProfileId);
     })().catch((error) => {

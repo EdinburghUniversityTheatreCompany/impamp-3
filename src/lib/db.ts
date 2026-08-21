@@ -1,4 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
+import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import type {
   LoudnessAnalysis,
   NormalisationSettings,
@@ -736,7 +737,7 @@ const updateFieldsModified = <T>(
  */
 function startBackgroundAnalysis(id: number): void {
   if (typeof window === "undefined") return;
-  void import("@/lib/audio/loudness/pipeline")
+  void loadLoudnessPipeline()
     .then(({ analyseAndStore }) => analyseAndStore(id))
     .catch((error) => {
       // analyseAndStore already contains its own errors; this only guards
