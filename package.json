@@ -32,12 +32,12 @@
     "@zip.js/zip.js": "^2.8.47",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
-    "file-selector": "^4.1.0",
+    "file-selector": "^5.0.0",
     "idb": "^8.0.3",
     "next": "^16.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-dropzone": "^20.1.0",
+    "react-dropzone": "^20.1.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

@@ -3,18 +3,26 @@
 Dependency bumps that were attempted, could not be landed green, and were
 reverted. Each entry records what blocked it and what has to be true to retry.
 
-## file-selector 5.0.0 — held deliberately at 4.1.0 (2026-08-13)
+## file-selector 5 — RESOLVED, taken at 5.0.1 (2026-08-22)
 
-Not a failure; a deliberate pin. `file-selector` is a direct dependency only so
-`Pad.tsx` can import `COMMON_MIME_TYPES` from its `/mime` subpath (see the
-react-dropzone 20 commit). react-dropzone 20.1.0 depends on
-`file-selector: ^4.1.0`, so taking 5.0.0 at the top level would install a
-second copy — and `fromEvent` would then come from a different build than the
-one react-dropzone calls internally.
+**Kept for the rule it leaves behind**, which outlives this particular version.
+`file-selector` is a direct dependency only so `Pad.tsx` can import
+`COMMON_MIME_TYPES` from its `/mime` subpath and hand `fromEvent` back to
+react-dropzone as `getFilesFromEvent` — so the two must be the _same build_,
+and `npm ls file-selector` showing a single deduped entry is the invariant to
+protect. Whichever way the versions drift, match react-dropzone's declared
+range rather than leading or lagging it.
 
-**Retry when** react-dropzone widens its range to file-selector 5. Match its
-range then, rather than leading it; `npm ls file-selector` should always show a
-single deduped entry.
+Held at 4.1.0 from 2026-08-13 because react-dropzone 20.1.0 depended on
+`file-selector: ^4.1.0`, and leading it would have installed a second copy.
+react-dropzone 20.1.1 changed that dependency to `^5.0.0` — in a patch
+release, alongside `attr-accept` `^2.2.5` → `^4.0.0`, and its release note
+mentions neither — so the pin inverted: holding 4.1.0 was suddenly what forked
+the tree. The stated retry condition had fired, so both moved in one commit.
+
+file-selector 5.0.0's only breaking change is a Node 22 floor, and this repo is
+on 24.19.0. `COMMON_MIME_TYPES` is still a 1199-entry `Map` with `caf` in it,
+which is what `e2e-tests/audio-playback.spec.ts`'s typeless-drop test exercises.
 
 ## eslint 10.8.1 — blocked on eslint-plugin-react (2026-08-13)
 
