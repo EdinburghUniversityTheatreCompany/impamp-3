@@ -54,9 +54,21 @@ export default defineConfig({
   // buys. Anything that now flakes at two workers would have flaked on a
   // developer's machine at ten, so it is a real report, not new noise.
   workers: process.env.CI ? 2 : undefined,
-  // The HTML report is the artifact; the flaky reporter makes retries visible
+  // Three reporters, and the `line` one is the reason this is a list.
+  //
+  // With `html` alone a local run prints nothing until it ends and then opens
+  // a browser, which is indistinguishable from a hang and was half of why
+  // `npm run test:e2e` read as "your change broke everything". `line` puts the
+  // progress back on stdout for CI logs and terminals alike; `open: "never"`
+  // stops the report server from holding the terminal after a failure — run
+  // `npx playwright show-report` when you actually want it. The HTML report is
+  // still the artifact, and the flaky reporter still makes retries visible
   // without opening it. See e2e-tests/flaky-reporter.ts.
-  reporter: [["html"], ["./e2e-tests/flaky-reporter.ts"]],
+  reporter: [
+    ["line"],
+    ["html", { open: "never" }],
+    ["./e2e-tests/flaky-reporter.ts"],
+  ],
   use: {
     baseURL,
     trace: "on-first-retry",

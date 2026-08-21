@@ -9,10 +9,14 @@ paragraph for a long time, while more than half the suite went undescribed.)
 ## Running
 
 ```bash
-npx playwright test --project=chromium      # what CI gates on
-npx playwright test                         # all three browsers
-E2E_DEV_SERVER=1 npx playwright test        # against `next dev` instead
+npm run test:e2e                            # chromium — what CI gates on
+npm run test:e2e:cross-browser              # firefox and webkit, both known-red
+E2E_DEV_SERVER=1 npm run test:e2e           # against `next dev` instead
 ```
+
+Both scripts name their projects explicitly, because a bare `playwright test`
+runs all three and the two it adds fail for reasons outside the app — see
+[../docs/cross-browser-e2e.md](../docs/cross-browser-e2e.md).
 
 By default the suite builds the app and serves it with `npm start`. This is
 deliberate: Turbopack compiles routes on demand, so several browser workers
