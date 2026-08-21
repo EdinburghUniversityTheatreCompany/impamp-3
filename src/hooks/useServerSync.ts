@@ -10,7 +10,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import type { TokenInfo } from "@/lib/googleDrive/types";
+import {
+  applyDriveTokenRefresh,
+  currentDriveToken,
+} from "@/lib/googleDrive/storeToken";
 import { applySyncedProfile } from "./applySyncedProfile";
 import { mirrorToProfile, syncStatusActions } from "@/store/syncStatusStore";
 import {
@@ -217,15 +220,7 @@ export function useServerSync(): ServerSyncHook {
       // long way round and a write React reserves for effects and handlers.
       const driveAccess: DriveAccess = {
         tokenInfo: currentDriveToken(),
-        onTokenRefresh: (token: TokenInfo) => {
-          const store = useProfileStore.getState();
-          store.setGoogleAuthDetails(
-            store.googleUser ?? { name: "", email: "" },
-            token.accessToken,
-            token.refreshToken ?? null,
-            token.expiresAt,
-          );
-        },
+        onTokenRefresh: applyDriveTokenRefresh,
       };
 
       const result = await syncServerProfile(
@@ -290,15 +285,5 @@ export function useServerSync(): ServerSyncHook {
     listShares: listServerShares,
     addShare: createServerShare,
     revokeShare: deleteServerShare,
-  };
-}
-
-function currentDriveToken(): TokenInfo | null {
-  const state = useProfileStore.getState();
-  if (!state.isGoogleSignedIn || !state.googleAccessToken) return null;
-  return {
-    accessToken: state.googleAccessToken,
-    refreshToken: state.googleRefreshToken,
-    expiresAt: state.tokenExpiresAt || 0,
   };
 }

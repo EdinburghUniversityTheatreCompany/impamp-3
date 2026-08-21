@@ -23,6 +23,11 @@ import {
 import { isTokenValid } from "@/lib/googleDrive/utils";
 import { checkAndRefreshAuth } from "@/lib/googleDrive/auth";
 import {
+  applyDriveTokenRefresh,
+  currentDriveToken,
+  driveTokenFrom,
+} from "@/lib/googleDrive/storeToken";
+import {
   findDriveFileById,
   findDriveFileByName,
   getDriveFileVersionToken,
@@ -258,36 +263,16 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     [selectAuthState],
   );
 
-  // Prepare token info based on local state
-  const currentTokenInfo = useMemo<TokenInfo | null>(() => {
-    if (!authState.isGoogleSignedIn || !authState.googleAccessToken)
-      return null;
-
-    return {
-      accessToken: authState.googleAccessToken,
-      refreshToken: authState.googleRefreshToken,
-      expiresAt: authState.tokenExpiresAt || 0,
-    };
-  }, [
-    authState.isGoogleSignedIn,
-    authState.googleAccessToken,
-    authState.googleRefreshToken,
-    authState.tokenExpiresAt,
-  ]);
-
-  // Read token fresh from the store at call-time to avoid stale closures.
-  // Callbacks that pass tokenInfo to async functions should use this instead
-  // of the closure-captured currentTokenInfo, because React may call the effect
-  // with the old callback before currentTokenInfo has been updated.
-  const getFreshTokenInfo = useCallback((): TokenInfo | null => {
-    const s = useProfileStore.getState();
-    if (!s.isGoogleSignedIn || !s.googleAccessToken) return null;
-    return {
-      accessToken: s.googleAccessToken,
-      refreshToken: s.googleRefreshToken,
-      expiresAt: s.tokenExpiresAt || 0,
-    };
-  }, []);
+  // The token as of the last render, which is what the validation effect
+  // below watches. `setAuthState` is the subscription callback and the
+  // subscription has an equality function, so `authState` takes a new identity
+  // only when one of the six mirrored fields actually changed — depending on
+  // the object rather than picking four fields out of it costs nothing and
+  // cannot fall out of step with what `driveTokenFrom` reads.
+  const currentTokenInfo = useMemo<TokenInfo | null>(
+    () => driveTokenFrom(authState),
+    [authState],
+  );
 
   // Reset the needsReauthSet flag when needsReauth changes to false
   useEffect(() => {
@@ -295,34 +280,6 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       stateRef.current.needsReauthSet = false;
     }
   }, [authState.needsReauth]);
-
-  // Get setGoogleAuthDetails function from the store
-  const setGoogleAuthDetails = useProfileStore(
-    (state) => state.setGoogleAuthDetails,
-  );
-
-  // Token refresh callback
-  const handleTokenRefresh = useCallback(
-    (newTokenInfo: TokenInfo) => {
-      if (!newTokenInfo.accessToken) return;
-
-      // Keep the existing user info when refreshing tokens
-      setGoogleAuthDetails(
-        authState.googleUser || { name: "", email: "" }, // Preserve existing user info or use minimal object
-        newTokenInfo.accessToken,
-        newTokenInfo.refreshToken || null,
-        newTokenInfo.expiresAt,
-      );
-
-      // Reset the needsReauth flag directly - won't cause a loop because we check for changes in useEffect
-      useProfileStore.setState({ needsReauth: false });
-
-      console.log("Token refreshed successfully", {
-        expiresAt: new Date(newTokenInfo.expiresAt).toLocaleString(),
-      });
-    },
-    [setGoogleAuthDetails, authState.googleUser],
-  );
 
   // Check token validity on mount and periodically. An expired token is only a
   // re-auth prompt once refreshing it has actually failed.
@@ -336,7 +293,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     let cancelled = false;
 
     const validateToken = async () => {
-      const tokenInfo = getFreshTokenInfo();
+      const tokenInfo = currentDriveToken();
       if (!tokenInfo || stateRef.current.needsReauthSet) return;
       if (isTokenValid(tokenInfo.accessToken, tokenInfo.expiresAt)) return;
 
@@ -357,7 +314,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       if (cancelled) return;
 
       if (isValid) {
-        if (refreshedTokenInfo) handleTokenRefresh(refreshedTokenInfo);
+        if (refreshedTokenInfo) applyDriveTokenRefresh(refreshedTokenInfo);
         return;
       }
 
@@ -377,13 +334,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [
-    authState.isGoogleSignedIn,
-    authState.needsReauth,
-    currentTokenInfo,
-    getFreshTokenInfo,
-    handleTokenRefresh,
-  ]);
+  }, [authState.isGoogleSignedIn, authState.needsReauth, currentTokenInfo]);
 
   // Status callbacks
   const callbacks = useMemo(
@@ -401,19 +352,19 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
     async (profileId: number): Promise<SyncResult> => {
       const result = await syncProfile(
         profileId,
-        getFreshTokenInfo(),
+        currentDriveToken(),
         mirrorToProfile(profileId, callbacks, {
           setConflicts,
           setConflictData,
         }),
-        handleTokenRefresh,
+        applyDriveTokenRefresh,
       );
       if (result.status === "success") {
         await applySyncedProfile(profileId);
       }
       return result;
     },
-    [getFreshTokenInfo, callbacks, handleTokenRefresh],
+    [callbacks],
   );
 
   const resolveConflict = useCallback(
@@ -426,7 +377,7 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         resolvedData,
         fileId,
         profileId,
-        getFreshTokenInfo(),
+        currentDriveToken(),
         // Mirrored, exactly as `synchronizeProfile` above is. The raw
         // `callbacks` object has no `onWarnings` at all — it is optional on
         // `SyncStatusCallbacks` — so a warning raised while applying a hand-made
@@ -437,47 +388,47 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
           setConflicts,
           setConflictData,
         }),
-        handleTokenRefresh,
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, callbacks, handleTokenRefresh],
+    [callbacks],
   );
 
   const getAppFiles = useCallback(async (): Promise<DriveFile[]> => {
-    return await listAppFiles(getFreshTokenInfo(), handleTokenRefresh);
-  }, [getFreshTokenInfo, handleTokenRefresh]);
+    return await listAppFiles(currentDriveToken(), applyDriveTokenRefresh);
+  }, []);
 
   const getFilesInFolder = useCallback(
     async (folderId: string): Promise<DriveFile[]> => {
       return await listFilesInFolder(
         folderId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const downloadFile = useCallback(
     async (fileId: string): Promise<ProfileSyncData | null> => {
       return await downloadDriveFile(
         fileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const getVersionToken = useCallback(
     async (fileId: string): Promise<string | null> => {
       return await getDriveFileVersionToken(
         fileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const uploadFile = useCallback(
@@ -492,68 +443,65 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         jsonData,
         existingFileId,
         profileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const findFileById = useCallback(
     async (fileId: string): Promise<DriveFile | null> => {
       return await findDriveFileById(
         fileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const findFileByName = useCallback(
     async (fileName: string): Promise<DriveFile | null> => {
       return await findDriveFileByName(
         fileName,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
-  const shareFile = useCallback(
-    async (fileId: string): Promise<void> => {
-      return await createFilePermission(
-        fileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
-      );
-    },
-    [getFreshTokenInfo, handleTokenRefresh],
-  );
+  const shareFile = useCallback(async (fileId: string): Promise<void> => {
+    return await createFilePermission(
+      fileId,
+      currentDriveToken(),
+      applyDriveTokenRefresh,
+    );
+  }, []);
 
   const downloadAudio = useCallback(
     async (driveFileId: string): Promise<Blob | null> => {
       return await downloadAudioFileAsBlob(
         driveFileId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const uploadMissingAudio = useCallback(
     async (profileId: number): Promise<void> => {
-      const tokenInfo = getFreshTokenInfo();
+      const tokenInfo = currentDriveToken();
       if (!tokenInfo) throw new Error("Not authenticated with Google Drive");
       return await uploadMissingAudioFiles(
         profileId,
         tokenInfo,
-        handleTokenRefresh,
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const repairAudio = useCallback(
@@ -561,27 +509,27 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       profileId: number,
       folderId?: string,
     ): Promise<{ checked: number; uploaded: number; errors: string[] }> => {
-      const tokenInfo = getFreshTokenInfo();
+      const tokenInfo = currentDriveToken();
       if (!tokenInfo) throw new Error("Not authenticated with Google Drive");
       return repairDriveAudioFiles(
         profileId,
         tokenInfo,
-        handleTokenRefresh,
+        applyDriveTokenRefresh,
         folderId,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const listPermissions = useCallback(
     async (folderId: string): Promise<DrivePermission[]> => {
       return await listFolderPermissions(
         folderId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const setPublicAccess = useCallback(
@@ -592,11 +540,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       return await setPublicLinkAccess(
         folderId,
         access,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const invite = useCallback(
@@ -609,11 +557,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
         folderId,
         email,
         role,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   const removePerm = useCallback(
@@ -621,11 +569,11 @@ export const useGoogleDriveSync = (): GoogleDriveSyncHookReturn => {
       return await removePermission(
         folderId,
         permissionId,
-        getFreshTokenInfo(),
-        handleTokenRefresh,
+        currentDriveToken(),
+        applyDriveTokenRefresh,
       );
     },
-    [getFreshTokenInfo, handleTokenRefresh],
+    [],
   );
 
   // Return the hook API
