@@ -7,13 +7,12 @@ import {
   notifyPadConfigsChanged,
   savePadConfiguration,
 } from "@/hooks/pad/padWrites";
-import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
-
-// Define special pad indices to avoid assignment
-const SPECIAL_PAD_INDICES = [
-  1 * GRID_COLS + (GRID_COLS - 1), // Stop All (Row 2, last col)
-  2 * GRID_COLS + (GRID_COLS - 1), // Fade Out All (Row 3, last col)
-];
+import {
+  GRID_COLS,
+  GRID_ROWS,
+  SPECIAL_PAD_INDICES,
+  TOTAL_PADS,
+} from "@/lib/constants";
 
 interface AudioFilePreview {
   id: string; // Temporary ID for drag/drop

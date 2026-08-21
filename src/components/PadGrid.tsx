@@ -14,33 +14,19 @@ import {
   preloadCurrentPageIntelligent,
 } from "@/lib/audio";
 import { useArmedTracks } from "@/store/playbackStore";
-import { GRID_COLS, GRID_ROWS, TOTAL_PADS } from "@/lib/constants";
+import {
+  GRID_COLS,
+  GRID_ROWS,
+  SPECIAL_PAD_CONFIG,
+  SPECIAL_PAD_INDICES,
+  TOTAL_PADS,
+} from "@/lib/constants";
 import { usePadInteractions, usePadSwap, usePadDrop } from "@/hooks/pad";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
 import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
-
-// Define configuration for special pads
-const SPECIAL_PAD_CONFIG = {
-  STOP_ALL: {
-    index: 1 * GRID_COLS + (GRID_COLS - 1),
-    label: "Stop All",
-    keyBinding: "Escape",
-  }, // Row 2, last col
-  FADE_OUT_ALL: {
-    index: 2 * GRID_COLS + (GRID_COLS - 1),
-    label: "Fade Out All",
-    keyBinding: " ",
-  }, // Row 3, last col
-};
-
-// Get array of special pad indices for checking
-const SPECIAL_PAD_INDICES = [
-  SPECIAL_PAD_CONFIG.STOP_ALL.index,
-  SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index,
-];
 
 // Stable no-op handlers for the special pads (no edit or drop actions)
 const noopClick = () => {};

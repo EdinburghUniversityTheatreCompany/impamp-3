@@ -1,4 +1,11 @@
-import { GRID_COLS } from "./constants";
+import {
+  GRID_COLS,
+  MANUAL_ROW_START_INDEX,
+  SPECIAL_PAD_CONFIG,
+} from "./constants";
+
+const STOP_ALL_INDEX = SPECIAL_PAD_CONFIG.STOP_ALL.index;
+const FADE_OUT_ALL_INDEX = SPECIAL_PAD_CONFIG.FADE_OUT_ALL.index;
 
 // Define keyboard rows for the first 3 rows (indices 0 up to MANUAL_ROW_START_INDEX)
 // Adjust the keys based on the desired default layout for the grid size
@@ -21,18 +28,12 @@ const KEYBOARD_ROWS = [
 export const getDefaultKeyForPadIndex = (
   padIndex: number,
 ): string | undefined => {
-  // Define special indices based on the grid layout
-  // These might need adjustment if the grid layout changes significantly
-  const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Assumes Stop All is in Row 2, last col
-  const FADE_OUT_ALL_INDEX = 2 * GRID_COLS + (GRID_COLS - 1); // Assumes Fade Out is in Row 3, last col
-  const MANUAL_ROW_START_INDEX = 3 * GRID_COLS; // Assumes manual row starts at Row 4
-
   // Check for special pads first
   if (padIndex === STOP_ALL_INDEX) {
-    return "Escape"; // Use 'Escape' to match KeyboardEvent.key
+    return SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding;
   }
   if (padIndex === FADE_OUT_ALL_INDEX) {
-    return " "; // Use ' ' (space) to match KeyboardEvent.key
+    return SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding;
   }
   // Check if pad is in the manual row (or beyond)
   if (padIndex >= MANUAL_ROW_START_INDEX) {
@@ -70,17 +71,14 @@ export const getDefaultKeyForPadIndex = (
  * @returns The corresponding pad index (0-based) or undefined if the key is not mapped.
  */
 export const getPadIndexForKey = (key: string): number | undefined => {
-  // Define special indices based on the grid layout (must match getDefaultKeyForPadIndex)
-  const STOP_ALL_INDEX = 1 * GRID_COLS + (GRID_COLS - 1); // Assumes Stop All is in Row 2, last col
-  const FADE_OUT_ALL_INDEX = 2 * GRID_COLS + (GRID_COLS - 1); // Assumes Fade Out is in Row 3, last col
-  const MANUAL_ROW_START_INDEX = 3 * GRID_COLS; // Assumes manual row starts at Row 4
-
-  // Check for special keys first
-  if (key === "Escape") {
+  // Check for special keys first. The two functions read one definition
+  // rather than each deriving the positions from the grid, which is what the
+  // "must match getDefaultKeyForPadIndex" comment here used to ask of a
+  // reader.
+  if (key === SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding) {
     return STOP_ALL_INDEX;
   }
-  if (key === " ") {
-    // Check for space key
+  if (key === SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding) {
     return FADE_OUT_ALL_INDEX;
   }
 
