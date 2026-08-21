@@ -15,6 +15,7 @@ import {
   collectReferencedAudioFileIds,
   computeBlobHash,
   initialSyncFields,
+  withAudioImportInProgress,
 } from "./db"; // Import necessary types and DB functions from db.ts
 import type { LoudnessAnalysis } from "./db";
 import { getPadIndexForKey } from "./keyboardUtils";
@@ -934,7 +935,35 @@ type ProfileImportMeta = Omit<ProfileExport, "audioFiles" | "profile"> & {
  * page metadata and pad configurations. Cleans up the partial profile on
  * failure.
  */
-async function importProfileCore(
+function importProfileCore(
+  db: IDBPDatabase<ImpAmpDBSchema>,
+  exportData: ProfileImportMeta,
+  audioSources: ImportAudioSource[],
+  onAudioProgress?: (progress: ImportAudioProgress) => void,
+  audioConcurrency = 1,
+  link: ImportLink = {},
+): Promise<number> {
+  // Declared to the orphan sweeps for as long as it runs. Step 2 writes the
+  // audio and step 4 writes the pads that name it, so in between there are
+  // records nothing references — which is the definition of an orphan, and
+  // `cleanupOrphanedAudioFiles` used to delete exactly those. The audio
+  // cannot be written any later than this: a pad names its sounds by the ids
+  // the store assigns, so the ids have to exist first. See
+  // `withAudioImportInProgress` in db.ts for why this is a register rather
+  // than a grace period or one big transaction.
+  return withAudioImportInProgress(() =>
+    runProfileImport(
+      db,
+      exportData,
+      audioSources,
+      onAudioProgress,
+      audioConcurrency,
+      link,
+    ),
+  );
+}
+
+async function runProfileImport(
   db: IDBPDatabase<ImpAmpDBSchema>,
   exportData: ProfileImportMeta,
   audioSources: ImportAudioSource[],
