@@ -167,6 +167,74 @@ async function storeAudio(
 }
 
 describe("POST /api/audio/upload-url", () => {
+  /** Ask for a licence to upload and then do nothing with it. */
+  const ask = (token: string, label: string, sizeBytes: number) =>
+    uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: token,
+        body: {
+          hash: hashOf(label, sizeBytes),
+          sizeBytes,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+  it("counts a licence nobody used against the next one", async () => {
+    // The quota bounded nothing between minting and committing. Nothing is
+    // recorded until commit, so a caller could ask for a URL, PUT the bytes,
+    // never commit, and ask again — every ask decided against a total the
+    // previous ask had not moved. Each abandoned object then sat in the bucket
+    // that no total could see and no API could delete, with Wasabi's 90-day
+    // minimum on every one.
+    const { token } = signIn(1, { approved: true });
+
+    expect((await ask(token, "first", 6 * KB)).status).toBe(200);
+
+    const second = await ask(token, "second", 6 * KB);
+
+    expect(second.status).toBe(413);
+    expect((await second.json()).reason).toBe("user_quota");
+  });
+
+  it("counts everyone's live licences against the deployment cap", async () => {
+    setObjectStoreForTests({
+      store,
+      config: { ...config, globalCapBytes: 8 * KB },
+    });
+    const first = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+
+    expect((await ask(first.token, "theirs", 5 * KB)).status).toBe(200);
+
+    const refused = await ask(second.token, "mine", 5 * KB);
+
+    expect(refused.status).toBe(507);
+    expect((await refused.json()).reason).toBe("global_cap");
+  });
+
+  it("gives the licence back when the upload commits", async () => {
+    // The other half, and the one that would lock a real user out: a commit
+    // has to stop the provisional charge, or the bytes are counted twice —
+    // once as pending and once as stored — until the mint lapses.
+    const { token } = signIn(1, { approved: true });
+    expect((await storeAudio(token, "committed", 4 * KB)).status).toBe(200);
+
+    expect((await ask(token, "next", 4 * KB)).status).toBe(200);
+  });
+
+  it("lets a caller retry a file whose upload failed", async () => {
+    // Same hash, same size, twice: a client whose PUT failed asks again, and
+    // must not be charged for both attempts. Two *different* 6K files do not
+    // fit in the 10K quota, which is what makes this assertion worth making.
+    const { token } = signIn(1, { approved: true });
+    expect((await ask(token, "flaky", 6 * KB)).status).toBe(200);
+
+    expect((await ask(token, "flaky", 6 * KB)).status).toBe(200);
+  });
+
   it("refuses an anonymous caller", async () => {
     const response = await uploadUrl(
       makeRequest("/api/audio/upload-url", {
@@ -995,14 +1063,90 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     });
   });
 
-  it("still refuses to delete a sound a profile shared with you is using", async () => {
-    // The guard exists so nobody silences a live board they can actually
-    // reach. A board shared with you is one of those; a stranger's is not.
+  it("does not let an invitation to a stranger's profile pin it either", async () => {
+    // The same squat, made to satisfy the scope rather than to evade it.
+    // "Profiles you can reach" includes every profile you have been invited
+    // to, and an invitation is unilateral: `upsertEmailShare` writes the row
+    // on the inviter's say-so, with no acceptance step and no notification. So
+    // the attacker adds one line and the scope stops being a defence — the
+    // victim's own file is pinned forever, by a profile they never asked for
+    // and cannot make anybody delete.
+    const victim = signIn(1, { approved: true });
+    const squatter = signIn(2);
+    const { hash } = await storeAudio(victim.token, "invited", KB);
+
+    const bait = profileWith(squatter.user.id, [hash!]);
+    upsertEmailShare(bait.id, victim.user.email, "editor", squatter.user.id);
+
+    const response = await deleteAudio(
+      makeRequest(`/api/audio/${hash}`, {
+        method: "DELETE",
+        sessionToken: victim.token,
+      }),
+      routeParams({ hash: hash! }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("still refuses to delete a sound you put on someone else's board", async () => {
+    // The guard exists so nobody silences a live board, and this is the case
+    // it is actually for: the editor's own reference is what serves that sound
+    // to the owner, so dropping it takes the pad away.
+    //
+    // The editor publishes the sound themselves, which is both what the app
+    // does and what records them as its adder. An owner naming a hash only
+    // somebody else holds is the attack shape from the sibling tests, and is
+    // already unservable — a fixture built that way would be asserting on a
+    // board that never worked.
     const owner = signIn(1, { approved: true });
     const editor = signIn(2, { approved: true });
     const { hash } = await storeAudio(editor.token, "collaborative", KB);
-    const profile = profileWith(owner.user.id, [hash!]);
+    const profile = profileWith(owner.user.id, []);
+    const share = upsertEmailShare(
+      profile.id,
+      editor.user.email,
+      "editor",
+      owner.user.id,
+    );
+    await publish(profile.id, profile.version, [hash!], {
+      sessionToken: editor.token,
+    });
+
+    const ask = () =>
+      deleteAudio(
+        makeRequest(`/api/audio/${hash}`, {
+          method: "DELETE",
+          sessionToken: editor.token,
+        }),
+        routeParams({ hash: hash! }),
+      );
+
+    expect((await ask()).status).toBe(409);
+
+    // And it stays refused once the share is gone, for the same reason the
+    // download stays allowed: what makes the board depend on this reference is
+    // the act of putting the sound there, not a membership that can be taken
+    // away afterwards.
+    deleteShare(profile.id, share.id);
+    expect((await ask()).status).toBe(409);
+  });
+
+  it("lets go of a copy the board does not depend on", async () => {
+    // Both of them uploaded the same sound, so the owner's own reference
+    // serves it whatever the editor does with theirs. Refusing here would
+    // freeze an allowance to protect nothing — the check is "would this
+    // delete silence a board", not "is this sound on a board somewhere".
+    const owner = signIn(1, { approved: true });
+    const editor = signIn(2, { approved: true });
+    const { hash } = await storeAudio(editor.token, "duplicated", KB);
+    expect((await storeAudio(owner.token, "duplicated", KB)).status).toBe(200);
+
+    const profile = profileWith(owner.user.id, []);
     upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+    await publish(profile.id, profile.version, [hash!], {
+      sessionToken: editor.token,
+    });
 
     const response = await deleteAudio(
       makeRequest(`/api/audio/${hash}`, {
@@ -1012,7 +1156,12 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
       routeParams({ hash: hash! }),
     );
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
+    // The owner still holds it, so the bytes stay in the bucket.
+    expect(await response.json()).toEqual({
+      removed: true,
+      objectDeleted: false,
+    });
   });
 
   it("re-checks the quota when the bytes behind a held hash change", async () => {

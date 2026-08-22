@@ -27,6 +27,22 @@
 let pipeline: Promise<typeof import("./pipeline")> | null = null;
 
 export function loadLoudnessPipeline(): Promise<typeof import("./pipeline")> {
-  pipeline ??= import("./pipeline");
+  // A *failure* is not memoised. `??=` cannot tell the two apart — a promise
+  // is neither null nor undefined whichever way it settles — so the first
+  // failed chunk fetch used to disable loudness analysis for the rest of the
+  // session. That is a real event rather than a theoretical one: this is a
+  // PWA, and a chunk fetch fails when the network drops or when a redeploy
+  // moves chunk hashes under an open tab. Both callers swallow the rejection
+  // into a console warning, so the only symptom would be every sound added
+  // afterwards playing at 0 dB normalisation — the same silent symptom the
+  // memo itself was introduced to end.
+  //
+  // Clearing the memo inside the catch keeps the single-importer property
+  // intact: while the import is in flight every caller still shares one
+  // promise, and only a settled failure opens the door to a fresh attempt.
+  pipeline ??= import("./pipeline").catch((error: unknown) => {
+    pipeline = null;
+    throw error;
+  });
   return pipeline;
 }

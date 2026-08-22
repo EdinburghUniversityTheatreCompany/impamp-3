@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { describe, expect, it } from "vitest";
-import { parseProfileBody } from "./profileRequests";
+import { MAX_PROFILE_AUDIO_ENTRIES, parseProfileBody } from "./profileRequests";
 import { makeChunkedApiRequest } from "./testSupport";
 
 const MB = 1024 * 1024;
@@ -75,6 +75,45 @@ describe("parseProfileBody", () => {
 
     // 3M emoji is 6M UTF-16 code units but 12 MB of UTF-8.
     expect((result as NextResponse).status).toBe(413);
+  });
+
+  it("refuses a blob naming more sounds than any soundboard has", async () => {
+    // `MAX_PROFILE_BODY_BYTES` bounds the bytes and nothing bounded the entry
+    // count, and it is the entry count that costs: `reindexProfileAudio` runs
+    // a statement per hash inside `BEGIN IMMEDIATE`, on the single instance
+    // this app is deployed as. An 8 MB body holds ~110k of them, measured at
+    // 593 ms of held write lock — every other request, every SSE heartbeat and
+    // /up, stopped for that long by one PUT.
+    const audioFiles = Array.from(
+      { length: MAX_PROFILE_AUDIO_ENTRIES + 1 },
+      (_, i) => ({ id: i, hash: `hash-${i}` }),
+    );
+    const request = new NextRequest("http://localhost/api/profiles/x", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Panto", data: { audioFiles } }),
+    });
+
+    const result = await parseProfileBody(request);
+
+    expect((result as NextResponse).status).toBe(413);
+  });
+
+  it("accepts a board that names as many sounds as the ceiling allows", async () => {
+    // The other half of a limit: it has to be somewhere no real board reaches.
+    // Twenty banks of forty-eight pads is 960 pads, so this is twenty distinct
+    // sounds on every pad of a completely full profile.
+    const audioFiles = Array.from(
+      { length: MAX_PROFILE_AUDIO_ENTRIES },
+      (_, i) => ({ id: i, hash: `hash-${i}` }),
+    );
+    const request = new NextRequest("http://localhost/api/profiles/x", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Panto", data: { audioFiles } }),
+    });
+
+    expect(await parseProfileBody(request)).not.toBeInstanceOf(NextResponse);
   });
 
   it("rejects a body that is not JSON", async () => {

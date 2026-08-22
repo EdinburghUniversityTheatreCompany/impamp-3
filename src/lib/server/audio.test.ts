@@ -4,10 +4,12 @@ import { closeDb, execute, getDb } from "./db";
 import { upsertUserFromGoogle } from "./users";
 import {
   canUpload,
+  clearPendingUpload,
   getGlobalUsage,
   getUserUsage,
   listUserAudio,
   listUserUsage,
+  recordPendingUpload,
   recordUpload,
   releaseReference,
   userHoldsReference,
@@ -127,6 +129,7 @@ describe("canUpload", () => {
     label: string,
     sizeBytes: number,
     quotaBytes = DEFAULT_QUOTA,
+    pendingSince = 0,
   ) =>
     canUpload({
       userId,
@@ -136,6 +139,10 @@ describe("canUpload", () => {
       quotaBytes,
       capBytes: GLOBAL_CAP,
       maxObjectBytes: MAX_OBJECT,
+      // 0 rather than the default: these tests are about what the pending
+      // rows do, so every one of them is inside the window unless a case
+      // deliberately puts it outside.
+      pendingSince,
     });
 
   it("refuses a user who has not been approved", () => {
@@ -228,6 +235,94 @@ describe("canUpload", () => {
       allowed: false,
       reason: "user_quota",
     });
+  });
+
+  it("counts a licence to upload that nobody has committed", () => {
+    // `upload-url` mints a presigned PUT and records nothing; the object is
+    // written at commit. So every ask was decided against a total that the
+    // previous ask had not changed, and a caller who never committed could
+    // have as many licences as they liked.
+    const user = approvedUser(1);
+    recordPendingUpload({
+      userId: user.id,
+      hash: hash("in-flight"),
+      sizeBytes: 6 * KB,
+    });
+
+    expect(decide(user.id, true, "another", 6 * KB)).toMatchObject({
+      allowed: false,
+      reason: "user_quota",
+      // The reported figure stays the committed one, because that is what the
+      // client shows next to the allowance and what deleting a file changes.
+      detail: { usedBytes: 0, limitBytes: DEFAULT_QUOTA },
+    });
+  });
+
+  it("stops counting a licence once its URL has expired", () => {
+    // The charge lapses with the presign, deliberately: metering bytes the
+    // caller can no longer write freezes the allowance of somebody whose
+    // upload failed, and this app is used to run shows.
+    const user = approvedUser(1);
+    recordPendingUpload({
+      userId: user.id,
+      hash: hash("abandoned"),
+      sizeBytes: 6 * KB,
+      now: 1000,
+    });
+
+    expect(
+      decide(user.id, true, "another", 6 * KB, DEFAULT_QUOTA, 2000),
+    ).toMatchObject({ allowed: true });
+  });
+
+  it("does not charge twice for retrying the same file", () => {
+    const user = approvedUser(1);
+    recordPendingUpload({
+      userId: user.id,
+      hash: hash("flaky"),
+      sizeBytes: 6 * KB,
+    });
+
+    expect(decide(user.id, true, "flaky", 6 * KB)).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it("stops charging for a licence once it has been committed", () => {
+    const user = approvedUser(1);
+    recordPendingUpload({
+      userId: user.id,
+      hash: hash("done"),
+      sizeBytes: 6 * KB,
+    });
+    upload(user.id, "done", 6 * KB);
+    clearPendingUpload(user.id, hash("done"));
+
+    // 6K committed and nothing provisional, so 4K still fits in the 10K quota.
+    expect(decide(user.id, true, "next", 4 * KB)).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it("counts everyone's live licences against the deployment cap", () => {
+    const user = approvedUser(1);
+    execute(
+      "UPDATE users SET audio_quota_bytes = ? WHERE id = ?",
+      GLOBAL_CAP * 2,
+      user.id,
+    );
+    for (let n = 0; n < 13; n++) {
+      const filler = approvedUser(100 + n);
+      recordPendingUpload({
+        userId: filler.id,
+        hash: hash(`fill${n}`),
+        sizeBytes: MAX_OBJECT,
+      });
+    }
+
+    expect(
+      decide(user.id, true, "over", MAX_OBJECT, GLOBAL_CAP * 2),
+    ).toMatchObject({ allowed: false, reason: "global_cap" });
   });
 
   it("does not recount the global cap for a blob already in the bucket", () => {

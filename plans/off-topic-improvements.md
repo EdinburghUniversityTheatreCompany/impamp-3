@@ -75,3 +75,37 @@ except three, and each was left for a reason rather than missed:
 Worth a source-scan guard (`src/lib/testSupport/sourceScan.ts`) once the first
 two are gone — while they remain, the skip list would be longer than the rule.
 Noticed while resolving 🟢 13 of the 2026-08-22 subsystem review.
+
+## Nothing bounds what a presigned PUT actually writes
+
+`upload-url` mints a presigned PUT whose signature covers only `host`
+(`src/lib/server/s3/client.ts`), so the `sizeBytes` a client declares is a
+claim and the bytes that arrive are unconstrained. Commit measures the object
+and refuses an over-size one, and uncommitted objects are now charged
+provisionally and swept hourly — but a caller who declares a byte, sends five
+gigabytes and never commits still gets those bytes into the bucket until the
+sweep reaches them, with Wasabi's 90-day minimum billing on each.
+
+The fix is to put `content-length` in the presign's `SignedHeaders` so S3
+rejects a PUT whose length is not the one that was signed for. It was left out
+deliberately: nothing in this repo can verify Wasabi accepts it —
+`e2e-tests/fake-s3.js` does not check signatures on purpose, and
+`sigv4.test.ts` checks the signer against botocore's vectors rather than
+against a bucket — and a signing change Wasabi disagrees with breaks every
+real upload with `SignatureDoesNotMatch`. Worth doing against a live bucket
+with a real key, not from here. Noticed while fixing the 08-22 review's 🟡 5.
+
+## An email share cannot be accepted, declined or left
+
+`upsertEmailShare` writes a share row for any address on the inviter's
+say-so, and only the profile's owner can remove it. Two authorization rules
+have already had to be rewritten because they read that row as evidence about
+the invitee (`profileMayServeHash`, `deletingHashWouldSilenceAProfile`), and
+each rewrite is a workaround for the same missing concept. What remains
+without it is cosmetic — a profile you were invited to sits in your list until
+its owner deletes the invitation — but the next rule that wants to know
+"is this person actually a collaborator" will have the same problem.
+
+Share acceptance is the feature: a share is offered, and grants nothing until
+the invitee takes it. A "leave this profile" action is the smaller half of it
+and could ship alone. Noticed while fixing the 08-22 review's 🟡 4.

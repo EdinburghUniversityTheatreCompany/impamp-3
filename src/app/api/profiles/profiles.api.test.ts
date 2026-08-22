@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, getDb } from "@/lib/server/db";
 import { createSession } from "@/lib/server/session";
 import { upsertUserFromGoogle } from "@/lib/server/users";
-import { createProfile } from "@/lib/server/profiles";
+import { createProfile, MAX_PROFILES_PER_USER } from "@/lib/server/profiles";
 import { createLinkShare, upsertEmailShare } from "@/lib/server/shares";
 import {
   makeApiRequest as makeRequest,
@@ -81,6 +81,53 @@ describe("GET /api/profiles", () => {
 });
 
 describe("POST /api/profiles", () => {
+  it("stops one account filling the disk with profiles", async () => {
+    // Nothing capped this. Each profile is up to 8 MB and the deployment is
+    // one SQLite file on one volume, so an account — and signup is open unless
+    // IMPAMP_ALLOWED_EMAILS is set — could take the whole thing.
+    const owner = signIn(1);
+    for (let n = 0; n < MAX_PROFILES_PER_USER; n++) {
+      ownedProfile(owner, `Show ${n}`);
+    }
+
+    const response = await postProfile(
+      makeRequest("/api/profiles", {
+        method: "POST",
+        sessionToken: owner.token,
+        body: { name: "One too many", data: sampleData },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("counts only the profiles that account owns", async () => {
+    // Being shared into a hundred boards is not a reason to be unable to make
+    // your own — the ceiling is about what you are storing, not what you can
+    // see.
+    const hoarder = signIn(1);
+    const newcomer = signIn(2);
+    for (let n = 0; n < MAX_PROFILES_PER_USER; n++) {
+      const profile = ownedProfile(hoarder, `Show ${n}`);
+      upsertEmailShare(
+        profile.id,
+        newcomer.user.email,
+        "editor",
+        hoarder.user.id,
+      );
+    }
+
+    const response = await postProfile(
+      makeRequest("/api/profiles", {
+        method: "POST",
+        sessionToken: newcomer.token,
+        body: { name: "Mine", data: sampleData },
+      }),
+    );
+
+    expect(response.status).toBe(201);
+  });
+
   it("creates a profile at version 1 owned by the caller", async () => {
     const owner = signIn(1);
     const response = await postProfile(
