@@ -345,7 +345,6 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
           onChange={(value) =>
             updateValue("playbackType", value as PlaybackType)
           }
-          error={errors.playbackType}
           horizontal
           data-testid="edit-pad-playback-mode-group"
           optionTestIdPrefix="edit-pad-playback-mode"
@@ -375,7 +374,6 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
                 : (value as ActivePadBehavior),
             )
           }
-          error={errors.activePadBehavior as string}
           data-testid="edit-pad-active-behavior-group"
           optionTestIdPrefix="edit-pad-active-behavior"
         />

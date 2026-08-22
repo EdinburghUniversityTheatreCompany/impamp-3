@@ -24,6 +24,7 @@
 
 import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
+import { errorMessage } from "@/lib/errorMessage";
 import { useProfileStore } from "@/store/profileStore";
 
 /**
@@ -45,18 +46,25 @@ export default function MissingAudioPanel() {
   >(null);
   const [replacingIds, setReplacingIds] = useState<Set<string>>(new Set());
   const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const handleScanMissing = async () => {
     setIsScanningMissing(true);
     setMissingScanResult(null);
     setReplacingIds(new Set());
     setReplacedIds(new Set());
+    setScanError(null);
     try {
       const { findMissingAudioFiles } = await import("@/lib/db");
       const result = await findMissingAudioFiles();
       setMissingScanResult(result);
     } catch (error) {
       console.error("Failed to scan for missing audio files:", error);
+      // On screen, not only in the console. Nothing appearing is exactly what
+      // a library with no missing references looks like, so a swallowed
+      // failure reads as "your board is fine" to the one user whose board is
+      // not.
+      setScanError(`The scan could not finish: ${errorMessage(error)}.`);
     } finally {
       setIsScanningMissing(false);
     }
@@ -147,6 +155,16 @@ export default function MissingAudioPanel() {
           </button>
         </div>
 
+        {scanError && (
+          <div
+            role="alert"
+            data-testid="missing-audio-scan-error"
+            className="rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20 text-sm text-yellow-800 dark:text-yellow-200"
+          >
+            {scanError}
+          </div>
+        )}
+
         {missingScanResult !== null && (
           <div
             className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4"
@@ -185,7 +203,16 @@ export default function MissingAudioPanel() {
                               className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
                             >
                               <span className="text-gray-700 dark:text-gray-200">
-                                Bank {entry.bankName} &rsaquo;{" "}
+                                {/*
+                                  The name alone, with no "Bank " in front of
+                                  it: `bankName` is the bank's *stored* name,
+                                  and a bank nobody renamed is stored as
+                                  "Bank 6" — so a prefix here reads
+                                  "Bank Bank 6" on every default bank and only
+                                  looks right on the renamed ones. The search
+                                  results render a bank name the same way.
+                                */}
+                                {entry.bankName} &rsaquo;{" "}
                                 {entry.padName
                                   ? `"${entry.padName}"`
                                   : `Pad ${entry.padIndex + 1}`}

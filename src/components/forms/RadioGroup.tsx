@@ -22,6 +22,14 @@ interface RadioGroupProps<T extends string> {
   options: RadioOption<T>[];
   value: T;
   onChange: (value: T) => void;
+  /**
+   * For a group rendered on its own. **Do not pass this inside a
+   * `FormField`** — the field renders the message already, and passing it to
+   * both puts the same sentence on screen twice, one line apart, and reads it
+   * out twice. `FormField` is the owner because it also owns the label and the
+   * spacing; this prop exists so a group with no field around it still has
+   * somewhere to say it.
+   */
   error?: string;
   horizontal?: boolean;
   className?: string;

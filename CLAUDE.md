@@ -492,6 +492,13 @@ and the ranges are floors that should move only when something requires it.
   and the remove handler from it. This has shipped wrong twice: once as the
   drag id (duplicate React keys, and removing one copy removed both), and again
   when that was fixed and the four neighbours one line away were left behind.
+  Both halves are now pinned twice over: `EditPadForm.dedup.test.tsx` counts
+  the matches in jsdom, and `e2e-tests/pad-editor-duplicate-rows.spec.ts`
+  builds the pad in a browser and drives each copy's own controls — a
+  collision there is a Playwright strict-mode violation, which is the failure
+  no unit test can produce. That spec was missing for a release, and it is why
+  a duplicate id could sit in the tree unseen: no other spec ever builds a pad
+  naming one sound twice.
   `audioGainSettings` and `audioTrimSettings` stay keyed on `fileId`
   deliberately, because two copies of one row genuinely share one gain and one
   trim
@@ -574,8 +581,11 @@ one now covers only what is machine-checked.
 
 - Node 24.19.0 (LTS) everywhere — `.node-version`, `mise.toml` and the
   `NODE_VERSION` ARG in **both** `Dockerfile` and `Dockerfile.dev`.
-  `scripts/check_version_sync.sh` cross-checks the first three;
-  `scripts/check_extra_dockerfiles.sh` covers every `Dockerfile*`, because the
-  first script is a shared template that reads only one of them and
-  `Dockerfile.dev` drifted to Node 22 unnoticed for months as a result.
+  `scripts/check_version_sync.sh` cross-checks all four. It reads every
+  `Dockerfile*` as of dev-env standard v24; before that it stopped at the
+  first, which is how `Dockerfile.dev` drifted to Node 22 unnoticed for
+  months, and this repo carried a second script to cover the gap. That
+  script is gone — two gates for one rule is how they drift. The hk step's
+  glob is deliberately `Dockerfile*` rather than the template's `Dockerfile`,
+  so editing only the dev image still fires it.
   `node:sqlite` requires Node >= 22.13, so that is the floor

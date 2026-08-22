@@ -117,8 +117,9 @@ function craftedGroup(
   hash: string,
   duplicateIds: number[],
   reclaimableBytes: number,
+  names: string[] = ["horn.wav"],
 ): DuplicateAudioGroup {
-  return { hash, canonicalId: 1, duplicateIds, reclaimableBytes };
+  return { hash, canonicalId: 1, duplicateIds, reclaimableBytes, names };
 }
 
 let panel: MountedPanel;
@@ -175,6 +176,41 @@ describe("scanning", () => {
     expect(required("duplicate-audio-collapse").textContent).toContain(
       "Remove 2 Copies",
     );
+  });
+
+  it("names the sounds in each group rather than only counting them", async () => {
+    // "2 groups, 2 copies, 14 B" is not something a user can check against
+    // their own library before pressing a button that deletes audio. The
+    // names are on the rows the scan already read, and they are the only part
+    // of the preview anyone can recognise.
+    await storedTwice(horn, "horn");
+    await storedTwice(stab, "stab");
+
+    await click("duplicate-audio-scan");
+
+    const listed = panel
+      .all("duplicate-audio-group")
+      .map((row) => row.textContent ?? "");
+    expect(listed).toHaveLength(2);
+    expect(listed[0]).toContain("horn.wav / horn (1).wav");
+    expect(listed[0]).toContain("1 copy to remove");
+    expect(listed[1]).toContain("stab.wav / stab (1).wav");
+  });
+
+  it("gives each group its own byte total", async () => {
+    findDuplicateAudioGroups.mockResolvedValueOnce([
+      craftedGroup("a".repeat(64), [2], 512_000, ["horn.wav", "horn (1).wav"]),
+      craftedGroup("b".repeat(64), [4, 5], 2_000_000, ["stab.wav"]),
+    ]);
+
+    await click("duplicate-audio-scan");
+
+    const listed = panel
+      .all("duplicate-audio-group")
+      .map((row) => row.textContent ?? "");
+    expect(listed[0]).toContain("500 KB");
+    expect(listed[1]).toContain("2 copies to remove");
+    expect(listed[1]).toContain("1.9 MB");
   });
 
   it("adds up the bytes and shows a sub-megabyte reclaim as itself", async () => {

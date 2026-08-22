@@ -43,6 +43,14 @@ vi.doMock("@/store/profileStore", () => ({
   useProfileStore: { getState: () => ({ incrementPadConfigsVersion }) },
 }));
 
+// The real implementation behind a spy, so a scan can be made to fail.
+// `importActual` resolves the module's own imports normally, so this is one
+// connection and one memoised `getDb` — the same database the fixtures below
+// write through.
+const realDb = await vi.importActual<typeof import("@/lib/db")>("@/lib/db");
+const findMissingAudioFiles = vi.fn(realDb.findMissingAudioFiles);
+vi.doMock("@/lib/db", () => ({ ...realDb, findMissingAudioFiles }));
+
 const MissingAudioPanel = (
   await import("@/components/profiles/MissingAudioPanel")
 ).default;
@@ -52,7 +60,7 @@ const {
   getDb,
   upsertPadConfiguration,
   upsertPageMetadata,
-} = await import("@/lib/db");
+} = realDb;
 
 /**
  * A bank id that is a minted UUID at a position that is not its index.
@@ -62,6 +70,16 @@ const {
  * bank name on each row here is looked up by identity.
  */
 const OPENERS = "b4d1a5c0-1111-4a2b-8c3d-000000000001";
+
+/**
+ * A bank the user never renamed, exactly as `ensureDefaultBanks` writes one.
+ *
+ * Its id is the position it sits at and its stored name is
+ * `Bank ${convertIndexToBankNumber(pageIndex)}` — so the name a row shows
+ * already carries the word "Bank", and a row that adds its own reads
+ * "Bank Bank 6".
+ */
+const UNRENAMED = { bankId: "5", pageIndex: 5, name: "Bank 6" };
 
 /** An id no `audioFiles` row will ever be given, so every pad naming it is broken. */
 const GONE = 987_654;
@@ -134,6 +152,7 @@ async function storedPad(
 beforeEach(async () => {
   await clearAllStores();
   vi.clearAllMocks();
+  findMissingAudioFiles.mockImplementation(realDb.findMissingAudioFiles);
   profileId = await addProfile({ name: "Show", syncType: "local" });
   await upsertPageMetadata({
     profileId,
@@ -199,6 +218,59 @@ describe("scanning", () => {
     // string its record holds.
     expect(result).toContain("Pad 5");
     expect(panel.all("missing-audio-row")).toHaveLength(2);
+  });
+
+  it("says a default bank's name once, not 'Bank Bank 6'", async () => {
+    // `findMissingAudioFiles` reports the bank's *stored* name, and a bank
+    // nobody renamed is stored as "Bank 6". The row therefore has nothing to
+    // prefix: a literal "Bank " in front of it reads "Bank Bank 6", while a
+    // renamed bank ("Openers") reads correctly — so only the case every
+    // profile ships ten of is wrong, which is why it survived review.
+    await upsertPageMetadata({ profileId, ...UNRENAMED });
+    await padNaming({
+      profileId,
+      bankId: UNRENAMED.bankId,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+
+    const row = panel.all("missing-audio-row")[0].textContent ?? "";
+    expect(row).toContain("Bank 6 ›");
+    expect(row).not.toContain("Bank Bank");
+  });
+
+  it("says the scan failed rather than going quiet", async () => {
+    // A swallowed failure is indistinguishable from a clean library: the
+    // spinner comes and goes and nothing appears, except that even the "no
+    // missing audio files" line is absent. A user cannot tell those apart,
+    // and one of them means their board is still broken.
+    findMissingAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
+
+    await click("missing-audio-scan");
+
+    const alert = required("missing-audio-scan-error");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("store is shut");
+    expect(testId("missing-audio-result")).toBeNull();
+    // And the button comes back, so a failed scan is retryable rather than a
+    // dead panel.
+    expect((required("missing-audio-scan") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("takes the failure back when the next scan works", async () => {
+    findMissingAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
+
+    await click("missing-audio-scan");
+    await click("missing-audio-scan");
+
+    expect(testId("missing-audio-scan-error")).toBeNull();
+    expect(required("missing-audio-result").textContent).toContain(
+      "No missing audio files found",
+    );
   });
 
   it("keeps two profiles' banks apart when both call a bank '0'", async () => {

@@ -36,6 +36,16 @@ export interface DuplicateAudioGroup {
   duplicateIds: number[];
   /** Bytes the collapse gives back. */
   reclaimableBytes: number;
+  /**
+   * What the group's rows are called, survivor first, each name once.
+   *
+   * A count is not something a user can check against their own library, and
+   * this panel deletes audio — so the preview has to name the sounds it is
+   * offering to remove. Distinct, because the ordinary way a duplicate
+   * arrives is the same file imported twice and both rows then carry one
+   * name; "horn.wav / horn.wav" says nothing the copy count has not.
+   */
+  names: string[];
 }
 
 /** One audio row, reduced to what the grouping and the election need. */
@@ -43,6 +53,7 @@ interface CandidateRow {
   id: number;
   size: number;
   analysed: boolean;
+  name: string;
 }
 
 /** Files the row under its hash, starting the group if it is the first. */
@@ -92,6 +103,10 @@ export async function findDuplicateAudioGroups(): Promise<
         id: record.id,
         size: record.blob.size,
         analysed: record.loudness !== undefined,
+        // The name off the same record, so no second pass is needed. A row
+        // with none is named by its id rather than left blank: the preview
+        // would otherwise show a separator with nothing beside it.
+        name: record.name || `Sound ${record.id}`,
       };
       // Truthiness, not a null check: `""` is a valid IndexedDB key and a
       // valid Map key, and a hash reaching the store from unvalidated JSON
@@ -135,6 +150,8 @@ export async function findDuplicateAudioGroups(): Promise<
       canonicalId: canonical.id,
       duplicateIds: duplicates.map((row) => row.id),
       reclaimableBytes: duplicates.reduce((sum, row) => sum + row.size, 0),
+      // In the election's order, so the first name is the row that stays.
+      names: [...new Set(ranked.map((row) => row.name))],
     });
   }
 

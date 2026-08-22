@@ -13,6 +13,16 @@ export const TOTAL_PADS = GRID_ROWS * GRID_COLS;
 export const DEFAULT_PAD_NAME = "Empty Pad";
 
 /**
+ * The hard cap on banks per profile. Position 0-19 maps to bank 1-20.
+ *
+ * Lives here rather than in `db.ts`, where it was, because `bankUtils.ts` has
+ * to read it too and `db.ts` imports `bankUtils.ts` — the other direction is a
+ * cycle that would drag IndexedDB into every module wanting the number. It is
+ * a capacity rule, not a storage detail, so nothing about it needs `db.ts`.
+ */
+export const MAX_BANKS = 20;
+
+/**
  * Milliseconds in a day.
  *
  * Backup reminder periods are stored in milliseconds and shown in days, so

@@ -26,8 +26,8 @@ import {
   setBankEmergencyState,
   createBank,
   reorderBanks,
-  MAX_BANKS,
 } from "@/lib/db";
+import { MAX_BANKS } from "@/lib/constants";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { positionOfBank } from "@/lib/bankOrder";
 import BackupReminderNotification from "@/components/BackupReminderNotification"; // Import the new component

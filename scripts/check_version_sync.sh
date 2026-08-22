@@ -10,7 +10,7 @@
 # image builds on a different Ruby than the tests ran on, or the suite goes green against a
 # database server nobody deploys.
 #
-# Part of the dev-env standard (dev-hooks:dev-env-setup, v23) — run by the hk `versions` step and
+# Part of the dev-env standard (dev-hooks:dev-env-setup, v24) — run by the hk `versions` step and
 # CI's `versions` job so the local and CI gates can't drift. Don't hand-edit the logic; the next
 # policy change should be a plain re-copy of the template (a repo's own formatter may re-indent
 # this file to local style, which is fine).
@@ -27,6 +27,12 @@
 # Deliberately NOT enforced: Dockerfile style. Whether an image hardcodes `ARG NODE_VERSION` or
 # derives the Node major from .node-version is a per-repo choice. This verifies that whatever
 # pins exist agree, so adopting the standard never forces a Dockerfile rewrite.
+#
+# EVERY Dockerfile in the repo root is checked, not just the first one found. A repo
+# commonly carries a production `Dockerfile` beside a `Dockerfile.dev`, and stopping at the first
+# is how one of them sat on node:22 for months while .node-version, mise.toml and the production
+# Dockerfile all said 24 — with this gate green the whole time, in the repo whose own docs claimed
+# Node 24 "everywhere".
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -50,12 +56,24 @@ for f in mise.toml .mise.toml; do
   fi
 done
 
-DOCKERFILE=""
-for f in Dockerfile Containerfile; do
-  if [ -f "$f" ]; then
-    DOCKERFILE=$f
-    break
-  fi
+# Newline-separated, because a `for f in $DOCKERFILES` would word-split a name containing a
+# space. An unmatched glob is left literal by the shell (no nullglob here), so `Dockerfile.*` in
+# a repo with only a plain `Dockerfile` survives as that literal string — the `[ -f ]` guard is
+# what drops it, and must not be removed. `Dockerfile` itself needs the literal dot to match
+# `Dockerfile.*`, so it can never be listed twice.
+#
+# Excluded: editor/VCS leftovers (`Dockerfile.dev.bak`, `Dockerfile.orig`) and templates
+# (`Dockerfile.j2`) — neither is a build input, and a template's `ARG NODE_VERSION={{ ... }}`
+# would fail forever with no correct value to change it to.
+DOCKERFILES=""
+for f in Dockerfile Containerfile Dockerfile.* Containerfile.*; do
+  [ -f "$f" ] || continue
+  case $f in
+    *.bak | *.orig | *.rej | *.save | *.swp | *.swo | *.tmp | *.disabled | *~) continue ;;
+    *.example | *.sample | *.j2 | *.tpl | *.template | *.erb) continue ;;
+  esac
+  DOCKERFILES="$DOCKERFILES$f
+"
 done
 
 # A mise.toml `[tools]` value. Handles both `node = "22.4.1"` and the table form
@@ -75,11 +93,16 @@ read_mise() {
   ' "$MISE"
 }
 
-# Dockerfile `ARG NAME=value` defaults, deduplicated. A multi-stage build may redeclare a bare
-# `ARG NAME` to pull it into a later stage's scope; those carry no pin, so only `=` lines count.
+# One Dockerfile's `ARG NAME=value` defaults, one per line, deduplicated. A multi-stage build may
+# redeclare a bare `ARG NAME` to pull it into a later stage's scope; those carry no pin, so only
+# `=` lines count. $1 is the file, $2 the ARG name.
+#
+# Strips blanks, CR and quotes but NOT newlines: `[:space:]` here used to delete the line
+# separators too, which collapsed two differing defaults into one line, so `lines` could only
+# ever answer 0 or 1 and the caller's "conflicting defaults" branch was unreachable. A file
+# declaring 24.19.0 and 20.0.0 reported the value as "24.19.020.0.0" instead.
 read_arg() {
-  [ -n "$DOCKERFILE" ] || return 0
-  sed -n "s/^[[:space:]]*ARG[[:space:]]\{1,\}$1=//p" "$DOCKERFILE" | tr -d "[:space:]\"'" | sort -u
+  sed -n "s/^[[:space:]]*ARG[[:space:]]\{1,\}$2=//p" "$1" | tr -d "[:blank:]\r\"'" | sort -u
 }
 
 # package.json's `"packageManager": "pnpm@9.1.0+sha512…"` — corepack's pin, for the JS stack.
@@ -121,7 +144,7 @@ add_source() { # $1 label, $2 version
 
 echo "Toolchain:"
 [ -n "$MISE" ] || skip "no mise.toml, so no mise pins to cross-check"
-[ -n "$DOCKERFILE" ] || skip "no Dockerfile, so no image-build ARGs to cross-check"
+[ -n "$DOCKERFILES" ] || skip "no Dockerfile, so no image-build ARGs to cross-check"
 
 # tool | version file (empty = no conventional one) | Dockerfile ARG
 while IFS='|' read -r tool vfile arg; do
@@ -152,12 +175,17 @@ while IFS='|' read -r tool vfile arg; do
   raw=$(read_pkgmgr "$tool")
   [ -n "$raw" ] && add_source "package.json packageManager" "$(normalize "$tool" "$raw")"
 
-  raw=$(read_arg "$arg")
-  case "$(lines "$raw")" in
-    0) ;;
-    1) add_source "$DOCKERFILE ARG $arg" "$(normalize "$tool" "$raw")" ;;
-    *) note "$DOCKERFILE declares ARG $arg with conflicting defaults: $(printf '%s' "$raw" | tr '\n' ' ')" ;;
-  esac
+  # Each Dockerfile is its own source, labelled by name: with two of them the ✓ line lists both,
+  # and a mismatch says which file to fix rather than just "Dockerfile".
+  while IFS= read -r dockerfile; do
+    [ -n "$dockerfile" ] || continue
+    raw=$(read_arg "$dockerfile" "$arg")
+    case "$(lines "$raw")" in
+      0) ;;
+      1) add_source "$dockerfile ARG $arg" "$(normalize "$tool" "$raw")" ;;
+      *) note "$dockerfile declares ARG $arg with conflicting defaults: $(printf '%s' "$raw" | tr '\n' ' ')" ;;
+    esac
+  done <<<"$DOCKERFILES"
 
   # A floating mise spec is only worth mentioning when some other file does pin the tool —
   # on its own it is the standard's normal state, not a gap.

@@ -13,6 +13,11 @@
  * a missing element must fail with the test id it looked for, not with
  * `null.click is not a function` three frames down.
  *
+ * `openForm` takes the optional validator through as well, because the errors
+ * a form shows are the hook's own state: nothing outside `useFormModal` can
+ * put a message on a field, and a test that hand-mounted the form with an
+ * `errors` prop would be asserting on a wiring no user reaches.
+ *
  * Unlike `reactPanel.tsx` this settles on microtasks alone. These forms do no
  * I/O on mount — a pad with sounds would read them back out of IndexedDB, and
  * the suites using this pass none — so there is nothing here for a macrotask
@@ -23,7 +28,10 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
+import type {
+  FormErrors,
+  FormModalRenderProps,
+} from "@/hooks/modal/useFormModal";
 import { useFormModal } from "@/hooks/modal/useFormModal";
 import { useUIStore } from "@/store/uiStore";
 
@@ -46,11 +54,18 @@ export interface FormModalHarness {
   openForm<V extends Record<string, unknown>>(
     initialValues: V,
     renderForm: (props: FormModalRenderProps<V>) => React.ReactNode,
+    validate?: (values: V) => FormErrors<V>,
   ): OpenedForm<V>;
   /** Clicks the radio with this test id, failing loudly when it is absent. */
   chooseOption(testId: string): void;
   /** The value of the checked radio in a group, or null when none is checked. */
   checkedValueOf(groupTestId: string): string | null;
+  /**
+   * Renders a component into the container on its own, with no modal around
+   * it — for the case a form's own markup cannot show: a control used outside
+   * a `FormField`.
+   */
+  render(node: React.ReactNode): void;
   /** Empties the container without tearing the root down. */
   clear(): void;
   /** Unmounts, removes the container and closes the modal. */
@@ -73,6 +88,7 @@ export function mountFormModalHarness(): FormModalHarness {
     openForm<V extends Record<string, unknown>>(
       initialValues: V,
       renderForm: (props: FormModalRenderProps<V>) => React.ReactNode,
+      validate?: (values: V) => FormErrors<V>,
     ): OpenedForm<V> {
       const submitted: V[] = [];
 
@@ -83,6 +99,7 @@ export function mountFormModalHarness(): FormModalHarness {
             title: "Test",
             initialValues,
             renderForm,
+            validate,
             onSubmit: (values) => {
               submitted.push(values);
             },
@@ -126,6 +143,12 @@ export function mountFormModalHarness(): FormModalHarness {
         throw new Error(`${checked.length} radios checked in "${groupTestId}"`);
       }
       return checked[0]?.value ?? null;
+    },
+
+    render(node: React.ReactNode) {
+      act(() => {
+        root.render(node);
+      });
     },
 
     clear() {

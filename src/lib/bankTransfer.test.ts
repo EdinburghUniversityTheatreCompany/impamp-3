@@ -26,7 +26,7 @@ import { makeArchive } from "@/lib/testSupport/zipArchive";
 import type { PadConfiguration, PlaybackType } from "./db";
 import type { BankExport, BankExportPad } from "./bankTransfer";
 import type { TransferProgress } from "./importExport";
-import { TOTAL_PADS } from "./constants";
+import { MAX_BANKS, TOTAL_PADS } from "./constants";
 import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
 /**
@@ -48,7 +48,6 @@ const {
   writeBankIntoProfile,
 } = await import("./bankTransfer");
 const {
-  MAX_BANKS,
   addAudioFile,
   addProfile,
   cleanupOrphanedAudioFiles,
