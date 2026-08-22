@@ -86,3 +86,15 @@ API) was not taken: it means carrying two TypeScript installs and pinning the
 tooling's resolution, which is a lot of standing complexity to buy a compiler
 speedup this repo has not asked for. Worth revisiting only if `tsc` becomes a
 bottleneck before upstream support lands.
+
+## Re-checked 2026-08-22
+
+Both remaining deferrals were verified against the npm registry rather than
+assumed: `typescript-eslint@8.67.0` still peers `typescript: >=4.8.4 <6.1.0`,
+so TypeScript 7 is still refused, and `eslint-plugin-react@7.37.5` still tops
+out at `eslint: ^9.7`. Both hold.
+
+`file-selector` came off this list the same day: react-dropzone 20.1.1 moved
+its own dependency to `^5.0.0`, which inverted the pin — holding 4.1.0 became
+the thing that forked the tree. That was the written retry condition, so both
+moved together.

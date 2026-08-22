@@ -109,3 +109,36 @@ its owner deletes the invitation — but the next rule that wants to know
 Share acceptance is the feature: a share is offered, and grants nothing until
 the invitee takes it. A "leave this profile" action is the smaller half of it
 and could ship alone. Noticed while fixing the 08-22 review's 🟡 4.
+
+## A phone has no route to four things the keyboard does
+
+The portrait layout makes the board usable on a phone as a _convenience_
+device — the scope Mick set — and deliberately stops short of the affordances
+a performance device would need. Four actions have no touch route at all:
+
+- **Play the emergency sound** (`Enter`, round-robin over emergency banks).
+  No button, no gesture, nothing in the UI at all.
+- **Play the next armed track** (`F9`). `ArmedTracksPanel` has a per-row play
+  button, but "play the head of the queue" — the verb the panel's own help
+  text tells you to press F9 for — has no control.
+- **Arm a track** (Ctrl/Cmd+click, or Ctrl/Cmd+Enter in search). The chord
+  needs a modifier key, so it is unreachable by touch.
+- **Stop All and Fade Out All** exist _only_ as pads, at grid indices 23 and 35. There is no toolbar button for either, so the panic control is the same
+  size as every other pad and needs a scroll to reach.
+
+Two more that are touch-broken rather than merely absent:
+
+- **Pad reordering is desktop-only.** `Pad.tsx` uses HTML5 drag-and-drop
+  (`draggable`, `onDragStart`, `onDrop`), which does not fire on touch.
+- **Bank-tab reordering by touch is untested.** `@hello-pangea/dnd` registers
+  `useTouchSensor` by default and injects `touch-action: manipulation`, so it
+  should work — but the strip is `overflow-x-auto` and scroll-versus-lift
+  arbitration was never verified. `e2e-tests/bank-reorder.spec.ts` drives the
+  _keyboard_ sensor only.
+
+And one polish item: pads have no `:active` state and no tap-highlight
+suppression, so feedback is `hover:` only, which sticks after a tap.
+
+All of this becomes worth doing if the answer to "what is a phone for here"
+ever changes from convenience to performance. Noticed while building the
+portrait layout.
