@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { addOrReuseAudioFile } from "@/lib/db";
+import { addOrReuseAudioFile, withAudioImportInProgress } from "@/lib/db";
 import {
   notifyPadConfigsChanged,
   savePadConfiguration,
@@ -306,38 +306,46 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
         return;
       }
 
-      // Process each assignment
-      for (let i = 0; i < assignmentsToProcess.length; i++) {
-        const assignment = assignmentsToProcess[i];
-        if (!assignment.fileId) continue;
+      // Declared for the whole loop rather than per file. Each pair of writes
+      // opens a window in which the audio row is real and no pad names it,
+      // which is what the orphan sweep exists to delete, and a sixty-file
+      // folder opens sixty of them — the writers' half of the rule the
+      // deleters keep with `settleAudioImports()`. See
+      // `withAudioImportInProgress`.
+      await withAudioImportInProgress(async () => {
+        // Process each assignment
+        for (let i = 0; i < assignmentsToProcess.length; i++) {
+          const assignment = assignmentsToProcess[i];
+          if (!assignment.fileId) continue;
 
-        const file = fileMap.get(assignment.fileId);
-        if (!file) continue;
+          const file = fileMap.get(assignment.fileId);
+          if (!file) continue;
 
-        // A folder routinely holds one sting twice — `horn.wav` and the
-        // `horn (1).wav` a browser download made — so reuse by content hash
-        // rather than adding unconditionally.
-        const { id: audioFileId } = await addOrReuseAudioFile({
-          blob: file,
-          name: file.name,
-          type: file.type,
-        });
+          // A folder routinely holds one sting twice — `horn.wav` and the
+          // `horn (1).wav` a browser download made — so reuse by content hash
+          // rather than adding unconditionally.
+          const { id: audioFileId } = await addOrReuseAudioFile({
+            blob: file,
+            name: file.name,
+            type: file.type,
+          });
 
-        // Create pad configuration. The announcement is deliberately not
-        // per-pad: one import can write sixty of them, and every bump
-        // re-reads the bank.
-        await savePadConfiguration({
-          profileId,
-          bankId,
-          padIndex: assignment.padIndex,
-          audioFileIds: [audioFileId],
-          playbackType: "sequential",
-          name: assignment.fileName || file.name.replace(/\.[^/.]+$/, ""),
-        });
+          // Create pad configuration. The announcement is deliberately not
+          // per-pad: one import can write sixty of them, and every bump
+          // re-reads the bank.
+          await savePadConfiguration({
+            profileId,
+            bankId,
+            padIndex: assignment.padIndex,
+            audioFileIds: [audioFileId],
+            playbackType: "sequential",
+            name: assignment.fileName || file.name.replace(/\.[^/.]+$/, ""),
+          });
 
-        // Update progress
-        setImportProgress(((i + 1) / assignmentsToProcess.length) * 100);
-      }
+          // Update progress
+          setImportProgress(((i + 1) / assignmentsToProcess.length) * 100);
+        }
+      });
 
       // Complete import
       notifyPadConfigsChanged(profileId);
