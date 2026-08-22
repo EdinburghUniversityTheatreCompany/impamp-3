@@ -719,10 +719,40 @@ export async function keyboardDragTab(
   position: number,
   direction: "ArrowLeft" | "ArrowRight",
 ) {
-  await bankTabs(page).nth(position).focus();
+  const tab = await bankDragHandle(page, position);
+  await tab.focus();
   await page.keyboard.press("Space");
   await page.keyboard.press(direction);
   await page.keyboard.press("Space");
+}
+
+/**
+ * The bank tab at `position`, once it is actually a drag handle.
+ *
+ * `BankTabStrip` renders plain buttons until `BankTabsDraggable` — a lazily
+ * imported chunk, fetched from a `requestIdleCallback` — has landed, and only
+ * then swaps in the `DragDropContext`. On an idle machine that is a few
+ * milliseconds after paint and nobody notices. Under ten Playwright workers
+ * the browser is never idle, the callback is deferred, and a Space pressed
+ * before it lands is not a lift: it is Space on an ordinary `<button>`, so
+ * the arrow moves nothing and the drop Space moves nothing either. No error
+ * is reported and the order simply never changes, which reads as
+ * `reorderBanks` losing the write. It cost this suite two full-run failures
+ * in six runs, and one in a hundred repeats.
+ *
+ * Worse in the one spec that presses Space by hand rather than through
+ * `keyboardDragTab`: with no drag to swallow it, Space reaches the global
+ * shortcut and fades every sound out — which is the exact regression that
+ * spec exists to catch, arriving as a false positive.
+ *
+ * `data-rfd-drag-handle-draggable-id` is dnd's own mark on a wired handle, so
+ * this waits on the sensor being attached rather than on the DOM looking
+ * right.
+ */
+export async function bankDragHandle(page: Page, position: number) {
+  const tab = bankTabs(page).nth(position);
+  await expect(tab).toHaveAttribute("data-rfd-drag-handle-draggable-id", /./);
+  return tab;
 }
 
 /**
