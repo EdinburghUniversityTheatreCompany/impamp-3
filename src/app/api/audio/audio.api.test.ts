@@ -1077,8 +1077,14 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     const owner = signIn(1, { approved: true });
     const editor = signIn(2, { approved: true });
     const { hash } = await storeAudio(editor.token, "editors-sound", KB);
-    const profile = profileWith(owner.user.id, [hash!]);
+
+    // The editor publishes the sound onto the board, which is what records
+    // them as its adder. The owner cannot be the one who names it: an owner
+    // naming a hash only somebody else holds is indistinguishable from the
+    // attack in the sibling test above, and is refused for that reason.
+    const profile = profileWith(owner.user.id, []);
     upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+    await publish(profile.id, 1, [hash!], { sessionToken: editor.token });
 
     const response = await profileAudio(
       makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
@@ -1090,27 +1096,32 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     expect(response.status).toBe(200);
   });
 
-  it("refuses a sound a mere viewer of the profile happens to hold", async () => {
-    // The sibling above covers `role = 'editor'`; deleting that clause from
-    // `profileMayServeHash` left the whole suite green. A viewer cannot
-    // publish here, so a sound they merely hold is not "audio a collaborator
-    // uploaded to this board" — serving it is the escalation the clause
-    // closes, where reaching a profile as a viewer gets you any bytes you have
-    // a reference to through it.
-    const owner = signIn(1, { approved: true });
-    const viewer = signIn(2, { approved: true });
-    const { hash } = await storeAudio(viewer.token, "viewers-sound", KB);
-    const profile = profileWith(owner.user.id, [hash!]);
-    upsertEmailShare(profile.id, viewer.user.email, "viewer", owner.user.id);
+  it("refuses a sound a collaborator holds but did not put there, at any role", async () => {
+    // This case used to guard the `role = 'editor'` clause of an email-share
+    // branch that no longer exists — with the branch gone it passed for an
+    // unrelated reason and could not fail, which is worse than no test. It now
+    // guards what replaced it: a share grants access TO someone and is never
+    // evidence ABOUT what they hold. Both roles, because the distinction the
+    // old branch drew is exactly what turned out not to matter.
+    for (const role of ["viewer", "editor"] as const) {
+      const owner = signIn(1, { approved: true });
+      const other = signIn(2, { approved: true });
+      const { hash } = await storeAudio(other.token, `${role}s-sound`, KB);
 
-    const response = await profileAudio(
-      makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
-        sessionToken: owner.token,
-      }),
-      routeParams({ id: profile.id, hash: hash! }),
-    );
+      // The owner names it. Nobody who holds it ever attached it here, so
+      // there is no act to point at.
+      const profile = profileWith(owner.user.id, [hash!]);
+      upsertEmailShare(profile.id, other.user.email, role, owner.user.id);
 
-    expect(response.status).toBe(404);
+      const response = await profileAudio(
+        makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
+          sessionToken: owner.token,
+        }),
+        routeParams({ id: profile.id, hash: hash! }),
+      );
+
+      expect(response.status, `role=${role}`).toBe(404);
+    }
   });
 
   it("serves a sound a link-share editor added, to the owner and to them", async () => {

@@ -146,10 +146,27 @@ export function userHoldsReference(userId: number, hash: string): boolean {
  * own used to be enough to be handed that sound. The blob is the caller's
  * word; a reference row is the server's own record of who uploaded what.
  *
- * "Could have put it there" means the owner holds it, the person recorded as
- * having attached it to this profile holds it, or a current email-share editor
- * holds it. Restricting it to the owner alone would refuse an owner the sounds
- * their own collaborators added.
+ * "Could have put it there" means the owner holds it, or the person recorded
+ * as having attached it to this profile holds it. Restricting it to the owner
+ * alone would refuse an owner the sounds their own collaborators added.
+ *
+ * There used to be a third way to say yes — "a current email-share editor
+ * holds it" — and it was an authorization bypass. Inviting an email is
+ * unilateral: `upsertEmailShare` writes the row on the inviter's say-so, with
+ * no acceptance step. So the owner of any profile could manufacture the grant:
+ * name a hash you do not hold, invite the person who does, and the bucket
+ * serves it. In practice that let anyone who had ever been shown a board
+ * re-obtain its sounds after their share was revoked, since they kept the
+ * hashes. Gating the branch on `added_by IS NULL` looked like a fix and was
+ * not: an anonymous link-share write records no adder (`route.ts` passes
+ * `loaded.user?.id ?? null`), and an attacker can make one of those on their
+ * own profile.
+ *
+ * The cost is that a row with no recorded adder is now refused even to the
+ * owner — migration 2's backfill, and anything published through an anonymous
+ * link share. `reindexProfileAudio` is INSERT OR IGNORE, so a re-save does not
+ * fill the column in. Serving those safely needs a grant the owner cannot
+ * manufacture, which means share acceptance. See audioShareGrant.test.ts.
  *
  * The `profile_audio.added_by` branch is what makes the answer stable. Deriving
  * it from the live share table alone was wrong twice: a link share has
@@ -181,24 +198,12 @@ export function profileMayServeHash(
                 FROM profile_audio pa
                WHERE pa.profile_id = ? AND pa.hash = ? AND pa.added_by IS NOT NULL
             )
-            OR r.user_id IN (
-              -- Joined on the raw column, not lower(trim(u.email)): an
-              -- expression over an indexed column cannot use the index, so
-              -- this scanned every user on every hosted-audio download. Both
-              -- sides are already normalised on write (users.ts, shares.ts),
-              -- so the functions bought nothing.
-              SELECT u.id
-                FROM users u
-                JOIN profile_shares s ON s.email = u.email
-               WHERE s.profile_id = ? AND s.role = 'editor'
-            )
           )
         LIMIT 1`,
       hash,
       ownerId,
       profileId,
       hash,
-      profileId,
     ) !== undefined
   );
 }
