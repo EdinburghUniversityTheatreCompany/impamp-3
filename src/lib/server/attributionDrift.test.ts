@@ -8,17 +8,26 @@
  * to the owner. Who holds no reference to it: 404 on their own board, and the
  * 409 that stops the real holder deleting the bytes flipped to "safe".
  *
- * The row cannot simply outlive the blob, because `profileNamesHash` reads the
- * same table to gate downloads — a row kept past its hash would widen that
- * gate. So the attribution is genuinely lost on a round trip, and the two
- * properties worth having are the ones asserted here: it is never *wrong*, and
- * the holder's next save puts it back.
+ * The `profile_audio` row cannot simply outlive the blob, because
+ * `profileNamesHash` reads that table to gate downloads and a row kept past
+ * its hash would widen the gate. So the attribution is kept somewhere else
+ * instead — `profile_audio_adders`, which the rebuild does not touch and no
+ * download consults.
+ *
+ * That matters because "lost on a round trip" was never benign. It was
+ * described as failing closed and self-healing, and it does neither on the
+ * delete side: a NULL `added_by` is invisible to
+ * `deletingHashWouldSilenceAProfile`, so the 409 that stops the real holder
+ * deleting bytes a board still plays answers "safe to delete". Take that
+ * offer and the object is gone, no holder remains, and the "a holder next
+ * saves" repair can never fire. It hardened rather than healed — which is the
+ * case pinned at the bottom of this file.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, execute, getDb, queryOne } from "./db";
 import { upsertUserFromGoogle } from "./users";
 import { createProfile, updateProfile } from "./profiles";
-import { profileMayServeHash } from "./audio";
+import { deletingHashWouldSilenceAProfile, profileMayServeHash } from "./audio";
 
 beforeEach(() => {
   closeDb();
@@ -103,11 +112,31 @@ describe("attribution across a round trip", () => {
     save(profileId, 3, [HASH], owner.id);
 
     // Never the owner, who does not hold it — that is the state nothing could
-    // recover from. NULL instead: unservable, and repairable by the one act
-    // that is evidence, a holder saving. The window between the two is the
-    // residual, and it fails closed.
-    expect(adder(profileId)).toBeNull();
-    expect(profileMayServeHash(profileId, owner.id, HASH)).toBe(false);
+    // recover from. It is the helper, carried across the round trip by
+    // `profile_audio_adders`, because the fact worth keeping is who was
+    // *witnessed* attaching the sound and that is not a fact the rebuild gets
+    // to forget.
+    expect(adder(profileId)).toBe(helper.id);
+    expect(profileMayServeHash(profileId, owner.id, HASH)).toBe(true);
+  });
+
+  it("cannot be manufactured by an owner naming a hash nobody attached", () => {
+    // The reason the carried-forward value is safe to trust: there is nothing
+    // to carry unless somebody holding the bytes was seen putting them here.
+    // An owner naming a stranger's hash writes no memory and reads none back.
+    const owner = user("o-x", "owner-x@example.com");
+    const stranger = user("s-x", "stranger-x@example.com");
+    giveReference(stranger.id);
+
+    const profile = createProfile({
+      ownerId: owner.id,
+      name: "B",
+      data: { audioFiles: [] },
+    } as never);
+    save(profile.id, 1, [HASH], owner.id);
+
+    expect(adder(profile.id)).toBeNull();
+    expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(false);
   });
 
   it("recovers when the holder saves again", () => {
@@ -146,5 +175,30 @@ describe("attribution across a round trip", () => {
 
     expect(adder(profileId)).toBe(second.id);
     expect(profileMayServeHash(profileId, owner.id, HASH)).toBe(true);
+  });
+
+  it("still refuses the holder's delete after a round trip", () => {
+    // The half of the old residual that destroyed data. `added_by` went NULL,
+    // which made the row invisible to `deletingHashWouldSilenceAProfile` — so
+    // the holder was told the bytes a live board still names were safe to
+    // delete. Nothing recovers from taking that offer: the object is removed,
+    // no holder is left, and the repair the design leans on needs a holder.
+    const { owner, helper, profileId } = boardWithCollaboratorsSound("d");
+    expect(deletingHashWouldSilenceAProfile(helper.id, HASH)).toBe(true);
+
+    save(profileId, 2, [], owner.id);
+    save(profileId, 3, [HASH], owner.id);
+
+    expect(deletingHashWouldSilenceAProfile(helper.id, HASH)).toBe(true);
+  });
+
+  it("allows the delete once the board really stops naming the sound", () => {
+    // The other direction, so the guard above is not simply "always true":
+    // remembering who attached a sound must not pin their bytes after the
+    // board it was on has let it go.
+    const { helper, profileId, owner } = boardWithCollaboratorsSound("e");
+    save(profileId, 2, [], owner.id);
+
+    expect(deletingHashWouldSilenceAProfile(helper.id, HASH)).toBe(false);
   });
 });

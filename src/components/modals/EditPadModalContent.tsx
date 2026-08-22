@@ -39,10 +39,21 @@ const EditPadModalContent: React.FC<EditPadModalContentProps> = ({
     // rather than `withAudioImportInProgress`.
     //
     // The cost is that an audio deleter started while the editor is open waits
-    // for it to close. Nothing reachable pays it: every deleter in the app is
-    // a button on the profile manager or the editor's own discard, and
-    // `uiStore` holds exactly one modal, so the profile manager cannot be open
-    // at the same time as this.
+    // for it to close — on `settleAudioImports`, a `while` loop with no
+    // timeout, so paying it hangs the tab silently and for ever. Nothing
+    // reachable pays it: every deleter in the app is a button on the profile
+    // manager or the editor's own discard, and `openProfileManager` closes any
+    // open modal before it opens.
+    //
+    // That last clause is the load-bearing one and it is deliberate, not
+    // incidental. The profile manager is the one overlay rendered outside the
+    // modal system — `isProfileManagerOpen` is in `profileStore`, `isModalOpen`
+    // in `uiStore`, and `useIsAnyOverlayOpen` ORs them precisely because
+    // neither store watches the other. This used to read "`uiStore` holds
+    // exactly one modal, so the profile manager cannot be open at the same
+    // time as this", which was simply not true of a store the profile manager
+    // is not in. What actually separated them was `BackupReminderNotification`
+    // sitting at `z-40` under `Modal`'s `z-50`.
     const releaseAudioHold = beginAudioImport();
     return () => {
       // First, and in the same synchronous block as the discard below.

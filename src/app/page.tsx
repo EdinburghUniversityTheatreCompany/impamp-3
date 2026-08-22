@@ -7,6 +7,7 @@ import BankTabStrip from "@/components/BankTabStrip";
 import ActiveTracksPanel from "@/components/ActiveTracksPanel";
 import ArmedTracksPanel from "@/components/ArmedTracksPanel";
 import PlaybackAnnouncer from "@/components/PlaybackAnnouncer";
+import WelcomeTourOffer from "@/components/WelcomeTourOffer";
 import {
   HelpButton,
   DeleteMoveModeButton,
@@ -377,6 +378,7 @@ export default function Home() {
           the panels on purpose — ArmedTracksPanel unmounts when its queue
           empties, and that is the transition most worth announcing. */}
       <PlaybackAnnouncer />
+      <WelcomeTourOffer />
 
       {/* Tracks panels at the bottom of the screen */}
       {/* Sticky, not fixed. A fixed footer is outside flow, so the space it

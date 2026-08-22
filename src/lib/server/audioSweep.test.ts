@@ -385,6 +385,56 @@ describe("sweepIfDue", () => {
     expect(await due(NOW + 3 * RESUME_SWEEP_INTERVAL_MS)).toBeNull();
   });
 
+  it("lets only one of two overlapping callers sweep", async () => {
+    // The two live callers can fire together by construction: the 5-minute
+    // tick and the admin page. Both passes would share `resumeAfterKey`, so
+    // each clobbers the other's cursor as well as doing the work twice.
+    //
+    // The claim being gated is the *placement* of the throttle, not its
+    // arithmetic — moving `nextSweepAt = …` after the await leaves every other
+    // test in this file green while both callers sweep.
+    orphan(30);
+    let admit!: () => void;
+    const held = new Promise<void>((resolve) => (admit = resolve));
+    const slow = {
+      ...store,
+      list: async (options: Parameters<typeof store.list>[0]) => {
+        await held;
+        return store.list(options);
+      },
+    };
+
+    // Started together, before either can finish.
+    const first = sweepIfDue({ store: slow, config }, NOW);
+    const second = sweepIfDue({ store: slow, config }, NOW);
+    admit();
+
+    expect(await second).toBeNull();
+    expect(await first).toMatchObject({ removed: 1 });
+  });
+
+  it("holds the throttle after a failure instead of retrying every call", async () => {
+    // The other half of the same comment. A bucket that is down is asked once
+    // an hour, not once per admin page view — the throttle is claimed before
+    // the work, so a throw leaves it in place.
+    let listCalls = 0;
+    const broken = {
+      ...store,
+      list: async () => {
+        listCalls++;
+        throw new Error("bucket unreachable");
+      },
+    };
+
+    expect(await sweepIfDue({ store: broken, config }, NOW)).toBeNull();
+    expect(
+      await sweepIfDue({ store: broken, config }, NOW + 60_000),
+    ).toBeNull();
+
+    // Both answered null; only the count says the second never ran.
+    expect(listCalls).toBe(1);
+  });
+
   it("reports null rather than throwing when the bucket is unreachable", async () => {
     // This hangs off the admin page. A bucket that is down must not take the
     // one view of storage down with it.

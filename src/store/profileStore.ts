@@ -34,6 +34,7 @@ import { positionOfBank } from "@/lib/bankOrder";
 import { isTokenExpiredOrExpiring, validateAuthState } from "@/lib/authUtils";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { syncStatusActions } from "@/store/syncStatusStore";
+import { useUIStore } from "@/store/uiStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 import { getSyncState } from "@/lib/syncState";
 
@@ -939,7 +940,27 @@ export const useProfileStore = create<ProfileState>()(
         },
 
         // Profile manager UI state
-        openProfileManager: () => set({ isProfileManagerOpen: true }),
+        openProfileManager: () => {
+          // The profile manager is the one overlay rendered outside the modal
+          // system, so nothing about opening it closed a modal — the two flags
+          // live in different stores and neither watches the other. What kept
+          // them apart was a z-index: the only opener reachable while a modal
+          // is up sits at `z-40` under `Modal`'s `z-50` overlay, so the click
+          // dismisses the modal instead of arriving here.
+          //
+          // That is an accident, and an expensive one to rely on. Every audio
+          // deleter in this app is a button on this overlay, and the pad
+          // editor holds an import registration from mount to unmount; a
+          // deleter reached while that hold is open waits on
+          // `settleAudioImports`, which is a `while` loop with no timeout. So
+          // one raised z-index, one toast with a shortcut, or one
+          // programmatic call, and the tab hangs silently and for ever.
+          //
+          // Making it true is cheaper than guarding it: the modal closes
+          // first, which is what a click on the overlay already did.
+          useUIStore.getState().closeModal();
+          set({ isProfileManagerOpen: true });
+        },
         closeProfileManager: () => set({ isProfileManagerOpen: false }),
 
         // Fadeout duration management

@@ -42,6 +42,7 @@ const SHIPPED_MIGRATION_HASHES = [
   "32886b1e0bc1824f08238e3a29d357cfc7376eea42b0cdbc316cff529a3441ea", // 4 — drop sessions_user_idx
   "44227e17e1768785fcaf45a687169f9a86c996bbba2c1b4f2b503591140e7eaf", // 5 — profile_audio.added_by
   "cb3ac3046a145c5e6286ccc9b1882289dc4c372db8cb4746431b2123ad661f2c", // 6 — audio_pending_uploads
+  "a3221def92ea69da11816f26f081c5e89608df4cd70a0b06d714a74999e2ca28", // 7 — profile_audio_adders
 ];
 
 const hashOf = (sql: string) =>

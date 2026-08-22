@@ -3,6 +3,7 @@ import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProfileStore } from "@/store/profileStore";
 import { syncStatusActions, useSyncStatusStore } from "@/store/syncStatusStore";
+import { useUIStore } from "@/store/uiStore";
 import type { Profile } from "@/lib/db";
 
 const mocks = vi.hoisted(() => ({
@@ -360,5 +361,27 @@ describe("bank selection", () => {
     useProfileStore.getState().setCurrentPageIndex(15);
 
     expect(useProfileStore.getState().currentBankId).toBe("0");
+  });
+});
+
+describe("opening the profile manager", () => {
+  it("closes any open modal first", () => {
+    // Not cosmetic. Every audio deleter in the app is a button on this
+    // overlay, and the pad editor holds an import registration from mount to
+    // unmount; a deleter reached while that hold is open waits on
+    // `settleAudioImports`, a `while` loop with no timeout, so the tab hangs
+    // silently and for ever.
+    //
+    // The two flags live in different stores and neither watches the other,
+    // so what used to keep them apart was a z-index — the only opener
+    // reachable while a modal is up renders under `Modal`'s overlay. This is
+    // the same guarantee, written down instead of arranged.
+    useUIStore.getState().openModal({ title: "Edit Pad", content: null });
+    expect(useUIStore.getState().isModalOpen).toBe(true);
+
+    state().openProfileManager();
+
+    expect(useUIStore.getState().isModalOpen).toBe(false);
+    expect(state().isProfileManagerOpen).toBe(true);
   });
 });
