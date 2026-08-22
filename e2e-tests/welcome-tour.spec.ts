@@ -21,7 +21,7 @@ import {
  */
 test.describe("first-use tour", () => {
   test("greets a brand-new board, and does not come back", async ({ page }) => {
-    await gotoApp(page);
+    await gotoApp(page, { showWelcomeTour: true });
 
     const tour = page.getByTestId("welcome-tour");
     await expect(tour).toBeVisible();
@@ -47,7 +47,7 @@ test.describe("first-use tour", () => {
   });
 
   test("stays away from a board that already has sounds", async ({ page }) => {
-    await gotoApp(page);
+    await gotoApp(page, { showWelcomeTour: true });
 
     // Dismiss the tour this first load legitimately offers, then put a sound
     // on the board and clear the flag — so the only thing keeping it away on
