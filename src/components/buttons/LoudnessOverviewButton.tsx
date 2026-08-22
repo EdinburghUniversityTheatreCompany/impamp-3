@@ -10,7 +10,7 @@
 
 import React from "react";
 import { openLoudnessOverviewModal } from "@/lib/uiUtils";
-import { SlidersIcon } from "@/components/icons";
+import SlidersIcon from "@/components/icons/SlidersIcon";
 
 interface LoudnessOverviewButtonProps {
   className?: string;

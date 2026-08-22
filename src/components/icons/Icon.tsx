@@ -18,6 +18,14 @@
  * menu a coherent set of 24px outlined ones, and unifying across them would
  * make each set inconsistent to fix a duplication that is only skin-deep.
  *
+ * There is deliberately no barrel here — import each glyph from its own
+ * module. A `components/icons/index.ts` re-exporting all twenty was the first
+ * shape of this directory and it put all twenty into one shared chunk that
+ * every route loads: measured, the `/_not-found` page grew 5.1 KB raw for
+ * icons it does not render, and the Drive open page carried the loudness
+ * sliders. This is an offline-first PWA whose first load is a real constraint,
+ * so the extra import line per glyph is the cheaper half of that trade.
+ *
  * @module components/icons/Icon
  */
 

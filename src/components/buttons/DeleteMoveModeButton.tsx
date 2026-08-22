@@ -10,7 +10,7 @@
 
 import React from "react";
 import { useToggleMode } from "@/hooks/useToggleMode";
-import { TrashMoveIcon } from "@/components/icons";
+import TrashMoveIcon from "@/components/icons/TrashMoveIcon";
 
 interface DeleteMoveModeButtonProps {
   className?: string;

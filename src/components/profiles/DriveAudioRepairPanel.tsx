@@ -30,7 +30,7 @@
 
 import { useState } from "react";
 import type { Profile } from "@/lib/db";
-import { SpinnerIcon } from "@/components/icons";
+import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
 export default function DriveAudioRepairPanel({
   profiles,

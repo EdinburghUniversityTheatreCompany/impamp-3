@@ -5,13 +5,11 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useProfileStore } from "@/store/profileStore";
 import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
-import {
-  CheckIcon,
-  GoogleIcon,
-  InfoCircleIcon,
-  SpinnerIcon,
-  XIcon,
-} from "@/components/icons";
+import CheckIcon from "@/components/icons/CheckIcon";
+import GoogleIcon from "@/components/icons/GoogleIcon";
+import InfoCircleIcon from "@/components/icons/InfoCircleIcon";
+import SpinnerIcon from "@/components/icons/SpinnerIcon";
+import XIcon from "@/components/icons/XIcon";
 
 const PENDING_FOLDER_KEY = "pendingDriveOpenFolderId";
 

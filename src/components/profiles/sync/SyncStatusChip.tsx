@@ -13,7 +13,7 @@
 
 import { formatDistanceToNow } from "date-fns";
 import { syncChipText, type SyncState } from "@/lib/syncState";
-import { ChevronDownIcon } from "@/components/icons";
+import ChevronDownIcon from "@/components/icons/ChevronDownIcon";
 
 interface SyncStatusChipProps {
   state: SyncState;

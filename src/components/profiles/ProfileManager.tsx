@@ -24,7 +24,7 @@ import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useShallow } from "zustand/react/shallow";
-import { XIcon } from "@/components/icons";
+import XIcon from "@/components/icons/XIcon";
 
 /**
  * An ImpAmp share link, if that is what this is.

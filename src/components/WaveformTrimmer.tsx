@@ -32,7 +32,7 @@ import {
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useProfileStore } from "@/store/profileStore";
-import { XIcon } from "@/components/icons";
+import XIcon from "@/components/icons/XIcon";
 
 interface WaveformTrimmerProps {
   audioFileId: number;

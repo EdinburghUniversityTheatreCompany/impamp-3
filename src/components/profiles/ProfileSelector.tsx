@@ -3,12 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { syncTargetLabel } from "@/lib/syncState";
-import {
-  CheckSolidIcon,
-  ChevronDownIcon,
-  PencilIcon,
-  UserIcon,
-} from "@/components/icons";
+import CheckSolidIcon from "@/components/icons/CheckSolidIcon";
+import ChevronDownIcon from "@/components/icons/ChevronDownIcon";
+import PencilIcon from "@/components/icons/PencilIcon";
+import UserIcon from "@/components/icons/UserIcon";
 
 export default function ProfileSelector() {
   // Per-field: this sits in the header, so a bare subscription re-rendered it

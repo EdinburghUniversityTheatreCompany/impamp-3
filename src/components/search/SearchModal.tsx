@@ -16,7 +16,8 @@ import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel, hasArmModifier } from "@/lib/platform";
 import { extractPadPlaybackSettings } from "@/lib/db";
-import { MagnifierIcon, XIcon } from "@/components/icons";
+import MagnifierIcon from "@/components/icons/MagnifierIcon";
+import XIcon from "@/components/icons/XIcon";
 
 interface SearchModalProps {
   isOpen: boolean;

@@ -14,7 +14,7 @@ import { usePlaybackStore, groupPlaybackByPad } from "@/store/playbackStore";
 import { usePlaybackSettings } from "@/hooks/usePlaybackSettings";
 import PanelHeader from "./shared/PanelHeader";
 import PadTrackGroup from "./shared/PadTrackGroup";
-import { GearIcon } from "@/components/icons";
+import GearIcon from "@/components/icons/GearIcon";
 
 /**
  * Panel component that displays currently playing tracks

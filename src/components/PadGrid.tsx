@@ -27,7 +27,7 @@ import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
 import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
-import { PlusIcon } from "@/components/icons";
+import PlusIcon from "@/components/icons/PlusIcon";
 
 // Stable no-op handlers for the special pads (no edit or drop actions)
 const noopClick = () => {};

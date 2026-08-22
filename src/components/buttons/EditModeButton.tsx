@@ -10,7 +10,7 @@
 
 import React from "react";
 import { useToggleMode } from "@/hooks/useToggleMode";
-import { PencilFillIcon } from "@/components/icons";
+import PencilFillIcon from "@/components/icons/PencilFillIcon";
 
 interface EditModeButtonProps {
   className?: string;

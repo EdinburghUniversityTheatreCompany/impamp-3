@@ -25,7 +25,7 @@
 import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
 import { useProfileStore } from "@/store/profileStore";
-import { SpinnerIcon } from "@/components/icons";
+import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
 /**
  * What the panel's per-row state is keyed on.

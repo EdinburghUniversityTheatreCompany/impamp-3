@@ -21,7 +21,7 @@
  */
 
 import { useState } from "react";
-import { SpinnerIcon } from "@/components/icons";
+import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
 export default function OrphanedAudioPanel() {
   // Orphan cleanup state

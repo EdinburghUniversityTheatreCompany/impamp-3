@@ -12,7 +12,7 @@ import React from "react";
 import { useSearchContext } from "@/components/search";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel } from "@/lib/platform";
-import { MagnifierFillIcon } from "@/components/icons";
+import MagnifierFillIcon from "@/components/icons/MagnifierFillIcon";
 
 interface SearchButtonProps {
   className?: string;

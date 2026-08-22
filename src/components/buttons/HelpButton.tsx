@@ -10,7 +10,7 @@
 
 import React from "react";
 import { openHelpModal } from "@/lib/uiUtils";
-import { QuestionCircleIcon } from "@/components/icons";
+import QuestionCircleIcon from "@/components/icons/QuestionCircleIcon";
 
 interface HelpButtonProps {
   className?: string;

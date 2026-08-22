@@ -13,12 +13,10 @@ import React from "react";
 import { formatTime } from "@/utils/formatters";
 import TrackProgressBar from "./TrackProgressBar";
 import { useTrackControls } from "@/hooks/useTrackControls";
-import {
-  CheckIcon,
-  FadeOutIcon,
-  PlayCircleIcon,
-  XIcon,
-} from "@/components/icons";
+import CheckIcon from "@/components/icons/CheckIcon";
+import FadeOutIcon from "@/components/icons/FadeOutIcon";
+import PlayCircleIcon from "@/components/icons/PlayCircleIcon";
+import XIcon from "@/components/icons/XIcon";
 
 interface TrackItemProps {
   /**

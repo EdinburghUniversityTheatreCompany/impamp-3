@@ -2,7 +2,7 @@
 
 import React, { useEffect, useId, useRef } from "react";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
-import { XIcon } from "@/components/icons";
+import XIcon from "@/components/icons/XIcon";
 
 /**
  * Everything the browser would put in the tab order.

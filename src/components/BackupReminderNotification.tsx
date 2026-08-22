@@ -3,7 +3,7 @@
 import React from "react";
 import { useBackupReminders } from "@/hooks/useBackupReminders";
 import { useProfileStore } from "@/store/profileStore";
-import { WarningTriangleIcon } from "@/components/icons";
+import WarningTriangleIcon from "@/components/icons/WarningTriangleIcon";
 
 /**
  * Displays a notification banner if any profiles are due for a backup reminder.
