@@ -1,5 +1,17 @@
+import { MAX_BANKS } from "./constants";
+
 /**
- * Converts a UI bank number to an internal zero-based index (0-19).
+ * The position of bank 10, which is the one bank with two spellings.
+ *
+ * A property of the digit row rather than of the cap: there are ten number
+ * keys, and the tenth is labelled "0". Deliberately not derived from
+ * `MAX_BANKS` — raising the cap to 30 would not move it, and tying the two
+ * together is how a keyboard quirk gets mistaken for a capacity rule.
+ */
+const BANK_TEN_INDEX = 9;
+
+/**
+ * Converts a UI bank number to an internal zero-based index.
  *
  * Bank 10 has two accepted spellings: `0`, because the "0" digit key is what
  * a person presses for it, and literal `10`, because that is what
@@ -9,33 +21,35 @@
  * position it started with. Accepting both here, once, is what keeps that
  * translation from being re-implemented (and re-forgotten) at each call site.
  *
- * @param bankNumber The bank number as displayed/entered in the UI (1-9, 0 or 10 for bank 10, 11-20).
+ * The upper bound is `MAX_BANKS` and is read, not written out. Both bounds
+ * used to be literals (`bankNumber <= 20`, `index <= 19`) beside a constant
+ * that already said 20, so raising the cap meant editing `db.ts` and then
+ * remembering these; `bankUtils.test.ts` narrows the constant and re-imports
+ * to prove they follow it.
+ *
+ * @param bankNumber The bank number as displayed/entered in the UI (1-9, 0 or 10 for bank 10, 11-MAX_BANKS).
  * @returns The internal zero-based index, or -1 if the bank number is invalid.
  */
 export const convertBankNumberToIndex = (bankNumber: number): number => {
-  // Map bank 10 — spelled as the "0" key or as the literal 10 — to internal index 9
-  if (bankNumber === 0 || bankNumber === 10) return 9;
-  // Map banks 1-9 to indices 0-8
-  if (bankNumber >= 1 && bankNumber <= 9) return bankNumber - 1;
-  // Map banks 11-20 to indices 10-19
-  if (bankNumber >= 11 && bankNumber <= 20) return bankNumber - 1;
+  // The keyboard's 0-for-10, and the only place the two spellings meet.
+  if (bankNumber === 0) return BANK_TEN_INDEX;
+  // Every other bank number is its position plus one, bank 10 included.
+  if (bankNumber >= 1 && bankNumber <= MAX_BANKS) return bankNumber - 1;
   // Return -1 for any other invalid input
   return -1;
 };
 
 /**
- * Converts an internal zero-based index (0-19) to a UI bank number (1-20).
- * Note: Bank 10 is represented as 10 in the UI.
+ * Converts an internal zero-based index to a UI bank number (1-MAX_BANKS).
+ *
+ * This direction has no quirk: bank 10 is spelled 10 here, because only a
+ * keypress spells it 0 and nothing hands a keypress back to the user.
+ *
  * @param index The internal zero-based index.
  * @returns The bank number for display in the UI, or -1 if the index is invalid.
  */
 export const convertIndexToBankNumber = (index: number): number => {
-  // Map indices 0-8 to banks 1-9
-  if (index >= 0 && index <= 8) return index + 1;
-  // Map index 9 to bank 10
-  if (index === 9) return 10;
-  // Map indices 10-19 to banks 11-20
-  if (index >= 10 && index <= 19) return index + 1;
+  if (index >= 0 && index < MAX_BANKS) return index + 1;
   // Return -1 for any other invalid input
   return -1;
 };

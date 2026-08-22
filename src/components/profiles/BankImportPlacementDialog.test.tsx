@@ -29,6 +29,7 @@ import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mountPanel, type MountedPanel } from "@/lib/testSupport/reactPanel";
+import { MAX_BANKS } from "@/lib/constants";
 // Type-only, so they are erased and cannot defeat the import ordering above.
 import type {
   BankImportResult,
@@ -43,13 +44,8 @@ vi.doMock("@/lib/audio/loudness/pipeline", () => ({
   analyseAndStore: vi.fn(async () => null),
 }));
 
-const {
-  MAX_BANKS,
-  addAudioFile,
-  addProfile,
-  upsertPadConfiguration,
-  upsertPageMetadata,
-} = await import("@/lib/db");
+const { addAudioFile, addProfile, upsertPadConfiguration, upsertPageMetadata } =
+  await import("@/lib/db");
 const BankImportPlacementDialog = (
   await import("@/components/profiles/BankImportPlacementDialog")
 ).default;

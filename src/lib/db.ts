@@ -5,6 +5,7 @@ import type {
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
+import { MAX_BANKS } from "./constants";
 import {
   migrateToV7,
   migratedBankId,
@@ -136,8 +137,6 @@ export type PlaybackType = "sequential" | "random" | "round-robin";
  */
 export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
 
-/** The hard cap on banks per profile. Position 0-19 maps to bank 1-20. */
-export const MAX_BANKS = 20;
 /** The banks every profile starts with, so every tab has an identity. */
 export const DEFAULT_BANK_COUNT = 10;
 

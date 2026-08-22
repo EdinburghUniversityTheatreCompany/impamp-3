@@ -13,8 +13,8 @@ import {
   DEFAULT_NORMALISATION,
   NormalisationSettings,
   PageMetadata,
-  MAX_BANKS,
 } from "@/lib/db";
+import { MAX_BANKS } from "@/lib/constants";
 // Import/export utilities will be loaded dynamically to reduce bundle size
 // Types are imported separately for type checking
 import type {
