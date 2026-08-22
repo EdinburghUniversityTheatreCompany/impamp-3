@@ -27,6 +27,7 @@ import { ModalType } from "@/components/modals/modalRegistry";
 import { usePadLoadingState } from "@/store/loadingStore";
 import { PadConfiguration } from "@/lib/db";
 import { useEffect } from "react";
+import { PlusIcon } from "@/components/icons";
 
 // Stable no-op handlers for the special pads (no edit or drop actions)
 const noopClick = () => {};
@@ -462,20 +463,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             onClick={handleOpenBulkImport}
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md flex items-center"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5 mr-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
+            <PlusIcon className="h-5 w-5 mr-2" />
             Bulk Import
           </button>
         </div>

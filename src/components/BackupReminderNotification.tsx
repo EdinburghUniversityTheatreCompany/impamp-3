@@ -3,6 +3,7 @@
 import React from "react";
 import { useBackupReminders } from "@/hooks/useBackupReminders";
 import { useProfileStore } from "@/store/profileStore";
+import { WarningTriangleIcon } from "@/components/icons";
 
 /**
  * Displays a notification banner if any profiles are due for a backup reminder.
@@ -25,21 +26,7 @@ export default function BackupReminderNotification() {
       className="fixed top-4 left-1/2 transform -translate-x-1/2 z-40 w-auto max-w-md p-4 bg-yellow-100 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-700 rounded-md shadow-lg flex items-center space-x-4" // Changed z-50 to z-40
       role="alert"
     >
-      <svg
-        className="h-6 w-6 text-yellow-600 dark:text-yellow-400 flex-shrink-0"
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-        />
-      </svg>
+      <WarningTriangleIcon className="h-6 w-6 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
       <div className="flex-grow">
         <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
           Backup Recommended
