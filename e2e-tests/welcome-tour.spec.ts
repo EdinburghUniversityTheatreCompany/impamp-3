@@ -101,3 +101,54 @@ test.describe("first-use tour", () => {
     await expect(page.getByTestId("welcome-tour")).toBeHidden();
   });
 });
+
+test.describe("where the tour is offered", () => {
+  test("stays off a share link, which is where new users actually arrive", async ({
+    page,
+  }) => {
+    // A brand-new device: nothing marks the tour seen, and no profile has any
+    // configured pads — both halves of the gate are satisfied. They were also
+    // satisfied on every other route, because the offer lived in
+    // `ClientSideInitializer` and the root layout mounts that everywhere. The
+    // first thing a new user does with a shared board is open its link, so
+    // this page is the most likely place in the app to meet both conditions.
+    //
+    // `Modal`'s overlay is `fixed inset-0 z-50`, so the tour did not appear
+    // beside this page's controls — it appeared over them.
+    await page.goto("/server/open");
+
+    // Wait for the app to have an active profile, which is the condition the
+    // offer is waiting on too. Its mount hook is written synchronously with
+    // hydration, so by the time this resolves the offer has either mounted or
+    // does not exist on this route — and absence means something.
+    //
+    // Asserting on the modal alone does not: `toHaveCount(0)` is equally true
+    // of a tour that simply has not finished its pad-count read, so that
+    // version of this test passed with the offer mounted on every route.
+    await page.waitForFunction(
+      () =>
+        (
+          window as unknown as {
+            __profileStore?: { getState(): { activeProfileId: number | null } };
+          }
+        ).__profileStore?.getState().activeProfileId != null,
+    );
+
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { __impampWelcomeTourMounted?: boolean })
+            .__impampWelcomeTourMounted ?? false,
+      ),
+    ).toBe(false);
+    await expect(page.getByTestId("welcome-tour")).toHaveCount(0);
+    await expect(page.locator(".custom-modal-overlay")).toHaveCount(0);
+  });
+
+  test("still greets the board itself", async ({ page }) => {
+    // The other direction, so the test above cannot pass by the tour being
+    // broken everywhere.
+    await page.goto("/");
+    await expect(page.getByTestId("welcome-tour")).toBeVisible();
+  });
+});
