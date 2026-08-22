@@ -2538,8 +2538,33 @@ export async function findMissingAudioFiles(): Promise<MissingAudioFile[]> {
   return results;
 }
 
-// Replace a missing audio file reference with a new file
+/**
+ * Replaces a missing audio file reference with a new file.
+ *
+ * Declared to the audio-import register for the whole of its work, because it
+ * is the shape the register exists for: the audio row and the pad naming it
+ * are written in two transactions, and in between the row is referenced by
+ * nothing at all. That is what the orphan sweep deletes and what
+ * `deleteUnreferencedAudioFiles` deletes, and reuse makes it worse rather than
+ * better — `addOrReuseAudioFile` routinely hands this function a row that
+ * already existed and that some deleter is already holding a candidate list
+ * for. `MissingAudioPanel` and `OrphanedAudioPanel` are rendered on the same
+ * Maintenance tab, so the deleter is not behind a modal: it is the button
+ * above. See `withAudioImportInProgress`, and `db.replaceMissingRace.test.ts`.
+ */
 export async function replaceMissingAudioFile(
+  profileId: number,
+  bankId: string,
+  padIndex: number,
+  missingAudioFileId: number,
+  file: File,
+): Promise<void> {
+  return withAudioImportInProgress(() =>
+    swapMissingAudioFile(profileId, bankId, padIndex, missingAudioFileId, file),
+  );
+}
+
+async function swapMissingAudioFile(
   profileId: number,
   bankId: string,
   padIndex: number,
