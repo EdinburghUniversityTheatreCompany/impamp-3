@@ -1442,6 +1442,15 @@ export function beginAudioImport(): () => void {
  * records at all — but one that registers in a turn between the two would be
  * missed.
  *
+ * **This is one half of a two-sided rule, and the half that was swept first.**
+ * Waiting buys nothing unless the writer at risk is in the register to be
+ * waited for: the rework that added this call to all five deleters declared no
+ * writer at all, and six of them were still walking through the window it was
+ * written to close. `withAudioImportInProgress` (or `beginAudioImport`, where
+ * the two writes are two user actions) is the other half, and CLAUDE.md names
+ * every writer that has to take it — grep the callers of
+ * `addOrReuseAudioFile` to check the list is still complete.
+ *
  * **Exported because the rule is repo-wide, not db.ts-wide.** The rule has no
  * exceptions: *every* deleter of audio rows calls this immediately before
  * opening its transaction, and none of them may be called from inside
