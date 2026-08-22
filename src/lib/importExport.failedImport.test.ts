@@ -221,6 +221,36 @@ describe("an audio file that cannot be imported", () => {
     expect(await db.get("audioFiles", keeperId)).toBeDefined();
   });
 
+  it("rolls back on the far side of its own import scope", async () => {
+    // Both halves of the rollback delete audio rows, and every deleter of
+    // audio rows waits for the imports in flight. The import being rolled back
+    // is one of those until its own `withAudioImportInProgress` returns, so
+    // the failure is carried out of the scope and cleaned up beyond it. Put
+    // either deleter back inside and this test does not fail an assertion — it
+    // hangs, on a register entry that only its own return can clear, which is
+    // why the wait is bounded here rather than left to the suite.
+    const db = await getDb();
+    let hang: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      importProfileFromSyncData(
+        db,
+        withCollidingPads(),
+        async () => new Blob(["bytes"], { type: "audio/mpeg" }),
+      ).then(
+        () => "imported",
+        () => "rolled back",
+      ),
+      new Promise<string>((resolve) => {
+        hang = setTimeout(() => resolve("still running after a second"), 1000);
+      }),
+    ]);
+    clearTimeout(hang);
+
+    expect(outcome).toBe("rolled back");
+    expect(await db.getAll("profiles")).toHaveLength(0);
+    expect(await db.getAll("audioFiles")).toHaveLength(0);
+  });
+
   it("says so plainly when the device has run out of storage", async () => {
     // A QuotaExceededError is not worth retrying as-is, and the generic
     // "could not be imported" message sends people round the same loop. There

@@ -29,3 +29,28 @@ average 17 while merging the icon set, and passed the other five; the failing
 test's name was not captured, so this is the shape rather than a specific
 diagnosis. Fake timers, or a settle that waits on a condition rather than a
 count, would end the class. Noticed while merging `p2/icons`.
+
+## A nested `withAudioImportInProgress` would hang an import's rollback
+
+`settleAudioImports` waits for every registered import, and nothing tells it
+which one its caller is running inside — there is no `AsyncLocalStorage` in a
+browser, and no `AsyncContext` yet. The rule that keeps that from deadlocking
+is "no audio deleter may be called from inside `withAudioImportInProgress`",
+and a failed profile import now honours it by carrying its profile id and
+created audio ids out on a `FailedProfileImport` and rolling back one line past
+the scope.
+
+That holds today because no scope contains another. It would stop holding the
+moment one did — if `performServerSync` or `performProfileSync` ever called
+`importProfileFromSyncData` (today only the two connect hooks do), the inner
+import's rollback would run outside the _inner_ scope but still inside the
+_outer_ one, and `deleteProfile` would wait for the sync that is waiting for
+it. The failure is a hung tab, not an error.
+
+Nothing enforces the rule; it is prose in `settleAudioImports`'s docstring and
+in CLAUDE.md. An id-based register — each scope publishing the audio rows it
+has been handed but not yet named, so deleters _exclude_ rather than _wait_ —
+would end the class outright and remove the latency `deleteProfile` now pays
+behind a running sync. It is bigger and permissive-by-default (a writer that
+forgets to publish is silently back to the original bug), which is why it was
+not done here. Noticed while fixing the 08-22 review's 🔴 2.
