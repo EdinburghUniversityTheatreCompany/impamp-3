@@ -185,7 +185,16 @@ export default function MissingAudioPanel() {
                               className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
                             >
                               <span className="text-gray-700 dark:text-gray-200">
-                                Bank {entry.bankName} &rsaquo;{" "}
+                                {/*
+                                  The name alone, with no "Bank " in front of
+                                  it: `bankName` is the bank's *stored* name,
+                                  and a bank nobody renamed is stored as
+                                  "Bank 6" — so a prefix here reads
+                                  "Bank Bank 6" on every default bank and only
+                                  looks right on the renamed ones. The search
+                                  results render a bank name the same way.
+                                */}
+                                {entry.bankName} &rsaquo;{" "}
                                 {entry.padName
                                   ? `"${entry.padName}"`
                                   : `Pad ${entry.padIndex + 1}`}

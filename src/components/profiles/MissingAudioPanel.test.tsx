@@ -63,6 +63,16 @@ const {
  */
 const OPENERS = "b4d1a5c0-1111-4a2b-8c3d-000000000001";
 
+/**
+ * A bank the user never renamed, exactly as `ensureDefaultBanks` writes one.
+ *
+ * Its id is the position it sits at and its stored name is
+ * `Bank ${convertIndexToBankNumber(pageIndex)}` — so the name a row shows
+ * already carries the word "Bank", and a row that adds its own reads
+ * "Bank Bank 6".
+ */
+const UNRENAMED = { bankId: "5", pageIndex: 5, name: "Bank 6" };
+
 /** An id no `audioFiles` row will ever be given, so every pad naming it is broken. */
 const GONE = 987_654;
 const ALSO_GONE = 987_655;
@@ -199,6 +209,27 @@ describe("scanning", () => {
     // string its record holds.
     expect(result).toContain("Pad 5");
     expect(panel.all("missing-audio-row")).toHaveLength(2);
+  });
+
+  it("says a default bank's name once, not 'Bank Bank 6'", async () => {
+    // `findMissingAudioFiles` reports the bank's *stored* name, and a bank
+    // nobody renamed is stored as "Bank 6". The row therefore has nothing to
+    // prefix: a literal "Bank " in front of it reads "Bank Bank 6", while a
+    // renamed bank ("Openers") reads correctly — so only the case every
+    // profile ships ten of is wrong, which is why it survived review.
+    await upsertPageMetadata({ profileId, ...UNRENAMED });
+    await padNaming({
+      profileId,
+      bankId: UNRENAMED.bankId,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+
+    const row = panel.all("missing-audio-row")[0].textContent ?? "";
+    expect(row).toContain("Bank 6 ›");
+    expect(row).not.toContain("Bank Bank");
   });
 
   it("keeps two profiles' banks apart when both call a bank '0'", async () => {

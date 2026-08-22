@@ -65,22 +65,6 @@ done
 
 Noticed while fixing the Node pin during the whole-repo review.
 
-## ProfileManager's missing-audio repair list can read "Bank Bank 3"
-
-Task 13's brief specified rendering the missing-audio repair entries as
-`Bank {entry.bankName}` (`src/components/profiles/ProfileManager.tsx`, the
-`handleReplaceMissingFile`/repair-list JSX around line 1470). `entry.bankName`
-already comes pre-formatted from `findMissingAudioFiles` in `src/lib/db.ts`
-(`` `Bank ${convertIndexToBankNumber(position)}` `` for any bank that was
-never custom-named), so an un-renamed bank shows "Bank Bank 3" in the UI. A
-custom-named bank ("Act 1 SFX") reads fine; only the default-named case is
-odd. Implemented exactly as briefed since it was an explicit instruction, not
-a judgment call — but the fix, if wanted, is to drop the literal "Bank "
-prefix and render `{entry.bankName}` alone, since the name already carries it
-when there is no custom name.
-
-Noticed while implementing Task 13 (bank identity components).
-
 ## The `audioFiles` `name` index has no readers left
 
 `db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
