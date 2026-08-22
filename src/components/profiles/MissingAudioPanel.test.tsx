@@ -92,14 +92,25 @@ const testId = (id: string) => panel.testId(id);
 const required = (id: string) => panel.required(id);
 const click = (id: string) => panel.click(id);
 
-/** The key the panel builds a row's identity from. */
-function rowKey(pad: {
-  profileId: number;
-  bankId: string;
-  padIndex: number;
-  missingAudioFileId: number;
-}): string {
-  return `${pad.profileId}-${pad.bankId}-${pad.padIndex}-${pad.missingAudioFileId}`;
+/**
+ * The key the panel builds a row's identity from.
+ *
+ * The reference — profile, bank, pad, missing id — plus which occurrence of it
+ * the row is, because a pad can name the same absent id twice and the panel
+ * gives each line its own identity the way `EditPadForm` does. The state
+ * underneath is still keyed on the reference alone, since one file repairs
+ * every occurrence.
+ */
+function rowKey(
+  pad: {
+    profileId: number;
+    bankId: string;
+    padIndex: number;
+    missingAudioFileId: number;
+  },
+  occurrence = 0,
+): string {
+  return `${pad.profileId}-${pad.bankId}-${pad.padIndex}-${pad.missingAudioFileId}-${occurrence}`;
 }
 
 /**
@@ -380,6 +391,50 @@ describe("repairing", () => {
         `missing-audio-replace-${rowKey({ profileId, bankId: OPENERS, padIndex: 7, missingAudioFileId: GONE })}`,
       ),
     ).not.toBeNull();
+  });
+
+  it("gives a pad naming one dead id twice a row apiece", async () => {
+    // A pad can hold the same audio id twice — adding the same bytes again
+    // returns the row already there — so the scan reports the reference once
+    // per occurrence and the two rows shared a React key and a `data-testid`.
+    // `e2e-tests/missing-audio-duplicate-rows.spec.ts` is the half that checks
+    // the panel stays *addressable*, which only a real browser can fail on;
+    // this counts the ids the way `EditPadForm.dedup.test.tsx` does.
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE, GONE],
+    });
+
+    await click("missing-audio-scan");
+    expect(panel.all("missing-audio-row")).toHaveLength(2);
+
+    const ids = [
+      ...panel.container.querySelectorAll<HTMLInputElement>(
+        '[data-testid^="missing-audio-replace-"]',
+      ),
+    ].map((input) => input.getAttribute("data-testid"));
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+
+    // One file repairs both, because `replaceMissingAudioFile` swaps every
+    // occurrence of the id in the pad — so the state stays on the reference
+    // even though the rows have identities of their own. Marking one
+    // "Replaced" and leaving the other offering a picker would be the same
+    // lie pointing the other way.
+    await chooseReplacement(
+      rowKey({ profileId, ...brokenPad }),
+      replacementNamed("found-again"),
+    );
+
+    const rows = panel.all("missing-audio-row");
+    expect(rows[0].textContent).toContain("Replaced");
+    expect(rows[1].textContent).toContain("Replaced");
+    const pad = await storedPad(profileId, OPENERS, 0);
+    expect(pad?.audioFileIds).toHaveLength(2);
+    expect(pad?.audioFileIds).not.toContain(GONE);
+    expect(pad!.audioFileIds[0]).toBe(pad!.audioFileIds[1]);
   });
 
   it("reuses a row this browser already holds rather than storing it twice", async () => {

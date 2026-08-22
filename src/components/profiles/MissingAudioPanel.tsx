@@ -10,11 +10,25 @@
  * plays nothing. This finds every such reference and lets a file be supplied
  * for each one.
  *
- * The row identity is the whole of the state here, and it is
- * `profile-bank-pad-missingId` rather than the missing id alone: one absent
- * audio row is routinely named by several pads, and keying the "replacing" and
- * "replaced" sets on the id would mark all of them done the moment one was
- * repaired. That is the same collision `EditPadForm` mints its `rowId` for.
+ * Two keys, because two different things are being identified.
+ *
+ * A repair acts on a *reference*: one pad's mention of one absent audio row,
+ * `profile-bank-pad-missingId`. Not the missing id alone — one absent row is
+ * routinely named by several pads, and keying the "replacing" and "replaced"
+ * sets on the id would mark all of them done the moment one was repaired.
+ *
+ * A *row* is one line on screen, and a pad can hold the same id twice (add the
+ * same bytes again and `addOrReuseAudioFile` returns the row already there),
+ * so `findMissingAudioFiles` reports one reference once per occurrence. The
+ * reference key is the same string for both, which left the two rows sharing a
+ * React key and a `data-testid` — the collision `EditPadForm` mints its
+ * `rowId` of `${fileId}-${occurrence}` for, and the same answer is used here.
+ *
+ * The state stays on the reference deliberately, and that is not the bug
+ * repeating itself: `replaceMissingAudioFile` swaps *every* occurrence of the
+ * id in the pad, so one file really does repair both rows, and marking one
+ * "Replaced" while the other still offered a picker would be the lie in the
+ * other direction. Identity on screen, state underneath.
  *
  * Replacement goes through `replaceMissingAudioFile`, which reuses an audio
  * row already holding the same bytes rather than writing a second copy —
@@ -29,14 +43,34 @@ import { useProfileStore } from "@/store/profileStore";
 import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
 /**
- * What the panel's per-row state is keyed on.
+ * What one repair acts on: a pad's mention of one absent audio row.
  *
- * Written once because the two places that need it — the replace handler and
- * the row it re-renders — have to agree exactly, and the same rule written
- * twice is this repo's characteristic regression.
+ * Written once because the places that need it — the replace handler and the
+ * rows it re-renders — have to agree exactly, and the same rule written twice
+ * is this repo's characteristic regression.
  */
-function rowKeyOf(entry: MissingAudioFile): string {
+function referenceKeyOf(entry: MissingAudioFile): string {
   return `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
+}
+
+/** One line on screen: a reference, and which occurrence of it this is. */
+interface MissingAudioRow {
+  entry: MissingAudioFile;
+  /** Unique across the whole list — the React key and every `data-testid`. */
+  rowKey: string;
+  /** Shared by every occurrence of one reference — all of the panel's state. */
+  referenceKey: string;
+}
+
+/** Numbers each reference's occurrences, in the order the scan reported them. */
+function rowsOf(entries: MissingAudioFile[]): MissingAudioRow[] {
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const referenceKey = referenceKeyOf(entry);
+    const occurrence = seen.get(referenceKey) ?? 0;
+    seen.set(referenceKey, occurrence + 1);
+    return { entry, referenceKey, rowKey: `${referenceKey}-${occurrence}` };
+  });
 }
 
 export default function MissingAudioPanel() {
@@ -48,6 +82,10 @@ export default function MissingAudioPanel() {
   const [replacingIds, setReplacingIds] = useState<Set<string>>(new Set());
   const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
   const [scanError, setScanError] = useState<string | null>(null);
+
+  // Numbered per render rather than stored: the scan result is the only input,
+  // so a second copy in state is a second thing to keep in step with it.
+  const rows = rowsOf(missingScanResult ?? []);
 
   const handleScanMissing = async () => {
     setIsScanningMissing(true);
@@ -75,7 +113,7 @@ export default function MissingAudioPanel() {
     entry: MissingAudioFile,
     file: File,
   ) => {
-    const key = rowKeyOf(entry);
+    const key = referenceKeyOf(entry);
     setReplacingIds((prev) => new Set(prev).add(key));
     try {
       const { replaceMissingAudioFile } = await import("@/lib/db");
@@ -172,15 +210,14 @@ export default function MissingAudioPanel() {
                       {profileName}
                     </p>
                     <div className="space-y-2">
-                      {missingScanResult
-                        .filter((e) => e.profileId === profileId)
-                        .map((entry) => {
-                          const key = rowKeyOf(entry);
-                          const isReplacing = replacingIds.has(key);
-                          const isReplaced = replacedIds.has(key);
+                      {rows
+                        .filter(({ entry }) => entry.profileId === profileId)
+                        .map(({ entry, rowKey, referenceKey }) => {
+                          const isReplacing = replacingIds.has(referenceKey);
+                          const isReplaced = replacedIds.has(referenceKey);
                           return (
                             <div
-                              key={key}
+                              key={rowKey}
                               data-testid="missing-audio-row"
                               className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
                             >
@@ -209,7 +246,7 @@ export default function MissingAudioPanel() {
                                     type="file"
                                     accept="audio/*"
                                     className="sr-only"
-                                    data-testid={`missing-audio-replace-${key}`}
+                                    data-testid={`missing-audio-replace-${rowKey}`}
                                     disabled={isReplacing}
                                     onChange={(e) => {
                                       const file = e.target.files?.[0];
