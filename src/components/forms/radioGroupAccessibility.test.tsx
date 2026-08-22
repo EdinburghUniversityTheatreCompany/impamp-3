@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import EditPadForm from "@/components/modals/EditPadForm";
 import PlaybackSettingsForm from "@/components/settings/PlaybackSettingsForm";
 import ProfileEditForm from "@/components/profiles/ProfileEditForm";
+import { RadioGroup } from "@/components/forms";
 import { activePadBehaviorOptions } from "@/components/forms/activePadBehaviorOptions";
 import {
   mountFormModalHarness,
@@ -208,5 +209,91 @@ describe("an option's description is announced with it", () => {
     ].map((radio) => radio.getAttribute("aria-describedby"));
 
     expect(describedBy).toEqual([null, null, null]);
+  });
+});
+
+describe("a validation message is written once", () => {
+  // Nothing validates these fields today, so this is the state the first
+  // validator to arrive would put its form into.
+  const REJECTED = "Pick one of these.";
+
+  /** How many elements carry exactly this message and nothing else. */
+  function timesShown(message: string): number {
+    return [...form.container.querySelectorAll("p")].filter(
+      (paragraph) => paragraph.textContent?.trim() === message,
+    ).length;
+  }
+
+  /** One opened form, reduced to the confirm the message depends on. */
+  type Submittable = { save(): Promise<void> };
+
+  const validatedGroups: [string, () => Submittable][] = [
+    [
+      "the pad editor's playback mode",
+      () =>
+        form.openForm(
+          padValues,
+          (props) => <EditPadForm {...props} />,
+          () => ({
+            playbackType: REJECTED,
+          }),
+        ),
+    ],
+    [
+      "the pad editor's already-playing override",
+      () =>
+        form.openForm(
+          padValues,
+          (props) => <EditPadForm {...props} />,
+          () => ({
+            activePadBehavior: REJECTED,
+          }),
+        ),
+    ],
+    [
+      "the profile editor",
+      () =>
+        form.openForm(
+          profileValues,
+          (props) => <ProfileEditForm {...props} />,
+          () => ({ activePadBehavior: REJECTED }),
+        ),
+    ],
+    [
+      "playback settings",
+      () =>
+        form.openForm(
+          settingsValues,
+          (props) => <PlaybackSettingsForm {...props} />,
+          () => ({ activePadBehavior: REJECTED }),
+        ),
+    ],
+  ];
+
+  it.each(validatedGroups)("in %s", async (_where, open) => {
+    const opened = open();
+
+    await opened.save();
+
+    expect(timesShown(REJECTED)).toBe(1);
+  });
+
+  it("still says it when a group is used without a FormField", () => {
+    // The message has one owner and it is `FormField`, which already owns the
+    // label and the spacing. `RadioGroup` keeps its own `error` all the same:
+    // a group outside a field has nowhere else to say it, so dropping the
+    // prop from the component would make that case silent instead of doubled.
+    form.render(
+      <RadioGroup
+        id="standalone"
+        name="standalone"
+        options={[{ value: "one", label: "One" }]}
+        value="one"
+        onChange={() => {}}
+        error={REJECTED}
+      />,
+    );
+
+    expect(timesShown(REJECTED)).toBe(1);
   });
 });

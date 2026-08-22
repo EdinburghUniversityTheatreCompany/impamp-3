@@ -86,6 +86,19 @@ async function twoCopiesOfTheHorn(): Promise<[number, number]> {
   return [first, second];
 }
 
+/**
+ * Gives a row the loudness analysis the election prefers.
+ *
+ * Written once because four tests need it and jscpd runs at threshold 0 —
+ * and because "which row carries an analysis" is the whole of the election,
+ * so a second spelling of it is a second answer waiting to drift.
+ */
+async function markAnalysed(id: number): Promise<void> {
+  const db = await getDb();
+  const row = (await db.get("audioFiles", id))!;
+  await db.put("audioFiles", { ...row, loudness: someAnalysis() });
+}
+
 beforeEach(async () => {
   await clearAllStores();
   analyseAndStore.mockClear();
@@ -113,9 +126,7 @@ describe("findDuplicateAudioGroups", () => {
 
   it("prefers a row that already carries a loudness analysis", async () => {
     const [first, second] = await twoCopiesOfTheHorn();
-    const db = await getDb();
-    const analysed = (await db.get("audioFiles", second))!;
-    await db.put("audioFiles", { ...analysed, loudness: someAnalysis() });
+    await markAnalysed(second);
 
     const groups = await findDuplicateAudioGroups();
 
@@ -208,6 +219,44 @@ describe("findDuplicateAudioGroups", () => {
     expect(groups[0].canonicalId).toBe(first);
     expect(groups[0].duplicateIds).toEqual([second, third]);
     expect(groups[0].reclaimableBytes).toBe(horn().size * 2);
+  });
+
+  it("names the rows in the group, survivor first", async () => {
+    // The panel deletes audio, and a count is not something a user can check.
+    // The names come from the rows the cursor above already read, so the
+    // order they are reported in is the order the election settled on: the
+    // survivor, then what goes.
+    const [, second] = await twoCopiesOfTheHorn();
+    await markAnalysed(second);
+
+    const groups = await findDuplicateAudioGroups();
+
+    expect(groups[0].canonicalId).toBe(second);
+    expect(groups[0].names).toEqual(["horn (1).wav", "horn.wav"]);
+  });
+
+  it("says a name once when both copies were stored under it", async () => {
+    // The ordinary way a duplicate arrives is the same file imported twice,
+    // so both rows carry the same name. "horn.wav / horn.wav" tells a user
+    // nothing the copy count has not already said.
+    await addAudioFile({ name: "horn.wav", type: "audio/wav", blob: horn() });
+    await addAudioFile({ name: "horn.wav", type: "audio/wav", blob: horn() });
+
+    const groups = await findDuplicateAudioGroups();
+
+    expect(groups[0].names).toEqual(["horn.wav"]);
+  });
+
+  it("names a row that has no name by its id", async () => {
+    // `name` is declared a string and a row is written locally, but an empty
+    // one would render as a stray separator with nothing beside it — and the
+    // point of the list is that every entry can be recognised.
+    const first = await putRawRow({ name: "", blob: horn() });
+    await putRawRow({ name: "horn.wav", blob: horn() });
+
+    const groups = await findDuplicateAudioGroups();
+
+    expect(groups[0].names).toEqual([`Sound ${first}`, "horn.wav"]);
   });
 
   it("reports each set of identical bytes as its own group", async () => {
@@ -526,6 +575,7 @@ describe("collapseDuplicateAudioGroups", () => {
         canonicalId: first,
         duplicateIds: [second, first],
         reclaimableBytes: horn().size * 2,
+        names: ["horn.wav", "horn (1).wav"],
       },
     ]);
 
@@ -580,10 +630,7 @@ describe("collapseDuplicateAudioGroups", () => {
     // bytes, so it is always safe to inherit.
     const db = await getDb();
     const [first, second] = await twoCopiesOfTheHorn();
-    await db.put("audioFiles", {
-      ...(await db.get("audioFiles", second))!,
-      loudness: someAnalysis(),
-    });
+    await markAnalysed(second);
 
     await collapseDuplicateAudioGroups([
       {
@@ -591,6 +638,7 @@ describe("collapseDuplicateAudioGroups", () => {
         canonicalId: first,
         duplicateIds: [second],
         reclaimableBytes: horn().size,
+        names: ["horn.wav", "horn (1).wav"],
       },
     ]);
 
@@ -621,12 +669,8 @@ describe("collapseDuplicateAudioGroups", () => {
     // not in it resolves gain from nothing — normalisation silently reverts to
     // 0 dB for the rest of the session, which on a live board is a cue at the
     // wrong level with no error anywhere.
-    const db = await getDb();
     const [first, second] = await twoCopiesOfTheHorn();
-    await db.put("audioFiles", {
-      ...(await db.get("audioFiles", first))!,
-      loudness: someAnalysis(),
-    });
+    await markAnalysed(first);
     await padOnTheDuplicate(second);
     expect(getCachedLoudness(first)).toBeUndefined();
 
@@ -636,6 +680,7 @@ describe("collapseDuplicateAudioGroups", () => {
         canonicalId: first,
         duplicateIds: [second],
         reclaimableBytes: horn().size,
+        names: ["horn.wav", "horn (1).wav"],
       },
     ]);
 

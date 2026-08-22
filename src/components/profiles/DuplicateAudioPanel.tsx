@@ -31,6 +31,7 @@ import { useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { formatBytes } from "@/lib/serverAudio/format";
 import { count } from "@/lib/plural";
+import { errorMessage } from "@/lib/errorMessage";
 import type { DuplicateAudioGroup } from "@/lib/audioDedup";
 
 /** How many rows a preview would delete, and how many bytes that gives back. */
@@ -45,10 +46,6 @@ function totals(groups: DuplicateAudioGroup[]): {
     }),
     { copies: 0, bytes: 0 },
   );
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export default function DuplicateAudioPanel() {
@@ -75,7 +72,7 @@ export default function DuplicateAudioPanel() {
       setGroups(await findDuplicateAudioGroups());
     } catch (caught) {
       console.error("Failed to scan for duplicate audio files:", caught);
-      setError(`The scan could not finish: ${message(caught)}.`);
+      setError(`The scan could not finish: ${errorMessage(caught)}.`);
     } finally {
       setIsScanning(false);
     }
@@ -111,7 +108,7 @@ export default function DuplicateAudioPanel() {
     } catch (caught) {
       console.error("Failed to remove duplicate audio files:", caught);
       setError(
-        `Removing the duplicates failed: ${message(caught)}. ` +
+        `Removing the duplicates failed: ${errorMessage(caught)}. ` +
           "Scan again to see what is left.",
       );
     } finally {
@@ -167,6 +164,27 @@ export default function DuplicateAudioPanel() {
                   sounds: {count(preview.copies, "copy", "copies")} to remove,{" "}
                   {formatBytes(preview.bytes)} to reclaim.
                 </p>
+                {/*
+                  Which sounds, not just how many. The totals above are not
+                  something a user can check against their own library, and
+                  the button below them deletes audio; the names are the only
+                  part of the preview anyone can recognise. Every group is
+                  listed rather than the first few — the missing-audio list
+                  above does the same, and a truncated list would hide exactly
+                  the entry someone went looking for.
+                */}
+                <ul className="space-y-1 text-gray-600 dark:text-gray-300">
+                  {groups.map((group) => (
+                    <li key={group.hash} data-testid="duplicate-audio-group">
+                      <span className="font-medium">
+                        {group.names.join(" / ")}
+                      </span>{" "}
+                      &mdash;{" "}
+                      {count(group.duplicateIds.length, "copy", "copies")} to
+                      remove, {formatBytes(group.reclaimableBytes)}
+                    </li>
+                  ))}
+                </ul>
                 <p className="text-amber-700 dark:text-amber-300">
                   Removing duplicates deletes audio from this browser
                   permanently. There is no undo, and an export you have already

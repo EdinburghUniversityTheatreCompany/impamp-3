@@ -17,10 +17,14 @@
  *    and cleanup results are separate pieces of state and the second does not
  *    overwrite the first; a re-scan is scheduled instead, so what is on screen
  *    afterwards came from reading the database again rather than from
- *    subtracting the numbers the panel had.
+ *    subtracting the numbers the panel had. That re-scan goes through
+ *    `runOrphanScan` and not through the Scan button's handler, so the report
+ *    of what was deleted survives it — see the comment there.
  */
 
 import { useState } from "react";
+
+import { errorMessage } from "@/lib/errorMessage";
 
 export default function OrphanedAudioPanel() {
   // Orphan cleanup state
@@ -36,11 +40,22 @@ export default function OrphanedAudioPanel() {
     totalAudioFiles: number;
   } | null>(null);
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
-  const handleScanOrphans = async () => {
+  /**
+   * Re-reads the library, and says nothing about the cleanup report.
+   *
+   * The Scan button and the re-scan a cleanup schedules both end up here, and
+   * the one thing they must not share is the clearing: the report of what was
+   * deleted is the whole point of the re-scan's own trigger, and a handler
+   * that opened by clearing it put "Files deleted: 2" on screen for half a
+   * second and then replaced it with a scan saying 0 orphans. The report is
+   * the part a user might want to read twice, and it was the part that went.
+   */
+  const runOrphanScan = async () => {
     setIsScanningOrphans(true);
     setOrphanScanResult(null);
-    setOrphanCleanupResult(null);
+    setScanError(null);
 
     try {
       const { findOrphanedAudioFiles } = await import("@/lib/db");
@@ -48,10 +63,23 @@ export default function OrphanedAudioPanel() {
       setOrphanScanResult(result);
     } catch (error) {
       console.error("Failed to scan for orphaned audio files:", error);
-      // You could add error handling here if needed
+      // Said out loud, not only to the console. A swallowed failure leaves the
+      // panel exactly as it was, which is what a library with no orphans looks
+      // like too — the results box is simply absent rather than saying "0
+      // orphaned", and no user can tell those two apart.
+      setScanError(`The scan could not finish: ${errorMessage(error)}.`);
     } finally {
       setIsScanningOrphans(false);
     }
+  };
+
+  /**
+   * The Scan button. A press is the user asking a new question, so the report
+   * of the last cleanup goes with it — kept until then, not for half a second.
+   */
+  const handleScanOrphans = async () => {
+    setOrphanCleanupResult(null);
+    await runOrphanScan();
   };
 
   const handleCleanupOrphans = async () => {
@@ -63,10 +91,13 @@ export default function OrphanedAudioPanel() {
       const result = await cleanupOrphanedAudioFiles();
       setOrphanCleanupResult(result);
 
-      // Refresh scan results after cleanup
+      // Read the library again rather than subtracting: the counts on screen
+      // after a cleanup should have come from the database. `runOrphanScan`,
+      // not the button's handler — this must not clear the report it was
+      // scheduled to corroborate.
       if (result.deletedCount > 0) {
         setTimeout(() => {
-          handleScanOrphans();
+          runOrphanScan();
         }, 500);
       }
     } catch (error) {
@@ -74,9 +105,7 @@ export default function OrphanedAudioPanel() {
       setOrphanCleanupResult({
         deletedCount: 0,
         cacheEntriesCleared: 0,
-        errors: [
-          `Failed to cleanup: ${error instanceof Error ? error.message : error}`,
-        ],
+        errors: [`Failed to cleanup: ${errorMessage(error)}`],
       });
     } finally {
       setIsCleaningOrphans(false);
@@ -131,6 +160,16 @@ export default function OrphanedAudioPanel() {
             )}
           </button>
         </div>
+
+        {scanError && (
+          <div
+            role="alert"
+            data-testid="orphan-scan-error"
+            className="rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20 text-sm text-yellow-800 dark:text-yellow-200"
+          >
+            {scanError}
+          </div>
+        )}
 
         {/* Scan Results */}
         {orphanScanResult && (

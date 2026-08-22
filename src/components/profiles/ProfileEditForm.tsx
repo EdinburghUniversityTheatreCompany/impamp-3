@@ -84,7 +84,6 @@ const ProfileEditForm: React.FC<FormModalRenderProps<ProfileFormValues>> = ({
           onChange={(value) =>
             updateValue("activePadBehavior", value as ActivePadBehavior)
           }
-          error={errors.activePadBehavior as string}
           data-testid="profile-active-behavior-group"
           optionTestIdPrefix="profile-active-behavior"
         />
