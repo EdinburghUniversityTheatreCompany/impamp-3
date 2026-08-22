@@ -39,6 +39,7 @@
 import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
 import { errorMessage } from "@/lib/errorMessage";
+import { count } from "@/lib/plural";
 import { useProfileStore } from "@/store/profileStore";
 import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
@@ -217,8 +218,12 @@ export default function MissingAudioPanel() {
             ) : (
               <>
                 <p className="text-sm text-orange-600 dark:text-orange-400 font-medium mb-4">
-                  {missingScanResult.length} missing audio file
-                  {missingScanResult.length !== 1 ? "s" : ""} found
+                  {count(
+                    missingScanResult.length,
+                    "missing audio file",
+                    "missing audio files",
+                  )}{" "}
+                  found
                 </p>
                 {Array.from(
                   new Map(

@@ -29,3 +29,24 @@ average 17 while merging the icon set, and passed the other five; the failing
 test's name was not captured, so this is the shape rather than a specific
 diagnosis. Fake timers, or a settle that waits on a condition rather than a
 count, would end the class. Noticed while merging `p2/icons`.
+
+## Three inline plural ternaries left behind by the `count()` sweep
+
+`src/lib/plural.ts` now has every "N of a thing" in the app going through it
+except three, and each was left for a reason rather than missed:
+
+- `src/lib/importExport.ts:463` —
+  `${failures.length} of ${total} sound${total === 1 ? "" : "s"}`. The number
+  rendered and the number the plural agrees with are different, which is not
+  the shape `count` takes. Either a second helper or a reworded message.
+- `src/lib/importExport.ts:796` — `${skipped.length} bank${…}`, an ordinary
+  `count(skipped.length, "bank", "banks")`. Not taken because `importExport.ts`
+  was owned by another change in flight on 2026-08-22.
+- `src/components/profiles/BankImportPlacementDialog.tsx:309` —
+  `{result.skipped.length === 1 ? "was" : "were"}`. Verb agreement, not a
+  count; the noun beside it already goes through `count`. A `wasWere` helper
+  would be one more thing to keep in step for one call site.
+
+Worth a source-scan guard (`src/lib/testSupport/sourceScan.ts`) once the first
+two are gone — while they remain, the skip list would be longer than the rule.
+Noticed while resolving 🟢 13 of the 2026-08-22 subsystem review.

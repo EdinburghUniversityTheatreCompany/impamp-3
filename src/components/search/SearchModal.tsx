@@ -16,6 +16,7 @@ import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel, hasArmModifier } from "@/lib/platform";
 import { extractPadPlaybackSettings } from "@/lib/db";
+import { count } from "@/lib/plural";
 import MagnifierIcon from "@/components/icons/MagnifierIcon";
 import XIcon from "@/components/icons/XIcon";
 
@@ -302,9 +303,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             way to guess from a list of pads. */}
         {!isLoading && results.length > 0 && (
           <div className="flex items-center justify-between gap-2 px-4 pt-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 pb-2">
-            <span>
-              {results.length} {results.length === 1 ? "result" : "results"}
-            </span>
+            <span>{count(results.length, "result", "results")}</span>
             {/* The promise is withdrawn while the list is out of date, because
                 the promise is the whole reason an operator presses Enter
                 without reading the list first. */}
