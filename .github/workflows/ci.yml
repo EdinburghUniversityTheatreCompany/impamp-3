@@ -199,7 +199,7 @@ jobs:
   # — after a dependency upgrade, or when touching storage or playback.
   #
   # To run: Actions → ci → "Run workflow" (workflow_dispatch), or
-  # `gh workflow run ci`. Locally: `npx playwright test --project=webkit`.
+  # `gh workflow run ci`. Locally: `npm run test:e2e:cross-browser`.
   #
   # Do not delete `continue-on-error` expecting a green gate. Read that doc
   # first — making either one gate means changing the app's storage schema or

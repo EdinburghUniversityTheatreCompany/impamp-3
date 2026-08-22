@@ -99,9 +99,11 @@ feedback path stays chromium.
 
 ```bash
 npx playwright install firefox webkit
-npx playwright test --project=firefox --workers=2
-npx playwright test --project=webkit  --workers=2
+npm run test:e2e:cross-browser -- --workers=2
 ```
+
+That script is `playwright test --project=firefox --project=webkit`; run one at
+a time with `npm run test:e2e:cross-browser -- --project=webkit --workers=2`.
 
 `--workers=2` matters. Playwright sizes its default pool from the CPU count, and
 on a many-core machine with modest free RAM that pool gets OOM-killed — the run

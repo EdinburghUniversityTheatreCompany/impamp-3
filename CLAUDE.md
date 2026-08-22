@@ -29,13 +29,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   a **ratchet set just under the current number**, not a target: raise them
   when a run comes in comfortably above, and never lower them to make a build
   pass
-- `npm run test:e2e` - Run all Playwright end-to-end tests
+- `npm run test:e2e` - Run the Playwright end-to-end suite on chromium, which
+  is what CI gates on. Every `test:e2e*` script below is chromium too
 - `npm run test:e2e:audio` - Run audio playback tests specifically
 - `npm run test:e2e:profiles` - Run profile management tests
 - `npm run test:e2e:edit` - Run edit mode tests
 - `npm run test:e2e:keyboard` - Run keyboard shortcut tests
 - `npm run test:e2e:loudness` - Run loudness and gain tests
 - `npm run test:e2e:debug` - Run tests in debug mode
+- `npm run test:e2e:cross-browser` - Run firefox and webkit, on demand only.
+  Both are known-red for reasons outside the app; read
+  `docs/cross-browser-e2e.md` before acting on a failure
 
 (`npm test` works without `run` because `test` is a built-in npm alias. Nothing
 else here is, and these were all written without it.)
@@ -234,14 +238,26 @@ Prettier 3.9, Vitest 4.1 with `@vitest/coverage-v8` on the same version (the
 coverage provider is released in lockstep with Vitest, so bump the two
 together).
 
-Three upgrades are deliberately held back, with the reasons and retry
-conditions in `plans/deferred-upgrades.md`: TypeScript 7 (typescript-eslint
-refuses the TS 7 API), ESLint 10 (eslint-plugin-react has no ESLint 10 release)
-and file-selector 5 (react-dropzone 20 depends on `^4.1.0`, so bumping the top
-level installs a second copy and `fromEvent` stops being the one react-dropzone
-calls internally). These are exactly the three `npm outdated` reports, and
-exactly the three `.github/dependabot.yml` ignores — if you see three outdated
-packages, none of them is fair game.
+Two upgrades are deliberately held back, with the reasons and retry conditions
+in `plans/deferred-upgrades.md`: **TypeScript 7** (typescript-eslint refuses the
+TS 7 API) and **ESLint 10** (eslint-plugin-react has no ESLint 10 release). They
+are also the two `.github/dependabot.yml` ignores, and the ignores are scoped to
+majors, so a TypeScript 6 or ESLint 9 patch is still fair game.
+
+**The rule is those names, not a count.** This paragraph used to end "if you see
+three outdated packages, none of them is fair game", which read as a standing
+instruction to leave everything alone — and by the time anyone checked,
+`npm outdated` had ten rows, seven of them ordinary in-range patches nobody had
+taken, including a Next.js one. A rule stated as a count goes stale the moment
+the count changes, so: anything `npm outdated` lists that is not a TypeScript or
+ESLint major is fair game, and the count is whatever it happens to be today.
+
+Two things to check before taking one, both learned the hard way on 2026-08-22.
+Read the release notes even for a patch — react-dropzone 20.1.1 was a docs fix
+that also swapped `file-selector` from `^4.1.0` to `^5.0.0`, which silently
+forked a dependency `Pad.tsx` hands data across. And `npm update` is the tool,
+not `npm install pkg@version`: the latter rewrites the range in `package.json`,
+and the ranges are floors that should move only when something requires it.
 
 ### Code Style
 
@@ -354,10 +370,15 @@ packages, none of them is fair game.
   untrue before dedup for anything comparing content; dedup only made it
   visible. A fixture needing two different sounds should also assert they got
   different ids
-- `npm run test:e2e` is a bare `playwright test`, so it runs firefox and webkit
-  as well — both known-red below — exits 1, and lets the html reporter swallow
-  stdout. It looks exactly like your change breaking everything. Use
-  `npx playwright test --project=chromium --reporter=line`
+- **Every `test:e2e*` script names `--project=chromium`, and that is not
+  decoration.** `test:e2e` used to be a bare `playwright test`, which runs
+  firefox and webkit as well — both known-red below — so it exited 1 on a
+  perfectly good tree, and the html reporter swallowed the stdout that would
+  have said why. It looked exactly like your change breaking everything, and
+  the README sent every new contributor straight into it. The `line` reporter
+  in `playwright.config.ts` is the other half of that fix. Firefox and webkit
+  now live behind `npm run test:e2e:cross-browser`, which is the only script
+  that runs anything but chromium
 - `activatePad` returns **immediately if anything at all is playing**: its poll
   opens `if (await nothingPlaying.isHidden()) return true;`, so a sound left
   running by an earlier call lets the next call through **without pressing the
