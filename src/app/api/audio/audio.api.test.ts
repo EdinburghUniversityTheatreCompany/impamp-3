@@ -1077,8 +1077,14 @@ describe("GET /api/profiles/:id/audio/:hash", () => {
     const owner = signIn(1, { approved: true });
     const editor = signIn(2, { approved: true });
     const { hash } = await storeAudio(editor.token, "editors-sound", KB);
-    const profile = profileWith(owner.user.id, [hash!]);
+
+    // The editor publishes the sound onto the board, which is what records
+    // them as its adder. The owner cannot be the one who names it: an owner
+    // naming a hash only somebody else holds is indistinguishable from the
+    // attack in the sibling test above, and is refused for that reason.
+    const profile = profileWith(owner.user.id, []);
     upsertEmailShare(profile.id, editor.user.email, "editor", owner.user.id);
+    await publish(profile.id, 1, [hash!], { sessionToken: editor.token });
 
     const response = await profileAudio(
       makeRequest(`/api/profiles/${profile.id}/audio/${hash}`, {
