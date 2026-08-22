@@ -19,9 +19,43 @@ import { createHash } from "crypto";
  * Under one worker the gap closes before the first action; under ten it does
  * not, which is why these failures looked like CPU contention.
  */
-export async function gotoApp(page: Page) {
+export async function gotoApp(
+  page: Page,
+  { showWelcomeTour = false }: { showWelcomeTour?: boolean } = {},
+) {
+  // An option rather than a second navigation helper, and rather than letting
+  // a spec undo it: `addInitScript` calls accumulate in the order they are
+  // added, so a spec clearing the key in `beforeEach` is overwritten by this
+  // one moments later. Measured — the tour spec failed with "element(s) not
+  // found" while every other spec was fixed.
+  if (!showWelcomeTour) await markWelcomeTourSeen(page);
   await page.goto("/");
   await waitForAppReady(page);
+}
+
+/**
+ * Records the first-use tour as already seen, before anything navigates.
+ *
+ * Every spec here starts on an empty board, which is exactly the condition the
+ * tour is offered on — so without this it opens a modal over the board in
+ * every one of them, and its overlay intercepts every click. Measured: eleven
+ * specs failed with `custom-modal-overlay intercepts pointer events` before
+ * this existed.
+ *
+ * `addInitScript` rather than a dismissal, because the modal has to never be
+ * there: a click that races the tour's own IndexedDB read is a flake nobody
+ * would attribute to onboarding. `welcome-tour.spec.ts` clears the key itself,
+ * being the one spec that wants the tour.
+ */
+export async function markWelcomeTourSeen(page: Page) {
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem("impamp:welcomeTourSeen", "1");
+    } catch {
+      // A context that refuses storage also refuses the tour, which reads an
+      // unreadable store as "already seen". Either way it will not appear.
+    }
+  });
 }
 
 /**
