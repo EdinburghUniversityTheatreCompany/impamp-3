@@ -31,8 +31,17 @@ export interface FormModalOptions<TFormValues> extends BaseModalOptions {
 export interface FormModalRenderProps<TFormValues> {
   // Current form values
   values: TFormValues;
-  // Update form values
-  setValues: (values: TFormValues) => void;
+  /**
+   * Replaces the form values.
+   *
+   * Typed as React's own setter, updater form included, because a handler
+   * that awaits before it writes cannot use the values its render captured.
+   * `handleFileChange` in `EditPadForm` awaits a content hash, a database
+   * write and a name read before it appends the sound the user picked; the
+   * only safe way to append is against the values React holds at that
+   * moment, which is what the updater form gives it.
+   */
+  setValues: React.Dispatch<React.SetStateAction<TFormValues>>;
   // Update a single form value
   updateValue: <K extends keyof TFormValues>(
     field: K,
