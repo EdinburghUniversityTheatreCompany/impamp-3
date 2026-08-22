@@ -258,8 +258,10 @@ export function storageKeyForHash(
  * collaborator also uploaded — this reference is not load-bearing and there is
  * nothing to protect by refusing.
  *
- * Link shares are deliberately not counted, and never were: holding a link
- * grants access to one profile, not membership of it.
+ * Membership of any kind has stopped being part of the answer, which is what
+ * makes link shares a non-question here: a signed-in writer using a link is
+ * recorded as the adder exactly like anyone else, and an anonymous one records
+ * nothing because there is no account to record.
  */
 export function deletingHashWouldSilenceAProfile(
   userId: number,

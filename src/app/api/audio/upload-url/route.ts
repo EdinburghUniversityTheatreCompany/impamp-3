@@ -14,8 +14,10 @@ import { proofRangeFor } from "@/lib/server/proofOfPossession";
  *
  * Answers a short-lived presigned PUT the browser sends the bytes to directly;
  * they never pass through this server. The size quoted here is the client's
- * claim and is only used to refuse obviously-too-big uploads early — what
- * actually gets charged is measured server-side at commit time.
+ * claim: it refuses an obviously-too-big upload early, and is charged
+ * provisionally until the commit lands or the URL expires, so that a caller
+ * who never commits cannot keep asking. What is finally charged is the size
+ * the bucket reports at commit.
  *
  * `alreadyStored` tells the client the bytes are in the bucket already
  * (someone uploaded the same audio before) and it can skip straight to commit.
