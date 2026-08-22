@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/server/apiAuth";
-import { createProfile, listProfilesForUser } from "@/lib/server/profiles";
+import {
+  countProfilesOwnedBy,
+  createProfile,
+  listProfilesForUser,
+  MAX_PROFILES_PER_USER,
+} from "@/lib/server/profiles";
 import { parseProfileBody, versionEtag } from "@/lib/server/profileRequests";
 
 /**
@@ -21,6 +26,18 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const user = requireUser(request);
   if (user instanceof NextResponse) return user;
+
+  // Before the body is read: nothing caps how large the store gets otherwise,
+  // and an account that has hit the ceiling should not get there by uploading
+  // 8 MB first.
+  if (countProfilesOwnedBy(user.id) >= MAX_PROFILES_PER_USER) {
+    return NextResponse.json(
+      {
+        error: `You already have ${MAX_PROFILES_PER_USER} profiles on this server. Delete one to add another.`,
+      },
+      { status: 403 },
+    );
+  }
 
   const body = await parseProfileBody(request);
   if (body instanceof NextResponse) return body;

@@ -25,6 +25,31 @@ export interface CreateProfileInput {
   serialisedData?: string;
 }
 
+/**
+ * The most profiles one account may own.
+ *
+ * There was no ceiling at all: every profile is up to `MAX_PROFILE_BODY_BYTES`
+ * and the whole deployment is one SQLite file on one volume, so a single
+ * account could take all of it — and signup is open to any Google account
+ * unless `IMPAMP_ALLOWED_EMAILS` is set, which it need not be.
+ *
+ * A hundred is roomy for what this is: people run a show or two per profile,
+ * and the busiest real user has a handful. Deliberately far above any honest
+ * use, because the failure it causes — "you cannot sync this show" — lands on
+ * somebody in a theatre rather than on an attacker.
+ */
+export const MAX_PROFILES_PER_USER = 100;
+
+/** How many profiles this account owns. Shared-in profiles are not theirs. */
+export function countProfilesOwnedBy(userId: number): number {
+  return (
+    queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM profiles WHERE owner_id = ?",
+      userId,
+    )?.count ?? 0
+  );
+}
+
 export function getProfileById(id: string): ProfileRow | undefined {
   return queryOne<ProfileRow>("SELECT * FROM profiles WHERE id = ?", id);
 }

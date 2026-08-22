@@ -72,10 +72,46 @@ export interface ProfileWriteBody {
  */
 const MAX_PROFILE_BODY_BYTES = 8 * 1024 * 1024;
 
+/**
+ * The most sounds one profile may name.
+ *
+ * Bytes were the only bound, and bytes are the wrong unit for the cost that
+ * hurts: `reindexProfileAudio` runs a statement per hash inside
+ * `BEGIN IMMEDIATE`, so the entry count is what decides how long one PUT holds
+ * the write lock of a single-instance, synchronous database — every other
+ * request, every SSE heartbeat and `/up` waiting behind it. An 8 MB body fits
+ * about 110,000 entries, measured at 593 ms.
+ *
+ * Twenty thousand is far outside any real board and cheap enough to hold:
+ * twenty banks of forty-eight pads is 960 pads, so the ceiling is twenty
+ * distinct sounds on every pad of a completely full profile, and 20,000 rows
+ * measured 90 ms. Erring generous is deliberate — a refusal here costs a real
+ * user the ability to save their show at all, which is worse than the
+ * milliseconds it buys.
+ *
+ * The array's length rather than its distinct hashes: it is an O(1) test on
+ * the value the client sent, and the distinct count can only be smaller.
+ *
+ * Batching the inserts was tried and dropped. At 10k/20k/50k/110k hashes,
+ * one-statement-per-row measured 46/90/240/593 ms and hundred-row batches
+ * 39/96/254/617 ms — the cost is the B-tree insert, not statement overhead,
+ * which `prepared()` already caches away. Variable-length SQL for no
+ * measurable gain is a worse trade than a number.
+ */
+export const MAX_PROFILE_AUDIO_ENTRIES = 20_000;
+
 const TOO_LARGE = "That profile is too large to store";
+
+const TOO_MANY_SOUNDS = "That profile names too many sounds to store";
 
 function tooLarge(): NextResponse {
   return tooLargeResponse(TOO_LARGE);
+}
+
+/** How many entries a blob's `audioFiles` claims, without walking them. */
+function audioEntryCount(data: unknown): number {
+  const files = (data as { audioFiles?: unknown } | null)?.audioFiles;
+  return Array.isArray(files) ? files.length : 0;
 }
 
 /** Validate the JSON body shared by profile create and update. */
@@ -103,6 +139,12 @@ export async function parseProfileBody(
   // one the row stores — is already the redacted one and there is no second
   // pass over 8 MB.
   const data = redactProfileBlob(body.data);
+
+  // Before the serialisation below, which is the expensive half of parsing a
+  // body this size, and long before the write lock.
+  if (audioEntryCount(data) > MAX_PROFILE_AUDIO_ENTRIES) {
+    return tooLargeResponse(TOO_MANY_SOUNDS);
+  }
 
   // Content-length can be absent or wrong, so the parsed size is what decides.
   // Kept rather than discarded: this is the exact string the row will store.

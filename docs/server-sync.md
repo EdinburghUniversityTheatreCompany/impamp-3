@@ -212,9 +212,14 @@ surface is not advertised to non-admins.
   else, audio remains in Drive for everyone and the server hosts none of it.
   The gated Wasabi option — approved users only, a global cap, per-user
   metering — now exists as a separate, opt-in piece: see `wasabi-audio.md`.
-- **No storage quota.** Nothing caps how many profiles a user creates or how
-  large a profile blob may be. `IMPAMP_ALLOWED_EMAILS` is the only limit on
-  who can consume space.
+- **Coarse storage limits, and no quota.** Three ceilings bound what one
+  account can take: 8 MB per profile blob, 20,000 sounds named by one profile,
+  and 100 profiles per account. They exist to stop a single account taking the
+  volume or holding the write lock, not to meter anyone — there is no per-user
+  byte allowance the way hosted audio has one, and `IMPAMP_ALLOWED_EMAILS`
+  remains the real limit on who can consume space. All three are constants in
+  the source (`profileRequests.ts`, `profiles.ts`), deliberately set far above
+  any honest use, because each one refuses somebody a save when it bites.
 - **Not true concurrent editing.** Two people editing the same pad within the
   same second still produce a conflict for a human to resolve; they just no
   longer silently overwrite one another.
