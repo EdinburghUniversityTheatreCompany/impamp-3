@@ -6,7 +6,17 @@
  * and no API can delete them — while Wasabi bills a 90-day minimum for each.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import type { AddressInfo } from "node:net";
 import { closeDb, getDb, queryAll } from "./db";
 import { upsertUserFromGoogle } from "./users";
 import { recordPendingUpload, recordUpload } from "./audio";
@@ -16,10 +26,15 @@ import {
   sweepIfDue,
   sweepIsScheduledForTests,
   resetSweepScheduleForTests,
+  type SweepLimits,
 } from "./audioSweep";
 import { sweepUncommittedObjects } from "./audioSweep";
 import { resolveObjectStore, setObjectStoreForTests } from "./audioRequests";
-import { objectKeyForHash } from "./s3/client";
+import { createObjectStore, objectKeyForHash } from "./s3/client";
+// The bucket the E2E run uses: real HTTP, real ListObjectsV2 with continuation
+// tokens. Borrowed rather than restated, so the pagination this module now
+// depends on is exercised against something that answers over the wire.
+import { createFakeS3Server } from "../../../e2e-tests/fake-s3.js";
 import {
   createFakeObjectStore,
   type FakeObjectStore,
@@ -58,17 +73,14 @@ beforeEach(() => {
   resetSweepScheduleForTests();
 });
 
-/** An object in the bucket with a matching audio_objects row. */
-function committed(n: number, at = LONG_AGO): string {
+/** The audio_objects row that makes an object a committed one. */
+function commitRow(n: number): string {
   const user = upsertUserFromGoogle({
     sub: `sub-${n}`,
     email: `user${n}@example.com`,
     name: null,
     picture: null,
   });
-  const key = objectKeyForHash(hash(n), "wav");
-  store.put(key, KB);
-  store.setLastModified(key, at);
   recordUpload({
     userId: user.id,
     hash: hash(n),
@@ -77,6 +89,14 @@ function committed(n: number, at = LONG_AGO): string {
     extension: "wav",
     name: `sound-${n}.wav`,
   });
+  return objectKeyForHash(hash(n), "wav");
+}
+
+/** An object in the bucket with a matching audio_objects row. */
+function committed(n: number, at = LONG_AGO): string {
+  const key = commitRow(n);
+  store.put(key, KB);
+  store.setLastModified(key, at);
   return key;
 }
 
@@ -133,6 +153,138 @@ describe("sweepUncommittedObjects", () => {
 
     expect(await sweep()).toMatchObject({ scanned: 4, removed: 2 });
     expect(store.keys().sort()).toEqual([kept, recent].sort());
+  });
+});
+
+/**
+ * Small enough to build in a test, and the same shape as the production
+ * numbers: a budget of several pages, so both halves of the traversal — the
+ * continuation token within a pass and the resume key across passes — get
+ * used.
+ */
+const SMALL: SweepLimits = { maxScanned: 4, listPageSize: 2, maxRemoved: 100 };
+
+describe("walking a bucket bigger than one pass", () => {
+  /** One pass over the fake bucket, on the small limits above. */
+  const pass = (limits: SweepLimits = SMALL) =>
+    sweepUncommittedObjects({ store, config, now: NOW, limits });
+
+  // `continuationToken` was a local, so every pass restarted at the top of the
+  // listing and the scan cap stopped it in the same place. Committed objects
+  // count against that cap, so any bucket with a real library in it hid
+  // everything sorting behind the first `maxScanned` keys — permanently, from
+  // the only mechanism that can delete an uncommitted object at all.
+  it("reaches an orphan sorting behind more committed objects than one pass sees", async () => {
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) committed(n);
+    const junk = orphan(9);
+
+    expect(await pass()).toEqual({ scanned: 4, removed: 0, truncated: true });
+    expect(store.keys()).toContain(junk);
+
+    expect(await pass()).toEqual({ scanned: 4, removed: 0, truncated: true });
+    expect(store.keys()).toContain(junk);
+
+    expect(await pass()).toEqual({ scanned: 1, removed: 1, truncated: false });
+    expect(store.keys()).not.toContain(junk);
+  });
+
+  it("starts over from the top once it has reached the end of the listing", async () => {
+    // Otherwise the cursor is a one-way trip: everything behind it is swept
+    // once and nothing ever uploaded in front of it is looked at again. The
+    // first pass has to end truncated for this to mean anything — a bucket
+    // small enough to finish in one pass leaves the cursor at null either way,
+    // which is how the first version of this test passed with the reset
+    // removed.
+    for (const n of [1, 2, 3, 4, 5]) committed(n);
+
+    expect(await pass()).toEqual({ scanned: 4, removed: 0, truncated: true });
+    expect(await pass()).toEqual({ scanned: 1, removed: 0, truncated: false });
+
+    const junk = orphan(0);
+
+    expect(await pass()).toEqual({ scanned: 4, removed: 1, truncated: true });
+    expect(store.keys()).not.toContain(junk);
+  });
+
+  it("resumes after the object it was deleting when it hit the removal cap", async () => {
+    // The early return at the removal cap had the same shape as the scan cap:
+    // it left with nothing recorded, so the next pass re-examined everything
+    // in front of it. The recent orphan is what makes that visible — it stays
+    // in the bucket, so a pass that started over would count it again.
+    orphan(1, NOW - 60_000);
+    orphan(2);
+    committed(3);
+    const limits: SweepLimits = { ...SMALL, maxScanned: 100, maxRemoved: 1 };
+
+    expect(await pass(limits)).toEqual({
+      scanned: 2,
+      removed: 1,
+      truncated: true,
+    });
+    expect(await pass(limits)).toEqual({
+      scanned: 1,
+      removed: 0,
+      truncated: false,
+    });
+  });
+});
+
+describe("walking a bucket that answers over HTTP", () => {
+  // Everything above runs against an in-process fake, which is the same code
+  // deciding what a page is and what a continuation token means. This one goes
+  // through `createObjectStore` — signed requests, a real ListObjectsV2
+  // document, real `NextContinuationToken` and `start-after` query parameters
+  // — against the bucket the E2E run uses.
+  let server: ReturnType<typeof createFakeS3Server>;
+  let httpConfig: AudioHostingConfig;
+
+  beforeAll(async () => {
+    server = createFakeS3Server();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    httpConfig = { ...config, endpoint: `http://127.0.0.1:${port}` };
+  });
+
+  afterAll(
+    () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  );
+
+  it("pages through the listing and resumes where the last pass stopped", async () => {
+    const httpStore = createObjectStore(httpConfig);
+    // The bucket stamps every PUT with the moment it arrived, so the passes
+    // run from ten days later rather than backdating the objects.
+    const now = Date.now() + 10 * 24 * 60 * 60 * 1000;
+    const put = async (key: string) => {
+      const response = await fetch(httpStore.presignUpload(key), {
+        method: "PUT",
+        body: new Uint8Array(KB),
+      });
+      expect(response.ok).toBe(true);
+    };
+
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) await put(commitRow(n));
+    const junk = objectKeyForHash(hash(9), "wav");
+    await put(junk);
+
+    const pass = () =>
+      sweepUncommittedObjects({
+        store: httpStore,
+        config: httpConfig,
+        now,
+        limits: SMALL,
+      });
+
+    expect(await pass()).toEqual({ scanned: 4, removed: 0, truncated: true });
+    expect(await pass()).toEqual({ scanned: 4, removed: 0, truncated: true });
+    expect(await pass()).toEqual({ scanned: 1, removed: 1, truncated: false });
+
+    expect(await httpStore.head(junk)).toBeNull();
+    expect(
+      (await httpStore.list({ prefix: "audio/", maxKeys: 100 })).objects,
+    ).toHaveLength(8);
   });
 });
 
