@@ -1,6 +1,6 @@
 import { useUIStore } from "@/store/uiStore";
 import { ModalType } from "@/components/modals/modalRegistry";
-import { hasSeenWelcomeTour, markWelcomeTourSeen } from "@/lib/firstRun";
+import { hasSeenWelcomeTour } from "@/lib/firstRun";
 
 /**
  * Opens the standard Help Modal using the UI store with lazy loading.
@@ -42,10 +42,10 @@ export const openLoudnessOverviewModal = () => {
 /**
  * Opens the first-use tour (issue #8).
  *
- * `onCancel` records the answer as well, because the shared `Modal` closes on
- * Escape and on the backdrop without going near the tour's own buttons — and
- * someone who dismisses it that way is the person least likely to want it
- * again next load.
+ * No `onCancel`: `Modal` reaches it only from the Cancel button, and this tour
+ * shows none, so passing one here was dead code that read as a guarantee. The
+ * component records the answer on unmount instead, which is the one path every
+ * dismissal takes.
  */
 export const openWelcomeTour = () => {
   const openModalFn = useUIStore.getState().openModal;
@@ -56,7 +56,6 @@ export const openWelcomeTour = () => {
     modalProps: {},
     showConfirmButton: false,
     showCancelButton: false,
-    onCancel: markWelcomeTourSeen,
   });
 };
 

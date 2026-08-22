@@ -20,7 +20,7 @@
  * @module components/modals/WelcomeTourContent
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { markWelcomeTourSeen } from "@/lib/firstRun";
 import { useUIStore } from "@/store/uiStore";
 import { armModifierLabel } from "@/lib/platform";
@@ -111,12 +111,18 @@ export default function WelcomeTourContent() {
   const step = all[index];
   const isLast = index === all.length - 1;
 
-  // Every exit records the answer, including the Escape the shared Modal
-  // handles for us — see `openWelcomeTour`, which passes the same call as its
-  // cancel handler. A tour that only remembers being *finished* reappears for
-  // everyone who dismissed it, which is the group most certain not to want it.
+  // Recorded on unmount, not through the modal's `onCancel`. `Modal` reaches
+  // `onCancel` only from the Cancel button, so Escape, the × and a backdrop
+  // click all closed straight past it — and this tour renders no Cancel
+  // button at all, which made the handler dead code. It was measured:
+  // `welcomeTourSeen` stayed null after Escape and the tour came back on the
+  // next load.
+  //
+  // `EditPadModalContent` states the rule thirty lines from here, for the same
+  // reason: unmount is the one path every dismissal takes.
+  useEffect(() => markWelcomeTourSeen, []);
+
   const finish = () => {
-    markWelcomeTourSeen();
     closeModal();
   };
 
