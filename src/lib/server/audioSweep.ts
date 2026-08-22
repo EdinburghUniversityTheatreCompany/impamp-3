@@ -68,8 +68,19 @@ export const SWEEP_LIMITS: SweepLimits = {
   maxRemoved: 100,
 };
 
-/** How often a sweep is worth running at all. */
+/** How often a sweep is worth running when there is nothing left to walk. */
 export const MIN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * How soon a pass that stopped mid-bucket may be followed by the next.
+ *
+ * A pass that ran out of budget knows there is more bucket behind its cursor.
+ * Waiting the full hour would then walk a large library at one pass an hour —
+ * 200k objects is most of a day just to look at every key once — while the
+ * bytes being looked for are billed for ninety days whether anyone finds them
+ * or not.
+ */
+export const RESUME_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface SweepResult {
   scanned: number;
@@ -77,6 +88,8 @@ export interface SweepResult {
   /**
    * True when the pass stopped at a cap with listing left, so the next one
    * resumes from its cursor rather than starting over.
+   *
+   * Read by `sweepIfDue`, which brings the next pass forward when it is set.
    */
   truncated: boolean;
 }
@@ -210,12 +223,13 @@ export async function sweepUncommittedObjects({
   return stopAt(null);
 }
 
-let lastSweepAt = 0;
+/** The earliest a sweep may next run. */
+let nextSweepAt = 0;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Forget the schedule and the cursor, and stop the timer. Tests only. */
 export function resetSweepScheduleForTests(): void {
-  lastSweepAt = 0;
+  nextSweepAt = 0;
   resumeAfterKey = null;
   if (sweepTimer) clearInterval(sweepTimer);
   sweepTimer = null;
@@ -239,8 +253,14 @@ export function sweepIsScheduledForTests(): boolean {
  * A plain interval is the whole of the coordination needed: this app is
  * documented and deployed as a single instance. `unref` so it can never be the
  * reason the process stays alive, and the admin page keeps its own
- * `sweepIfDue` — both share the same "not more than hourly" throttle, so the
- * two cannot double up.
+ * `sweepIfDue` — both go through the same throttle, so the two cannot double
+ * up.
+ *
+ * The tick is the resume interval rather than the hourly one because
+ * `sweepIfDue` is what decides how long to wait: an idle deployment still
+ * sweeps at most hourly, and one whose last pass stopped mid-bucket gets its
+ * next pass five minutes later instead of in an hour. Ticking hourly would put
+ * that decision out of reach.
  */
 export function ensureSweepScheduled(hosting: {
   store: ObjectStore;
@@ -252,7 +272,7 @@ export function ensureSweepScheduled(hosting: {
     // Not awaited by anyone, and `sweepIfDue` swallows storage failures, so an
     // unreachable bucket cannot become an unhandled rejection.
     void sweepIfDue(hosting);
-  }, MIN_SWEEP_INTERVAL_MS);
+  }, RESUME_SWEEP_INTERVAL_MS);
 
   sweepTimer.unref?.();
 }
@@ -265,17 +285,26 @@ export function ensureSweepScheduled(hosting: {
  * that is unreachable must not take that page down with it, so a failure is
  * logged and reported as `null`.
  *
+ * How long until the next one is the pass's own answer: an hour when it walked
+ * the listing to the end, `RESUME_SWEEP_INTERVAL_MS` when it stopped at a cap
+ * with a cursor pointing at the rest. That is what `truncated` is for.
+ *
  * @returns The sweep's result, or null if one was not due or it failed
  */
 export async function sweepIfDue(
   hosting: { store: ObjectStore; config: AudioHostingConfig },
   now = Date.now(),
+  limits: SweepLimits = SWEEP_LIMITS,
 ): Promise<SweepResult | null> {
-  if (now - lastSweepAt < MIN_SWEEP_INTERVAL_MS) return null;
-  lastSweepAt = now;
+  if (now < nextSweepAt) return null;
+  // Claimed before the first await, so two overlapping callers cannot both
+  // sweep and a throw still leaves the hour's throttle in place.
+  nextSweepAt = now + MIN_SWEEP_INTERVAL_MS;
 
   try {
-    return await sweepUncommittedObjects({ ...hosting, now });
+    const result = await sweepUncommittedObjects({ ...hosting, now, limits });
+    if (result.truncated) nextSweepAt = now + RESUME_SWEEP_INTERVAL_MS;
+    return result;
   } catch (error) {
     console.error("Sweeping uncommitted audio objects failed:", error);
     return null;

@@ -23,6 +23,7 @@ import { recordPendingUpload, recordUpload } from "./audio";
 import {
   ensureSweepScheduled,
   MIN_SWEEP_INTERVAL_MS,
+  RESUME_SWEEP_INTERVAL_MS,
   sweepIfDue,
   sweepIsScheduledForTests,
   resetSweepScheduleForTests,
@@ -311,6 +312,28 @@ describe("sweepIfDue", () => {
     expect(await sweepIfDue({ store, config }, NOW + 2 * HOUR)).toMatchObject({
       removed: 1,
     });
+  });
+
+  it("comes back sooner when the last pass stopped mid-bucket", async () => {
+    // `truncated` was returned and read by nobody. It is the only thing that
+    // knows there is more bucket behind the cursor, and on the hourly throttle
+    // alone a large library would be walked at one pass an hour.
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) committed(n);
+    const junk = orphan(9);
+    const due = (at: number) => sweepIfDue({ store, config }, at, SMALL);
+
+    expect(await due(NOW)).toMatchObject({ truncated: true });
+    expect(await due(NOW + RESUME_SWEEP_INTERVAL_MS)).toMatchObject({
+      truncated: true,
+    });
+    expect(await due(NOW + 2 * RESUME_SWEEP_INTERVAL_MS)).toMatchObject({
+      removed: 1,
+      truncated: false,
+    });
+    expect(store.keys()).not.toContain(junk);
+
+    // And once it has been all the way round, back to the hourly throttle.
+    expect(await due(NOW + 3 * RESUME_SWEEP_INTERVAL_MS)).toBeNull();
   });
 
   it("reports null rather than throwing when the bucket is unreachable", async () => {
