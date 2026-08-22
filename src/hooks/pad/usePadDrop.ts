@@ -8,7 +8,11 @@
 
 import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
-import { addOrReuseAudioFile, DEFAULT_PLAYBACK_TYPE } from "@/lib/db";
+import {
+  addOrReuseAudioFile,
+  DEFAULT_PLAYBACK_TYPE,
+  withAudioImportInProgress,
+} from "@/lib/db";
 import { savePadConfiguration } from "./padWrites";
 import { loadAndDecodeAudio } from "@/lib/audio/decoder";
 
@@ -59,25 +63,32 @@ export function usePadDrop(currentBankId: string) {
       }
 
       try {
-        // The same sting dropped on a second pad, or a second bank, must name
-        // one row.
-        const { id: audioFileId } = await addOrReuseAudioFile({
-          blob: file,
-          name: file.name,
-          type: file.type,
-        });
+        // Declared for the whole of the two writes below. Between them the
+        // row is real and no pad names it, which is exactly what the orphan
+        // sweep exists to delete — the writers' half of the rule the deleters
+        // keep with `settleAudioImports()`. See `withAudioImportInProgress`.
+        const audioFileId = await withAudioImportInProgress(async () => {
+          // The same sting dropped on a second pad, or a second bank, must
+          // name one row.
+          const { id } = await addOrReuseAudioFile({
+            blob: file,
+            name: file.name,
+            type: file.type,
+          });
 
-        // Create a pad configuration with the new audio file, and tell the
-        // rest of the app. One call: the version bump the grid, the keyboard
-        // and the emergency set all watch, and the sync request, are the
-        // single tail every pad write shares — see `padWrites`.
-        await savePadConfiguration({
-          profileId: activeProfileId,
-          bankId: currentBankId,
-          padIndex: padIndex,
-          audioFileIds: [audioFileId], // Single audio file in array
-          playbackType: DEFAULT_PLAYBACK_TYPE,
-          name: file.name.replace(/\.[^/.]+$/, ""), // Set default name (without extension)
+          // Create a pad configuration with the new audio file, and tell the
+          // rest of the app. One call: the version bump the grid, the keyboard
+          // and the emergency set all watch, and the sync request, are the
+          // single tail every pad write shares — see `padWrites`.
+          await savePadConfiguration({
+            profileId: activeProfileId,
+            bankId: currentBankId,
+            padIndex: padIndex,
+            audioFileIds: [id], // Single audio file in array
+            playbackType: DEFAULT_PLAYBACK_TYPE,
+            name: file.name.replace(/\.[^/.]+$/, ""), // Set default name (without extension)
+          });
+          return id;
         });
 
         // Preload the audio file to ensure it's ready to play

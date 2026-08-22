@@ -165,3 +165,22 @@ it was given. Worth a test with a store that does exactly that, or it is
 another claim nobody checks.
 
 Noticed while fixing the sweep's traversal (phase 7 review, 🔴 2).
+
+## The bulk importer's "not per-pad" announcement is per-pad after all
+
+`BulkImportModalContent.tsx:333` says _"The announcement is deliberately not
+per-pad: one import can write sixty of them, and every bump re-reads the
+bank"_, and the very next call is `savePadConfiguration`, whose whole job is
+`upsertPadConfiguration` **plus** `notifyPadConfigsChanged` (`padWrites.ts`).
+So a sixty-file import fires sixty bumps and then a sixty-first at line 351.
+The comment was true when the importer wrote pads through
+`upsertPadConfiguration` directly; adopting the shared tail took the write and
+left the comment — this repo's characteristic shape, the same one recorded in
+the "fixes take the data and leave the guard" memory.
+
+Either the loop should go back to `upsertPadConfiguration` and keep its single
+trailing announcement, or the comment and the trailing call should go. The
+first is what the comment intends and is what the performance note is about.
+Not taken here because it changes what the importer notifies and this branch
+was about the audio-import register. Noticed while wrapping that loop in
+`withAudioImportInProgress`.

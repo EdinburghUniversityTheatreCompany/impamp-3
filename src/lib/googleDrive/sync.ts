@@ -897,9 +897,34 @@ const performProfileSync = async (
  * @param refreshCallback Callback to update token if refreshed
  * @returns The sync result
  */
-export const applyConflictResolution = async (
+export const applyConflictResolution = (
   resolvedData: ProfileSyncData,
   fileId: string | null, // Allow fileId to be null to match uploadDriveFile parameter type
+  profileId: number,
+  tokenInfo: TokenInfo | null,
+  callbacks: SyncStatusCallbacks,
+  refreshCallback: (token: TokenInfo) => void,
+): Promise<SyncResult> =>
+  // The second entry point into `updateLocalData`, and it declared nothing
+  // while `syncProfile` — the first — declares its whole run. The work is the
+  // same: sounds are resolved to local rows several steps before the pads
+  // naming them are written, and in between the row the resolution has chosen
+  // is referenced by nothing. Settling a conflict is a button on the profile
+  // manager, one panel from the orphan cleanup button.
+  withAudioImportInProgress(() =>
+    runConflictResolution(
+      resolvedData,
+      fileId,
+      profileId,
+      tokenInfo,
+      callbacks,
+      refreshCallback,
+    ),
+  );
+
+const runConflictResolution = async (
+  resolvedData: ProfileSyncData,
+  fileId: string | null,
   profileId: number,
   tokenInfo: TokenInfo | null,
   callbacks: SyncStatusCallbacks,

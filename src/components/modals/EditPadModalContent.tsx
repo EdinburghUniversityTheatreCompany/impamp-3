@@ -11,7 +11,7 @@ import React from "react";
 import EditPadForm from "./EditPadForm";
 import type { PadFormValues } from "@/types/forms";
 import type { FormModalRenderProps } from "@/hooks/modal/useFormModal";
-import { deleteUnreferencedAudioFiles } from "@/lib/db";
+import { beginAudioImport, deleteUnreferencedAudioFiles } from "@/lib/db";
 // The session lives in its own module so that opening this editor does not
 // require importing it — see `padEditSession` for why that matters to the
 // first-load bundle.
@@ -30,7 +30,27 @@ const EditPadModalContent: React.FC<EditPadModalContentProps> = ({
   // close the modal straight through onClose. Unmount is the one path every
   // dismissal takes.
   React.useEffect(() => {
+    // Held for as long as the editor is open. Picking a sound writes its row
+    // straight away and the pad naming it is written on Save, so between the
+    // two there is a row nothing references — the window every audio deleter
+    // is entitled to delete in, and the writers' half of the rule the deleters
+    // keep with `settleAudioImports()`. No single call spans it: the two
+    // halves are two user actions, which is why this is `beginAudioImport`
+    // rather than `withAudioImportInProgress`.
+    //
+    // The cost is that an audio deleter started while the editor is open waits
+    // for it to close. Nothing reachable pays it: every deleter in the app is
+    // a button on the profile manager or the editor's own discard, and
+    // `uiStore` holds exactly one modal, so the profile manager cannot be open
+    // at the same time as this.
+    const releaseAudioHold = beginAudioImport();
     return () => {
+      // First, and in the same synchronous block as the discard below.
+      // `settleAudioImports` waits for every registered import and cannot tell
+      // which one its caller holds, so a deleter that reaches it while this
+      // hold is open waits for the hold that is waiting for it — a hung tab
+      // rather than an error.
+      releaseAudioHold();
       const kept = new Set(session.savedFileIds ?? []);
       const discardable = [...session.provisionalFileIds].filter(
         (fileId) => !kept.has(fileId),

@@ -469,9 +469,30 @@ and the ranges are floors that should move only when something requires it.
   transactions** must run inside `withAudioImportInProgress` (`db.ts`), and
   **every deleter of audio rows must `await settleAudioImports()` as the last
   thing before it opens its transaction, and must not be called from inside
-  `withAudioImportInProgress`.** That is one sentence with no exceptions and
-  five deleters: `deleteProfile`, `deleteUnreferencedAudioFiles`, the two
-  orphan sweeps and `collapseDuplicateAudioGroups`. The second half is why a
+  `withAudioImportInProgress`.** That is one sentence with no exceptions,
+  **ten writers and five deleters**, and it is a two-sided rule where sweeping
+  one side is worth nothing: the 2026-08-22 rework added the wait to every
+  deleter and declared no writer, and a deleter waits for what is in the
+  register, so six writers were still walking through the window it was
+  written to close. The deleters are `deleteProfile`,
+  `deleteUnreferencedAudioFiles`, the two orphan sweeps and
+  `collapseDuplicateAudioGroups`. The writers are `importProfileCore`,
+  `writeBankIntoProfile`, `syncProfile`, `syncServerProfile`,
+  `applyConflictResolution`, `applyServerConflictResolution`,
+  `replaceMissingAudioFile`, the drop handler (`usePadDrop`) and the bulk
+  importer (`BulkImportModalContent`) — and the pad editor, which is the tenth
+  and cannot use the wrapper at all. It writes a sound's row when the file is
+  picked and the pad naming it on Save, so its window is not two transactions a
+  turn apart but two user actions minutes apart; `EditPadModalContent` holds
+  `beginAudioImport()` from mount to unmount instead, releasing it in the same
+  synchronous block as its own discard. Two things follow. **A scope must
+  never contain another** — see `plans/off-topic-improvements.md`, and note
+  that it is why the two conflict-resolution entry points declare themselves
+  rather than the `updateLocalData` they share with the two sync runs, which
+  are declared already. And a writer that has been handed a row but not yet
+  named it must be **found by grepping the callers of `addOrReuseAudioFile`**,
+  which is where all seven live; there is no type and no lint rule behind any
+  of this. The second half is why a
   failed profile import carries its profile id and created audio ids out on a
   `FailedProfileImport` and rolls back one line past the scope
   (`importProfileCore`) — a deleter waiting from inside a scope waits for the
