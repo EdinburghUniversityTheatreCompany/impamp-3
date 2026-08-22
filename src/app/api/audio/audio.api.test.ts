@@ -167,6 +167,74 @@ async function storeAudio(
 }
 
 describe("POST /api/audio/upload-url", () => {
+  /** Ask for a licence to upload and then do nothing with it. */
+  const ask = (token: string, label: string, sizeBytes: number) =>
+    uploadUrl(
+      makeRequest("/api/audio/upload-url", {
+        method: "POST",
+        sessionToken: token,
+        body: {
+          hash: hashOf(label, sizeBytes),
+          sizeBytes,
+          contentType: "audio/wav",
+          extension: "wav",
+        },
+      }),
+    );
+
+  it("counts a licence nobody used against the next one", async () => {
+    // The quota bounded nothing between minting and committing. Nothing is
+    // recorded until commit, so a caller could ask for a URL, PUT the bytes,
+    // never commit, and ask again — every ask decided against a total the
+    // previous ask had not moved. Each abandoned object then sat in the bucket
+    // that no total could see and no API could delete, with Wasabi's 90-day
+    // minimum on every one.
+    const { token } = signIn(1, { approved: true });
+
+    expect((await ask(token, "first", 6 * KB)).status).toBe(200);
+
+    const second = await ask(token, "second", 6 * KB);
+
+    expect(second.status).toBe(413);
+    expect((await second.json()).reason).toBe("user_quota");
+  });
+
+  it("counts everyone's live licences against the deployment cap", async () => {
+    setObjectStoreForTests({
+      store,
+      config: { ...config, globalCapBytes: 8 * KB },
+    });
+    const first = signIn(1, { approved: true });
+    const second = signIn(2, { approved: true });
+
+    expect((await ask(first.token, "theirs", 5 * KB)).status).toBe(200);
+
+    const refused = await ask(second.token, "mine", 5 * KB);
+
+    expect(refused.status).toBe(507);
+    expect((await refused.json()).reason).toBe("global_cap");
+  });
+
+  it("gives the licence back when the upload commits", async () => {
+    // The other half, and the one that would lock a real user out: a commit
+    // has to stop the provisional charge, or the bytes are counted twice —
+    // once as pending and once as stored — until the mint lapses.
+    const { token } = signIn(1, { approved: true });
+    expect((await storeAudio(token, "committed", 4 * KB)).status).toBe(200);
+
+    expect((await ask(token, "next", 4 * KB)).status).toBe(200);
+  });
+
+  it("lets a caller retry a file whose upload failed", async () => {
+    // Same hash, same size, twice: a client whose PUT failed asks again, and
+    // must not be charged for both attempts. Two *different* 6K files do not
+    // fit in the 10K quota, which is what makes this assertion worth making.
+    const { token } = signIn(1, { approved: true });
+    expect((await ask(token, "flaky", 6 * KB)).status).toBe(200);
+
+    expect((await ask(token, "flaky", 6 * KB)).status).toBe(200);
+  });
+
   it("refuses an anonymous caller", async () => {
     const response = await uploadUrl(
       makeRequest("/api/audio/upload-url", {

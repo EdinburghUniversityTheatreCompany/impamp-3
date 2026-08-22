@@ -18,7 +18,7 @@
  * Server-only.
  */
 
-import { getAudioObject } from "./audio";
+import { getAudioObject, prunePendingUploads } from "./audio";
 import type { AudioHostingConfig } from "./s3/config";
 import type { ObjectStore } from "./s3/client";
 
@@ -42,7 +42,7 @@ const MAX_SCANNED_PER_SWEEP = 1000;
 const MAX_REMOVED_PER_SWEEP = 100;
 
 /** How often a sweep is worth running at all. */
-const MIN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+export const MIN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface SweepResult {
   scanned: number;
@@ -79,6 +79,12 @@ export async function sweepUncommittedObjects({
   now?: number;
 }): Promise<SweepResult> {
   const graceMs = config.uploadUrlTtlSeconds * 1000 + EXTRA_GRACE_MS;
+
+  // The database half of the same housekeeping: a mint whose presigned URL has
+  // expired is no longer charged for, so its row is only taking up space. The
+  // upload path prunes as it goes, which covers everyone who comes back; this
+  // covers whoever does not.
+  prunePendingUploads(now - config.uploadUrlTtlSeconds * 1000);
 
   let scanned = 0;
   let removed = 0;
@@ -118,10 +124,49 @@ export async function sweepUncommittedObjects({
 }
 
 let lastSweepAt = 0;
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Forget when the last sweep ran. Tests only. */
+/** Forget when the last sweep ran, and stop the timer. Tests only. */
 export function resetSweepScheduleForTests(): void {
   lastSweepAt = 0;
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
+}
+
+/** Whether the periodic sweep is running in this process. Tests only. */
+export function sweepIsScheduledForTests(): boolean {
+  return sweepTimer !== null;
+}
+
+/**
+ * Start the periodic sweep, once per process.
+ *
+ * It used to hang off the admin storage page and nothing else, on the
+ * reasoning that a sweep should run when somebody is already looking at
+ * storage. That makes the only recovery from uncommitted bytes depend on an
+ * admin opening a page — which on a working deployment is approximately never,
+ * while Wasabi bills a 90-day minimum for every object nobody swept. A caller
+ * who PUTs and never commits was, in practice, storing indefinitely.
+ *
+ * A plain interval is the whole of the coordination needed: this app is
+ * documented and deployed as a single instance. `unref` so it can never be the
+ * reason the process stays alive, and the admin page keeps its own
+ * `sweepIfDue` — both share the same "not more than hourly" throttle, so the
+ * two cannot double up.
+ */
+export function ensureSweepScheduled(hosting: {
+  store: ObjectStore;
+  config: AudioHostingConfig;
+}): void {
+  if (sweepTimer) return;
+
+  sweepTimer = setInterval(() => {
+    // Not awaited by anyone, and `sweepIfDue` swallows storage failures, so an
+    // unreachable bucket cannot become an unhandled rejection.
+    void sweepIfDue(hosting);
+  }, MIN_SWEEP_INTERVAL_MS);
+
+  sweepTimer.unref?.();
 }
 
 /**

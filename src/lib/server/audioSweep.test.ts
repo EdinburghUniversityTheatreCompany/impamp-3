@@ -6,12 +6,19 @@
  * and no API can delete them — while Wasabi bills a 90-day minimum for each.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { closeDb, getDb } from "./db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { closeDb, getDb, queryAll } from "./db";
 import { upsertUserFromGoogle } from "./users";
-import { recordUpload } from "./audio";
-import { sweepIfDue, resetSweepScheduleForTests } from "./audioSweep";
+import { recordPendingUpload, recordUpload } from "./audio";
+import {
+  ensureSweepScheduled,
+  MIN_SWEEP_INTERVAL_MS,
+  sweepIfDue,
+  sweepIsScheduledForTests,
+  resetSweepScheduleForTests,
+} from "./audioSweep";
 import { sweepUncommittedObjects } from "./audioSweep";
+import { resolveObjectStore, setObjectStoreForTests } from "./audioRequests";
 import { objectKeyForHash } from "./s3/client";
 import {
   createFakeObjectStore,
@@ -165,5 +172,72 @@ describe("sweepIfDue", () => {
     };
 
     expect(await sweepIfDue({ store: broken, config }, NOW)).toBeNull();
+  });
+});
+
+describe("the periodic sweep", () => {
+  afterEach(() => {
+    resetSweepScheduleForTests();
+    vi.useRealTimers();
+  });
+
+  it("runs without an admin looking at the storage page", async () => {
+    // The only thing that swept was the admin audio route, so uncommitted
+    // bytes were reclaimed when somebody happened to open a page — which on a
+    // working deployment is approximately never, while Wasabi bills a 90-day
+    // minimum for each object.
+    vi.useFakeTimers();
+    const key = orphan(10, Date.now() - 6 * HOUR);
+
+    ensureSweepScheduled({ store, config });
+    expect(store.keys()).toEqual([key]);
+
+    await vi.advanceTimersByTimeAsync(MIN_SWEEP_INTERVAL_MS + 1000);
+
+    expect(store.keys()).toEqual([]);
+  });
+
+  it("is started by the first hosted-audio request of the process", async () => {
+    // There is no startup hook to hang it off, and a deployment nobody uses
+    // has nothing to sweep, so the store resolver is where it begins.
+    setObjectStoreForTests(null);
+    const vars = {
+      IMPAMP_S3_ENDPOINT: "https://s3.example.invalid",
+      IMPAMP_S3_REGION: "eu-central-2",
+      IMPAMP_S3_BUCKET: "impamp-audio",
+      IMPAMP_S3_ACCESS_KEY_ID: "key",
+      IMPAMP_S3_SECRET_ACCESS_KEY: "secret",
+    };
+    Object.assign(process.env, vars);
+    try {
+      expect(sweepIsScheduledForTests()).toBe(false);
+
+      expect(resolveObjectStore()).not.toBeNull();
+
+      expect(sweepIsScheduledForTests()).toBe(true);
+    } finally {
+      for (const name of Object.keys(vars)) delete process.env[name];
+    }
+  });
+
+  it("forgets a mint whose upload URL has expired", async () => {
+    // The upload path prunes as it goes, which covers everyone who comes back.
+    // This covers whoever does not.
+    const user = upsertUserFromGoogle({
+      sub: "sub-pending",
+      email: "pending@example.com",
+      name: null,
+      picture: null,
+    });
+    recordPendingUpload({
+      userId: user.id,
+      hash: hash(11),
+      sizeBytes: KB,
+      now: LONG_AGO,
+    });
+
+    await sweep();
+
+    expect(queryAll("SELECT 1 FROM audio_pending_uploads")).toHaveLength(0);
   });
 });

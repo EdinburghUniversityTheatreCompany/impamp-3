@@ -14,6 +14,7 @@ import {
 import type { AudioObjectRow, UserRow } from "./db";
 import type { UploadDecision } from "./audio";
 import { parseJsonBody } from "./requestBody";
+import { ensureSweepScheduled } from "./audioSweep";
 
 /**
  * Test seam. Route handlers call `resolveObjectStore()`; tests swap in the
@@ -39,7 +40,14 @@ export function resolveObjectStore(): {
 
   const config = getAudioHostingConfig();
   if (!config) return null;
-  return { store: createObjectStore(config), config };
+
+  const hosting = { store: createObjectStore(config), config };
+  // The first hosted-audio request of the process is what starts the periodic
+  // sweep. There is no other startup hook to hang it off, and a deployment
+  // nobody uses has nothing to sweep. Idempotent, so calling it per request
+  // costs a null check.
+  ensureSweepScheduled(hosting);
+  return hosting;
 }
 
 /** 501 rather than 404: the route exists, this deployment just hosts nothing. */

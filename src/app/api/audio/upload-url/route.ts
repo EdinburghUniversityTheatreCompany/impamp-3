@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { canUpload, quotaForUser, storageKeyForHash } from "@/lib/server/audio";
+import {
+  canUpload,
+  prunePendingUploads,
+  quotaForUser,
+  recordPendingUpload,
+  storageKeyForHash,
+} from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
 import { proofRangeFor } from "@/lib/server/proofOfPossession";
 
@@ -31,6 +37,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // A mint this old cannot be used any more: the presign has expired. Dropped
+  // before deciding, so an upload that failed frees its provisional charge
+  // rather than counting against the user until something else clears it.
+  const pendingSince = Date.now() - config.uploadUrlTtlSeconds * 1000;
+  prunePendingUploads(pendingSince);
+
   const decision = canUpload({
     userId: user.id,
     canUploadAudio: user.can_upload_audio === 1,
@@ -39,6 +51,7 @@ export async function POST(request: NextRequest) {
     quotaBytes: quotaForUser(user.id, config.defaultUserQuotaBytes),
     capBytes: config.globalCapBytes,
     maxObjectBytes: config.maxObjectBytes,
+    pendingSince,
   });
 
   if (!decision.allowed) return uploadRefusal(decision);
@@ -51,11 +64,31 @@ export async function POST(request: NextRequest) {
   // the hash is public: it travels in every profile blob a viewer can read.
   const stored = decision.alreadyStored ? await store.head(key) : null;
 
+  // Nothing to upload when the bytes are already there — commit directly.
+  const uploadUrl = decision.alreadyStored ? null : store.presignUpload(key);
+
+  // This is the moment a caller is licensed to put bytes in the bucket, and
+  // until now it was the moment nothing was recorded: the object is written on
+  // commit, so a PUT that never commits stored bytes no total could see, once
+  // per invented hash, bounded only by a sweep an admin had to trigger by
+  // opening a page.
+  //
+  // The size is the caller's claim, which is all there is before the bytes
+  // land — the presign signs only `host`, so it cannot constrain what is
+  // actually sent, and commit re-decides against what the bucket reports. What
+  // this bounds is how many licences one account can hold at once.
+  if (uploadUrl) {
+    recordPendingUpload({
+      userId: user.id,
+      hash: fields.hash,
+      sizeBytes: body.sizeBytes,
+    });
+  }
+
   return NextResponse.json({
     key,
     alreadyStored: decision.alreadyStored,
-    // Nothing to upload when the bytes are already there — commit directly.
-    uploadUrl: decision.alreadyStored ? null : store.presignUpload(key),
+    uploadUrl,
     proofRange: stored ? proofRangeFor(fields.hash, stored.sizeBytes) : null,
     expiresInSeconds: config.uploadUrlTtlSeconds,
   });

@@ -48,6 +48,35 @@ on five pads, or held by five people, is one object.
   them could be the last to let it go.
 - **Globally**: the object counts once. That is what the bucket holds.
 - An object leaves the bucket only when its **last** reference does.
+- **Provisionally**, from the moment an upload URL is minted. A presigned PUT
+  is a licence to put bytes in the bucket, and nothing is recorded until
+  commit — so without this a caller could ask, upload, never commit, and ask
+  again, with every ask decided against a total the last one had not moved.
+  The charge is the size the client claimed (nothing better exists before the
+  bytes land), it is dropped the moment the commit lands, and it lapses when
+  the presign expires — `IMPAMP_AUDIO_UPLOAD_URL_TTL`, 15 minutes by default.
+  Lapsing rather than persisting is deliberate: an upload that failed must not
+  freeze somebody's allowance, and the bytes it may have left behind are the
+  sweep's problem rather than the quota's.
+
+Two things this does **not** do. It does not bound what a PUT actually writes
+— the presign signs only `host`, so the declared size is a claim, and commit
+measuring the object in the bucket is what settles the real number. And it does
+not bound bytes uploaded under a lie: an object PUT for a hash that is never
+committed is removed by the sweep below rather than accounted for.
+
+### The sweep
+
+Objects that were PUT and never committed are unreachable in every other
+sense: no `audio_objects` row means no quota counts them, the admin view sums
+that table so it cannot show them, and no API can delete them — while Wasabi
+bills its 90-day minimum for each. So a sweep removes them, an hour after the
+upload URL that could have written them expired.
+
+It runs **hourly, on a timer**, started by the first hosted-audio request the
+process serves; the admin storage page also triggers one, and both share the
+same "not more than hourly" throttle. It used to hang off the admin page
+alone, which made the only recovery depend on somebody opening a page.
 
 **Deleting frees the user's allowance immediately.** Wasabi bills a 90-day
 minimum retention per object regardless, so the deployment absorbs a residual

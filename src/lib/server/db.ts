@@ -234,6 +234,35 @@ export const MIGRATIONS: readonly string[] = [
   -- matches nothing rather than serving the wrong person.
   ALTER TABLE profile_audio ADD COLUMN added_by INTEGER;
   `,
+
+  // 6 — bytes a presigned PUT has been licensed to write, but nobody has
+  // committed yet
+  `
+  -- Nothing counted an upload until commit recorded it, so the window between
+  -- minting a URL and committing was free storage: quota and the global cap
+  -- both sum audio_objects, and a caller who PUTs and never commits writes an
+  -- object no total can see. The only recovery was a sweep that ran when an
+  -- admin happened to open the storage page.
+  --
+  -- One row per user per hash, so a client retrying the same file replaces its
+  -- own row rather than being charged twice. The size is the client's claim,
+  -- which is all anyone has before the bytes land — commit still measures the
+  -- object in the bucket and re-decides against that.
+  --
+  -- Rows are provisional in both directions: they are charged only while the
+  -- presigned URL they belong to could still be used, and pruned when it
+  -- cannot. Holding them longer would meter more accurately and lock out a
+  -- user whose upload failed, which is the worse of the two failures for an
+  -- app people run shows on.
+  CREATE TABLE audio_pending_uploads (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hash       TEXT    NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, hash)
+  );
+  CREATE INDEX audio_pending_created_idx ON audio_pending_uploads(created_at);
+  `,
 ];
 
 let db: DatabaseSync | null = null;

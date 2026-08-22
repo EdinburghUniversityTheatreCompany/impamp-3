@@ -288,6 +288,130 @@ export function deletingHashWouldSilenceAProfile(
   );
 }
 
+/**
+ * Bytes a presigned PUT has been licensed to write but nothing has committed.
+ *
+ * `upload-url` mints a URL and returns; the object is not recorded until
+ * commit. Between the two, the bytes can be in the bucket while every total
+ * that exists — `getUserUsage`, `getGlobalUsage`, the admin view — sums
+ * `audio_objects` and therefore cannot see them. A caller who PUTs and never
+ * commits was storing for free, once per invented hash, with no bound but the
+ * sweep an admin has to trigger by opening a page.
+ *
+ * So a mint is recorded and provisionally charged. Two properties keep that
+ * from turning into a lockout, which is the failure that matters more here —
+ * this app is used to run shows, and a refused upload lands on somebody in a
+ * theatre:
+ *
+ * - **One row per user per hash.** A client retrying the same file replaces
+ *   its own row rather than being charged again for it.
+ * - **Charged only while the URL could still be used.** Past
+ *   `uploadUrlTtlSeconds` the presign is dead, so the charge lapses and the
+ *   row is pruned. The bytes may still be in the bucket until the sweep gets
+ *   to them; that is the sweep's job, not the quota's, and metering them for
+ *   longer would freeze an allowance over an upload that failed.
+ *
+ * The size is the client's claim, which is all anyone has before the bytes
+ * land. Commit still measures the object and re-decides against the real
+ * number — a presigned PUT signs only `host`, so nothing here can constrain
+ * what is actually sent.
+ */
+export function recordPendingUpload({
+  userId,
+  hash,
+  sizeBytes,
+  now = Date.now(),
+}: {
+  userId: number;
+  hash: string;
+  sizeBytes: number;
+  now?: number;
+}): void {
+  execute(
+    `INSERT INTO audio_pending_uploads (user_id, hash, size_bytes, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, hash)
+     DO UPDATE SET size_bytes = excluded.size_bytes, created_at = excluded.created_at`,
+    userId,
+    hash,
+    sizeBytes,
+    now,
+  );
+}
+
+/** Drop a mint's provisional charge: it committed, or its URL has expired. */
+export function clearPendingUpload(userId: number, hash: string): void {
+  execute(
+    "DELETE FROM audio_pending_uploads WHERE user_id = ? AND hash = ?",
+    userId,
+    hash,
+  );
+}
+
+/** Forget every mint whose presigned URL can no longer be used. */
+export function prunePendingUploads(since: number): void {
+  execute("DELETE FROM audio_pending_uploads WHERE created_at < ?", since);
+}
+
+/**
+ * What this user's live mints add to their usage, ignoring `hash`.
+ *
+ * `hash` is the upload being decided, whose own row must not count against it
+ * — otherwise re-asking for a URL after a failed PUT would charge twice and
+ * eventually refuse the retry. Hashes the user already holds a reference to
+ * are ignored for the same reason from the other side: those bytes are in
+ * `getUserUsage` already.
+ */
+function pendingBytesForUser(
+  userId: number,
+  hash: string,
+  since: number,
+): number {
+  return (
+    queryOne<{ bytes: number | null }>(
+      `SELECT COALESCE(SUM(p.size_bytes), 0) AS bytes
+         FROM audio_pending_uploads p
+        WHERE p.user_id = ?
+          AND p.hash <> ?
+          AND p.created_at >= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM audio_references r
+             WHERE r.user_id = p.user_id AND r.hash = p.hash
+          )`,
+      userId,
+      hash,
+      since,
+    )?.bytes ?? 0
+  );
+}
+
+/**
+ * What every live mint adds to the bucket's total, ignoring `hash`.
+ *
+ * Counted once per hash however many people are uploading it, because the
+ * bucket holds one object either way — and never for a hash already in
+ * `audio_objects`, which `getGlobalUsage` counts.
+ */
+function pendingBytesGlobally(hash: string, since: number): number {
+  return (
+    queryOne<{ bytes: number | null }>(
+      `SELECT COALESCE(SUM(size), 0) AS bytes
+         FROM (
+           SELECT MAX(p.size_bytes) AS size
+             FROM audio_pending_uploads p
+            WHERE p.hash <> ?
+              AND p.created_at >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM audio_objects o WHERE o.hash = p.hash
+              )
+            GROUP BY p.hash
+         )`,
+      hash,
+      since,
+    )?.bytes ?? 0
+  );
+}
+
 export type UploadDecision =
   | { allowed: true; alreadyStored: boolean }
   | {
@@ -312,6 +436,7 @@ export function canUpload({
   quotaBytes,
   capBytes,
   maxObjectBytes,
+  pendingSince = Date.now(),
 }: {
   userId: number;
   canUploadAudio: boolean;
@@ -320,6 +445,12 @@ export function canUpload({
   quotaBytes: number;
   capBytes: number;
   maxObjectBytes: number;
+  /**
+   * The oldest mint still worth charging for — `now - uploadUrlTtlSeconds`.
+   * Defaults to now, which counts nothing: a caller that does not know the
+   * TTL decides on committed bytes alone, exactly as this used to.
+   */
+  pendingSince?: number;
 }): UploadDecision {
   if (!canUploadAudio) return { allowed: false, reason: "not_approved" };
 
@@ -349,10 +480,16 @@ export function canUpload({
   const chargedBytes = existing?.size_bytes ?? sizeBytes;
 
   const user = getUserUsage(userId, quotaBytes);
-  if (user.usedBytes + chargedBytes > quotaBytes) {
+  // Plus what this user has already been licensed to write and not committed.
+  // Without it the quota bounded nothing: ask for a URL, do not commit, ask
+  // again, and every ask was decided against the same unchanged total.
+  const userPending = pendingBytesForUser(userId, hash, pendingSince);
+  if (user.usedBytes + userPending + chargedBytes > quotaBytes) {
     return {
       allowed: false,
       reason: "user_quota",
+      // The used figure stays the committed one, because that is what the
+      // client shows next to the allowance and what deleting a file changes.
       detail: { usedBytes: user.usedBytes, limitBytes: quotaBytes },
     };
   }
@@ -360,7 +497,8 @@ export function canUpload({
   // A blob already in the bucket adds nothing to the global total.
   if (!existing) {
     const global = getGlobalUsage(capBytes);
-    if (global.usedBytes + sizeBytes > capBytes) {
+    const globalPending = pendingBytesGlobally(hash, pendingSince);
+    if (global.usedBytes + globalPending + sizeBytes > capBytes) {
       return {
         allowed: false,
         reason: "global_cap",
@@ -414,6 +552,10 @@ export function recordUpload({
       name,
       now,
     );
+    // The mint this commit was for is no longer provisional — it is in
+    // `audio_objects` now, where every total can see it. Leaving the row would
+    // charge the same bytes twice until it lapsed.
+    clearPendingUpload(userId, hash);
   });
 }
 
