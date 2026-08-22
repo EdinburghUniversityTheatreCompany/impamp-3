@@ -63,7 +63,6 @@ const PlaybackSettingsForm: React.FC<
           onChange={(value) =>
             updateValue("activePadBehavior", value as ActivePadBehavior)
           }
-          error={errors.activePadBehavior as string}
           data-testid="playback-settings-active-behavior-group"
           optionTestIdPrefix="playback-settings-active-behavior"
         />
