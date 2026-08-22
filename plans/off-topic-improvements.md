@@ -81,38 +81,6 @@ when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
 
-## The `audioFiles` `name` index has no readers left
-
-`db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
-nothing looks anything up in it any more: the Drive reader's name fallback was
-the last reader, and it is gone. The only surviving `index("name")` in the
-codebase is on `profiles`, where import uses it to make a unique profile name.
-
-It costs an index write per audio row and, more to the point, it is a loaded
-gun — the shape of "match a sound by its name" is one lookup away for as long
-as the index exists. Removing it needs a schema version bump and a migration,
-which is why it was not done alongside the fallback.
-
-Noticed while making the Drive reader identify audio by content hash only.
-
-## Two sound rows in the pad editor can share a `data-testid`
-
-`EditPadForm`'s list rows are tagged `edit-pad-sound-item-${sound.fileId}`,
-and so are the trim, gain and remove controls inside them. A pad may name one
-audio row twice — legitimately, since a sequential pad can play a sound twice
-in a round, and reuse by content hash makes it easy to arrive at. The drag ids
-were fixed for that in Task 3 (`placeSounds` numbers the copies); the test ids
-were not, because `e2e-tests/loudness.spec.ts:199` parses the audio file id
-back out of `edit-pad-gain-sound-${id}` and several specs match on the
-`edit-pad-sound-item-` prefix.
-
-Nothing is broken today: no spec builds a pad that names one sound twice. One
-that did would hit Playwright's strict-mode "resolved to 2 elements". The fix
-is to tag the row with the drag id and keep the file id only where a spec
-genuinely needs to read it back.
-
-Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
-
 ## The duplicate-audio panel names no sounds
 
 `DuplicateAudioPanel` reports a group count, a copy count and a byte total,
@@ -128,22 +96,6 @@ Task 7 rather than bolted on.
 
 Noticed while building the duplicate-audio panel (Task 7 of the audio-dedup
 plan).
-
-## `bankUtils.ts` spells the 20-bank cap out three times
-
-`MAX_BANKS` lives in `db.ts:139` and is read by `addBank`, `page.tsx` and
-`profileStore.ts`. `convertBankNumberToIndex` and `convertIndexToBankNumber`
-in `src/lib/bankUtils.ts` still carry the number as literals — `bankNumber <= 20`
-and `index <= 19` — alongside the 9/10 boundary the keyboard's "0-for-10"
-quirk needs.
-
-They are correct today and they are genuinely a keyboard mapping rather than a
-capacity rule, so this is not urgent. But raising the cap would mean editing
-`db.ts` and then finding these, and "the same rule written twice" is this
-repo's characteristic regression.
-
-Noticed while checking whether Task 8 of the audio-dedup plan still needed to
-add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
 
 ## A radio group's validation error is rendered twice
 

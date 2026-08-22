@@ -5,6 +5,7 @@ import type {
   NormalisationSettings,
 } from "@/lib/audio/loudness/types";
 import { convertIndexToBankNumber } from "./bankUtils";
+import { MAX_BANKS } from "./constants";
 import {
   migrateToV7,
   migratedBankId,
@@ -136,8 +137,6 @@ export type PlaybackType = "sequential" | "random" | "round-robin";
  */
 export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
 
-/** The hard cap on banks per profile. Position 0-19 maps to bank 1-20. */
-export const MAX_BANKS = 20;
 /** The banks every profile starts with, so every tab has an identity. */
 export const DEFAULT_BANK_COUNT = 10;
 
@@ -388,6 +387,25 @@ export function getDb(): Promise<IDBPDatabase<ImpAmpDBSchema>> {
         // V1 Stores
         if (oldVersion < 1) {
           if (!db.objectStoreNames.contains("audioFiles")) {
+            // The `name` index is kept on purpose and has no readers.
+            //
+            // The last one was the Drive reader's name fallback, removed
+            // because a name is not an identity: `horn.wav` from two
+            // libraries is two recordings, and merging them onto one row
+            // makes every pad on both sides play whichever arrived first.
+            // Audio is identified by the SHA-256 of its bytes and nothing
+            // else — that is what the `hash` index added in V5 is for.
+            //
+            // Removing an index means a version bump and a migration every
+            // client runs on its next load, and one a still-cached PWA shell
+            // asking for version 7 answers with a hard VersionError. The
+            // saving is one index entry per audio row, on an insert that also
+            // writes a blob, hashes it and analyses its loudness. And it
+            // would not buy what it looks like it buys: matching a sound by
+            // name needs no index at all — a cursor, or a comparison in
+            // memory, writes the same bug. So the guard is on the reader
+            // rather than on the index, in `db.audioNameIndex.test.ts`, which
+            // is also where an argument for removing this belongs.
             db.createObjectStore("audioFiles", {
               keyPath: "id",
               autoIncrement: true,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
 import { loadLoudnessPipeline } from "./loadPipeline";
+import { sourceFilesMatching } from "@/lib/testSupport/sourceScan";
 
 /**
  * Two guards over one rule: the loudness pipeline is imported exactly once.
@@ -36,28 +35,11 @@ describe("loadLoudnessPipeline", () => {
 
 describe("the pipeline has one importer", () => {
   it("is imported nowhere but loadPipeline.ts", () => {
-    const root = path.join(import.meta.dirname, "../../../..", "src");
-    const offenders: string[] = [];
-
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!/\.tsx?$/.test(entry.name)) continue;
-        // The loader itself, and test files, which mock it by specifier.
-        if (entry.name === "loadPipeline.ts") continue;
-        if (/\.test\.tsx?$/.test(entry.name)) continue;
-
-        const source = fs.readFileSync(full, "utf8");
-        if (/import\(\s*["'][^"']*loudness\/pipeline["']\s*\)/.test(source)) {
-          offenders.push(path.relative(root, full));
-        }
-      }
-    };
-    walk(root);
+    // The loader itself is the one file allowed to name the module.
+    const offenders = sourceFilesMatching(
+      /import\(\s*["'][^"']*loudness\/pipeline["']\s*\)/,
+      (file) => file.endsWith("loadPipeline.ts"),
+    );
 
     expect(offenders).toEqual([]);
   });

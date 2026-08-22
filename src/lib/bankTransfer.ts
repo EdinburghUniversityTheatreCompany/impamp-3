@@ -57,10 +57,9 @@
  */
 
 import { IDBPDatabase } from "idb";
-import { TOTAL_PADS } from "./constants";
+import { MAX_BANKS, TOTAL_PADS } from "./constants";
 import {
   ImpAmpDBSchema,
-  MAX_BANKS,
   PadConfiguration,
   PageMetadata,
   createBank,

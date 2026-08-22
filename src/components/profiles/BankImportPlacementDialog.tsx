@@ -43,7 +43,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { MAX_BANKS } from "@/lib/db";
+import { MAX_BANKS } from "@/lib/constants";
 import {
   bankContents,
   bankDisplayName,
