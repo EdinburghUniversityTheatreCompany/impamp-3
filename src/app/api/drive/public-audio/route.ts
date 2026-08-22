@@ -121,7 +121,14 @@ export async function GET(request: NextRequest) {
     }
 
     const mediaUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
-    const mediaResponse = await fetchWithTimeout(mediaUrl);
+    // `transfer`, not the default `control` tier: this streams up to
+    // MAX_AUDIO_BYTES. The tier was wrong from the start and harmless only
+    // because the deadline used to stop at the headers — now that it runs to
+    // the last byte, a 10s idle limit would cut off a working download on the
+    // kind of connection a venue actually has.
+    const mediaResponse = await fetchWithTimeout(mediaUrl, {
+      timeoutKind: "transfer",
+    });
 
     if (!mediaResponse.ok || !mediaResponse.body) {
       return NextResponse.json(

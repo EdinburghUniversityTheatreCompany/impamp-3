@@ -21,6 +21,24 @@
  * an un-timed proxy or token-exchange fetch holds a Node request handler open,
  * so a slow Google can exhaust the process.
  *
+ * ## The deadline covers the body, not just the headers
+ *
+ * `fetch` resolves as soon as response *headers* arrive; the body is still
+ * unread at that point. So a deadline that is cleared when `fetch` resolves
+ * protects only the handshake, and a peer that sends headers and then stops
+ * sending bytes hangs the caller exactly as completely as one that never
+ * answered at all — which is the failure this module exists to prevent, left
+ * open on the largest transfers in the app (the Drive audio proxy streams up
+ * to 100 MB with the timer already disarmed).
+ *
+ * So the deadline stays armed across the body too. It is an **idle** deadline
+ * there rather than a total one: it resets on every chunk, so a slow but
+ * progressing transfer is never cancelled for being slow — only for stopping.
+ * A total deadline would have to be either too short for a 100 MB download on
+ * a thin venue connection or too long to catch a stall promptly; "no progress
+ * for N" is the condition actually worth acting on, and it needs no second
+ * number.
+ *
  * @module lib/fetchWithTimeout
  */
 
@@ -31,6 +49,10 @@
  * order of magnitude and a single compromise value would be wrong for both: a
  * 60s control-plane call is a hang nobody notices, and a 10s blob transfer is a
  * working upload cancelled on a slow connection.
+ *
+ * Each is applied twice over: once to the headers, and then as an idle limit
+ * between body chunks. A `transfer` download may therefore run far longer than
+ * 120s in total, so long as it never goes 120s without producing a byte.
  */
 export const FETCH_TIMEOUTS = {
   /** JSON control-plane calls: our API, OAuth, Drive metadata, presign. */
@@ -60,14 +82,18 @@ export class FetchTimeoutError extends Error {
 }
 
 /**
- * Performs a fetch that aborts if it has not settled in time.
+ * Performs a fetch that aborts if it stops making progress.
+ *
+ * The deadline covers the headers and then, as an idle limit reset by every
+ * chunk, the body — see the module docstring for why the body half is not
+ * optional.
  *
  * A caller's own `signal` still works: whichever fires first wins, so an
  * in-flight request can be cancelled early *and* cannot hang forever.
  *
  * @param input - As `fetch`
  * @param options - As `fetch`, plus `timeoutKind` or `timeoutMs`
- * @returns The response
+ * @returns The response, whose body carries the remaining deadline
  * @throws {FetchTimeoutError} when the timeout fires first
  */
 export async function fetchWithTimeout(
@@ -76,27 +102,102 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const { timeoutKind = "control", timeoutMs, signal, ...init } = options;
   const limit = timeoutMs ?? FETCH_TIMEOUTS[timeoutKind];
+  const url = String(input);
 
   const controller = new AbortController();
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, limit);
 
-  // The caller's signal has to keep working; an early cancel is not a timeout.
+  // The caller's signal has to keep working, for the whole of the request and
+  // not just its headers; an early cancel is not a timeout.
   const abortFromCaller = () => controller.abort();
   signal?.addEventListener("abort", abortFromCaller);
+  const detachCallerSignal = () =>
+    signal?.removeEventListener("abort", abortFromCaller);
 
+  const expire = () => {
+    timedOut = true;
+    // Closing the socket as well as failing the read, so a stalled peer does
+    // not keep a connection — and, server-side, a Node request handler — open
+    // behind a caller that has already given up.
+    controller.abort();
+  };
+
+  const headerTimer = setTimeout(expire, limit);
+
+  let response: Response;
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    response = await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
-    if (timedOut) {
-      throw new FetchTimeoutError(String(input), limit);
-    }
+    clearTimeout(headerTimer);
+    detachCallerSignal();
+    if (timedOut) throw new FetchTimeoutError(url, limit);
     throw error;
   } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", abortFromCaller);
+    clearTimeout(headerTimer);
   }
+
+  // Nothing to wait for — a 204, a 304, a HEAD. Waiting on a body that will
+  // never be read would leave the deadline armed until it fired.
+  if (!response.body) {
+    detachCallerSignal();
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  const finish = () => {
+    detachCallerSignal();
+  };
+
+  const monitored = new ReadableStream<Uint8Array>({
+    async pull(out) {
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const stalled = new Promise<never>((_, reject) => {
+          idle = setTimeout(() => {
+            expire();
+            reject(new FetchTimeoutError(url, limit));
+          }, limit);
+        });
+
+        const { done, value } = await Promise.race([reader.read(), stalled]);
+        if (done) {
+          finish();
+          out.close();
+          return;
+        }
+        out.enqueue(value);
+      } catch (error) {
+        finish();
+        // An abort reaching a body read is either ours or the caller's, and
+        // only ours is a timeout. Anything else is an ordinary network failure
+        // and passes through unchanged.
+        out.error(
+          timedOut &&
+            (isAbortError(error) || error instanceof FetchTimeoutError)
+            ? new FetchTimeoutError(url, limit)
+            : error,
+        );
+        await reader.cancel().catch(() => {});
+      } finally {
+        clearTimeout(idle);
+      }
+    },
+    cancel(reason) {
+      finish();
+      return reader.cancel(reason);
+    },
+  });
+
+  // Rebuilt rather than mutated: `body` is read-only on a Response. Nothing in
+  // this app reads `url`, `redirected` or `type` off a fetch result, which are
+  // the only properties a reconstruction cannot carry over.
+  return new Response(monitored, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
