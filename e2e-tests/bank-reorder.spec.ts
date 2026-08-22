@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
+  bankDragHandle,
   bankTabs,
   createTestAudioFilePath,
   gotoApp,
@@ -157,7 +158,9 @@ test.describe("Bank reorder", () => {
 
     // Cancelling a drag with Escape used to reach the panic button and stop
     // every sound outright, so this assertion needs no wait to be meaningful.
-    await tabs.nth(1).focus();
+    // Through the drag handle, not the bare tab: before the drag chunk lands
+    // this Space is not a cancelled lift at all, it is the global fade-out.
+    await (await bankDragHandle(page, 1)).focus();
     await page.keyboard.press("Space");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Escape");

@@ -566,6 +566,25 @@ and the ranges are floors that should move only when something requires it.
   `audioGainSettings` and `audioTrimSettings` stay keyed on `fileId`
   deliberately, because two copies of one row genuinely share one gain and one
   trim
+- **The pad editor's sound list is a projection, not a place to append.**
+  `EditPadForm` turns `values.audioFileIds` into rows with one sequential
+  `await getAudioFile(id)`, and the Add Sounds input is live for the whole of
+  that read — the list only says "Loading sounds…". `handleFileChange`
+  therefore appended to `sounds` and wrote the result back, which inside that
+  window is `[...[], ...newSounds]`: every sound the pad already had, dropped,
+  with nothing on screen admitting it because the list is then rebuilt from
+  the ids that were just truncated. Append to the ids through `setValues`'s
+  updater form and let the effect rebuild the rows. `values` is no safer than
+  `sounds` here — by the time the handler writes it has awaited a content
+  hash, a database write and a name read — which is why
+  `FormModalRenderProps.setValues` is React's own
+  `Dispatch<SetStateAction<T>>`. The drag and the remove button may keep
+  reading `sounds`, because both need a row on screen and `isLoadingNames`
+  hides the list while a load is in flight. The window is disk-bound, so it
+  opens under ten parallel e2e workers and essentially never on an idle
+  machine: it cost the chromium gate two intermittent failures that each
+  passed 4 of 4 in isolation, and `EditPadForm.loadRace.test.tsx` gates it by
+  holding `getAudioFile` behind a gate rather than by racing anything
 - `audioGainSettings` is keyed by audio file ID, and `audioTrimSettings` is the
   second field of that shape — missed by a plan and a brief in turn, which is
   the hazard in miniature. Those IDs are remapped or copied in **seven** places,

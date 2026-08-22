@@ -109,6 +109,7 @@ function placeSounds(sounds: UnplacedSound[]): SoundListItem[] {
  */
 const EditPadForm: React.FC<EditPadFormProps> = ({
   values,
+  setValues,
   updateValue,
   errors,
   isSubmitting,
@@ -274,13 +275,30 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
 
       onSoundsAdded?.(newSounds.map((sound) => sound.fileId));
 
-      // Combine existing sounds with new ones and update the form state
-      const updatedSounds = placeSounds([...sounds, ...newSounds]);
-      setSounds(updatedSounds);
-      updateValue(
-        "audioFileIds",
-        updatedSounds.map((item) => item.fileId),
-      );
+      // Append to the ids the form holds, in the updater form, and let the
+      // effect above rebuild the rows from them.
+      //
+      // Not to `sounds`, and not through `updateValue`. `sounds` is a
+      // *projection* of `values.audioFileIds` that lags it by one
+      // `getAudioFile` per id, and this handler has just awaited a content
+      // hash, a database write and a name read of its own — so both the
+      // `sounds` state and the `values` this render captured can be older
+      // than what React holds. A pad opened with sounds and added to before
+      // that read settled built its new list as `[...[], ...newSounds]` and
+      // wrote it straight back, dropping every sound the pad already had.
+      // Nothing on screen admitted it, because the list is then rebuilt from
+      // the ids that were just truncated.
+      //
+      // The other two writers — the drag and the remove button — are safe
+      // where this was not, because both are driven by a row that has to be
+      // on screen to be used, and a row on screen means the load finished.
+      setValues((current) => ({
+        ...current,
+        audioFileIds: [
+          ...(current.audioFileIds ?? []),
+          ...newSounds.map((sound) => sound.fileId),
+        ],
+      }));
     } catch (error) {
       console.error("Error adding audio files:", error);
     } finally {
