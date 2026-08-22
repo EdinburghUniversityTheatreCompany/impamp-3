@@ -669,7 +669,6 @@ describe("collapseDuplicateAudioGroups", () => {
     // not in it resolves gain from nothing — normalisation silently reverts to
     // 0 dB for the rest of the session, which on a live board is a cue at the
     // wrong level with no error anywhere.
-    const db = await getDb();
     const [first, second] = await twoCopiesOfTheHorn();
     await markAnalysed(first);
     await padOnTheDuplicate(second);
