@@ -15,7 +15,7 @@
  * today.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { closeDb, execute, getDb } from "./db";
+import { closeDb, execute, getDb, queryOne } from "./db";
 import { upsertUserFromGoogle } from "./users";
 import { createProfile, updateProfile } from "./profiles";
 import { upsertEmailShare } from "./shares";
@@ -51,6 +51,17 @@ function giveReference(userId: number) {
     userId,
     "horn.wav",
     Date.now(),
+  );
+}
+
+/** What `profile_audio` records as this sound's adder, which is the real subject. */
+function recordedAdder(profileId: string): number | null {
+  return (
+    queryOne<{ added_by: number | null }>(
+      "SELECT added_by FROM profile_audio WHERE profile_id = ? AND hash = ?",
+      profileId,
+      HASH,
+    )?.added_by ?? null
   );
 }
 
@@ -134,6 +145,7 @@ describe("profileMayServeHash and unilateral invites", () => {
       writerId: helper.id,
     });
 
+    expect(recordedAdder(profile.id)).toBe(helper.id);
     expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(true);
   });
 
@@ -163,6 +175,12 @@ describe("profileMayServeHash and unilateral invites", () => {
       writerId: owner.id,
     });
 
+    // The stored column, not `profileMayServeHash`. Asserting the derived
+    // answer here is vacuous: with the holder check gone `added_by` becomes
+    // the owner, but the reference still belongs to the helper, so the answer
+    // is false either way and the guard can be deleted with this test green.
+    // Measured — `if (true || userHoldsReference(...))` left all five passing.
+    expect(recordedAdder(profile.id)).toBeNull();
     expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(false);
   });
 

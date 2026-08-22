@@ -183,6 +183,53 @@ describe("whether the active profile may be edited", () => {
 
     expect(state().canEditActiveProfile()).toBe(false);
   });
+
+  it("refuses to enter any editing mode on a followed profile", () => {
+    // The predicate above was tested thoroughly and none of its three
+    // consumers were, so all three guards could be deleted with the whole
+    // suite green — the repo's own recorded shape, a rule tested and the code
+    // using it not. A followed profile put into edit or delete/move mode
+    // produces exactly the edits the next sync destroys.
+    useProfileStore.setState({
+      profiles: [
+        profile(7, {
+          syncType: "server",
+          serverProfileId: "abc",
+          followOnly: true,
+        } as Partial<Profile>),
+      ],
+      activeProfileId: 7,
+      isLoading: false,
+      isEditMode: false,
+      isDeleteMoveMode: false,
+    });
+
+    state().setEditMode(true);
+    expect(state().isEditMode).toBe(false);
+
+    state().setDeleteMoveMode(true);
+    expect(state().isDeleteMoveMode).toBe(false);
+
+    state().toggleDeleteMoveMode();
+    expect(state().isDeleteMoveMode).toBe(false);
+  });
+
+  it("still lets an ordinary profile into those modes", () => {
+    // The other side, so a pass above cannot mean "these setters do nothing".
+    useProfileStore.setState({
+      profiles: [profile(7)],
+      activeProfileId: 7,
+      isLoading: false,
+      isEditMode: false,
+      isDeleteMoveMode: false,
+    });
+
+    state().setEditMode(true);
+    expect(state().isEditMode).toBe(true);
+
+    state().setDeleteMoveMode(true);
+    expect(state().isDeleteMoveMode).toBe(true);
+  });
 });
 
 describe("reporting a failed write", () => {

@@ -128,6 +128,50 @@ describe("playing a search result", () => {
   });
 });
 
+describe("keys on a result button", () => {
+  /** Renders the open modal over one result and presses a key on it. */
+  function pressOnResult(
+    key: string,
+    chord: { ctrlKey?: boolean } = {},
+  ): KeyboardEvent {
+    mocks.results = [searchResult({ name: "Horn" })];
+    act(() => {
+      root.render(<SearchModal isOpen onClose={() => {}} />);
+    });
+    const item = container.querySelector<HTMLButtonElement>(
+      '[data-testid="search-result-item"]',
+    )!;
+    const event = new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...chord,
+    });
+    act(() => {
+      item.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("arms on the chord", () => {
+    pressOnResult("Enter", { ctrlKey: true });
+    expect(mocks.armTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an ordinary character, chord or not", () => {
+    // `handleResultKeyDown`'s `e.key !== "Enter"` half, which could be deleted
+    // with all 1544 tests green — every key test in this file pressed Enter,
+    // so a focused result would have armed on any keystroke.
+    const plain = pressOnResult("x");
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    expect(plain.defaultPrevented).toBe(false);
+
+    const chorded = pressOnResult("x", { ctrlKey: true });
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    expect(chorded.defaultPrevented).toBe(false);
+  });
+});
+
 describe("arming a search result", () => {
   it("carries the pad's activePadBehavior override into the cue", () => {
     clickTheResult(searchResult({ activePadBehavior: "layer" }), true);
@@ -192,12 +236,13 @@ describe("activating the first result from the input", () => {
   }
 
   /** Presses Enter on the element, with or without the arm chord. */
-  function pressEnter(
+  function pressKey(
     on: HTMLElement,
+    key: string,
     chord: { ctrlKey?: boolean; metaKey?: boolean } = {},
   ): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
-      key: "Enter",
+      key,
       bubbles: true,
       cancelable: true,
       ...chord,
@@ -214,7 +259,7 @@ describe("activating the first result from the input", () => {
       searchResult({ name: "Stab", padIndex: 4 }),
     ]);
 
-    pressEnter(input);
+    pressKey(input, "Enter");
 
     expect(mocks.triggerPad).toHaveBeenCalledTimes(1);
     expect(mocks.triggerPad.mock.calls[0][0]).toMatchObject({ padIndex: 3 });
@@ -226,14 +271,41 @@ describe("activating the first result from the input", () => {
     // chord is read through `hasArmModifier` rather than `ctrlKey`. A handler
     // testing `ctrlKey` directly passes the first half of this and fails the
     // second.
-    pressEnter(focusedInput([searchResult()]), { ctrlKey: true });
+    pressKey(focusedInput([searchResult()]), "Enter", { ctrlKey: true });
     expect(mocks.armTrack).toHaveBeenCalledTimes(1);
     expect(mocks.triggerPad).not.toHaveBeenCalled();
 
     act(() => root.render(<SearchModal isOpen={false} onClose={() => {}} />));
-    pressEnter(focusedInput([searchResult()]), { metaKey: true });
+    pressKey(focusedInput([searchResult()]), "Enter", { metaKey: true });
     expect(mocks.armTrack).toHaveBeenCalledTimes(2);
     expect(mocks.triggerPad).not.toHaveBeenCalled();
+  });
+
+  it("ignores an ordinary character, rather than firing a cue per keystroke", () => {
+    // The `e.key !== "Enter"` guard, which could be deleted with all 1544
+    // tests green: every existing key test hard-codes Enter, so nothing had
+    // ever sent this component another key. Without the guard, typing "a" into
+    // the search box plays a sound — irreversibly, on a board used to run live
+    // shows.
+    const input = focusedInput([searchResult({ name: "Horn" })]);
+
+    const event = pressKey(input, "a");
+
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    // And it must not claim the key either: `useKeyboardListener` reads
+    // `defaultPrevented` to know something nearer the target took the press.
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores an ordinary character even with the arm chord held", () => {
+    const input = focusedInput([searchResult()]);
+
+    const event = pressKey(input, "x", { ctrlKey: true });
+
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("claims the key it acted on, so no global shortcut acts on it too", () => {
@@ -241,7 +313,7 @@ describe("activating the first result from the input", () => {
     // whole of "a global shortcut must not act on a key something nearer the
     // target already claimed". Without it Enter would both activate a result
     // and fire an emergency cue.
-    const event = pressEnter(focusedInput([searchResult()]));
+    const event = pressKey(focusedInput([searchResult()]), "Enter");
 
     expect(event.defaultPrevented).toBe(true);
   });
@@ -250,7 +322,7 @@ describe("activating the first result from the input", () => {
     // The other side of the same rule: claiming a key it did nothing with
     // would swallow the emergency cue whenever the search box was open and
     // empty.
-    const event = pressEnter(focusedInput([]));
+    const event = pressKey(focusedInput([]), "Enter");
 
     expect(mocks.triggerPad).not.toHaveBeenCalled();
     expect(mocks.armTrack).not.toHaveBeenCalled();
@@ -258,8 +330,9 @@ describe("activating the first result from the input", () => {
   });
 
   it("refuses a disabled first result the way a click on it would", () => {
-    const event = pressEnter(
+    const event = pressKey(
       focusedInput([searchResult({ isDisabled: true })]),
+      "Enter",
     );
 
     expect(mocks.triggerPad).not.toHaveBeenCalled();
@@ -274,8 +347,9 @@ describe("activating the first result from the input", () => {
     // emergency cue from behind the modal — so silence here is a key that
     // vanishes: nothing plays, nothing is said, and the header a line above
     // has just promised that Enter plays the first result.
-    pressEnter(
+    pressKey(
       focusedInput([searchResult({ name: "Foghorn", isDisabled: true })]),
+      "Enter",
     );
 
     const notice = container.querySelector(
