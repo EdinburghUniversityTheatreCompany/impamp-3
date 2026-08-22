@@ -297,3 +297,32 @@ group still needs somewhere to say it.
 
 Noticed while giving the four groups an accessible name (🟡 3 of the 08-21
 review).
+
+## A failed orphan scan tells the user nothing
+
+`OrphanedAudioPanel`'s `handleScanOrphans` catches, writes a
+`console.error`, and leaves the panel exactly as it was — the comment in the
+branch still reads "You could add error handling here if needed". Press Scan,
+watch the spinner come and go, and nothing appears: indistinguishable from a
+scan that found nothing, except that the results box is absent rather than
+saying "0 orphaned". `handleScanMissing` is the same shape.
+
+Both sit one panel away from `DuplicateAudioPanel`, which does the thing
+worth copying — an `error` piece of state, rendered in a `role="alert"` box
+naming the message. There is a test for the swallowed branch already
+(`leaves no results behind when the scan itself fails`), so the fix is the
+state plus the box plus one changed assertion.
+
+## The cleanup report vanishes half a second after it appears
+
+A cleanup that deleted something schedules a re-scan 500 ms later, and
+`handleScanOrphans` opens by clearing the cleanup result. So "Files deleted:
+2, Cache entries cleared: 1" is on screen for half a second and is then
+replaced by a scan saying 0 orphans — the report of what was deleted is the
+one thing a user might want to read twice, and it is the thing that goes. The
+re-scan itself is right (the counts on screen come from the database rather
+than from the panel's arithmetic); it is the clearing that is wrong, and
+`handleScanOrphans` clears it because it is also the manual Scan handler.
+
+Noticed while extracting the Maintenance tab into its own panels (finding 8
+of the 2026-08-21 review).
