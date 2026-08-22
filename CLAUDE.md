@@ -581,8 +581,11 @@ one now covers only what is machine-checked.
 
 - Node 24.19.0 (LTS) everywhere — `.node-version`, `mise.toml` and the
   `NODE_VERSION` ARG in **both** `Dockerfile` and `Dockerfile.dev`.
-  `scripts/check_version_sync.sh` cross-checks the first three;
-  `scripts/check_extra_dockerfiles.sh` covers every `Dockerfile*`, because the
-  first script is a shared template that reads only one of them and
-  `Dockerfile.dev` drifted to Node 22 unnoticed for months as a result.
+  `scripts/check_version_sync.sh` cross-checks all four. It reads every
+  `Dockerfile*` as of dev-env standard v24; before that it stopped at the
+  first, which is how `Dockerfile.dev` drifted to Node 22 unnoticed for
+  months, and this repo carried a second script to cover the gap. That
+  script is gone — two gates for one rule is how they drift. The hk step's
+  glob is deliberately `Dockerfile*` rather than the template's `Dockerfile`,
+  so editing only the dev image still fires it.
   `node:sqlite` requires Node >= 22.13, so that is the floor
