@@ -1,4 +1,4 @@
-# Eight-phase run — 2026-08-22
+# Eight-phase run — 2026-08-22 (complete)
 
 Mick's list, worked in order with heavy parallelism. Phases 1–5 are **done and
 merged**; 6–8 remain. `main` is at `6f32e9e`, one checkout, no stray worktrees.
