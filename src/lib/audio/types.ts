@@ -7,7 +7,7 @@
  * @module lib/audio/types
  */
 
-import { ActivePadBehavior, PlaybackType } from "../db";
+import { PadPlaybackSettings, PlaybackType } from "../db";
 
 /**
  * Playback strategy interface for implementing different audio selection strategies
@@ -109,30 +109,19 @@ export interface ActiveTrack {
 }
 
 /**
- * Arguments for triggering audio playback
+ * Arguments for triggering audio playback.
+ *
+ * The playback fields are `PadPlaybackSettings` rather than a restatement of
+ * it: this interface and `TriggerablePad` used to list the same eight members
+ * each, and `triggerPad` copied them across one at a time, so a pad field had
+ * to be added in three places to travel and nothing failed to compile when it
+ * was added in two. Extending the one type the database defines leaves
+ * `padIndex` and the two location fields as the only things this shape adds.
  */
-export interface TriggerAudioArgs {
+export interface TriggerAudioArgs extends PadPlaybackSettings {
   padIndex: number;
-  audioFileIds: number[];
-  playbackType: PlaybackType;
   activeProfileId: number;
   currentBankId: string;
-  name?: string;
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  /** Per-sound manual gain in dB, keyed by audio file ID. */
-  audioGainSettings: Record<number, number> | undefined;
-  /** Whole-pad manual gain in dB. */
-  padGainDb: number | undefined;
-  /**
-   * When true the pad is disabled and playback is refused. Every trigger path
-   * passes this through so the guard lives in one place.
-   */
-  isDisabled?: boolean;
-  /**
-   * This pad's own override of the profile's activePadBehavior. Undefined means
-   * follow the profile.
-   */
-  activePadBehavior?: ActivePadBehavior;
 }
 
 /**

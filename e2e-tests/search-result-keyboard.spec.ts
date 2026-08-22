@@ -16,6 +16,11 @@ import {
  * That made this the one flow in the app that starts at the keyboard and
  * dead-ends there: Ctrl+F opens the modal and focuses its input, you type, and
  * then the results need a mouse.
+ *
+ * Tabbing to a result was the first half of the answer and is still covered
+ * here. The second half is that the *input* activates the first result, so the
+ * fastest path has no Tab in it at all — which matters because the input keeps
+ * focus after typing and what sits between it and the first result is layout.
  */
 
 /**
@@ -83,6 +88,48 @@ test.describe("search results from the keyboard", () => {
     ).toBeVisible();
     // Armed, not played — the whole distinction the chord exists for.
     await expect(page.locator("text=Nothing playing")).toBeVisible();
+  });
+
+  test("Enter in the search box plays the first result, with no Tab", async ({
+    page,
+  }) => {
+    const fileName = "search-input-play";
+    await searchFor(page, fileName);
+
+    // No `tabToFirstResult` here, deliberately. The input keeps focus after
+    // typing, and this is the whole claim: the fastest path from the search
+    // chord to a sound has nothing between the last character and the Enter.
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator('[data-testid="search-modal"]')).toBeHidden();
+    await expect(
+      page.locator('[data-testid="active-tracks-panel"]').getByText(fileName),
+    ).toBeVisible();
+  });
+
+  test("Ctrl+Enter in the search box arms the first result, with no Tab", async ({
+    page,
+  }) => {
+    const fileName = "search-input-arm";
+    await searchFor(page, fileName);
+
+    await page.keyboard.press("Control+Enter");
+
+    await expect(page.locator('[data-testid="search-modal"]')).toBeHidden();
+    await expect(
+      page.locator('[data-testid="armed-tracks-panel"]'),
+    ).toBeVisible();
+    // Armed, not played — and nothing fired the emergency bank either, which
+    // is what a global Enter handler acting on the same press would do.
+    await expect(page.locator("text=Nothing playing")).toBeVisible();
+  });
+
+  test("the results header says how to do it", async ({ page }) => {
+    await searchFor(page, "search-input-hint");
+
+    await expect(
+      page.locator('[data-testid="search-activation-hint"]'),
+    ).toContainText("Enter");
   });
 
   test("a result announces itself as a button", async ({ page }) => {

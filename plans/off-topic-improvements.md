@@ -81,34 +81,6 @@ when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
 
-## `triggerPad` could spread its argument instead of re-listing every field
-
-`TriggerablePad` (`src/lib/audio/triggerPad.ts`) declares eight pad fields, and
-`triggerPad` copies all eight into `triggerAudioForPadInstant` one at a time.
-Every one of those names is in `TriggerAudioArgs` too, so the whole enumeration
-could be `{ ...pad, activeProfileId, currentBankId, ...callbacks }` with no
-change in behaviour — the callbacks are added after, so they still win, and a
-key `TriggerAudioArgs` does not declare is simply ignored by the destructuring
-downstream.
-
-The enumeration is not merely redundant, it is the failure mode: both
-production callers build their argument by spreading
-`extractPadPlaybackSettings(pad)` into a `TriggerablePad` literal, and
-TypeScript exempts spread-in properties from excess-property checking. So a new
-pad field is dropped in silence twice over — once by the interface not
-declaring it, once by the copy not listing it — with no compiler error at
-either point. That is exactly what happened to `activePadBehavior` and it is
-the same shape as CLAUDE.md's `audioGainSettings`-in-five-places note.
-
-Not done as part of Task 7 of the layered-retrigger plan because that plan
-explicitly instructed adding the field to both places, and quietly changing the
-mechanism instead would have been a deviation the reviewer could not see. The
-same argument applies one level up to `SearchResult`, `EmergencySound` and
-`ArmedTrackState`, all of which are hand-built projections of a pad that could
-embed `PadPlaybackSettings` instead of restating it.
-
-Noticed while threading `activePadBehavior` through every trigger path.
-
 ## The coverage ratchet in `vitest.config.ts` is now far below the real number
 
 The thresholds are 33 / 28 / 27 / 33 and the comment records the run they were
@@ -124,21 +96,6 @@ task's. Worth doing once the branch is complete, per CLAUDE.md's "raise them
 deliberately when a run comes in comfortably above".
 
 Noticed while running the coverage gate at the end of Task 7.
-
-## The search modal's arm chord needs the result focused, not the input
-
-`SearchModal` reads the arm chord in `handleResultKeyDown`, which hangs off the
-result `<button>`. The input keeps focus after typing, so the keyboard route to
-arming is: type, Tab past whatever lies between, _then_ Ctrl/Cmd+Enter. Plain
-Enter in the input does nothing either — there is no "activate the first
-result" handler at all.
-
-An operator's fastest path from Ctrl+F to an armed cue would be to type and
-press Ctrl+Enter without moving focus. That wants an `onKeyDown` on the input
-that activates `results[0]`, with the chord deciding play versus arm, and a
-visible hint in the results header saying so.
-
-Noticed while making the arm chord reachable on macOS.
 
 ## `RadioGroup`'s `aria-labelledby` points at an id nothing renders
 
@@ -210,22 +167,6 @@ repo and closes the gap between "the hook passed" and "CI will pass".
 
 Noticed while committing Task 3 of the audio-dedup plan.
 
-## `clearCachedAudioBuffer` leaves the pin behind
-
-`src/lib/audio/cache.ts` keeps two maps keyed by audio file id: the buffer
-cache and `pinnedAudioFileIds`. `clearCachedAudioBuffer` deletes from the
-first only, so a row deleted while one of its buffers was pinned leaves a pin
-under an id that no longer exists — `isAudioBufferPinned` answers true for it
-forever, and the entry is never collected.
-
-Harmless today: nothing can reference the deleted id, so the stale pin only
-protects a cache entry that is already gone. It becomes wrong the moment
-autoIncrement hands the number out again, which IndexedDB will not do — but
-the asymmetry is still a trap for the next person reading either map.
-
-Noticed while enumerating what a duplicate collapse has to clean up (Task 5 of
-the audio-dedup plan).
-
 ## The duplicate-audio panel names no sounds
 
 `DuplicateAudioPanel` reports a group count, a copy count and a byte total,
@@ -257,28 +198,6 @@ repo's characteristic regression.
 
 Noticed while checking whether Task 8 of the audio-dedup plan still needed to
 add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
-
-## A pad drop can be refused without a word
-
-`PadGrid` decides per render whether a pad accepts a drop, through
-`usePadDrop`'s `isDropAllowed`, and when the answer is no its `onDropAudio`
-returns `Promise.resolve()`. The dropzone itself is only `disabled` for
-special pads and delete/move mode, so react-dropzone still fires, the handler
-still runs, and nothing is written, logged or shown. Every other refusal on
-that path says something — `console.error` for no profile, `console.warn` for
-a profile that takes no changes, an `alert` for a write that threw.
-
-It is reachable: a file dropped in the few milliseconds after a profile
-switch, while that answer is still settling, is silently lost. Measured while
-writing `e2e-tests/bank-transfer.spec.ts` — the first drop into a
-just-created profile was dropped every run, and the same drop moments later
-took every run, which is why `dropOnPad` there re-issues the way
-`activatePad` does. A human cannot hit a window that small, so this is a
-diagnosability complaint rather than a live bug: the fix is a `console.warn`
-in the refusal branch, saying which pad and why.
-
-Noticed while writing the cross-profile bank transfer spec (Task 16 of the
-audio-dedup plan).
 
 ## A radio group's validation error is rendered twice
 

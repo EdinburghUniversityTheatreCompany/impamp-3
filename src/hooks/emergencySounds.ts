@@ -11,26 +11,26 @@
  */
 
 import {
-  ActivePadBehavior,
-  PlaybackType,
   PadConfiguration,
+  type PadPlaybackSettings,
+  extractPadPlaybackSettings,
   getAllPageMetadataForProfile,
   getPadConfigurationsForProfileBank,
 } from "@/lib/db";
 
-/** One pad on an emergency bank, everything needed to fire it. */
-export interface EmergencySound {
+/**
+ * One pad on an emergency bank, everything needed to fire it.
+ *
+ * The playback half is `PadPlaybackSettings` rather than a hand-written copy
+ * of its members, and `readEmergencySounds` fills it with
+ * `extractPadPlaybackSettings`. It used to be a projection that named its
+ * fields twice — once here and once where they were read off the pad — which
+ * put two silent chances to drop a new field between a pad and the Enter key.
+ */
+export interface EmergencySound extends PadPlaybackSettings {
   profileId: number;
   bankId: string;
   padIndex: number;
-  audioFileIds: number[];
-  playbackType: PlaybackType;
-  name?: string;
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  audioGainSettings?: Record<number, number>;
-  padGainDb?: number;
-  /** The pad's own override of the profile's activePadBehavior, if it has one */
-  activePadBehavior?: ActivePadBehavior;
 }
 
 let emergencySounds: EmergencySound[] = [];
@@ -85,16 +85,10 @@ async function readEmergencySounds(
 
       sounds.push(
         ...configuredPads.map((pad: PadConfiguration) => ({
+          ...extractPadPlaybackSettings(pad),
           profileId,
           bankId: page.bankId,
           padIndex: pad.padIndex,
-          audioFileIds: pad.audioFileIds!,
-          playbackType: pad.playbackType,
-          name: pad.name,
-          audioTrimSettings: pad.audioTrimSettings,
-          audioGainSettings: pad.audioGainSettings,
-          padGainDb: pad.padGainDb,
-          activePadBehavior: pad.activePadBehavior,
         })),
       );
     }

@@ -1,13 +1,15 @@
 /**
  * What `triggerPad` actually hands the engine.
  *
- * `TriggerablePad` is hand-written and `triggerPad` hand-enumerates every one
- * of its fields into `triggerAudioForPadInstant`. Both production call sites
- * build their argument by spreading `extractPadPlaybackSettings(pad)` into an
- * object literal — and TypeScript exempts spread-in properties from
- * excess-property checking, so a field the interface does not declare, or one
- * the enumeration below forgets, is dropped in complete silence: no compiler
- * error anywhere, on either side.
+ * `TriggerablePad` used to be a hand-written copy of `PadPlaybackSettings`,
+ * and `triggerPad` copied every one of its fields into
+ * `triggerAudioForPadInstant` one at a time. Every caller builds its argument
+ * by spreading `extractPadPlaybackSettings(pad)` into an object literal — and
+ * TypeScript exempts spread-in properties from excess-property checking, so a
+ * field the interface did not declare, or one the enumeration forgot, was
+ * dropped in complete silence: no compiler error anywhere, on either side.
+ * `TriggerablePad` now extends the type and `triggerPad` spreads the value,
+ * which closes both halves.
  *
  * That is the `audioGainSettings`-remapped-in-five-places failure shape, and
  * it is why this file asserts on the object the engine receives rather than on
@@ -23,7 +25,7 @@ vi.mock("./controls", () => ({
 }));
 
 import { extractPadPlaybackSettings, type PadConfiguration } from "@/lib/db";
-import { triggerPad } from "./triggerPad";
+import { triggerPad, type TriggerablePad } from "./triggerPad";
 
 const WHERE = { activeProfileId: 1, currentBankId: "0" };
 
@@ -109,5 +111,47 @@ describe("triggerPad carries the pad's activePadBehavior override", () => {
     );
 
     expect(engineArgs()).toHaveProperty("activePadBehavior", undefined);
+  });
+});
+
+describe("triggerPad forwards the pad it was given", () => {
+  it("carries a field no hand-written list mentions", async () => {
+    // The regression above in its general form. `activePadBehavior` was
+    // dropped because two hand-written lists had to gain it and one did not;
+    // any future pad field is exposed to exactly that, and no compiler check
+    // can see it happen. Standing in for that future field with one no type
+    // declares is what makes this case *about the mechanism*: it can only
+    // pass if `triggerPad` forwards what it was handed, rather than copying
+    // out the fields it happens to know today.
+    const pad = {
+      padIndex: 3,
+      audioFileIds: [10],
+      playbackType: "sequential",
+      fieldNobodyListed: "carried",
+    } as unknown as TriggerablePad;
+
+    await triggerPad(pad, WHERE, {});
+
+    expect(engineArgs()).toHaveProperty("fieldNobodyListed", "carried");
+  });
+
+  it("carries every field extractPadPlaybackSettings produces", async () => {
+    // The key set is read back at run time rather than written out here, so
+    // this case grows a new assertion the moment `PadPlaybackSettings` grows
+    // a member — which is the one place a new pad field has to be declared.
+    const pad = padOnDisk({
+      audioTrimSettings: { 10: { trimStart: 0.5, trimEnd: 2 } },
+      audioGainSettings: { 10: -6 },
+      padGainDb: -3,
+      isDisabled: false,
+      activePadBehavior: "layer",
+    });
+    const settings = extractPadPlaybackSettings(pad);
+
+    await triggerPad({ ...settings, padIndex: pad.padIndex }, WHERE, {});
+
+    for (const [field, value] of Object.entries(settings)) {
+      expect(engineArgs()).toHaveProperty(field, value);
+    }
   });
 });

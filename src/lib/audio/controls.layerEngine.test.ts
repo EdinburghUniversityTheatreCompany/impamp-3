@@ -63,6 +63,7 @@ vi.mock("./context", () => ({
 vi.mock("./cache", () => ({
   getCachedAudioBuffer: () => ({ duration: 30, numberOfChannels: 2 }),
   clearCachedAudioBuffer: () => {},
+  invalidateCachedAudioBuffer: () => {},
 }));
 vi.mock("./decoder", () => ({
   loadAndDecodeAudioInstant: vi.fn(),

@@ -11,14 +11,14 @@
  * those fields optional, so a field lost anywhere along the way type-checks
  * perfectly and the pad simply plays wrong.
  *
- * Enter goes one hop further: it reads an `EmergencySound`, itself a hand-built
+ * Enter goes one hop further: it reads an `EmergencySound`, itself a
  * projection of the pad (see `emergencySounds.test.ts`), so the field has to
- * survive two copies to arrive.
+ * survive two hops to arrive.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PadConfiguration } from "@/lib/db";
+import { extractPadPlaybackSettings, type PadConfiguration } from "@/lib/db";
 import type { EmergencySound } from "@/hooks/emergencySounds";
 
 const mocks = vi.hoisted(() => ({
@@ -121,15 +121,24 @@ function padOnDisk(over: Partial<PadConfiguration> = {}): PadConfiguration {
   } as PadConfiguration;
 }
 
+/**
+ * Built the way `readEmergencySounds` builds one — through
+ * `extractPadPlaybackSettings` — rather than as a literal naming the fields it
+ * remembers. A literal here silently omits every field it forgets, which is
+ * the failure this file exists to catch, so a fixture that omits them cannot
+ * be the thing doing the catching.
+ */
 function emergencySound(over: Partial<EmergencySound> = {}): EmergencySound {
   return {
+    ...extractPadPlaybackSettings({
+      audioFileIds: [10],
+      playbackType: "sequential",
+      name: "Doorbell",
+      padGainDb: -3,
+    }),
     profileId: 1,
     bankId: "0",
     padIndex: 3,
-    audioFileIds: [10],
-    playbackType: "sequential",
-    name: "Doorbell",
-    padGainDb: -3,
     ...over,
   };
 }

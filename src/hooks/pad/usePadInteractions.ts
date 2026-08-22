@@ -293,6 +293,11 @@ export function usePadInteractions(params: PadInteractionsParams) {
 
       // Add to armed tracks store
       playbackStoreActions.armTrack(armedKey, {
+        // Through the one funnel, not a field list: an armed cue's snapshot is
+        // read back through `extractPadPlaybackSettings` when the pad cannot
+        // be re-read, so a field this literal forgot was defaulted rather than
+        // played.
+        ...extractPadPlaybackSettings(config),
         key: armedKey,
         name: config.name || `Pad ${padIndex + 1}`,
         padInfo: {
@@ -300,12 +305,6 @@ export function usePadInteractions(params: PadInteractionsParams) {
           bankId: currentBankId,
           padIndex: padIndex,
         },
-        audioFileIds: config.audioFileIds,
-        playbackType: config.playbackType || DEFAULT_PLAYBACK_TYPE,
-        audioTrimSettings: config.audioTrimSettings,
-        audioGainSettings: config.audioGainSettings,
-        padGainDb: config.padGainDb,
-        activePadBehavior: config.activePadBehavior,
       });
 
       console.log(`Armed track: ${config.name || `Pad ${padIndex + 1}`}`);
