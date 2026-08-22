@@ -78,14 +78,33 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      testIgnore: /portrait-layout\.spec\.ts/,
     },
     {
       name: "firefox",
       use: { ...devices["Desktop Firefox"] },
+      testIgnore: /portrait-layout\.spec\.ts/,
     },
     {
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
+      testIgnore: /portrait-layout\.spec\.ts/,
+    },
+    // A phone, in portrait, with touch — running exactly one spec.
+    //
+    // Deliberately not a fourth full-suite browser. The other 190-odd specs
+    // are written against `devices["Desktop Chrome"]` (1280x720, no touch);
+    // running them at 390px would assert a layout nobody designed and would
+    // double an already long suite for no signal. CI still gates on chromium
+    // alone, and this project is what `npm run test:e2e:portrait` runs.
+    //
+    // The `testIgnore` above is the other half: without it the portrait spec
+    // would also run at 1280px, where every one of its assertions passes
+    // trivially and therefore proves nothing.
+    {
+      name: "mobile-portrait",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /portrait-layout\.spec\.ts/,
     },
   ],
   // Serve a production build rather than `next dev` unless E2E_DEV_SERVER=1.
