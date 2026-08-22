@@ -46,6 +46,15 @@ vi.doMock("@/lib/db", () => ({
   cleanupOrphanedAudioFiles,
 }));
 
+// Loaded here rather than left to the cleanup handler's own dynamic import.
+// `cleanupOrphanedAudioFiles` reaches `clearCachedAudioBuffer` through
+// `await import("./audio/cache")`, and a module vite-node has not fetched yet
+// takes real wall time to arrive — while `reactPanel`'s settle is a fixed
+// number of *immediate* macrotask ticks, which under load all run before the
+// module lands. That is the whole of the flake this file had: green alone,
+// red in a full run, on the one press that loads a new module.
+await import("@/lib/audio/cache");
+
 const OrphanedAudioPanel = (
   await import("@/components/profiles/OrphanedAudioPanel")
 ).default;
