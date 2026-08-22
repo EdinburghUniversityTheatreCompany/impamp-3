@@ -61,25 +61,32 @@ test.describe("portrait layout", () => {
     expect(last.id).toMatch(/-23$/);
   });
 
-  test("the track panels do not cover the last row of pads", async ({
+  test("the track panels take their own space rather than covering the board", async ({
     page,
   }) => {
-    const stopAll = page.locator('[id^="pad-"][id$="-23"]');
-    await stopAll.scrollIntoViewIfNeeded();
+    // Scrolled to the very bottom, which is where a fixed footer wins and a
+    // footer in flow does not. Checked by hit-testing rather than by comparing
+    // boxes: a fixed overlay leaves the pad's own rectangle untouched, so
+    // geometry alone cannot tell whether anything is painted on top of it.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(150);
 
-    // `elementFromPoint` rather than a bounding-box comparison: the panels are
-    // a fixed overlay, so the pad's box is unchanged whether or not something
-    // is painted on top of it. Hit-testing is what a thumb does.
-    const state = await page.evaluate(() => {
-      const pad = document.querySelector('[id^="pad-"][id$="-23"]');
-      if (!pad) return "no pad";
-      const rect = pad.getBoundingClientRect();
-      const hit = document.elementFromPoint(
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2,
-      );
-      return hit && pad.contains(hit) ? "reachable" : "covered";
+    const covered = await page.evaluate(() => {
+      const pads = [...document.querySelectorAll('[id^="pad-"]')];
+      return pads
+        .map((pad) => {
+          const rect = pad.getBoundingClientRect();
+          // Only pads actually on screen; one scrolled out is not "covered".
+          if (rect.bottom <= 0 || rect.top >= window.innerHeight) return null;
+          const hit = document.elementFromPoint(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2,
+          );
+          return hit && pad.contains(hit) ? null : pad.id;
+        })
+        .filter(Boolean);
     });
-    expect(state).toBe("reachable");
+
+    expect(covered).toEqual([]);
   });
 });

@@ -200,13 +200,13 @@ export default function Home() {
       )}
       {/* Fixed position header to prevent layout shifts */}
       <div className="w-full mb-8 flex flex-col gap-2">
-        <div className="flex justify-between items-center">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100">
+        <div className="flex flex-wrap justify-between items-center gap-2">
+          <h1 className="text-2xl sm:text-4xl font-bold text-gray-900 dark:text-gray-100">
             ImpAmp3 Soundboard
           </h1>
 
           {/* Profile Selector and Action Buttons */}
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             {/* Search Button */}
             <SearchButton />
 
@@ -232,7 +232,7 @@ export default function Home() {
       <BackupReminderNotification />
 
       {/* Content container */}
-      <div className="w-full flex-1 flex flex-col mb-24">
+      <div className="w-full flex-1 flex flex-col">
         {/* Main content area */}
         <div className="flex flex-col min-w-0">
           {/* Help text panel */}
@@ -375,7 +375,15 @@ export default function Home() {
       <PlaybackAnnouncer />
 
       {/* Tracks panels at the bottom of the screen */}
-      <div className="fixed bottom-0 left-0 right-0 z-50">
+      {/* Sticky, not fixed. A fixed footer is outside flow, so the space it
+          needs had to be guessed at with `mb-24` on the content — 96px for two
+          always-mounted panels costing ~90px of chrome each plus up to 20dvh
+          and 15dvh of scroll area. It covered the board whenever the guess was
+          wrong. Sticky keeps the panels pinned to the bottom of the viewport
+          while the page scrolls, which is what fixed bought, but the element
+          still takes its own height in flow, so there is nothing to reserve
+          and nothing to keep in step. */}
+      <div className="sticky bottom-0 z-50 w-full">
         <ArmedTracksPanel />
         <ActiveTracksPanel />
       </div>
