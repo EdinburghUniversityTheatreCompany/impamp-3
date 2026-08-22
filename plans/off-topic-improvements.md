@@ -148,3 +148,20 @@ suppression, so feedback is `hover:` only, which sticks after a tap.
 All of this becomes worth doing if the answer to "what is a phone for here"
 ever changes from convenience to performance. Noticed while building the
 portrait layout.
+
+## The sweep's list loop has no guard against a token that never advances
+
+`sweepUncommittedObjects` (`src/lib/server/audioSweep.ts`) pages with the
+bucket's own continuation token and leaves the loop on two conditions: the
+listing ended, or the scan budget ran out. A page with no objects in it
+consumes no budget, so a store that answered every request with an empty page
+and the same continuation token would spin the loop for ever — inside a request
+handler, on a single instance whose event loop serves everything else.
+
+Real S3 always makes progress, and the loop had this shape before the cursor
+work too, so this is a hardening item rather than a bug anyone has seen. The
+guard is two lines: stop when a page comes back empty and hands back the token
+it was given. Worth a test with a store that does exactly that, or it is
+another claim nobody checks.
+
+Noticed while fixing the sweep's traversal (phase 7 review, 🔴 2).
