@@ -492,6 +492,121 @@ describe("repairing", () => {
     expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
   });
 
+  /** Deletes the pad row, so the next `replaceMissingAudioFile` throws. */
+  async function loseThePadBehindTheModal(): Promise<void> {
+    const db = await getDb();
+    const stale = await db.getFromIndex("padConfigurations", "profileBankPad", [
+      profileId,
+      OPENERS,
+      0,
+    ]);
+    await db.delete("padConfigurations", stale!.id!);
+  }
+
+  it("says the replacement failed rather than going quiet", async () => {
+    // The sibling scan path puts its failure in a `role="alert"` box one
+    // function above; this one only reached the console. On screen the row
+    // simply goes back to offering a picker, which is also what a press the
+    // user never made looks like — so the operator's reading is "it did not
+    // take my file", and they try the same file again.
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+    await loseThePadBehindTheModal();
+    await chooseReplacement(
+      rowKey({ profileId, ...brokenPad }),
+      replacementNamed("found-again"),
+    );
+
+    const alert = required(
+      `missing-audio-replace-error-${rowKey({ profileId, ...brokenPad })}`,
+    );
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("Pad configuration not found");
+  });
+
+  it("hands the failure back when the next attempt gets through", async () => {
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+    await loseThePadBehindTheModal();
+    const key = rowKey({ profileId, ...brokenPad });
+    await chooseReplacement(key, replacementNamed("found-again"));
+    expect(testId(`missing-audio-replace-error-${key}`)).not.toBeNull();
+
+    // The pad comes back — the other tab wrote it again, or the user undid
+    // whatever removed it — and the second attempt works.
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+    await chooseReplacement(key, replacementNamed("found-again"));
+
+    expect(testId(`missing-audio-replace-error-${key}`)).toBeNull();
+    expect(panel.all("missing-audio-row")[0].textContent).toContain("Replaced");
+  });
+
+  it("empties the picker so the same file can be chosen twice", async () => {
+    // A file input fires `change` only when the selection changes, so a
+    // control still holding the file of a failed attempt is dead to that
+    // file — the one file the user is most likely to pick again. jsdom cannot
+    // model that rule, so what is asserted is the component's side of it: the
+    // value is cleared once the handler has the file.
+    await padNaming({
+      profileId,
+      bankId: OPENERS,
+      padIndex: 0,
+      audioFileIds: [GONE],
+    });
+
+    await click("missing-audio-scan");
+    const input = required(
+      `missing-audio-replace-${rowKey({ profileId, ...brokenPad })}`,
+    ) as HTMLInputElement;
+
+    // Wrapping the descriptor React installed rather than replacing it: React
+    // tracks an input's value through that setter, and a plain override stops
+    // it seeing the change at all.
+    const tracked = Object.getOwnPropertyDescriptor(input, "value")!;
+    const assigned: string[] = [];
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: tracked.get,
+      set(next: string) {
+        assigned.push(next);
+        tracked.set?.call(this, next);
+      },
+    });
+
+    const file = replacementNamed("found-again");
+    Object.defineProperty(input, "files", {
+      value: [file],
+      configurable: true,
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await panel.settle();
+
+    expect(assigned).toContain("");
+    // And the repair still happened, so the reset is not standing in for it.
+    expect((await storedPad(profileId, OPENERS, 0))?.audioFileIds).not.toEqual([
+      GONE,
+    ]);
+  });
+
   it("does not claim a repair when the write failed", async () => {
     await padNaming({
       profileId,

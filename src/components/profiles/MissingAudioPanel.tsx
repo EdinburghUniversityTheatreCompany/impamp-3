@@ -82,6 +82,13 @@ export default function MissingAudioPanel() {
   const [replacingIds, setReplacingIds] = useState<Set<string>>(new Set());
   const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
   const [scanError, setScanError] = useState<string | null>(null);
+  // Why a repair did not happen, per reference. The sibling scan path has said
+  // this on screen since the panel was written; the repair path only reached
+  // the console, so the row went back to offering a picker, which is exactly
+  // what a press nobody made looks like.
+  const [replaceErrors, setReplaceErrors] = useState<Map<string, string>>(
+    new Map(),
+  );
 
   // Numbered per render rather than stored: the scan result is the only input,
   // so a second copy in state is a second thing to keep in step with it.
@@ -92,6 +99,7 @@ export default function MissingAudioPanel() {
     setMissingScanResult(null);
     setReplacingIds(new Set());
     setReplacedIds(new Set());
+    setReplaceErrors(new Map());
     setScanError(null);
     try {
       const { findMissingAudioFiles } = await import("@/lib/db");
@@ -115,6 +123,12 @@ export default function MissingAudioPanel() {
   ) => {
     const key = referenceKeyOf(entry);
     setReplacingIds((prev) => new Set(prev).add(key));
+    setReplaceErrors((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
     try {
       const { replaceMissingAudioFile } = await import("@/lib/db");
       await replaceMissingAudioFile(
@@ -127,6 +141,12 @@ export default function MissingAudioPanel() {
       setReplacedIds((prev) => new Set(prev).add(key));
     } catch (error) {
       console.error("Failed to replace missing audio file:", error);
+      setReplaceErrors((prev) =>
+        new Map(prev).set(
+          key,
+          `The replacement could not be saved: ${errorMessage(error)}.`,
+        ),
+      );
     } finally {
       setReplacingIds((prev) => {
         const next = new Set(prev);
@@ -219,10 +239,11 @@ export default function MissingAudioPanel() {
                             <div
                               key={rowKey}
                               data-testid="missing-audio-row"
-                              className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
+                              className="bg-white dark:bg-gray-700 rounded px-3 py-2"
                             >
-                              <span className="text-gray-700 dark:text-gray-200">
-                                {/*
+                              <div className="flex items-center justify-between gap-4 text-sm">
+                                <span className="text-gray-700 dark:text-gray-200">
+                                  {/*
                                   The name alone, with no "Bank " in front of
                                   it: `bankName` is the bank's *stored* name,
                                   and a bank nobody renamed is stored as
@@ -231,41 +252,60 @@ export default function MissingAudioPanel() {
                                   looks right on the renamed ones. The search
                                   results render a bank name the same way.
                                 */}
-                                {entry.bankName} &rsaquo;{" "}
-                                {entry.padName
-                                  ? `"${entry.padName}"`
-                                  : `Pad ${entry.padIndex + 1}`}
-                              </span>
-                              {isReplaced ? (
-                                <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
-                                  Replaced
+                                  {entry.bankName} &rsaquo;{" "}
+                                  {entry.padName
+                                    ? `"${entry.padName}"`
+                                    : `Pad ${entry.padIndex + 1}`}
                                 </span>
-                              ) : (
-                                <label className="shrink-0">
-                                  <input
-                                    type="file"
-                                    accept="audio/*"
-                                    className="sr-only"
-                                    data-testid={`missing-audio-replace-${rowKey}`}
-                                    disabled={isReplacing}
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0];
-                                      if (file)
-                                        handleReplaceMissingFile(entry, file);
-                                    }}
-                                  />
-                                  <span
-                                    className={`cursor-pointer px-3 py-1 text-xs rounded border transition-colors ${
-                                      isReplacing
-                                        ? "border-gray-300 text-gray-400 cursor-not-allowed"
-                                        : "border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                                    }`}
-                                  >
-                                    {isReplacing
-                                      ? "Replacing…"
-                                      : "Choose replacement…"}
+                                {isReplaced ? (
+                                  <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
+                                    Replaced
                                   </span>
-                                </label>
+                                ) : (
+                                  <label className="shrink-0">
+                                    <input
+                                      type="file"
+                                      accept="audio/*"
+                                      className="sr-only"
+                                      data-testid={`missing-audio-replace-${rowKey}`}
+                                      disabled={isReplacing}
+                                      onChange={(e) => {
+                                        const picker = e.currentTarget;
+                                        const file = picker.files?.[0];
+                                        // Emptied as soon as the file is in
+                                        // hand: a file input fires `change`
+                                        // only when the selection changes, so a
+                                        // control still holding the file of a
+                                        // failed attempt is dead to that
+                                        // file — the one the user is most
+                                        // likely to pick again.
+                                        picker.value = "";
+                                        if (file)
+                                          handleReplaceMissingFile(entry, file);
+                                      }}
+                                    />
+                                    <span
+                                      className={`cursor-pointer px-3 py-1 text-xs rounded border transition-colors ${
+                                        isReplacing
+                                          ? "border-gray-300 text-gray-400 cursor-not-allowed"
+                                          : "border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                      }`}
+                                    >
+                                      {isReplacing
+                                        ? "Replacing…"
+                                        : "Choose replacement…"}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
+                              {replaceErrors.has(referenceKey) && (
+                                <p
+                                  role="alert"
+                                  data-testid={`missing-audio-replace-error-${rowKey}`}
+                                  className="mt-1 text-xs text-yellow-800 dark:text-yellow-200"
+                                >
+                                  {replaceErrors.get(referenceKey)}
+                                </p>
                               )}
                             </div>
                           );
