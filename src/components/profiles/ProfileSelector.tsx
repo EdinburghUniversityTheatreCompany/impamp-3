@@ -3,7 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { syncTargetLabel } from "@/lib/syncState";
-import ChevronDownIcon from "@/components/shared/ChevronDownIcon";
+import CheckSolidIcon from "@/components/icons/CheckSolidIcon";
+import ChevronDownIcon from "@/components/icons/ChevronDownIcon";
+import PencilIcon from "@/components/icons/PencilIcon";
+import UserIcon from "@/components/icons/UserIcon";
 
 export default function ProfileSelector() {
   // Per-field: this sits in the header, so a bare subscription re-rendered it
@@ -57,19 +60,7 @@ export default function ProfileSelector() {
         aria-haspopup="true"
         aria-label={`Profile: ${activeProfile?.name || "No Profile"}`}
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="w-5 h-5 text-gray-500 dark:text-gray-300"
-        >
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-          <circle cx="12" cy="7" r="4"></circle>
-        </svg>
+        <UserIcon className="w-5 h-5 text-gray-500 dark:text-gray-300" />
         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[150px]">
           {activeProfile?.name || "No Profile"}
         </span>
@@ -97,18 +88,10 @@ export default function ProfileSelector() {
                   <div className="flex items-center">
                     <span className="flex-1 truncate">{profile.name}</span>
                     {profile.id === activeProfileId && (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
+                      <CheckSolidIcon
                         className="h-5 w-5 text-blue-500"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
+                        title="Current profile"
+                      />
                     )}
                   </div>
                   {/*
@@ -137,19 +120,7 @@ export default function ProfileSelector() {
               role="menuitem"
             >
               <div className="flex items-center">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-4 w-4 mr-2"
-                >
-                  <path d="M12 20h9"></path>
-                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                </svg>
+                <PencilIcon className="h-4 w-4 mr-2" />
                 <span>Manage Profiles</span>
               </div>
             </button>

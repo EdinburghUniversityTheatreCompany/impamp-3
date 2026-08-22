@@ -32,6 +32,7 @@ import {
 import { DEFAULT_NORMALISATION } from "@/lib/audio/loudness/types";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useProfileStore } from "@/store/profileStore";
+import XIcon from "@/components/icons/XIcon";
 
 interface WaveformTrimmerProps {
   audioFileId: number;
@@ -445,24 +446,19 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
           <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
             Trim: {audioFileName}
           </h3>
+          {/*
+            The only content is the cross, so without a label this button had
+            no accessible name at all — it announced as "button". That was
+            hidden while the cross was inline markup; making it `aria-hidden`
+            like every other decorative icon is what surfaces it.
+          */}
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             type="button"
+            aria-label="Close trimmer"
           >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <XIcon className="w-5 h-5" />
           </button>
         </div>
 

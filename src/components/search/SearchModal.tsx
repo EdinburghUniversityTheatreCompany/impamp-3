@@ -16,6 +16,8 @@ import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel, hasArmModifier } from "@/lib/platform";
 import { extractPadPlaybackSettings } from "@/lib/db";
+import MagnifierIcon from "@/components/icons/MagnifierIcon";
+import XIcon from "@/components/icons/XIcon";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -198,20 +200,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
       >
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center">
           <div className="mr-2 text-gray-500 dark:text-gray-400">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
+            <MagnifierIcon className="h-5 w-5" />
           </div>
           <input
             ref={inputRef}
@@ -229,20 +218,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             className="ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
             aria-label="Close search"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <XIcon className="h-6 w-6" />
           </button>
         </div>
 

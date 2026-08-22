@@ -5,36 +5,27 @@ Each entry: what, where, why it matters.
 
 Deferred dependency upgrades live in `plans/deferred-upgrades.md`, not here.
 
-## Inline SVG icons should live in their own files
+## `reactPanel`'s settle is a tick count, not a bounded wait
 
-Thirty-one hand-written `<svg>` blocks across fifteen components, none of them
-shared until `src/components/shared/ChevronDownIcon.tsx` — which exists only
-because the disclosure chevron was about to become a third copy of the same
-path data. The worst offenders:
+`src/lib/testSupport/reactPanel.tsx` settles a press by awaiting 40
+`setTimeout(0)` turns inside one `act` scope. `setTimeout(0)` is clamped to
+about a millisecond, so those 40 turns are roughly 40 ms on an idle machine
+and can stretch past half a second on a loaded one. Two independent
+consequences, both hit on 2026-08-22:
 
-```
-src/app/drive/open/page.tsx                    7
-src/components/profiles/ProfileManager.tsx     5
-src/components/shared/TrackItem.tsx            4
-src/components/profiles/ProfileSelector.tsx    3
-```
+- A component timer set inside the settle window fires _during_ the wait
+  rather than after it. `OrphanedAudioPanel`'s 500 ms re-scan did exactly
+  this, clearing state the assertion was about. That specific case is fixed —
+  `runOrphanScan` no longer clears the cleanup report — but the mechanism is
+  general, and the fix each time has been to spy on `setTimeout` and
+  intercept the request rather than wait for it.
+- A dynamic `import()` a module has not been fetched yet can land _after_ all
+  40 turns, because vite-node's fetch is not a macrotask the count can see.
+  `cleanupOrphanedAudioFiles` reaches `await import("./audio/cache")`, and
+  with `SETTLE_TICKS` cut to 4 that was the only failure in its file.
 
-They are unmaintainable in the ordinary way — the same glyph drifts between
-copies, sizes and colours are set inconsistently, and `aria-hidden` is present
-on some and missing on others — and they bloat the components they sit in:
-seven of them are most of what `drive/open/page.tsx` contains that isn't logic.
-
-The project has no icon library and no sprite, so this is a real decision
-rather than a mechanical sweep. Roughly in order of preference:
-
-1. Add an icon library (`lucide-react` is the obvious fit for this stack) and
-   delete the hand-written paths outright.
-2. Move each glyph to a `.svg` file under `src/components/icons/` and import
-   it — Next's SVGR support makes them components, so call sites barely change.
-3. Failing both, at least finish what `ChevronDownIcon` starts: one component
-   per glyph in a shared `icons/` directory, so each path is written once.
-
-Whichever route, do it in one pass — a half-converted icon set is worse than
-either end state. Noticed while adding the sync status chip, where the
-`dev-hooks` inline-svg hook flagged the new markup and the honest answer was
-"the whole codebase does this".
+The unit suite failed once in six consecutive runs on a machine at load
+average 17 while merging the icon set, and passed the other five; the failing
+test's name was not captured, so this is the shape rather than a specific
+diagnosis. Fake timers, or a settle that waits on a condition rather than a
+count, would end the class. Noticed while merging `p2/icons`.
