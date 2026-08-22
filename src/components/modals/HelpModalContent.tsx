@@ -29,6 +29,24 @@ const HelpModalContent: React.FC = () => {
         <div className="space-y-4">
           <h3 className="text-lg font-medium">Keyboard Shortcuts</h3>
 
+          {/* The way back to the first-use tour. It is shown once per device
+              and then never again, so without this there is no route to it at
+              all for anyone who skipped it — and Skip is the button a first-time
+              user is most likely to press. */}
+          <button
+            type="button"
+            data-testid="help-replay-tour"
+            onClick={async () => {
+              const { forgetWelcomeTourSeen } = await import("@/lib/firstRun");
+              const { openWelcomeTour } = await import("@/lib/uiUtils");
+              forgetWelcomeTourSeen();
+              openWelcomeTour();
+            }}
+            className="text-sm text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            Replay the welcome tour
+          </button>
+
           <div className="space-y-2">
             <h4 className="font-medium">Sound Playback</h4>
             <ul className="list-disc pl-5 space-y-1">
