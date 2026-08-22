@@ -9,10 +9,8 @@ import { gotoApp } from "./test-helpers";
  * assertions below pass trivially. That is why the desktop projects
  * `testIgnore` this file — a spec that cannot fail is worse than no spec.
  *
- * Numbers rather than screenshots, deliberately. A screenshot test fails on
- * every intentional style change and still cannot answer the only question
- * that matters here: is the board actually operable at this width. These four
- * are the things a reader cannot check by eye.
+ * Numbers rather than screenshots: a screenshot fails on every intentional
+ * style change and still cannot say whether the board is operable.
  */
 test.describe("portrait layout", () => {
   test.beforeEach(async ({ page }) => {
