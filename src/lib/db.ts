@@ -755,6 +755,21 @@ const updateFieldsModified = <T>(
  */
 function startBackgroundAnalysis(id: number): void {
   if (typeof window === "undefined") return;
+  // No Web Audio, no analysis — which is the honest production semantic (a
+  // browser that cannot decode cannot measure, and the file plays at 0 dB,
+  // exactly as it did before this feature existed) and, incidentally, the end
+  // of a whole class of test flake.
+  //
+  // `window` alone was never the right test. Vitest suites that need
+  // IndexedDB assign `globalThis.window` on purpose, so they passed this
+  // guard, fired an analysis that reached Web Audio, and had the rejection
+  // logged after the test file had finished — which under `--coverage` tears
+  // the worker down with `EnvironmentTeardownError: Closing rpc while
+  // "onUserConsoleLog" was pending`. `stubLoudnessPipeline` was the per-suite
+  // answer and stays, because a suite asserting on analysis still wants it;
+  // this is the answer for the twenty-odd suites that merely touch the
+  // database and were one indirect writer away from the same flake.
+  if (typeof AudioContext === "undefined") return;
   void loadLoudnessPipeline()
     .then(({ analyseAndStore }) => analyseAndStore(id))
     .catch((error) => {

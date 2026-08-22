@@ -363,6 +363,17 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
       const isSpecialPad = SPECIAL_PAD_INDICES.includes(padIndex);
 
       // --- Special Pad Logic ---
+      //
+      // The two transport pads are painted last in portrait, Stop All last of
+      // all so it lands bottom-right under the thumb. On a board you scroll
+      // down, "the last column" is not muscle memory — "scroll to the bottom"
+      // is. Their INDICES do not move: 23 and 35 are wired to Escape and Space
+      // in keyboardUtils.ts and every stored profile is keyed on pad index.
+      //
+      // `order` normally desynchronises visual order from DOM order, which
+      // breaks tab sequence and screen-reader browse order. It is safe here
+      // for one specific reason: `Pad` is tabIndex={-1} and Tab can never park
+      // focus on the board (CLAUDE.md). Do not "fix" this by removing it.
       if (padIndex === SPECIAL_PAD_CONFIG.STOP_ALL.index) {
         return (
           <Pad
@@ -371,6 +382,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             padIndex={padIndex}
             profileId={activeProfileId}
             bankId={bankId}
+            className="order-[9999] lg:order-none"
             keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
             // A special pad holds no sounds. It used to claim two, to switch
@@ -397,6 +409,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             padIndex={padIndex}
             profileId={activeProfileId}
             bankId={bankId}
+            className="order-[9998] lg:order-none"
             keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
             // As above: no sounds, and `isSpecialPad` is what refuses drops.
