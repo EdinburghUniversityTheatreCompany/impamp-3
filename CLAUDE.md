@@ -100,6 +100,20 @@ IndexedDB abstraction in `src/lib/db.ts` with four object stores:
 - **Modal System** - Centralized modal management with `ModalRenderer.tsx`
 - **Pad System** - `Pad.tsx`, `PadGrid.tsx` with drag-and-drop and edit capabilities
 - **Panel Components** - `ActiveTracksPanel.tsx`, `ArmedTracksPanel.tsx` for playback status
+- **Icons** - every glyph is a component in `src/components/icons/`, each of
+  them `Icon.tsx` plus its own path data, and `Icon` is the only `<svg>` in the
+  application. Size and colour arrive as `className`; the stroke weight and
+  line caps come from the paint table rather than from attributes repeated on
+  each `<path>`; and an icon is `aria-hidden` unless it is given a `title`,
+  which exactly one of them is. There is deliberately **no icon library**:
+  `lucide-react` tree-shakes to about 1.8 KB gzipped for this many glyphs, so
+  the objection is not size — it is that these glyphs are Heroicons, Bootstrap
+  Icons, Feather and the Google brand mark, so adopting one would restyle every
+  icon in a deployed application, and lucide has no brand icons, so the Google
+  "G" would keep this directory alive anyway. There is also deliberately **no
+  barrel**: an `index.ts` re-exporting all twenty put all twenty into a chunk
+  every route loads, measured at +5 KB raw on `/_not-found`, which renders none
+  of them. Import each glyph from its own module
 
 ### Key Features Implementation
 
