@@ -81,39 +81,6 @@ when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
 
-## The coverage ratchet in `vitest.config.ts` is now far below the real number
-
-The thresholds are 33 / 28 / 27 / 33 and the comment records the run they were
-set from as "34.28 / 29.89 / 28.47 / 34.77". A full `npm run test:coverage` on
-the layered-retrigger branch after Task 7 reports **47.81 / 40.62 / 44.14 /
-48.56** — roughly fourteen points of headroom on statements and lines. The gate
-can no longer notice a whole untested module landing, which is the thing it
-exists for.
-
-Deliberately not raised in Task 7: the number will move again with the rest of
-that branch, and a threshold bump is a branch-level decision rather than one
-task's. Worth doing once the branch is complete, per CLAUDE.md's "raise them
-deliberately when a run comes in comfortably above".
-
-Noticed while running the coverage gate at the end of Task 7.
-
-## `RadioGroup`'s `aria-labelledby` points at an id nothing renders
-
-`RadioGroup` sets `aria-labelledby={`${id}-label`}` on its `role="radiogroup"`
-container, but nothing in the codebase renders an element with that id. Its
-three callers all wrap it in a `FormField`, which renders
-`<label htmlFor={id}>` — no id of its own — so the `htmlFor` also points at a
-non-element (the radios are `${id}-continue`, `${id}-stop`, and so on). The net
-effect is a radio group with no accessible name and a label that clicks
-nowhere, in the profile editor, Playback Settings and now the pad editor.
-
-The fix is small and belongs in the two shared components rather than in each
-form: give `FormField`'s label `id={`${id}-label`}`, and drop or repoint the
-`htmlFor` since there is no single control for it to address.
-
-Noticed while adding the Layer option to the three activePadBehavior radio
-groups (Task 9 of the layered-retrigger plan).
-
 ## The `audioFiles` `name` index has no readers left
 
 `db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
@@ -145,27 +112,6 @@ is to tag the row with the drag id and keep the file id only where a spec
 genuinely needs to read it back.
 
 Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
-
-## ~~The pre-commit hook does not run `tsc`~~ — done on main
-
-**Resolved.** `hk.pkl` now has a `tsc` step running `npm run typecheck`, which
-lands on this branch with the merge from main. The entry is kept because the
-reasoning below is still the argument for it, and because Tasks 1-6 of the
-audio-dedup plan were written against the old behaviour and say so.
-
-## The pre-commit hook did not run `tsc`
-
-`hk.pkl` runs prettier, eslint, gitleaks, jscpd, vitest, a large-file check
-and an exec-bit check. It does not typecheck, so a commit can pass the hook
-cleanly and still fail CI — which is what happened to a test fixture on the
-audio-dedup branch that built a `TokenInfo` without its `refreshToken`. ESLint
-does not catch it either, because the type error is in the argument, not in
-the lint rules.
-
-Adding `npx tsc --noEmit` to the hook costs a few seconds per commit on this
-repo and closes the gap between "the hook passed" and "CI will pass".
-
-Noticed while committing Task 3 of the audio-dedup plan.
 
 ## The duplicate-audio panel names no sounds
 
