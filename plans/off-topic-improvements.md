@@ -86,6 +86,12 @@ provisionally and swept hourly — but a caller who declares a byte, sends five
 gigabytes and never commits still gets those bytes into the bucket until the
 sweep reaches them, with Wasabi's 90-day minimum billing on each.
 
+That last clause was doing more work than it could bear when this was written:
+the sweep restarted at the first key in the bucket on every pass, so on any
+deployment with a real library it reached nothing at all. It now carries a
+cursor across passes and comes round in about a hundred minutes on a
+200,000-object bucket, so the deferral rests on something that happens.
+
 The fix is to put `content-length` in the presign's `SignedHeaders` so S3
 rejects a PUT whose length is not the one that was signed for. It was left out
 deliberately: nothing in this repo can verify Wasabi accepts it —
