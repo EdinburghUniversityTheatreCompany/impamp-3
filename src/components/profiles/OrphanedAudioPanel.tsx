@@ -17,7 +17,9 @@
  *    and cleanup results are separate pieces of state and the second does not
  *    overwrite the first; a re-scan is scheduled instead, so what is on screen
  *    afterwards came from reading the database again rather than from
- *    subtracting the numbers the panel had.
+ *    subtracting the numbers the panel had. That re-scan goes through
+ *    `runOrphanScan` and not through the Scan button's handler, so the report
+ *    of what was deleted survives it — see the comment there.
  */
 
 import { useState } from "react";
@@ -40,10 +42,19 @@ export default function OrphanedAudioPanel() {
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
 
-  const handleScanOrphans = async () => {
+  /**
+   * Re-reads the library, and says nothing about the cleanup report.
+   *
+   * The Scan button and the re-scan a cleanup schedules both end up here, and
+   * the one thing they must not share is the clearing: the report of what was
+   * deleted is the whole point of the re-scan's own trigger, and a handler
+   * that opened by clearing it put "Files deleted: 2" on screen for half a
+   * second and then replaced it with a scan saying 0 orphans. The report is
+   * the part a user might want to read twice, and it was the part that went.
+   */
+  const runOrphanScan = async () => {
     setIsScanningOrphans(true);
     setOrphanScanResult(null);
-    setOrphanCleanupResult(null);
     setScanError(null);
 
     try {
@@ -62,6 +73,15 @@ export default function OrphanedAudioPanel() {
     }
   };
 
+  /**
+   * The Scan button. A press is the user asking a new question, so the report
+   * of the last cleanup goes with it — kept until then, not for half a second.
+   */
+  const handleScanOrphans = async () => {
+    setOrphanCleanupResult(null);
+    await runOrphanScan();
+  };
+
   const handleCleanupOrphans = async () => {
     setIsCleaningOrphans(true);
     setOrphanCleanupResult(null);
@@ -71,10 +91,13 @@ export default function OrphanedAudioPanel() {
       const result = await cleanupOrphanedAudioFiles();
       setOrphanCleanupResult(result);
 
-      // Refresh scan results after cleanup
+      // Read the library again rather than subtracting: the counts on screen
+      // after a cleanup should have come from the database. `runOrphanScan`,
+      // not the button's handler — this must not clear the report it was
+      // scheduled to corroborate.
       if (result.deletedCount > 0) {
         setTimeout(() => {
-          handleScanOrphans();
+          runOrphanScan();
         }, 500);
       }
     } catch (error) {
@@ -82,9 +105,7 @@ export default function OrphanedAudioPanel() {
       setOrphanCleanupResult({
         deletedCount: 0,
         cacheEntriesCleared: 0,
-        errors: [
-          `Failed to cleanup: ${error instanceof Error ? error.message : error}`,
-        ],
+        errors: [`Failed to cleanup: ${errorMessage(error)}`],
       });
     } finally {
       setIsCleaningOrphans(false);

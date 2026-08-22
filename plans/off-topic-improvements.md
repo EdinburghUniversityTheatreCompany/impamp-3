@@ -112,17 +112,3 @@ repo's characteristic regression.
 
 Noticed while checking whether Task 8 of the audio-dedup plan still needed to
 add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
-
-## The cleanup report vanishes half a second after it appears
-
-A cleanup that deleted something schedules a re-scan 500 ms later, and
-`handleScanOrphans` opens by clearing the cleanup result. So "Files deleted:
-2, Cache entries cleared: 1" is on screen for half a second and is then
-replaced by a scan saying 0 orphans — the report of what was deleted is the
-one thing a user might want to read twice, and it is the thing that goes. The
-re-scan itself is right (the counts on screen come from the database rather
-than from the panel's arithmetic); it is the clearing that is wrong, and
-`handleScanOrphans` clears it because it is also the manual Scan handler.
-
-Noticed while extracting the Maintenance tab into its own panels (finding 8
-of the 2026-08-21 review).

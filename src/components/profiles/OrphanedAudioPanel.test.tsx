@@ -268,6 +268,39 @@ describe("deleting", () => {
     expect(testId("orphan-cleanup")).toBeNull();
   });
 
+  it("keeps the report of what was deleted when the re-scan lands", async () => {
+    // "Files deleted: 2" is the one thing on this panel a user might want to
+    // read twice, and it is the thing that used to go: the re-scan runs
+    // through the same handler as the Scan button, which opens by clearing
+    // the cleanup report. Half a second of a report is not a report.
+    await soundNamed("orphan-one");
+    await soundNamed("orphan-two");
+
+    await click("orphan-scan");
+    await click("orphan-cleanup");
+    expect(text("orphan-cleanup-result")).toContain("Files deleted: 2");
+
+    await runScheduledRescan();
+
+    expect(text("orphan-cleanup-result")).toContain("Files deleted: 2");
+    // Beside the fresh counts, not instead of them: what is on screen still
+    // came from reading the database again.
+    expect(text("orphan-scan-result")).toContain("Orphaned files: 0");
+  });
+
+  it("drops the report when the user asks for a scan of their own", async () => {
+    // The press is the user moving on. A report about a library two presses
+    // ago would be the same staleness the other way round.
+    await soundNamed("orphan-one");
+
+    await click("orphan-scan");
+    await click("orphan-cleanup");
+    await runScheduledRescan();
+    await click("orphan-scan");
+
+    expect(testId("orphan-cleanup-result")).toBeNull();
+  });
+
   it("says the cleanup failed rather than reporting nothing", async () => {
     await soundNamed("orphan-one");
     cleanupOrphanedAudioFiles.mockRejectedValueOnce(
