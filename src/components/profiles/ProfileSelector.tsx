@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { syncTargetLabel } from "@/lib/syncState";
-import ChevronDownIcon from "@/components/shared/ChevronDownIcon";
+import { ChevronDownIcon } from "@/components/icons";
 
 export default function ProfileSelector() {
   // Per-field: this sits in the header, so a bare subscription re-rendered it
