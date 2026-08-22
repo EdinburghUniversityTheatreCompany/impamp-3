@@ -1,107 +1,118 @@
-# Eight-phase run — started 2026-08-21
+# Eight-phase run — 2026-08-22
 
-Working branch `fix/review-2026-08-21`, in the worktree
-`.worktrees/fix/review-2026-08-21`. Merge to `main` at the end of each phase
-that stands on its own; keep going without asking unless a phase hits one of
-the pause conditions in the global CLAUDE.md.
+Mick's list, worked in order with heavy parallelism. Phases 1–5 are **done and
+merged**; 6–8 remain. `main` is at `6f32e9e`, one checkout, no stray worktrees.
 
-**Definition of done for every phase:** `npx vitest run`, `npm run typecheck`,
-`npm run lint`, `npx prettier --check .`, jscpd, and
-`E2E_PORT=<free> npx playwright test --project=chromium --reporter=line` all
-green, and the change actually exercised rather than pattern-matched.
+## Gates on `main`
 
-## Phases
+1544 unit tests in 157 files · 196 chromium e2e · 4 `mobile-portrait` e2e ·
+typecheck, eslint, prettier, jscpd 0 %, gitleaks, version-sync, action-pins,
+actionlint, zizmor all clean · coverage ratchet 60 / 52 / 57 / 61.
 
-| #   | Phase                                               | State       |
-| --- | --------------------------------------------------- | ----------- |
-| 1   | Fix everything in `plans/repo-review-2026-08-21.md` | **done**    |
-| 2   | Drain `plans/off-topic-improvements.md`             | in progress |
-| 3   | Second full repo review, then fix what it finds     | not started |
-| 4   | Take the deferred upgrades that are now feasible    | not started |
-| 5   | A layout that works on mobile / portrait            | not started |
-| 6   | Issue #8 — first-use tutorial                       | not started |
-| 7   | Full code review, fix everything                    | not started |
-| 8   | Full code review, fix everything                    | not started |
+**Nothing has been deployed.** `impamp.bedlamtheatre.co.uk` still runs what it
+ran this morning, and that is deliberately Mick's call — this branch contains a
+security fix and a behaviour change to hosted audio.
 
-## Phase 1 — the 2026-08-21 review
+| #   | Phase                                   | State                            |
+| --- | --------------------------------------- | -------------------------------- |
+| 1   | Fix `plans/repo-review-2026-08-21.md`   | **done**                         |
+| 2   | Drain `plans/off-topic-improvements.md` | **done** — all 16 closed         |
+| 3   | Second full repo review, then fix it    | **done** — 19 findings, 17 fixed |
+| 4   | Deferred upgrades now feasible          | **done** — see below             |
+| 5   | A layout that works in portrait         | **done**                         |
+| 6   | Issue #8 — first-use tutorial           | not started                      |
+| 7   | Full code review, fix everything        | not started                      |
+| 8   | Full code review, fix everything        | not started                      |
 
-Report: `plans/repo-review-2026-08-21.md`. Fourteen findings.
+## What phases 1–5 actually changed
 
-- [x] 🔴 1 — the dedup collapse deletes a row an in-flight import holds
-      (`dccd616`, with the regression test that fails against `a0923a6`)
-- [x] 🔴 2 — `test:coverage` exits 1 on a green suite (`58a4fc6`, five clean
-      `--coverage` runs against two failures in three before)
-- [x] 🟡 3 — every `RadioGroup` has no accessible name (merged from
-      `p1/a11y`). Fixed better than the report proposed: `FormField` publishes
-      its label's real id through a context and `RadioGroup` consumes it, so
-      outside a `FormField` a group carries no `aria-labelledby` at all rather
-      than one that dangles. `htmlFor` dropped for group children, since it is
-      defined only against a labelable element and a group is a div.
-      Descriptions wired
-      with `aria-describedby`. Verified independently with the same probe that
-      proved it broken: name resolves, no dangling `for`
-- [x] 🟡 4 — rule restated by name, and all seven bumps landed (`p1/deps-docs`).
-      Mick approved taking them inside the 7-day cooldown; four were published
-      the same day. `npm outdated` is now exactly eslint and typescript
-- [x] 🟡 5 — every `test:e2e*` script is chromium now, with
-      `test:e2e:cross-browser` for the on-demand run, and the reporter prints
-      to the terminal instead of only opening a browser (`p1/deps-docs`)
-- [x] 🟡 6 — `settleAudioImports` was module-private (part of `dccd616`)
-- [x] 🟡 7 — five deleted; `resetGoogleTokenRefreshState` kept and now used by
-      a new throttle test, because the real finding there was a missing test
-      (`p1/deadcode`)
-- [x] 🟡 8 — 1682 → 1071 lines; the Maintenance tab is three tested panels
-      (24 tests, mutation-checked). Found a real bug on the way: a repaired
-      pad stayed silent because the repair never bumped `padConfigsVersion`
-      (`p1/profilemanager`)
-- [x] 🟡 9 — pattern moved into `.gitignore` (`p1/deps-docs`)
-- [x] 🟢 10 — stale worktrees (removed, 2.3 GB; branches deliberately kept)
-- [x] 🟢 11 — the dedup confirmation now says a pad naming both copies comes
-      out a sound shorter (merged from `p1/a11y`)
-- [x] 🟢 12 — one transaction, not one per row. Measured 25 → 1 for 25 sounds
-      (`p1/deadcode`)
-- [ ] 🟢 13 — Drive sync coverage. **Not fixable as a task** — it is a note
-      about where risk sits, and the path cannot be exercised outside
-      `localhost:3000`. Carry it into phase 3 rather than pretending.
-- [x] 🟢 14 — query stripped from the document cache key, on both the write
-      and the offline read (`p1/deadcode`)
+Three reviews ran today and each found real bugs the previous one missed —
+`repo-review-2026-08-21.md` (14 findings), the `/code-review` of the session
+diff (4), and `repo-review-2026-08-22-subsystems.md` (19). That is the
+strongest argument for phases 7–8 and also the reason not to expect them to
+come back empty.
 
-## In flight
+The bugs that mattered, all reproduced before being fixed:
 
-Six agents, one worktree and one branch each, all cut from `f20aeb7`. They
-merge back into `fix/review-2026-08-21` as they land.
+- **An authorization bypass on hosted audio.** `profileMayServeHash` accepted
+  "a current email-share editor holds it", and `upsertEmailShare` writes a
+  share on the inviter's say-so with no acceptance. So the owner of any profile
+  could manufacture the grant, and anyone ever shown a board kept its hashes
+  and could re-obtain every sound in it after their share was revoked. The
+  branch is gone. **The principle worth keeping: a share grants access _to_
+  someone and is never evidence _about_ them.**
+- **Three audio deleters could eat a row an in-flight import was holding**, all
+  three deterministically. The rule now has no exceptions to encode, because
+  the one deleter that ran inside an import's own scope was moved out rather
+  than the register taught to skip it — a token design deadlocks when two
+  imports fail at once.
+- **A repaired pad stayed silent**, because the repair never bumped
+  `padConfigsVersion`.
+- **Drive's legacy import matched audio by filename**, merging two different
+  recordings that shared a name.
+- **Enter in the search box acted on the previous query's results** during the
+  300 ms debounce — in a feature shipped the same morning.
+- **`ArmedTrackState` was missing `isDisabled`**, so a pad switched off after
+  arming still answered "enabled".
 
-| Branch              | Carrying                                                                    |
-| ------------------- | --------------------------------------------------------------------------- |
-| `p1/deps-docs`      | 🟡 4 (dep rule + seven patch bumps), 🟡 5 (e2e script), 🟡 9 (gitignore)    |
-| `p1/a11y`           | 🟡 3 (radiogroup name), 🟢 11 (dedup confirmation copy)                     |
-| `p1/deadcode`       | 🟡 7 (six dead exports), 🟢 12 (export transactions), 🟢 14 (sw key)        |
-| `p1/profilemanager` | 🟡 8 (extract the Maintenance tab, with real unit tests)                    |
-| `p2/sync-bugs`      | renamed profile never converges; Drive legacy import matches by name        |
-| `p2/small-fixes`    | `triggerPad` spread; cache pin asymmetry; silent pad drop; search arm chord |
+Phase 4's answer is a negative, verified rather than assumed: `typescript-eslint`
+still peers `typescript: >=4.8.4 <6.1.0` and `eslint-plugin-react` still tops
+out at `eslint: ^9.7`, so TypeScript 7 and ESLint 10 stay deferred.
+`file-selector` left that list when react-dropzone moved its own dependency and
+inverted the pin. Recorded in `plans/deferred-upgrades.md`.
 
-## Phase 2 — the off-topic backlog
+`dev-hooks` was **pushed** (v24): `check_version_sync.sh` now reads every
+`Dockerfile*` instead of breaking on the first, and this repo dropped the
+second gate it had grown to cover that hole. CI green.
 
-Sixteen entries. Two are already resolved and only need closing out (the
-`tsc` pre-commit hook, and the coverage ratchet, which is now 58/49/55/59
-against a measured 59.26/50.96/56.72/60.10). One belongs upstream in
-dev-hooks rather than here (`check_version_sync.sh` reading only the first
-Dockerfile — the local half is already covered by
-`scripts/check_extra_dockerfiles.sh`). Two are in flight above. That leaves,
-for a later wave:
+## Two lessons this run, both about evidence
 
-- inline SVG icons should live in their own files (31 blocks, 15 components —
-  a real decision: icon library vs local `icons/`, and it must be one pass)
-- ProfileManager's repair list can read "Bank Bank 3"
-- two sound rows in the pad editor can share a `data-testid`
-- the duplicate-audio panel names no sounds
-- `bankUtils.ts` spells the 20-bank cap out three times
+**A green gate is not a verdict.** The icon branch reported 143/193 then 30/193
+e2e failures at load average 19, with `worker process exited unexpectedly` and
+missing-module errors — pure starvation, 193/193 once the machine was quiet.
+Separately a rebuilt app screenshotted completely unstyled: the old server
+still held the port, `EADDRINUSE` went to a log nobody read, and the stale
+bundle named a CSS chunk the rebuild had renamed. **Check the machine before
+believing a failure, and check the server before believing a screenshot.**
+
+**Tests that pass can still be worthless.** The portrait spec's footer
+assertion flipped to passing as a _side effect_ of moving Stop All to the end,
+and had to be rewritten to hit-test every on-screen pad; mutation-checking it
+now reports 6 covered pads. An agent found its own first throttle test was
+vacuous because an in-flight promise coalesced the calls. And
+`"refuses a sound a mere viewer happens to hold"` went vacuous the moment the
+branch it guarded was deleted. **Mutation-check anything load-bearing.**
+
+## Phase 6 — issue #8, first-use tutorial
+
+"Implement short product tour/tutorial on first application use." Not started,
+and it is the only phase needing a design decision rather than a fix: a tour
+overlay, an interactive first-bank setup, and a teaching empty state are very
+different builds. No precedent in the repo — `localStorage` is used only for
+Drive sync timestamps, and the Help modal already carries the content a tour
+would narrate.
+
+## Phases 7–8 — two more review passes
+
+Expect them to find things. Known-unfixed going in:
+
+- 🟢 10 from the subsystem review: a still-valid presigned PUT can overwrite an
+  object someone else commits inside the 900 s window. Left deliberately; every
+  fix is disproportionate and unverifiable against Wasabi from here.
+- A presign signs only `host`, so a declared size is a claim — a caller can say
+  1 byte and PUT 5 GB. Signing `content-length` cannot be verified from this
+  repo. The new hourly sweep is what answers it for now.
+- Six things a phone still cannot do (`plans/off-topic-improvements.md`), all
+  performance-device concerns and all out of scope for a convenience device.
 
 ## Standing notes
 
-- **Running e2e:** always `E2E_PORT=<free port>`; port 3000 is often taken and
-  `reuseExistingServer` does not check what is listening. Redirect to a file
-  and echo `$?` — a passing run prints almost nothing.
-- **Worktrees need a real `npm ci`**, not a symlinked `node_modules`.
-- Subagents get their own worktree so they cannot stomp each other; their
-  branches merge back into `fix/review-2026-08-21`.
+- **e2e:** always `E2E_PORT=<free port>`, `--workers=1` while the machine is
+  busy. Redirect to a file and echo `$?`; a passing run prints almost nothing,
+  so check the count. `npm run test:e2e` is chromium-only now, and
+  `test:e2e:cross-browser` is the on-demand firefox/webkit run.
+- **Worktrees need a real `npm ci`.** Never point an agent at the main checkout
+  while merging into it — one was mid-probe on `audioHashIndex.ts` when a merge
+  landed underneath it.
+- **The backlog is 6 entries**, all opened today by the work itself; none is a
+  leftover from before.
