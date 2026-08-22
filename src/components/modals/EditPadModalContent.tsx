@@ -41,7 +41,10 @@ const EditPadModalContent: React.FC<EditPadModalContentProps> = ({
       // another's, since audio rows are global — still names. Deleting it
       // takes that pad's sound with it. This helper decides and deletes in one
       // transaction, keeping anything still referenced, so what goes is only
-      // what this edit actually created.
+      // what this edit actually created — and it waits for the imports in
+      // flight first, which is the other half of the same problem: a row a
+      // background sync has been handed but not yet named in a pad is
+      // referenced by nothing at all, and was deleted here until it did.
       deleteUnreferencedAudioFiles(discardable).catch((error) =>
         console.error("Failed to discard unsaved audio files:", error),
       );

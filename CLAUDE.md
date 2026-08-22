@@ -467,21 +467,33 @@ and the ranges are floors that should move only when something requires it.
   would let the table disagree with what is heard
 - Anything that writes an audio file and the pad naming it in **separate
   transactions** must run inside `withAudioImportInProgress` (`db.ts`), and
-  **every deleter of audio rows it did not itself create** must
-  `await settleAudioImports()` as the **last** thing before it opens its
-  transaction — the two orphan sweeps and `collapseDuplicateAudioGroups`.
-  `deleteUnreferencedAudioFiles` is the deliberate exception: it only considers
-  ids its own caller just created, so no other import's rows are in range.
-  `settleAudioImports` is exported for exactly this reason; it was private, and
-  the one deleter written outside `db.ts` shipped without the guard because
-  there was no way to reach it. Between the two writes the audio exists with
-  nothing referencing it, and `cleanupOrphanedAudioFiles` is entitled to delete
-  exactly that — an import racing the cleanup button deterministically left a
-  pad naming a sound that was gone. The ordering is load-bearing: work that
-  registers _after_ the sweep's transaction exists is already serialised behind
-  that scope, which is what closes the other half of the window. Two things this
-  is not: a grace period cannot work, because every record carries the single
-  `now` taken at the start of the import, so after a long download the first
+  **every deleter of audio rows must `await settleAudioImports()` as the last
+  thing before it opens its transaction, and must not be called from inside
+  `withAudioImportInProgress`.** That is one sentence with no exceptions and
+  five deleters: `deleteProfile`, `deleteUnreferencedAudioFiles`, the two
+  orphan sweeps and `collapseDuplicateAudioGroups`. The second half is why a
+  failed profile import carries its profile id and created audio ids out on a
+  `FailedProfileImport` and rolls back one line past the scope
+  (`importProfileCore`) — a deleter waiting from inside a scope waits for the
+  import that is waiting for it, and hangs rather than fails.
+  `deleteUnreferencedAudioFiles` used to be a documented exception, on the
+  grounds that it only considers ids its own caller just created. Reuse by
+  content hash ended that and nobody noticed: `addOrReuseAudioFile` hands back
+  rows that already existed, so a "provisional" id in the pad editor, or a
+  "created" id in an import's rollback, is routinely a row another import is
+  mid-flight on. It and `deleteProfile` were both measured deleting such a row
+  and leaving a pad naming nothing (`db.importRace.test.ts`).
+  `settleAudioImports` is exported because the rule is repo-wide; it was
+  private, and the one deleter written outside `db.ts` shipped without the
+  guard because there was no way to reach it. Between the two writes the audio
+  exists with nothing referencing it, and `cleanupOrphanedAudioFiles` is
+  entitled to delete exactly that — an import racing the cleanup button
+  deterministically left a pad naming a sound that was gone. The ordering is
+  load-bearing: work that registers _after_ the sweep's transaction exists is
+  already serialised behind that scope, which is what closes the other half of
+  the window. Two things this is not: a grace period cannot work, because
+  every record carries the single `now` taken at the start of the import, so
+  after a long download the first
   files are already older than any useful window; and one transaction spanning
   the import cannot exist, because IndexedDB commits as soon as the event loop
   turns with no request outstanding and the importer awaits a network download

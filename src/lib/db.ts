@@ -1283,7 +1283,16 @@ export async function clearAudioCacheEntries(
  * Deciding and deleting share one transaction, so nothing can start
  * referencing a file between the two.
  *
- * @param candidateIds The ids this operation created
+ * "The ids this operation created" is what the caller believes, not what is
+ * true, and the difference is why this waits for the imports in flight like
+ * every other deleter. `addOrReuseAudioFile` hands back the id of a row that
+ * already existed whenever the bytes match, so a pad editor's "provisional"
+ * id — or a failed import's "created" id — is routinely a row some other
+ * import is holding between its audio write and the pad write that names it.
+ * This function was exempted from the wait on the opposite belief, and the
+ * exemption outlived the argument for it by one feature.
+ *
+ * @param candidateIds The ids this operation believes it created
  * @returns How many were actually deleted
  */
 export async function deleteUnreferencedAudioFiles(
@@ -1293,6 +1302,9 @@ export async function deleteUnreferencedAudioFiles(
   if (candidates.size === 0) return 0;
 
   const db = await getDb();
+  // The last thing before the transaction, so no import can register between
+  // the two. See `settleAudioImports`.
+  await settleAudioImports();
   const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
   const allPadConfigs = await tx.objectStore("padConfigurations").getAll();
   const referencedIds = collectReferencedAudioFileIds(allPadConfigs);
@@ -1385,17 +1397,25 @@ export async function withAudioImportInProgress<T>(
  * records at all — but one that registers in a turn between the two would be
  * missed.
  *
- * **Exported because the rule is repo-wide, not db.ts-wide.** Anything that
- * deletes audio rows it did not itself create has to call this immediately
- * before opening its transaction. It was private, and the one such deleter
- * written outside this file — `collapseDuplicateAudioGroups` — shipped
- * without the guard because there was no way to reach it. Being unreachable
- * is not the same as being unnecessary.
+ * **Exported because the rule is repo-wide, not db.ts-wide.** The rule has no
+ * exceptions: *every* deleter of audio rows calls this immediately before
+ * opening its transaction, and none of them may be called from inside
+ * `withAudioImportInProgress`. That is five deleters — `deleteProfile`,
+ * `deleteUnreferencedAudioFiles`, `findOrphanedAudioFiles`,
+ * `cleanupOrphanedAudioFiles` and `collapseDuplicateAudioGroups` — and the
+ * second half of the sentence is why an import's rollback runs on the far
+ * side of its own scope rather than inside it (see `importProfileCore`).
+ * A deleter that waits from inside a scope waits for the import that is
+ * waiting for it, which hangs rather than fails.
  *
- * `deleteUnreferencedAudioFiles` is the deliberate exception: it only ever
- * considers ids its own caller just created, so an unrelated import's rows
- * are not in range and waiting for one would only make a failed import
- * slower to clean up after.
+ * This used to be exported "because `collapseDuplicateAudioGroups` is written
+ * outside this file", with `deleteUnreferencedAudioFiles` named as a
+ * deliberate exception on the grounds that it only considers ids its own
+ * caller just created. Reuse by content hash ended that: `addOrReuseAudioFile`
+ * hands back rows that already existed, so a caller's "created" list routinely
+ * holds rows another import is mid-flight on. Both remaining deleters were
+ * measured taking such a row out from under an import — see
+ * `db.importRace.test.ts`.
  */
 export async function settleAudioImports(): Promise<void> {
   while (audioImportsInFlight.size > 0) {
@@ -1658,6 +1678,16 @@ export async function deleteProfile(id: number): Promise<void> {
 
   // First, collect all audio file IDs referenced by this profile's pad configurations
   const audioFileIds = await getAudioFileIdsForProfile(id);
+
+  // This deletes the audio rows no *surviving* pad names, and an import that
+  // has been handed a row but has not yet written the pad naming it has no
+  // surviving pad to be counted — so without this wait, deleting a profile
+  // while a sync is running takes the sync's sound with it and leaves a pad
+  // pointing at nothing. Reuse by content hash is what makes it reachable:
+  // the row this profile is losing is routinely the same row the sync was
+  // handed. The last thing before the transaction, so no import can register
+  // in between (see `settleAudioImports`).
+  await settleAudioImports();
 
   const tx = db.transaction(
     ["profiles", "padConfigurations", "pageMetadata", "audioFiles"],
