@@ -27,8 +27,12 @@ stubLoudnessPipeline();
 const { createHashlessAudioIndex, addAudioFile, computeBlobHash, getDb } =
   await import("@/lib/db");
 
-/** Adds a sound and strips its stored hash, as a pre-hashing record would be. */
-async function addHashlessAudio(name: string, bytes: string): Promise<number> {
+/** Adds a sound and puts `hash` back to whatever a stored row would hold. */
+async function addAudioWithStoredHash(
+  name: string,
+  bytes: string,
+  hash: string | undefined,
+): Promise<number> {
   const id = await addAudioFile({
     blob: new Blob([bytes]),
     name,
@@ -36,8 +40,13 @@ async function addHashlessAudio(name: string, bytes: string): Promise<number> {
   });
   const db = await getDb();
   const row = await db.get("audioFiles", id);
-  await db.put("audioFiles", { ...row!, hash: undefined });
+  await db.put("audioFiles", { ...row!, hash });
   return id;
+}
+
+/** Adds a sound and strips its stored hash, as a pre-hashing record would be. */
+async function addHashlessAudio(name: string, bytes: string): Promise<number> {
+  return addAudioWithStoredHash(name, bytes, undefined);
 }
 
 beforeEach(async () => {
@@ -125,5 +134,67 @@ describe("createHashlessAudioIndex", () => {
     expect(
       secondPass.get(await computeBlobHash(new Blob(["stab-bytes"]))),
     ).toBeDefined();
+  });
+});
+
+/**
+ * A stored hash of `""`, and what the count comparison makes of it.
+ *
+ * 🟢 12 of the 2026-08-22 subsystem review, marked "claim to check": the scan
+ * is decided by `db.count("audioFiles")` against
+ * `db.countFromIndex("audioFiles", "hash")`, on the reasoning that IndexedDB
+ * leaves a record out of an index when its key is `undefined`. `""` is a valid
+ * key, so a row holding one counts as hashed.
+ *
+ * Measured rather than argued, because the two halves of the answer point
+ * different ways and the second one contradicts the finding.
+ *
+ * Nothing in production writes such a row. `addOrReuseAudioFile` and
+ * `importAudioSources` both normalise with `||` — each pinned by its own test
+ * in `db.audioDedup.test.ts` and `importExport.dedup.test.ts` — and every other
+ * writer is a `put` of a row it just read, which carries whatever hash was
+ * already there. So these cases characterise a shape the library should never
+ * be in; see the note in `audioHashIndex.ts` for why one could once have
+ * arrived, and why it self-heals if it did.
+ */
+describe("a row stored with an empty hash", () => {
+  it("counts as hashed, so a library of nothing else is not scanned", async () => {
+    // rows 2, indexed 2 — the counts agree and the scan is skipped, so these
+    // rows keep their empty hash and no local row can be matched by content.
+    await addAudioWithStoredHash("horn.mp3", "horn-bytes", "");
+    await addAudioWithStoredHash("stab.mp3", "stab-bytes", "");
+    const db = await getDb();
+
+    expect(await db.count("audioFiles")).toBe(2);
+    expect(await db.countFromIndex("audioFiles", "hash")).toBe(2);
+    expect(await createHashlessAudioIndex()()).toEqual(new Map());
+    expect((await db.getAll("audioFiles")).map((row) => row.hash)).toEqual([
+      "",
+      "",
+    ]);
+  });
+
+  it("cannot hide a genuinely unhashed row from the scan", async () => {
+    // The half the review got the wrong way round. An empty hash adds one to
+    // both counts, so it is neutral; a row with no hash at all adds one to the
+    // left only, and on its own keeps `rows > hashed` true. The scan therefore
+    // still runs — and `ensureAudioFileHash` tests the stored hash for truth,
+    // so it repairs the empty one on the way past.
+    await addAudioWithStoredHash("horn.mp3", "horn-bytes", "");
+    await addHashlessAudio("stab.mp3", "stab-bytes");
+    const db = await getDb();
+
+    expect(await db.count("audioFiles")).toBe(2);
+    expect(await db.countFromIndex("audioFiles", "hash")).toBe(1);
+
+    const index = await createHashlessAudioIndex()();
+
+    expect(index.get(await computeBlobHash(new Blob(["horn-bytes"])))).toBe(
+      (await db.getAllKeys("audioFiles"))[0],
+    );
+    expect(index.get(await computeBlobHash(new Blob(["stab-bytes"])))).toBe(
+      (await db.getAllKeys("audioFiles"))[1],
+    );
+    expect((await db.getAll("audioFiles")).every((row) => row.hash)).toBe(true);
   });
 });

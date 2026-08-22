@@ -13,6 +13,7 @@ import {
   getAudioFileIdsForProfile,
 } from "@/lib/db";
 import { MS_IN_DAY } from "@/lib/constants";
+import { count } from "@/lib/plural";
 import { useGoogleDriveSync } from "@/hooks/useGoogleDriveSync";
 import { useModal } from "@/hooks/modal/useModal";
 import { ModalType } from "@/components/modals/modalRegistry";
@@ -41,7 +42,7 @@ function formatReminderPeriod(periodMs: number | undefined): string {
     return `${defaultDays} days (Default)`;
   }
   const days = Math.round(periodMs / MS_IN_DAY);
-  return `${days} day${days !== 1 ? "s" : ""}`;
+  return count(days, "day", "days");
 }
 
 interface ProfileCardProps {

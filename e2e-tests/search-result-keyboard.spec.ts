@@ -124,6 +124,36 @@ test.describe("search results from the keyboard", () => {
     await expect(page.locator("text=Nothing playing")).toBeVisible();
   });
 
+  test("Enter never fires the result the previous query left on screen", async ({
+    page,
+  }) => {
+    // The hook waits 300 ms before it reads anything and leaves the old
+    // results up meanwhile, with nothing on screen or in its state saying so.
+    // "Type, then Enter without moving focus" is the flow the input handler
+    // exists for, so this was the ordinary way to use it — and it fired the
+    // cue for the query the operator had just replaced.
+    const fileName = "search-stale-cue";
+    await searchFor(page, fileName);
+
+    // A term nothing matches, so the assertions below hold whichever side of
+    // the debounce the Enter lands on: refused while the old results are still
+    // up, or ignored once the new (empty) ones have arrived. What must not
+    // happen either way is the sound from the first query playing.
+    await page
+      .locator('[data-testid="search-input"]')
+      .fill("no-such-sound-at-all");
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator('[data-testid="search-modal"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="search-result-item"]'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid="active-tracks-panel"]').getByText(fileName),
+    ).toBeHidden();
+    await expect(page.locator("text=Nothing playing")).toBeVisible();
+  });
+
   test("the results header says how to do it", async ({ page }) => {
     await searchFor(page, "search-input-hint");
 

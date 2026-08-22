@@ -59,12 +59,28 @@ export interface SearchOptions {
  */
 const NO_RESULTS: SearchResult[] = [];
 
+/** A finished search: what it found, and the question it answers. */
+interface CompletedSearch {
+  term: string;
+  profileId: number | null;
+  results: SearchResult[];
+}
+
 export function useSearch(searchOptions: SearchOptions = {}) {
   const { debounceTime = 300 } = searchOptions;
 
   // State
   const [searchTerm, setSearchTerm] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  // The results and the question they answer, stored together so no render
+  // can ever see one without the other. Kept as one object rather than two
+  // pieces of state for that reason: a caller deciding whether to fire a cue
+  // reads both, and a render where the results had updated and the term had
+  // not would be exactly the wrong moment to ask.
+  const [completed, setCompleted] = useState<CompletedSearch>({
+    term: "",
+    profileId: null,
+    results: NO_RESULTS,
+  });
   const [isLoading, setIsLoading] = useState(false);
 
   // Get active profile from store
@@ -209,7 +225,11 @@ export function useSearch(searchOptions: SearchOptions = {}) {
         }
 
         if (!cancelled) {
-          setResults(searchResults);
+          setCompleted({
+            term: searchTerm,
+            profileId: activeProfileId,
+            results: searchResults,
+          });
         }
       } catch (error) {
         console.error("Error searching pads:", error);
@@ -230,11 +250,32 @@ export function useSearch(searchOptions: SearchOptions = {}) {
     };
   }, [searchTerm, activeProfileId, debounceTime, hasQuery]);
 
+  // Whether what is on screen answers a question nobody is asking any more.
+  // Only ever true while something *is* on screen: an empty box shows nothing,
+  // so there is nothing for a caller to mistake for an answer.
+  const isStale =
+    hasQuery &&
+    (completed.term !== searchTerm || completed.profileId !== activeProfileId);
+
   return {
     searchTerm,
     setSearchTerm,
-    results: hasQuery ? results : NO_RESULTS,
+    results: hasQuery ? completed.results : NO_RESULTS,
     isLoading: hasQuery && isLoading,
+    /**
+     * True while the visible results were computed for a different term, or
+     * for a different profile.
+     *
+     * The debounce is 300 ms and `isLoading` stays false for all of it, so
+     * without this a caller acting on `results[0]` — the search modal's Enter
+     * key does exactly that — acts on the previous query. Blanking the list
+     * instead would be worse: the results are still worth reading while the
+     * next ones are computed, and a list that empties on every keystroke is
+     * unusable. So they stay, and this says what they are.
+     */
+    isStale,
+    /** The term the visible results were computed for, so a caller can say so. */
+    resultsTerm: completed.term,
 
     // Helper method to clear the search
     clearSearch: () => setSearchTerm(""),
