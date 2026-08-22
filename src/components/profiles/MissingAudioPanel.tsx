@@ -10,11 +10,25 @@
  * plays nothing. This finds every such reference and lets a file be supplied
  * for each one.
  *
- * The row identity is the whole of the state here, and it is
- * `profile-bank-pad-missingId` rather than the missing id alone: one absent
- * audio row is routinely named by several pads, and keying the "replacing" and
- * "replaced" sets on the id would mark all of them done the moment one was
- * repaired. That is the same collision `EditPadForm` mints its `rowId` for.
+ * Two keys, because two different things are being identified.
+ *
+ * A repair acts on a *reference*: one pad's mention of one absent audio row,
+ * `profile-bank-pad-missingId`. Not the missing id alone — one absent row is
+ * routinely named by several pads, and keying the "replacing" and "replaced"
+ * sets on the id would mark all of them done the moment one was repaired.
+ *
+ * A *row* is one line on screen, and a pad can hold the same id twice (add the
+ * same bytes again and `addOrReuseAudioFile` returns the row already there),
+ * so `findMissingAudioFiles` reports one reference once per occurrence. The
+ * reference key is the same string for both, which left the two rows sharing a
+ * React key and a `data-testid` — the collision `EditPadForm` mints its
+ * `rowId` of `${fileId}-${occurrence}` for, and the same answer is used here.
+ *
+ * The state stays on the reference deliberately, and that is not the bug
+ * repeating itself: `replaceMissingAudioFile` swaps *every* occurrence of the
+ * id in the pad, so one file really does repair both rows, and marking one
+ * "Replaced" while the other still offered a picker would be the lie in the
+ * other direction. Identity on screen, state underneath.
  *
  * Replacement goes through `replaceMissingAudioFile`, which reuses an audio
  * row already holding the same bytes rather than writing a second copy —
@@ -25,18 +39,39 @@
 import { useState } from "react";
 import { MissingAudioFile } from "@/lib/db";
 import { errorMessage } from "@/lib/errorMessage";
+import { count } from "@/lib/plural";
 import { useProfileStore } from "@/store/profileStore";
 import SpinnerIcon from "@/components/icons/SpinnerIcon";
 
 /**
- * What the panel's per-row state is keyed on.
+ * What one repair acts on: a pad's mention of one absent audio row.
  *
- * Written once because the two places that need it — the replace handler and
- * the row it re-renders — have to agree exactly, and the same rule written
- * twice is this repo's characteristic regression.
+ * Written once because the places that need it — the replace handler and the
+ * rows it re-renders — have to agree exactly, and the same rule written twice
+ * is this repo's characteristic regression.
  */
-function rowKeyOf(entry: MissingAudioFile): string {
+function referenceKeyOf(entry: MissingAudioFile): string {
   return `${entry.profileId}-${entry.bankId}-${entry.padIndex}-${entry.missingAudioFileId}`;
+}
+
+/** One line on screen: a reference, and which occurrence of it this is. */
+interface MissingAudioRow {
+  entry: MissingAudioFile;
+  /** Unique across the whole list — the React key and every `data-testid`. */
+  rowKey: string;
+  /** Shared by every occurrence of one reference — all of the panel's state. */
+  referenceKey: string;
+}
+
+/** Numbers each reference's occurrences, in the order the scan reported them. */
+function rowsOf(entries: MissingAudioFile[]): MissingAudioRow[] {
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const referenceKey = referenceKeyOf(entry);
+    const occurrence = seen.get(referenceKey) ?? 0;
+    seen.set(referenceKey, occurrence + 1);
+    return { entry, referenceKey, rowKey: `${referenceKey}-${occurrence}` };
+  });
 }
 
 export default function MissingAudioPanel() {
@@ -48,12 +83,24 @@ export default function MissingAudioPanel() {
   const [replacingIds, setReplacingIds] = useState<Set<string>>(new Set());
   const [replacedIds, setReplacedIds] = useState<Set<string>>(new Set());
   const [scanError, setScanError] = useState<string | null>(null);
+  // Why a repair did not happen, per reference. The sibling scan path has said
+  // this on screen since the panel was written; the repair path only reached
+  // the console, so the row went back to offering a picker, which is exactly
+  // what a press nobody made looks like.
+  const [replaceErrors, setReplaceErrors] = useState<Map<string, string>>(
+    new Map(),
+  );
+
+  // Numbered per render rather than stored: the scan result is the only input,
+  // so a second copy in state is a second thing to keep in step with it.
+  const rows = rowsOf(missingScanResult ?? []);
 
   const handleScanMissing = async () => {
     setIsScanningMissing(true);
     setMissingScanResult(null);
     setReplacingIds(new Set());
     setReplacedIds(new Set());
+    setReplaceErrors(new Map());
     setScanError(null);
     try {
       const { findMissingAudioFiles } = await import("@/lib/db");
@@ -75,8 +122,14 @@ export default function MissingAudioPanel() {
     entry: MissingAudioFile,
     file: File,
   ) => {
-    const key = rowKeyOf(entry);
+    const key = referenceKeyOf(entry);
     setReplacingIds((prev) => new Set(prev).add(key));
+    setReplaceErrors((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
     try {
       const { replaceMissingAudioFile } = await import("@/lib/db");
       await replaceMissingAudioFile(
@@ -89,6 +142,12 @@ export default function MissingAudioPanel() {
       setReplacedIds((prev) => new Set(prev).add(key));
     } catch (error) {
       console.error("Failed to replace missing audio file:", error);
+      setReplaceErrors((prev) =>
+        new Map(prev).set(
+          key,
+          `The replacement could not be saved: ${errorMessage(error)}.`,
+        ),
+      );
     } finally {
       setReplacingIds((prev) => {
         const next = new Set(prev);
@@ -159,8 +218,12 @@ export default function MissingAudioPanel() {
             ) : (
               <>
                 <p className="text-sm text-orange-600 dark:text-orange-400 font-medium mb-4">
-                  {missingScanResult.length} missing audio file
-                  {missingScanResult.length !== 1 ? "s" : ""} found
+                  {count(
+                    missingScanResult.length,
+                    "missing audio file",
+                    "missing audio files",
+                  )}{" "}
+                  found
                 </p>
                 {Array.from(
                   new Map(
@@ -172,20 +235,20 @@ export default function MissingAudioPanel() {
                       {profileName}
                     </p>
                     <div className="space-y-2">
-                      {missingScanResult
-                        .filter((e) => e.profileId === profileId)
-                        .map((entry) => {
-                          const key = rowKeyOf(entry);
-                          const isReplacing = replacingIds.has(key);
-                          const isReplaced = replacedIds.has(key);
+                      {rows
+                        .filter(({ entry }) => entry.profileId === profileId)
+                        .map(({ entry, rowKey, referenceKey }) => {
+                          const isReplacing = replacingIds.has(referenceKey);
+                          const isReplaced = replacedIds.has(referenceKey);
                           return (
                             <div
-                              key={key}
+                              key={rowKey}
                               data-testid="missing-audio-row"
-                              className="flex items-center justify-between gap-4 text-sm bg-white dark:bg-gray-700 rounded px-3 py-2"
+                              className="bg-white dark:bg-gray-700 rounded px-3 py-2"
                             >
-                              <span className="text-gray-700 dark:text-gray-200">
-                                {/*
+                              <div className="flex items-center justify-between gap-4 text-sm">
+                                <span className="text-gray-700 dark:text-gray-200">
+                                  {/*
                                   The name alone, with no "Bank " in front of
                                   it: `bankName` is the bank's *stored* name,
                                   and a bank nobody renamed is stored as
@@ -194,41 +257,60 @@ export default function MissingAudioPanel() {
                                   looks right on the renamed ones. The search
                                   results render a bank name the same way.
                                 */}
-                                {entry.bankName} &rsaquo;{" "}
-                                {entry.padName
-                                  ? `"${entry.padName}"`
-                                  : `Pad ${entry.padIndex + 1}`}
-                              </span>
-                              {isReplaced ? (
-                                <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
-                                  Replaced
+                                  {entry.bankName} &rsaquo;{" "}
+                                  {entry.padName
+                                    ? `"${entry.padName}"`
+                                    : `Pad ${entry.padIndex + 1}`}
                                 </span>
-                              ) : (
-                                <label className="shrink-0">
-                                  <input
-                                    type="file"
-                                    accept="audio/*"
-                                    className="sr-only"
-                                    data-testid={`missing-audio-replace-${key}`}
-                                    disabled={isReplacing}
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0];
-                                      if (file)
-                                        handleReplaceMissingFile(entry, file);
-                                    }}
-                                  />
-                                  <span
-                                    className={`cursor-pointer px-3 py-1 text-xs rounded border transition-colors ${
-                                      isReplacing
-                                        ? "border-gray-300 text-gray-400 cursor-not-allowed"
-                                        : "border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                                    }`}
-                                  >
-                                    {isReplacing
-                                      ? "Replacing…"
-                                      : "Choose replacement…"}
+                                {isReplaced ? (
+                                  <span className="text-xs text-green-600 dark:text-green-400 font-medium shrink-0">
+                                    Replaced
                                   </span>
-                                </label>
+                                ) : (
+                                  <label className="shrink-0">
+                                    <input
+                                      type="file"
+                                      accept="audio/*"
+                                      className="sr-only"
+                                      data-testid={`missing-audio-replace-${rowKey}`}
+                                      disabled={isReplacing}
+                                      onChange={(e) => {
+                                        const picker = e.currentTarget;
+                                        const file = picker.files?.[0];
+                                        // Emptied as soon as the file is in
+                                        // hand: a file input fires `change`
+                                        // only when the selection changes, so a
+                                        // control still holding the file of a
+                                        // failed attempt is dead to that
+                                        // file — the one the user is most
+                                        // likely to pick again.
+                                        picker.value = "";
+                                        if (file)
+                                          handleReplaceMissingFile(entry, file);
+                                      }}
+                                    />
+                                    <span
+                                      className={`cursor-pointer px-3 py-1 text-xs rounded border transition-colors ${
+                                        isReplacing
+                                          ? "border-gray-300 text-gray-400 cursor-not-allowed"
+                                          : "border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                      }`}
+                                    >
+                                      {isReplacing
+                                        ? "Replacing…"
+                                        : "Choose replacement…"}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
+                              {replaceErrors.has(referenceKey) && (
+                                <p
+                                  role="alert"
+                                  data-testid={`missing-audio-replace-error-${rowKey}`}
+                                  className="mt-1 text-xs text-yellow-800 dark:text-yellow-200"
+                                >
+                                  {replaceErrors.get(referenceKey)}
+                                </p>
                               )}
                             </div>
                           );

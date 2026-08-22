@@ -11,6 +11,7 @@
 
 import React from "react";
 import { formatTime } from "@/utils/formatters";
+import { count } from "@/lib/plural";
 import TrackProgressBar from "./TrackProgressBar";
 import { useTrackControls } from "@/hooks/useTrackControls";
 import CheckIcon from "@/components/icons/CheckIcon";
@@ -194,9 +195,7 @@ const TrackItem: React.FC<TrackItemProps> = ({
             onClick={handleFadeClick}
             className="bg-blue-500 hover:bg-blue-600 text-white p-1.5 rounded flex-shrink-0"
             aria-label={`Fade out ${name}`}
-            title={`Fade out over ${getFadeoutDuration()} ${
-              getFadeoutDuration() === 1 ? "second" : "seconds"
-            }`}
+            title={`Fade out over ${count(getFadeoutDuration(), "second", "seconds")}`}
           >
             <FadeOutIcon className="h-5 w-5" />
           </button>

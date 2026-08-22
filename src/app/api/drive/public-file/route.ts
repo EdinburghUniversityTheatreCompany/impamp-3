@@ -63,7 +63,14 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      return NextResponse.json(JSON.parse(body));
+      // `nosniff` for the same reason the audio proxy carries it: the bytes
+      // below are a stranger's, fetched with this deployment's own API key and
+      // served from this app's origin. The type is ours rather than Drive's
+      // here — the body is re-serialised as JSON — so the header is all that
+      // is missing.
+      return NextResponse.json(JSON.parse(body), {
+        headers: { "X-Content-Type-Options": "nosniff" },
+      });
     } catch {
       return NextResponse.json(
         { error: "File is not valid ImpAmp profile JSON" },

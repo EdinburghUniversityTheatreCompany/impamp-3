@@ -205,9 +205,7 @@ export default function DuplicateAudioPanel() {
                 >
                   {isCollapsing
                     ? "Removing..."
-                    : `Remove ${preview.copies} ${
-                        preview.copies === 1 ? "Copy" : "Copies"
-                      }`}
+                    : `Remove ${count(preview.copies, "Copy", "Copies")}`}
                 </button>
               </>
             )}

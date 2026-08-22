@@ -8,7 +8,7 @@
 
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { triggerPad, ensureAudioContextActive } from "@/lib/audio";
 import { playbackStoreActions } from "@/store/playbackStore";
 import { useSearch, type SearchResult } from "@/hooks/useSearch";
@@ -16,8 +16,19 @@ import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel, hasArmModifier } from "@/lib/platform";
 import { extractPadPlaybackSettings } from "@/lib/db";
+import { count } from "@/lib/plural";
 import MagnifierIcon from "@/components/icons/MagnifierIcon";
 import XIcon from "@/components/icons/XIcon";
+
+/** A refusal, and the exact situation it was raised in. */
+interface ActivationNotice {
+  /** The term in the box at the time. */
+  term: string;
+  /** The result list on screen at the time, by identity. */
+  results: SearchResult[];
+  /** What to tell the operator. */
+  text: string;
+}
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -32,7 +43,29 @@ interface SearchModalProps {
  */
 const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
   // Search functionality
-  const { searchTerm, setSearchTerm, results, isLoading } = useSearch();
+  const {
+    searchTerm,
+    setSearchTerm,
+    results,
+    isLoading,
+    isStale,
+    resultsTerm,
+  } = useSearch();
+
+  // Why the last press did nothing, when it did nothing. A refusal the
+  // operator cannot see is the same as no refusal at all.
+  //
+  // Stored with the term and the result list it was raised against, and read
+  // back only while both still hold. A notice is about one press against one
+  // set of results: typing again, or the results catching up, both answer it,
+  // and "still searching" left up after the search finished would be a second
+  // lie on top of the first. Expiring it by comparison rather than by clearing
+  // it from an effect keeps that out of the render cycle entirely.
+  const [notice, setNotice] = useState<ActivationNotice | null>(null);
+  const activationNotice =
+    notice && notice.term === searchTerm && notice.results === results
+      ? notice.text
+      : null;
 
   // How to name the arm chord in the per-result tooltip
   const modifier = armModifierLabel(useIsApplePlatform());
@@ -137,9 +170,20 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
   // Handle result interaction - play, or arm when the arm chord is held
   const activateResult = (result: SearchResult, withArmModifier: boolean) => {
-    // Disabled pads are listed so they can be found, but neither play nor arm
+    // Disabled pads are listed so they can be found, but neither play nor arm.
+    //
+    // Said on screen, not only to the console. From the keyboard this is the
+    // one branch that reaches here with the press already consumed — it has to
+    // be consumed, or Enter fires an emergency cue from behind the modal — so
+    // silence spends the key on nothing at all, one line under a header
+    // promising that Enter plays the first result. Raised here rather than in
+    // the key handler so the mouse and the chord get the same answer as Enter.
     if (result.isDisabled) {
-      console.log(`[SearchModal] Pad "${result.name}" is disabled, ignoring.`);
+      setNotice({
+        term: searchTerm,
+        results,
+        text: `“${result.name}” is disabled, so nothing was played. Turn the pad back on to use it.`,
+      });
       return;
     }
     if (withArmModifier) {
@@ -167,7 +211,27 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     const first = results[0];
     if (!first) return;
 
+    // From here on the press is this modal's, whatever comes of it: there is a
+    // result on screen and a hint above it saying Enter plays that result, so
+    // handing the key onwards would fire an emergency cue from behind an open
+    // search box. Every branch below therefore says something instead.
     e.preventDefault();
+
+    // The results have not caught up with the box. `useSearch` waits 300 ms
+    // before it reads anything and leaves the previous term's results up
+    // meanwhile — with `isLoading` false throughout — so acting on `results[0]`
+    // here fires the query the operator has already replaced. Refusing is the
+    // only safe answer: a cue is irreversible, and this is exactly the flow
+    // (type, Enter, no Tab) the handler was added for.
+    if (isStale) {
+      setNotice({
+        term: searchTerm,
+        results,
+        text: `Still searching. These results are for “${resultsTerm}” — press Enter again in a moment.`,
+      });
+      return;
+    }
+
     activateResult(first, hasArmModifier(e));
   };
 
@@ -222,6 +286,16 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
+        {activationNotice && (
+          <div
+            role="alert"
+            data-testid="search-activation-notice"
+            className="px-4 py-2 text-xs text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/20"
+          >
+            {activationNotice}
+          </div>
+        )}
+
         {/* Outside the scrolling list on purpose: a hint that scrolls away
             with the results is not a hint. Said here rather than in a tooltip
             on one result, because the chord is only reachable without a Tab
@@ -229,11 +303,14 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
             way to guess from a list of pads. */}
         {!isLoading && results.length > 0 && (
           <div className="flex items-center justify-between gap-2 px-4 pt-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 pb-2">
-            <span>
-              {results.length} {results.length === 1 ? "result" : "results"}
-            </span>
+            <span>{count(results.length, "result", "results")}</span>
+            {/* The promise is withdrawn while the list is out of date, because
+                the promise is the whole reason an operator presses Enter
+                without reading the list first. */}
             <span data-testid="search-activation-hint">
-              Enter plays the first result, {modifier}+Enter arms it
+              {isStale
+                ? "Searching…"
+                : `Enter plays the first result, ${modifier}+Enter arms it`}
             </span>
           </div>
         )}

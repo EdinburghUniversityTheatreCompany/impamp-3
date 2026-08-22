@@ -58,6 +58,7 @@
 
 import { IDBPDatabase } from "idb";
 import { MAX_BANKS, TOTAL_PADS } from "./constants";
+import { count } from "./plural";
 import {
   ImpAmpDBSchema,
   PadConfiguration,
@@ -1117,7 +1118,7 @@ export async function importBanksFromZip(
     const wantedSlots = plan.filter(({ mode }) => mode.kind === "add").length;
     if (wantedSlots > freeSlots) {
       throw new Error(
-        `This profile has ${freeSlots} free slot${freeSlots === 1 ? "" : "s"}, and the import needs ${wantedSlots}.`,
+        `This profile has ${count(freeSlots, "free slot", "free slots")}, and the import needs ${wantedSlots}.`,
       );
     }
 

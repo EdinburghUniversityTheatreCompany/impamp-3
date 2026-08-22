@@ -229,29 +229,43 @@ export function storageKeyForHash(
 }
 
 /**
- * Whether a profile *this user can reach* still names this sound.
+ * Whether dropping this user's reference would silence a board that plays it.
  *
  * Deleting from a library used to drop the bucket object the moment the last
  * *reference* went, without asking whether a board still played it — so an
  * owner tidying their library could make their own live profile 404.
  *
- * Scoped to the holder's own profiles and the ones shared with their email
- * address, because the unscoped version was a denial of service. profile_audio
- * is rebuilt from whatever a writer puts in `data`, and any signed-in account
- * may create a profile naming any hash, so a stranger could permanently freeze
- * someone else's storage allowance and stop them deleting their own file — with
- * no way for the victim to see who had done it, the squatting profile being
- * invisible to them. A third party's board is not a board this caller is about
- * to silence.
+ * The question is asked from the other end now: not "does some profile name
+ * this sound", but "is this caller's reference what serves it". Those are the
+ * same two facts `profileMayServeHash` decides a download on — a profile can
+ * play a sound when its owner holds a reference to it, or when whoever
+ * attached it does — so the two functions agree by construction, and a delete
+ * can only be refused when it would really take a pad away.
  *
- * Link shares are deliberately not counted: holding a link grants access to one
- * profile, not membership of it, and there is no way to enumerate them for a
- * user anyway (see listProfilesForUser).
+ * The scope used to be "profiles you own or have been shared", and that was a
+ * denial of service with an extra step. `profile_audio` is rebuilt from
+ * whatever a writer puts in `data`, any signed-in account may create a profile
+ * naming any hash, and `upsertEmailShare` writes an invitation for any address
+ * on the inviter's say-so with no acceptance step and no notification. So a
+ * stranger could name your hash in a board of their own, invite you to it, and
+ * pin your file and its share of your allowance permanently — in a profile you
+ * never asked for, cannot see listed as the cause, and cannot make them
+ * delete. Ownership and `added_by` are both facts about the past that nobody
+ * else can write on your behalf, which is what makes them safe to read here.
+ *
+ * The `NOT EXISTS` is the fail-open half: when somebody else who could serve
+ * that board still holds the bytes — the owner's own copy of a sound their
+ * collaborator also uploaded — this reference is not load-bearing and there is
+ * nothing to protect by refusing.
+ *
+ * Membership of any kind has stopped being part of the answer, which is what
+ * makes link shares a non-question here: a signed-in writer using a link is
+ * recorded as the adder exactly like anyone else, and an anonymous one records
+ * nothing because there is no account to record.
  */
-export function hashIsUsedByReachableProfile(
-  hash: string,
+export function deletingHashWouldSilenceAProfile(
   userId: number,
-  email: string,
+  hash: string,
 ): boolean {
   return (
     queryOne<{ one: number }>(
@@ -259,18 +273,144 @@ export function hashIsUsedByReachableProfile(
          FROM profile_audio pa
          JOIN profiles p ON p.id = pa.profile_id
         WHERE pa.hash = ?
-          AND (
-            p.owner_id = ?
-            OR EXISTS (
-              SELECT 1 FROM profile_shares s
-               WHERE s.profile_id = p.id AND s.email = ?
-            )
+          AND (p.owner_id = ? OR pa.added_by = ?)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM audio_references r
+             WHERE r.hash = pa.hash
+               AND r.user_id <> ?
+               AND (r.user_id = p.owner_id OR r.user_id = pa.added_by)
           )
         LIMIT 1`,
       hash,
       userId,
-      email,
+      userId,
+      userId,
     ) !== undefined
+  );
+}
+
+/**
+ * Bytes a presigned PUT has been licensed to write but nothing has committed.
+ *
+ * `upload-url` mints a URL and returns; the object is not recorded until
+ * commit. Between the two, the bytes can be in the bucket while every total
+ * that exists — `getUserUsage`, `getGlobalUsage`, the admin view — sums
+ * `audio_objects` and therefore cannot see them. A caller who PUTs and never
+ * commits was storing for free, once per invented hash, with no bound but the
+ * sweep an admin has to trigger by opening a page.
+ *
+ * So a mint is recorded and provisionally charged. Two properties keep that
+ * from turning into a lockout, which is the failure that matters more here —
+ * this app is used to run shows, and a refused upload lands on somebody in a
+ * theatre:
+ *
+ * - **One row per user per hash.** A client retrying the same file replaces
+ *   its own row rather than being charged again for it.
+ * - **Charged only while the URL could still be used.** Past
+ *   `uploadUrlTtlSeconds` the presign is dead, so the charge lapses and the
+ *   row is pruned. The bytes may still be in the bucket until the sweep gets
+ *   to them; that is the sweep's job, not the quota's, and metering them for
+ *   longer would freeze an allowance over an upload that failed.
+ *
+ * The size is the client's claim, which is all anyone has before the bytes
+ * land. Commit still measures the object and re-decides against the real
+ * number — a presigned PUT signs only `host`, so nothing here can constrain
+ * what is actually sent.
+ */
+export function recordPendingUpload({
+  userId,
+  hash,
+  sizeBytes,
+  now = Date.now(),
+}: {
+  userId: number;
+  hash: string;
+  sizeBytes: number;
+  now?: number;
+}): void {
+  execute(
+    `INSERT INTO audio_pending_uploads (user_id, hash, size_bytes, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, hash)
+     DO UPDATE SET size_bytes = excluded.size_bytes, created_at = excluded.created_at`,
+    userId,
+    hash,
+    sizeBytes,
+    now,
+  );
+}
+
+/** Drop a mint's provisional charge: it committed, or its URL has expired. */
+export function clearPendingUpload(userId: number, hash: string): void {
+  execute(
+    "DELETE FROM audio_pending_uploads WHERE user_id = ? AND hash = ?",
+    userId,
+    hash,
+  );
+}
+
+/** Forget every mint whose presigned URL can no longer be used. */
+export function prunePendingUploads(since: number): void {
+  execute("DELETE FROM audio_pending_uploads WHERE created_at < ?", since);
+}
+
+/**
+ * What this user's live mints add to their usage, ignoring `hash`.
+ *
+ * `hash` is the upload being decided, whose own row must not count against it
+ * — otherwise re-asking for a URL after a failed PUT would charge twice and
+ * eventually refuse the retry. Hashes the user already holds a reference to
+ * are ignored for the same reason from the other side: those bytes are in
+ * `getUserUsage` already.
+ */
+function pendingBytesForUser(
+  userId: number,
+  hash: string,
+  since: number,
+): number {
+  return (
+    queryOne<{ bytes: number | null }>(
+      `SELECT COALESCE(SUM(p.size_bytes), 0) AS bytes
+         FROM audio_pending_uploads p
+        WHERE p.user_id = ?
+          AND p.hash <> ?
+          AND p.created_at >= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM audio_references r
+             WHERE r.user_id = p.user_id AND r.hash = p.hash
+          )`,
+      userId,
+      hash,
+      since,
+    )?.bytes ?? 0
+  );
+}
+
+/**
+ * What every live mint adds to the bucket's total, ignoring `hash`.
+ *
+ * Counted once per hash however many people are uploading it, because the
+ * bucket holds one object either way — and never for a hash already in
+ * `audio_objects`, which `getGlobalUsage` counts.
+ */
+function pendingBytesGlobally(hash: string, since: number): number {
+  return (
+    queryOne<{ bytes: number | null }>(
+      `SELECT COALESCE(SUM(size), 0) AS bytes
+         FROM (
+           SELECT MAX(p.size_bytes) AS size
+             FROM audio_pending_uploads p
+            WHERE p.hash <> ?
+              AND p.created_at >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM audio_objects o WHERE o.hash = p.hash
+              )
+            GROUP BY p.hash
+         )`,
+      hash,
+      since,
+    )?.bytes ?? 0
   );
 }
 
@@ -298,6 +438,7 @@ export function canUpload({
   quotaBytes,
   capBytes,
   maxObjectBytes,
+  pendingSince = Date.now(),
 }: {
   userId: number;
   canUploadAudio: boolean;
@@ -306,6 +447,12 @@ export function canUpload({
   quotaBytes: number;
   capBytes: number;
   maxObjectBytes: number;
+  /**
+   * The oldest mint still worth charging for — `now - uploadUrlTtlSeconds`.
+   * Defaults to now, which counts nothing: a caller that does not know the
+   * TTL decides on committed bytes alone, exactly as this used to.
+   */
+  pendingSince?: number;
 }): UploadDecision {
   if (!canUploadAudio) return { allowed: false, reason: "not_approved" };
 
@@ -335,10 +482,16 @@ export function canUpload({
   const chargedBytes = existing?.size_bytes ?? sizeBytes;
 
   const user = getUserUsage(userId, quotaBytes);
-  if (user.usedBytes + chargedBytes > quotaBytes) {
+  // Plus what this user has already been licensed to write and not committed.
+  // Without it the quota bounded nothing: ask for a URL, do not commit, ask
+  // again, and every ask was decided against the same unchanged total.
+  const userPending = pendingBytesForUser(userId, hash, pendingSince);
+  if (user.usedBytes + userPending + chargedBytes > quotaBytes) {
     return {
       allowed: false,
       reason: "user_quota",
+      // The used figure stays the committed one, because that is what the
+      // client shows next to the allowance and what deleting a file changes.
       detail: { usedBytes: user.usedBytes, limitBytes: quotaBytes },
     };
   }
@@ -346,7 +499,8 @@ export function canUpload({
   // A blob already in the bucket adds nothing to the global total.
   if (!existing) {
     const global = getGlobalUsage(capBytes);
-    if (global.usedBytes + sizeBytes > capBytes) {
+    const globalPending = pendingBytesGlobally(hash, pendingSince);
+    if (global.usedBytes + globalPending + sizeBytes > capBytes) {
       return {
         allowed: false,
         reason: "global_cap",
@@ -400,6 +554,10 @@ export function recordUpload({
       name,
       now,
     );
+    // The mint this commit was for is no longer provisional — it is in
+    // `audio_objects` now, where every total can see it. Leaving the row would
+    // charge the same bytes twice until it lapsed.
+    clearPendingUpload(userId, hash);
   });
 }
 

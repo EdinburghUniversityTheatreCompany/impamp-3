@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   ensureAudioContextActive: vi.fn(),
   armTrack: vi.fn(),
   results: [] as SearchResult[],
+  isStale: false,
+  resultsTerm: "horn",
 }));
 
 vi.mock("@/lib/audio", () => ({
@@ -39,6 +41,8 @@ vi.mock("@/hooks/useSearch", () => ({
     setSearchTerm: vi.fn(),
     results: mocks.results,
     isLoading: false,
+    isStale: mocks.isStale,
+    resultsTerm: mocks.resultsTerm,
   }),
 }));
 
@@ -70,6 +74,8 @@ let root: Root;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.isStale = false;
+  mocks.resultsTerm = "horn";
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -263,6 +269,24 @@ describe("activating the first result from the input", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("says why a disabled first result did nothing", () => {
+    // The press is consumed either way — it has to be, or it fires an
+    // emergency cue from behind the modal — so silence here is a key that
+    // vanishes: nothing plays, nothing is said, and the header a line above
+    // has just promised that Enter plays the first result.
+    pressEnter(
+      focusedInput([searchResult({ name: "Foghorn", isDisabled: true })]),
+    );
+
+    const notice = container.querySelector(
+      '[data-testid="search-activation-notice"]',
+    );
+    expect(notice).not.toBeNull();
+    expect(notice!.getAttribute("role")).toBe("alert");
+    expect(notice!.textContent).toContain("Foghorn");
+    expect(notice!.textContent).toContain("disabled");
+  });
+
   it("says so in the results header, in the platform's own words", () => {
     focusedInput([searchResult()]);
 
@@ -273,5 +297,95 @@ describe("activating the first result from the input", () => {
     expect(hint!.textContent).toContain("Enter");
     // Not an Apple platform under jsdom, so the label is the Ctrl one.
     expect(hint!.textContent).toContain("Ctrl+Enter");
+  });
+});
+
+/**
+ * Enter, while the results on screen are the previous query's.
+ *
+ * `useSearch` debounces by 300 ms and keeps the old results up meanwhile —
+ * `isLoading` is false for all of it — so "type, then Enter without moving
+ * focus", the flow the input handler exists for, fired a cue from the query
+ * the operator had just replaced. A cue is irreversible during a show, so the
+ * handler refuses rather than guesses.
+ */
+describe("Enter while the results are from an earlier term", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function openOver(results: SearchResult[]): HTMLInputElement {
+    mocks.results = results;
+    act(() => {
+      root.render(<SearchModal isOpen onClose={() => {}} />);
+    });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    return container.querySelector<HTMLInputElement>(
+      '[data-testid="search-input"]',
+    )!;
+  }
+
+  function pressEnter(on: HTMLElement): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      on.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("fires nothing at all", () => {
+    mocks.isStale = true;
+    const event = pressEnter(openOver([searchResult({ name: "Horn" })]));
+
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    // Claimed even so: there is a result on screen and a hint saying Enter
+    // plays it, so letting the press through to the global handler would fire
+    // an emergency cue from behind an open modal.
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("says why, naming the term the results do answer", () => {
+    mocks.isStale = true;
+    mocks.resultsTerm = "horn";
+    pressEnter(openOver([searchResult()]));
+
+    const notice = container.querySelector(
+      '[data-testid="search-activation-notice"]',
+    );
+    expect(notice).not.toBeNull();
+    expect(notice!.getAttribute("role")).toBe("alert");
+    expect(notice!.textContent).toContain("horn");
+  });
+
+  it("stops promising that Enter plays the first result", () => {
+    // The hint is the whole reason an operator presses Enter without looking.
+    mocks.isStale = true;
+    openOver([searchResult()]);
+
+    const hint = container.querySelector(
+      '[data-testid="search-activation-hint"]',
+    );
+    expect(hint!.textContent).not.toContain("Enter plays");
+  });
+
+  it("acts normally once the results have caught up", () => {
+    mocks.isStale = false;
+    pressEnter(openOver([searchResult()]));
+
+    expect(mocks.triggerPad).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="search-activation-notice"]'),
+    ).toBeNull();
   });
 });

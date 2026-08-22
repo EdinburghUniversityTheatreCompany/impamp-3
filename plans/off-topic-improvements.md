@@ -29,3 +29,83 @@ average 17 while merging the icon set, and passed the other five; the failing
 test's name was not captured, so this is the shape rather than a specific
 diagnosis. Fake timers, or a settle that waits on a condition rather than a
 count, would end the class. Noticed while merging `p2/icons`.
+
+## A nested `withAudioImportInProgress` would hang an import's rollback
+
+`settleAudioImports` waits for every registered import, and nothing tells it
+which one its caller is running inside — there is no `AsyncLocalStorage` in a
+browser, and no `AsyncContext` yet. The rule that keeps that from deadlocking
+is "no audio deleter may be called from inside `withAudioImportInProgress`",
+and a failed profile import now honours it by carrying its profile id and
+created audio ids out on a `FailedProfileImport` and rolling back one line past
+the scope.
+
+That holds today because no scope contains another. It would stop holding the
+moment one did — if `performServerSync` or `performProfileSync` ever called
+`importProfileFromSyncData` (today only the two connect hooks do), the inner
+import's rollback would run outside the _inner_ scope but still inside the
+_outer_ one, and `deleteProfile` would wait for the sync that is waiting for
+it. The failure is a hung tab, not an error.
+
+Nothing enforces the rule; it is prose in `settleAudioImports`'s docstring and
+in CLAUDE.md. An id-based register — each scope publishing the audio rows it
+has been handed but not yet named, so deleters _exclude_ rather than _wait_ —
+would end the class outright and remove the latency `deleteProfile` now pays
+behind a running sync. It is bigger and permissive-by-default (a writer that
+forgets to publish is silently back to the original bug), which is why it was
+not done here. Noticed while fixing the 08-22 review's 🔴 2.
+
+## Three inline plural ternaries left behind by the `count()` sweep
+
+`src/lib/plural.ts` now has every "N of a thing" in the app going through it
+except three, and each was left for a reason rather than missed:
+
+- `src/lib/importExport.ts:463` —
+  `${failures.length} of ${total} sound${total === 1 ? "" : "s"}`. The number
+  rendered and the number the plural agrees with are different, which is not
+  the shape `count` takes. Either a second helper or a reworded message.
+- `src/lib/importExport.ts:796` — `${skipped.length} bank${…}`, an ordinary
+  `count(skipped.length, "bank", "banks")`. Not taken because `importExport.ts`
+  was owned by another change in flight on 2026-08-22.
+- `src/components/profiles/BankImportPlacementDialog.tsx:309` —
+  `{result.skipped.length === 1 ? "was" : "were"}`. Verb agreement, not a
+  count; the noun beside it already goes through `count`. A `wasWere` helper
+  would be one more thing to keep in step for one call site.
+
+Worth a source-scan guard (`src/lib/testSupport/sourceScan.ts`) once the first
+two are gone — while they remain, the skip list would be longer than the rule.
+Noticed while resolving 🟢 13 of the 2026-08-22 subsystem review.
+
+## Nothing bounds what a presigned PUT actually writes
+
+`upload-url` mints a presigned PUT whose signature covers only `host`
+(`src/lib/server/s3/client.ts`), so the `sizeBytes` a client declares is a
+claim and the bytes that arrive are unconstrained. Commit measures the object
+and refuses an over-size one, and uncommitted objects are now charged
+provisionally and swept hourly — but a caller who declares a byte, sends five
+gigabytes and never commits still gets those bytes into the bucket until the
+sweep reaches them, with Wasabi's 90-day minimum billing on each.
+
+The fix is to put `content-length` in the presign's `SignedHeaders` so S3
+rejects a PUT whose length is not the one that was signed for. It was left out
+deliberately: nothing in this repo can verify Wasabi accepts it —
+`e2e-tests/fake-s3.js` does not check signatures on purpose, and
+`sigv4.test.ts` checks the signer against botocore's vectors rather than
+against a bucket — and a signing change Wasabi disagrees with breaks every
+real upload with `SignatureDoesNotMatch`. Worth doing against a live bucket
+with a real key, not from here. Noticed while fixing the 08-22 review's 🟡 5.
+
+## An email share cannot be accepted, declined or left
+
+`upsertEmailShare` writes a share row for any address on the inviter's
+say-so, and only the profile's owner can remove it. Two authorization rules
+have already had to be rewritten because they read that row as evidence about
+the invitee (`profileMayServeHash`, `deletingHashWouldSilenceAProfile`), and
+each rewrite is a workaround for the same missing concept. What remains
+without it is cosmetic — a profile you were invited to sits in your list until
+its owner deletes the invitation — but the next rule that wants to know
+"is this person actually a collaborator" will have the same problem.
+
+Share acceptance is the feature: a share is offered, and grants nothing until
+the invitee takes it. A "leave this profile" action is the smaller half of it
+and could ship alone. Noticed while fixing the 08-22 review's 🟡 4.

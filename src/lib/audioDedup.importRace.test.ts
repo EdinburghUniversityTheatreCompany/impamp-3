@@ -1,10 +1,14 @@
 /**
  * The collapse against an import that is midway through attaching its audio.
  *
- * `collapseDuplicateAudioGroups` deletes rows it did not create, so it needs
- * `settleAudioImports` the way the two orphan sweeps do.
- * `deleteUnreferencedAudioFiles` does not: it only considers ids its own
- * caller just created.
+ * `collapseDuplicateAudioGroups` is one of the five things in this codebase
+ * that delete audio rows, and every one of them `await settleAudioImports()`
+ * immediately before opening its transaction, because between an import's
+ * audio write and the pad write that names it there are rows nothing
+ * references. `deleteUnreferencedAudioFiles` was once exempted from that on
+ * the grounds that it only ever considers ids its own caller just created;
+ * reuse by content hash ended the exemption, and `db.importRace.test.ts` is
+ * what it left behind.
  *
  * An import does not have to *create* a row to be caught. Two choices
  * disagree about which of a duplicate pair is the keeper:

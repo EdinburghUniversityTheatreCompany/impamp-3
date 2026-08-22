@@ -10,6 +10,7 @@ import {
 import { Profile, PadConfiguration, PageMetadata } from "@/lib/db";
 import type { SyncConflictData } from "@/lib/googleDrive/types";
 import { conflictOriginLabel } from "@/lib/syncUtils";
+import { count } from "@/lib/plural";
 
 interface ConflictResolutionModalProps {
   conflicts: ItemConflict[];
@@ -194,10 +195,7 @@ export const ConflictResolutionModal: React.FC<
                 ).toLocaleString()}
               </p>
             )}
-            <p>
-              {conflicts.length} conflict
-              {conflicts.length !== 1 ? "s" : ""} to resolve
-            </p>
+            <p>{count(conflicts.length, "conflict", "conflicts")} to resolve</p>
           </div>
         </div>
 
