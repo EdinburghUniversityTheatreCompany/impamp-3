@@ -514,7 +514,22 @@ function finish(
  * an error to hide: the next sync re-merges against the newer state and asks
  * again if it still cannot decide.
  */
-export async function applyServerConflictResolution(
+export function applyServerConflictResolution(
+  profileId: number,
+  resolvedData: ProfileSyncData,
+  origin: Extract<ConflictOrigin, { kind: "server" }>,
+): Promise<ServerSyncResult> {
+  // The second entry point into `updateLocalData`, and it declared nothing
+  // while `syncServerProfile` — the first — declares its whole run. The work
+  // is the same: sounds are resolved to local rows several steps before the
+  // pads naming them are written, and in between the row the resolution has
+  // chosen is referenced by nothing.
+  return withAudioImportInProgress(() =>
+    runServerConflictResolution(profileId, resolvedData, origin),
+  );
+}
+
+async function runServerConflictResolution(
   profileId: number,
   resolvedData: ProfileSyncData,
   origin: Extract<ConflictOrigin, { kind: "server" }>,
