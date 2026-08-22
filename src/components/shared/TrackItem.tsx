@@ -13,6 +13,10 @@ import React from "react";
 import { formatTime } from "@/utils/formatters";
 import TrackProgressBar from "./TrackProgressBar";
 import { useTrackControls } from "@/hooks/useTrackControls";
+import CheckIcon from "@/components/icons/CheckIcon";
+import FadeOutIcon from "@/components/icons/FadeOutIcon";
+import PlayCircleIcon from "@/components/icons/PlayCircleIcon";
+import XIcon from "@/components/icons/XIcon";
 
 interface TrackItemProps {
   /**
@@ -194,20 +198,7 @@ const TrackItem: React.FC<TrackItemProps> = ({
               getFadeoutDuration() === 1 ? "second" : "seconds"
             }`}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3 3L12 15.5m4.5-4.5h-7.5"
-              />
-            </svg>
+            <FadeOutIcon className="h-5 w-5" />
           </button>
         ) : (
           // Fading indicator
@@ -215,20 +206,7 @@ const TrackItem: React.FC<TrackItemProps> = ({
             className="p-1.5 rounded flex-shrink-0 text-blue-400"
             title="Fading out..."
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
+            <CheckIcon className="h-5 w-5" />
           </div>
         )
       ) : (
@@ -239,46 +217,14 @@ const TrackItem: React.FC<TrackItemProps> = ({
             className="bg-green-500 hover:bg-green-600 text-white p-1.5 rounded flex-shrink-0"
             aria-label={`Play ${name}`}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+            <PlayCircleIcon className="h-5 w-5" />
           </button>
           <button
             onClick={handleRemoveClick}
             className="bg-red-500 hover:bg-red-600 text-white p-1.5 rounded flex-shrink-0"
             aria-label={`Remove ${name} from queue`}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <XIcon className="h-5 w-5" />
           </button>
         </div>
       )}
