@@ -1044,7 +1044,7 @@ type ProfileImportMeta = Omit<ProfileExport, "audioFiles" | "profile"> & {
  * page metadata and pad configurations. Cleans up the partial profile on
  * failure.
  */
-function importProfileCore(
+async function importProfileCore(
   db: IDBPDatabase<ImpAmpDBSchema>,
   exportData: ProfileImportMeta,
   audioSources: ImportAudioSource[],
@@ -1052,24 +1052,33 @@ function importProfileCore(
   audioConcurrency = 1,
   link: ImportLink = {},
 ): Promise<number> {
-  // Declared to the orphan sweeps for as long as it runs. Step 2 writes the
-  // audio and step 4 writes the pads that name it, so in between there are
-  // records nothing references — which is the definition of an orphan, and
-  // `cleanupOrphanedAudioFiles` used to delete exactly those. The audio
-  // cannot be written any later than this: a pad names its sounds by the ids
-  // the store assigns, so the ids have to exist first. See
-  // `withAudioImportInProgress` in db.ts for why this is a register rather
-  // than a grace period or one big transaction.
-  return withAudioImportInProgress(() =>
-    runProfileImport(
-      db,
-      exportData,
-      audioSources,
-      onAudioProgress,
-      audioConcurrency,
-      link,
-    ),
-  );
+  try {
+    // Declared to the audio deleters for as long as it runs. Step 2 writes the
+    // audio and step 4 writes the pads that name it, so in between there are
+    // records nothing references — which is the definition of an orphan, and
+    // `cleanupOrphanedAudioFiles` used to delete exactly those. The audio
+    // cannot be written any later than this: a pad names its sounds by the ids
+    // the store assigns, so the ids have to exist first. See
+    // `withAudioImportInProgress` in db.ts for why this is a register rather
+    // than a grace period or one big transaction.
+    return await withAudioImportInProgress(() =>
+      runProfileImport(
+        db,
+        exportData,
+        audioSources,
+        onAudioProgress,
+        audioConcurrency,
+        link,
+      ),
+    );
+  } catch (error) {
+    // The rollback lives out here, one line past the scope, and that line is
+    // the whole point: an audio deleter called from inside an import waits for
+    // the import that is waiting for it.
+    if (!(error instanceof FailedProfileImport)) throw error;
+    await rollbackFailedProfileImport(error);
+    throw error.reason;
+  }
 }
 
 async function runProfileImport(
@@ -1227,42 +1236,84 @@ async function runProfileImport(
     return profileId;
   } catch (error) {
     console.error("Failed to import profile:", error);
-    // Attempt cleanup if profile was created
-    if (profileId !== undefined) {
-      console.warn(
-        `Attempting to delete partially imported profile ID: ${profileId}`,
-      );
-      try {
-        // Need a separate DB call here as the original transaction likely failed
-        await deleteProfile(profileId);
-        console.log(`Cleaned up partially imported profile ID: ${profileId}`);
-      } catch (cleanupError) {
-        console.error(
-          `Failed to clean up partially imported profile ID: ${profileId}`,
-          cleanupError,
-        );
-      }
-    }
+    // The cleanup is deliberately not done here. Both halves of it delete
+    // audio rows, and every deleter of audio rows waits for the imports in
+    // flight — which, on this side of `withAudioImportInProgress`, still
+    // includes this one. So the failure carries what it left behind out of
+    // its own scope instead, and `importProfileCore` rolls back on the far
+    // side of it. `BankWriteError` in bankTransfer.ts is the same shape for
+    // the same reason.
+    throw new FailedProfileImport(error, profileId, createdAudioIds);
+  }
+}
 
-    // And the audio, which the profile delete above could not reach: it
-    // decides what to remove from the profile's pads, and a failure between
-    // step 2 and step 4 means those pads were never written. Whatever the
-    // surviving pads do still name is kept, so this can never take a sound
-    // out from under another profile.
-    if (createdAudioIds.length > 0) {
-      try {
-        const removed = await deleteUnreferencedAudioFiles(createdAudioIds);
-        console.log(
-          `Cleaned up ${removed} of ${createdAudioIds.length} audio files written by the failed import.`,
-        );
-      } catch (cleanupError) {
-        console.error(
-          "Failed to clean up audio files from the failed import:",
-          cleanupError,
-        );
-      }
+/**
+ * What a failed import leaves behind, carried out of the import's own scope so
+ * that the rollback runs outside it.
+ *
+ * Not an error the caller ever sees: `importProfileCore` unwraps it and
+ * re-throws the original, so every message this module composes reaches the
+ * user unchanged.
+ */
+class FailedProfileImport extends Error {
+  constructor(
+    readonly reason: unknown,
+    readonly profileId: number | undefined,
+    readonly createdAudioIds: number[],
+  ) {
+    super("Profile import failed", { cause: reason });
+    this.name = "FailedProfileImport";
+  }
+}
+
+/**
+ * Takes a failed import's profile and audio back out.
+ *
+ * Runs outside `withAudioImportInProgress`, because both deleters wait for the
+ * imports in flight and an import that waited for itself would never return.
+ * Waiting for the *other* imports is wanted: a row this import created may
+ * have been reused by another that has not yet written the pad naming it, and
+ * `deleteUnreferencedAudioFiles` can only see that once the pad exists.
+ */
+async function rollbackFailedProfileImport(
+  failure: FailedProfileImport,
+): Promise<void> {
+  const { profileId, createdAudioIds } = failure;
+
+  // Attempt cleanup if profile was created
+  if (profileId !== undefined) {
+    console.warn(
+      `Attempting to delete partially imported profile ID: ${profileId}`,
+    );
+    try {
+      // Need a separate DB call here as the original transaction likely failed
+      await deleteProfile(profileId);
+      console.log(`Cleaned up partially imported profile ID: ${profileId}`);
+    } catch (cleanupError) {
+      console.error(
+        `Failed to clean up partially imported profile ID: ${profileId}`,
+        cleanupError,
+      );
     }
-    throw error; // Re-throw the original import error
+  }
+
+  // And the audio, which the profile delete above could not reach: it
+  // decides what to remove from the profile's pads, and a failure between
+  // step 2 and step 4 means those pads were never written. Whatever the
+  // surviving pads do still name is kept, so this can never take a sound
+  // out from under another profile.
+  if (createdAudioIds.length > 0) {
+    try {
+      const removed = await deleteUnreferencedAudioFiles(createdAudioIds);
+      console.log(
+        `Cleaned up ${removed} of ${createdAudioIds.length} audio files written by the failed import.`,
+      );
+    } catch (cleanupError) {
+      console.error(
+        "Failed to clean up audio files from the failed import:",
+        cleanupError,
+      );
+    }
   }
 }
 

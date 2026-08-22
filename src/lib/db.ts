@@ -1344,24 +1344,34 @@ export async function deleteUnreferencedAudioFiles(
 const audioImportsInFlight = new Set<Promise<void>>();
 
 /**
- * Runs an import that writes audio, holding off the orphan sweeps until it
+ * Runs an import that writes audio, holding off every audio deleter until it
  * has finished writing the pads that name it.
  *
- * The import's own outcome is passed straight back to the caller; the copy
- * kept here absorbs the rejection so that a failed import releases the sweeps
- * instead of wedging them behind an unhandled promise.
+ * The registered promise is one this function owns and resolves itself, never
+ * the import's own: a failed import has to release the deleters exactly like a
+ * successful one, and a rejection kept in a `Set` for other code to `await` is
+ * an unhandled rejection waiting to be reported.
+ *
+ * The de-registration is a `finally` rather than a `.then` on the import, so
+ * it happens *before* the caller's own `catch` runs rather than a microtask
+ * after it. That ordering is what lets an import roll its own failure back on
+ * the other side of this call and find the register already clear — see
+ * `settleAudioImports` for why the rollback cannot happen on this side of it.
  */
-export function withAudioImportInProgress<T>(
+export async function withAudioImportInProgress<T>(
   run: () => Promise<T>,
 ): Promise<T> {
-  const running = run();
-  const tracked = running.then(
-    () => {},
-    () => {},
-  );
-  audioImportsInFlight.add(tracked);
-  void tracked.then(() => audioImportsInFlight.delete(tracked));
-  return running;
+  let finish!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  audioImportsInFlight.add(settled);
+  try {
+    return await run();
+  } finally {
+    audioImportsInFlight.delete(settled);
+    finish();
+  }
 }
 
 /**
