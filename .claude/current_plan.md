@@ -1,11 +1,11 @@
 # Eight-phase run — 2026-08-22 (complete)
 
-Mick's list, worked in order with heavy parallelism. Phases 1–5 are **done and
-merged**; 6–8 remain. `main` is at `6f32e9e`, one checkout, no stray worktrees.
+Mick's list, worked in order with heavy parallelism. **All eight phases are
+done and merged.** One checkout, no stray worktrees, nothing left on a branch.
 
 ## Gates on `main`
 
-1544 unit tests in 157 files · 196 chromium e2e · 4 `mobile-portrait` e2e ·
+1577 unit tests in 166 files · 199 chromium e2e · 4 `mobile-portrait` e2e ·
 typecheck, eslint, prettier, jscpd 0 %, gitleaks, version-sync, action-pins,
 actionlint, zizmor all clean · coverage ratchet 60 / 52 / 57 / 61.
 
@@ -20,9 +20,9 @@ security fix and a behaviour change to hosted audio.
 | 3   | Second full repo review, then fix it    | **done** — 19 findings, 17 fixed |
 | 4   | Deferred upgrades now feasible          | **done** — see below             |
 | 5   | A layout that works in portrait         | **done**                         |
-| 6   | Issue #8 — first-use tutorial           | not started                      |
-| 7   | Full code review, fix everything        | not started                      |
-| 8   | Full code review, fix everything        | not started                      |
+| 6   | Issue #8 — first-use tutorial           | **done**                         |
+| 7   | Full code review, fix everything        | **done** — 21 findings           |
+| 8   | Full code review, fix everything        | **done** — 7 findings            |
 
 ## What phases 1–5 actually changed
 
@@ -85,16 +85,50 @@ branch it guarded was deleted. **Mutation-check anything load-bearing.**
 
 ## Phase 6 — issue #8, first-use tutorial
 
-"Implement short product tour/tutorial on first application use." Not started,
-and it is the only phase needing a design decision rather than a fix: a tour
-overlay, an interactive first-bank setup, and a teaching empty state are very
-different builds. No precedent in the repo — `localStorage` is used only for
-Drive sync timestamps, and the Help modal already carries the content a tour
-would narrate.
+Shipped as a four-step modal tour, `WelcomeTourContent.tsx`, gated by
+`src/lib/firstRun.ts` — a `localStorage` flag that **fails closed**, so a
+browser refusing storage shows the tour once per load rather than throwing on
+the first paint.
+
+Two things it taught, both about dismissal. `Modal`'s `onCancel` fires only
+from a Cancel button, and the tour renders none, so recording the dismissal
+there was dead code; it happens on unmount instead. And the regression test was
+vacuous in the other direction — `toBeHidden()` passes instantly against an
+element that has not rendered yet, so it polls `localStorage` now.
+
+The tour also broke **eleven** existing specs at once, because its overlay
+intercepts the clicks every spec starts with. `gotoApp` marks it seen through
+`addInitScript` before navigating; any new spec that wants to see the tour
+passes `{ showWelcomeTour: true }`.
 
 ## Phases 7–8 — two more review passes
 
-Expect them to find things. Known-unfixed going in:
+Phase 7 ran wide (21 findings, 3 red) and phase 8 ran **directed at the day's
+own fixes** (7 findings). Phase 7's headline is worth keeping: the merge seams
+were not the source of the bugs. Every red was a fix that was incomplete on its
+own branch, and twice a fix was made live by the fix immediately preceding it —
+which is an argument for reviewing a day's work as a whole rather than
+reviewing each branch and trusting the merge.
+
+The one that took longest to believe was billed as flake: two pad-editor specs
+failed only in full-suite runs. `EditPadForm` built its new sound list from the
+names it had finished loading, not from the ids it was holding, so adding a
+sound before the names arrived **dropped every sound already on the pad** — and
+the reload it triggers rebuilt the list from the truncated ids, so nothing on
+screen admitted it. Ten e2e workers writing 5 MB WAVs to one disk is what
+stretched the read far enough to see it.
+
+### Still open, deliberately
+
+- 🔴 The hourly sweep decides per **hash**, but the bucket is keyed
+  `hash.extension`. An object stored under a junk extension is invisible to it
+  permanently — one was reported as 1024 bytes against 18 MB stored.
+- 🟡 The attribution residual is wider than the fix's comment claims: inside the
+  NULL window the holder's own delete is allowed, and orphans the object.
+- 🟢 `sweepIfDue`'s overlap guard has no test, and the pad-editor hold's stated
+  reason is false (the behaviour is right, the comment is not).
+
+Known-unfixed going into 7–8, and still unfixed on purpose:
 
 - 🟢 10 from the subsystem review: a still-valid presigned PUT can overwrite an
   object someone else commits inside the 900 s window. Left deliberately; every
