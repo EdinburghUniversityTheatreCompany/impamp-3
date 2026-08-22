@@ -10,6 +10,7 @@
 
 import React from "react";
 import { openLoudnessOverviewModal } from "@/lib/uiUtils";
+import { SlidersIcon } from "@/components/icons";
 
 interface LoudnessOverviewButtonProps {
   className?: string;
@@ -34,22 +35,7 @@ const LoudnessOverviewButton: React.FC<LoudnessOverviewButtonProps> = ({
       title="Loudness overview"
       data-testid="loudness-overview-button"
     >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="h-6 w-6"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        aria-hidden="true"
-      >
-        {/* Three sliders, evoking per-sound gain controls */}
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 6h6m4 0h6M4 6a2 2 0 104 0 2 2 0 00-4 0zM4 18h10m4 0h2M4 18a2 2 0 104 0 2 2 0 00-4 0zM4 12h2m4 0h10M14 12a2 2 0 104 0 2 2 0 00-4 0z"
-        />
-      </svg>
+      <SlidersIcon className="h-6 w-6" />
     </button>
   );
 };
