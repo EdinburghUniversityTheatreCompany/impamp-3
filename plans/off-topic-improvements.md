@@ -95,24 +95,6 @@ which is why it was not done alongside the fallback.
 
 Noticed while making the Drive reader identify audio by content hash only.
 
-## Two sound rows in the pad editor can share a `data-testid`
-
-`EditPadForm`'s list rows are tagged `edit-pad-sound-item-${sound.fileId}`,
-and so are the trim, gain and remove controls inside them. A pad may name one
-audio row twice — legitimately, since a sequential pad can play a sound twice
-in a round, and reuse by content hash makes it easy to arrive at. The drag ids
-were fixed for that in Task 3 (`placeSounds` numbers the copies); the test ids
-were not, because `e2e-tests/loudness.spec.ts:199` parses the audio file id
-back out of `edit-pad-gain-sound-${id}` and several specs match on the
-`edit-pad-sound-item-` prefix.
-
-Nothing is broken today: no spec builds a pad that names one sound twice. One
-that did would hit Playwright's strict-mode "resolved to 2 elements". The fix
-is to tag the row with the drag id and keep the file id only where a spec
-genuinely needs to read it back.
-
-Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
-
 ## The duplicate-audio panel names no sounds
 
 `DuplicateAudioPanel` reports a group count, a copy count and a byte total,

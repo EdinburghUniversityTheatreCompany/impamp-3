@@ -492,6 +492,13 @@ and the ranges are floors that should move only when something requires it.
   and the remove handler from it. This has shipped wrong twice: once as the
   drag id (duplicate React keys, and removing one copy removed both), and again
   when that was fixed and the four neighbours one line away were left behind.
+  Both halves are now pinned twice over: `EditPadForm.dedup.test.tsx` counts
+  the matches in jsdom, and `e2e-tests/pad-editor-duplicate-rows.spec.ts`
+  builds the pad in a browser and drives each copy's own controls — a
+  collision there is a Playwright strict-mode violation, which is the failure
+  no unit test can produce. That spec was missing for a release, and it is why
+  a duplicate id could sit in the tree unseen: no other spec ever builds a pad
+  naming one sound twice.
   `audioGainSettings` and `audioTrimSettings` stay keyed on `fileId`
   deliberately, because two copies of one row genuinely share one gain and one
   trim
