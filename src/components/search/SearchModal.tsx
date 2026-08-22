@@ -169,9 +169,20 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
 
   // Handle result interaction - play, or arm when the arm chord is held
   const activateResult = (result: SearchResult, withArmModifier: boolean) => {
-    // Disabled pads are listed so they can be found, but neither play nor arm
+    // Disabled pads are listed so they can be found, but neither play nor arm.
+    //
+    // Said on screen, not only to the console. From the keyboard this is the
+    // one branch that reaches here with the press already consumed — it has to
+    // be consumed, or Enter fires an emergency cue from behind the modal — so
+    // silence spends the key on nothing at all, one line under a header
+    // promising that Enter plays the first result. Raised here rather than in
+    // the key handler so the mouse and the chord get the same answer as Enter.
     if (result.isDisabled) {
-      console.log(`[SearchModal] Pad "${result.name}" is disabled, ignoring.`);
+      setNotice({
+        term: searchTerm,
+        results,
+        text: `“${result.name}” is disabled, so nothing was played. Turn the pad back on to use it.`,
+      });
       return;
     }
     if (withArmModifier) {

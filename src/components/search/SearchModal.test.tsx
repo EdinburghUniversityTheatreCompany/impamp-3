@@ -269,6 +269,24 @@ describe("activating the first result from the input", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("says why a disabled first result did nothing", () => {
+    // The press is consumed either way — it has to be, or it fires an
+    // emergency cue from behind the modal — so silence here is a key that
+    // vanishes: nothing plays, nothing is said, and the header a line above
+    // has just promised that Enter plays the first result.
+    pressEnter(
+      focusedInput([searchResult({ name: "Foghorn", isDisabled: true })]),
+    );
+
+    const notice = container.querySelector(
+      '[data-testid="search-activation-notice"]',
+    );
+    expect(notice).not.toBeNull();
+    expect(notice!.getAttribute("role")).toBe("alert");
+    expect(notice!.textContent).toContain("Foghorn");
+    expect(notice!.textContent).toContain("disabled");
+  });
+
   it("says so in the results header, in the platform's own words", () => {
     focusedInput([searchResult()]);
 
