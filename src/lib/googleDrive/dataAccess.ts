@@ -4,7 +4,6 @@
  */
 
 import {
-  AudioFile,
   PadConfiguration,
   PageMetadata,
   getProfile,
@@ -12,9 +11,15 @@ import {
   getAudioFileMetadata,
   ensureAudioFileHash,
   updateAudioFileDriveId,
+  addOrReuseAudioFile,
+  createHashlessAudioIndex,
   collectReferencedAudioFileIds,
   computeBlobHash,
 } from "@/lib/db";
+import {
+  createStoredHashIndex,
+  lookupLocalAudioByHash,
+} from "@/lib/audioHashIndex";
 import {
   ProfileSyncData,
   reconcileWithStoredRecord,
@@ -142,31 +147,6 @@ export const getLocalProfileSyncData = async (
 };
 
 /**
- * Resolves a remote audio reference to the local record holding the same audio.
- * Content hashes are authoritative; names are only consulted for legacy entries
- * that predate hashing, and then only when the match is unambiguous.
- * @param ref The remote reference (name plus optional content hash)
- * @param getByHash Index lookup by hash
- * @param getByName Index lookup by name
- * @returns The matching local record, or undefined if none can be trusted
- */
-const findLocalAudioMatch = async (
-  ref: { name: string; hash?: string },
-  getByHash: (hash: string) => Promise<AudioFile[]>,
-  getByName: (name: string) => Promise<AudioFile[]>,
-): Promise<AudioFile | undefined> => {
-  if (ref.hash) {
-    const hashMatches = await getByHash(ref.hash);
-    // A hash miss means any same-named local file holds different audio
-    return hashMatches[0];
-  }
-
-  const nameMatches = await getByName(ref.name);
-  if (nameMatches.length !== 1) return undefined;
-  return nameMatches[0].hash ? undefined : nameMatches[0];
-};
-
-/**
  * Re-key a hash-keyed settings map onto this device's audio ids.
  *
  * A hash with no local audio is dropped: keeping it would leave a setting
@@ -202,42 +182,36 @@ const toDate = (value: unknown): Date => {
  * Backfills driveFileIds from remote sync data into local audio file records.
  * Called before uploading so that files already on Drive (per the remote JSON)
  * are not re-uploaded.
+ *
+ * The parameter names the two fields this reads, and `name` is deliberately
+ * not one of them: a reference is matched to a local row by its content hash
+ * or not at all.
  */
 export const backfillDriveFileIdsFromRemote = async (
-  audioRefs:
-    | { id: number; name: string; hash?: string; driveFileId?: string }[]
-    | undefined,
+  audioRefs: { hash?: string; driveFileId?: string }[] | undefined,
   profileId: number,
 ): Promise<void> => {
   if (!audioRefs || audioRefs.length === 0) return;
 
-  const db = await getDb();
-
-  // Resolve every reference in a single read-only pass. The writes must wait
-  // until this transaction is done — awaiting a separate transaction inside it
-  // lets it auto-commit, and the next read then throws TransactionInactiveError.
-  const pendingWrites: { localId: number; driveFileId: string }[] = [];
-  const tx = db.transaction("audioFiles", "readonly");
-  const audioStore = tx.objectStore("audioFiles");
+  // One cursor pass for the whole list, and the expensive index only if a
+  // reference misses it. This ran a `getAll` per reference inside a read-only
+  // transaction it then had to close before writing anything, because awaiting
+  // a separate transaction inside one lets it auto-commit.
+  const stored = createStoredHashIndex();
+  const getHashlessIndex = createHashlessAudioIndex();
 
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue;
 
-    const local = await findLocalAudioMatch(
-      ref,
-      (hash) => audioStore.index("hash").getAll(hash),
-      (name) => audioStore.index("name").getAll(name),
+    const local = await lookupLocalAudioByHash(
+      ref.hash,
+      stored,
+      getHashlessIndex,
     );
-    if (!local || local.id === undefined) continue;
+    if (!local) continue;
     if (local.driveFileIds?.[profileId]) continue;
 
-    pendingWrites.push({ localId: local.id, driveFileId: ref.driveFileId });
-  }
-
-  await tx.done;
-
-  for (const { localId, driveFileId } of pendingWrites) {
-    await updateAudioFileDriveId(localId, driveFileId, profileId);
+    await updateAudioFileDriveId(local.id, ref.driveFileId, profileId);
   }
 };
 
@@ -273,64 +247,70 @@ export const updateLocalData = async (
   if (hasAudioReferences) {
     console.log(`Importing ${data.audioFiles.length} audio files`);
 
-    // Decode legacy base64 payloads and derive their hashes up front: awaiting
-    // work that isn't an IndexedDB request would close the transaction below.
-    const prepared: {
-      ref: ProfileSyncData["audioFiles"][number];
-      blob?: Blob;
-      hash?: string;
-    }[] = [];
-    for (const audioFileData of data.audioFiles) {
+    // What this device already holds, asked once for the whole list rather
+    // than per reference, and the expensive pre-hashing index only if one of
+    // them misses.
+    const stored = createStoredHashIndex();
+    const getHashlessIndex = createHashlessAudioIndex();
+
+    for (const ref of data.audioFiles) {
+      // A legacy blob carries the bytes inline. Hash them here: the bytes are
+      // the only identity a sound has, so bytes arriving without a hash have
+      // no identity at all until this makes one. `||` rather than `??`,
+      // because an empty hash is a missing hash and not a key.
       let blob: Blob | undefined;
-      let hash = audioFileData.hash;
-      if (audioFileData.data) {
-        blob = await base64ToBlob(audioFileData.data, audioFileData.type);
-        hash = hash ?? (await computeBlobHash(blob));
+      let hash = ref.hash;
+      if (ref.data) {
+        blob = await base64ToBlob(ref.data, ref.type);
+        hash = hash || (await computeBlobHash(blob));
       }
-      prepared.push({ ref: audioFileData, blob, hash });
-    }
 
-    // Create a separate transaction for audio files
-    const audioTx = db.transaction(["audioFiles"], "readwrite");
-    const audioStore = audioTx.objectStore("audioFiles");
-
-    for (const { ref, blob, hash } of prepared) {
-      // Match on content hash so same-named different recordings stay distinct
-      const existing = await findLocalAudioMatch(
-        { name: ref.name, hash },
-        (h) => audioStore.index("hash").getAll(h),
-        (n) => audioStore.index("name").getAll(n),
+      const existing = await lookupLocalAudioByHash(
+        hash,
+        stored,
+        getHashlessIndex,
       );
       let newAudioId: number;
 
-      if (existing?.id !== undefined) {
+      if (existing) {
         newAudioId = existing.id;
-        // Persist the driveFileId for this profile if we now know it and it's missing
+        // Persist the driveFileId for this profile if we now know it and it's
+        // missing. Nothing else writes it: the row was found, not written.
         if (ref.driveFileId && !existing.driveFileIds?.[profileId]) {
-          const currentMap = existing.driveFileIds ?? {};
-          await audioStore.put({
-            ...existing,
-            driveFileIds: { ...currentMap, [profileId]: ref.driveFileId },
-          });
+          await updateAudioFileDriveId(newAudioId, ref.driveFileId, profileId);
         }
         console.log(`Using existing audio file "${ref.name}"`);
-      } else if (blob) {
-        // Legacy path: base64-encoded data present — store the decoded blob
-        newAudioId = await audioStore.add({
+      } else if (blob && hash) {
+        // Legacy path: base64-encoded data present — store the decoded blob.
+        // `addOrReuseAudioFile` rather than a bare add, because the lookup
+        // above is a separate transaction from this write and a browser runs
+        // several syncs at once; only a lookup inside the writing transaction
+        // collapses two of them arriving with the same bytes. (`hash` is set
+        // for every blob, just above — the check is what tells the compiler.)
+        const driveFileIds = ref.driveFileId
+          ? { [profileId]: ref.driveFileId }
+          : undefined;
+        const { id, reused } = await addOrReuseAudioFile({
           blob,
           name: ref.name,
           type: ref.type,
           hash,
-          driveFileIds: ref.driveFileId
-            ? { [profileId]: ref.driveFileId }
-            : undefined,
-          createdAt: new Date(),
+          driveFileIds,
         });
+        newAudioId = id;
+        // Reuse hands the row back exactly as it found it, so the Drive id
+        // passed above was never written. See CLAUDE.md: reuse writes nothing.
+        if (reused && ref.driveFileId) {
+          await updateAudioFileDriveId(id, ref.driveFileId, profileId);
+        }
+        await stored.remember(hash, { id, driveFileIds });
         console.log(`Added audio file from base64 "${ref.name}"`);
       } else {
-        // New path: driveFileId only — the file should have been pre-downloaded by
-        // downloadMissingAudioFiles in sync.ts. Leaving it out of the ID map makes
-        // referencing pads drop the reference instead of pointing at another sound.
+        // Nothing local holds these bytes and none arrived: either the file
+        // should have been pre-downloaded by downloadMissingAudioFiles in
+        // sync.ts and was not, or the reference carries no hash and so names
+        // no recording. Leaving it out of the ID map makes referencing pads
+        // drop the reference instead of pointing at another sound.
         warnings.push(
           `Audio file "${ref.name}" is unavailable locally — pads referencing it were cleared`,
         );
@@ -342,7 +322,6 @@ export const updateLocalData = async (
       if (hash) localIdByHash.set(hash, newAudioId);
     }
 
-    await audioTx.done;
     console.log(`Audio files import complete, mapped ${audioIdMap.size} files`);
   }
 

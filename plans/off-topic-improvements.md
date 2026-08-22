@@ -39,31 +39,6 @@ either end state. Noticed while adding the sync status chip, where the
 `dev-hooks` inline-svg hook flagged the new markup and the honest answer was
 "the whole codebase does this".
 
-## A renamed profile never converges, and the conflict modal lies about it
-
-`src/lib/googleDrive/dataAccess.ts:278` — `updateLocalData` pins the profile
-name to the local value:
-
-```ts
-name: existingLocalProfile?.name ?? data.profile.name,
-```
-
-`existingLocalProfile.name` is always set, so the local name always wins and a
-remote rename never lands. Nothing else applies one either — `applySyncedProfile`
-does not touch the name, and no other call site writes it from sync data.
-
-The sharp edge is that `detectProfileConflicts` disagrees. It treats `name` as
-ordinary content, merges a newer remote name into `mergedData`, and can raise a
-**manual conflict** over it — so the resolution modal asks the user to choose
-between two names, and then `updateLocalData` discards the choice if they picked
-the remote one. Either the name is local-only bookkeeping (in which case it
-belongs in `PROFILE_LOCATION_FIELDS` and should never reach the modal) or it is
-content (in which case the pin should go). Right now it is both.
-
-Noticed while excluding the _location_ fields from the merge; the name is a
-separate question, and changing it alters convergence for every existing synced
-profile, so it wanted its own change and its own test.
-
 ## `check_version_sync.sh` only ever looks at one Dockerfile
 
 `scripts/check_version_sync.sh` picks the first of `Dockerfile` / `Containerfile`
@@ -106,127 +81,19 @@ when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
 
-## `triggerPad` could spread its argument instead of re-listing every field
+## The `audioFiles` `name` index has no readers left
 
-`TriggerablePad` (`src/lib/audio/triggerPad.ts`) declares eight pad fields, and
-`triggerPad` copies all eight into `triggerAudioForPadInstant` one at a time.
-Every one of those names is in `TriggerAudioArgs` too, so the whole enumeration
-could be `{ ...pad, activeProfileId, currentBankId, ...callbacks }` with no
-change in behaviour — the callbacks are added after, so they still win, and a
-key `TriggerAudioArgs` does not declare is simply ignored by the destructuring
-downstream.
+`db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
+nothing looks anything up in it any more: the Drive reader's name fallback was
+the last reader, and it is gone. The only surviving `index("name")` in the
+codebase is on `profiles`, where import uses it to make a unique profile name.
 
-The enumeration is not merely redundant, it is the failure mode: both
-production callers build their argument by spreading
-`extractPadPlaybackSettings(pad)` into a `TriggerablePad` literal, and
-TypeScript exempts spread-in properties from excess-property checking. So a new
-pad field is dropped in silence twice over — once by the interface not
-declaring it, once by the copy not listing it — with no compiler error at
-either point. That is exactly what happened to `activePadBehavior` and it is
-the same shape as CLAUDE.md's `audioGainSettings`-in-five-places note.
+It costs an index write per audio row and, more to the point, it is a loaded
+gun — the shape of "match a sound by its name" is one lookup away for as long
+as the index exists. Removing it needs a schema version bump and a migration,
+which is why it was not done alongside the fallback.
 
-Not done as part of Task 7 of the layered-retrigger plan because that plan
-explicitly instructed adding the field to both places, and quietly changing the
-mechanism instead would have been a deviation the reviewer could not see. The
-same argument applies one level up to `SearchResult`, `EmergencySound` and
-`ArmedTrackState`, all of which are hand-built projections of a pad that could
-embed `PadPlaybackSettings` instead of restating it.
-
-Noticed while threading `activePadBehavior` through every trigger path.
-
-## The coverage ratchet in `vitest.config.ts` is now far below the real number
-
-The thresholds are 33 / 28 / 27 / 33 and the comment records the run they were
-set from as "34.28 / 29.89 / 28.47 / 34.77". A full `npm run test:coverage` on
-the layered-retrigger branch after Task 7 reports **47.81 / 40.62 / 44.14 /
-48.56** — roughly fourteen points of headroom on statements and lines. The gate
-can no longer notice a whole untested module landing, which is the thing it
-exists for.
-
-Deliberately not raised in Task 7: the number will move again with the rest of
-that branch, and a threshold bump is a branch-level decision rather than one
-task's. Worth doing once the branch is complete, per CLAUDE.md's "raise them
-deliberately when a run comes in comfortably above".
-
-Noticed while running the coverage gate at the end of Task 7.
-
-## The search modal's arm chord needs the result focused, not the input
-
-`SearchModal` reads the arm chord in `handleResultKeyDown`, which hangs off the
-result `<button>`. The input keeps focus after typing, so the keyboard route to
-arming is: type, Tab past whatever lies between, _then_ Ctrl/Cmd+Enter. Plain
-Enter in the input does nothing either — there is no "activate the first
-result" handler at all.
-
-An operator's fastest path from Ctrl+F to an armed cue would be to type and
-press Ctrl+Enter without moving focus. That wants an `onKeyDown` on the input
-that activates `results[0]`, with the chord deciding play versus arm, and a
-visible hint in the results header saying so.
-
-Noticed while making the arm chord reachable on macOS.
-
-## `RadioGroup`'s `aria-labelledby` points at an id nothing renders
-
-`RadioGroup` sets `aria-labelledby={`${id}-label`}` on its `role="radiogroup"`
-container, but nothing in the codebase renders an element with that id. Its
-three callers all wrap it in a `FormField`, which renders
-`<label htmlFor={id}>` — no id of its own — so the `htmlFor` also points at a
-non-element (the radios are `${id}-continue`, `${id}-stop`, and so on). The net
-effect is a radio group with no accessible name and a label that clicks
-nowhere, in the profile editor, Playback Settings and now the pad editor.
-
-The fix is small and belongs in the two shared components rather than in each
-form: give `FormField`'s label `id={`${id}-label`}`, and drop or repoint the
-`htmlFor` since there is no single control for it to address.
-
-Noticed while adding the Layer option to the three activePadBehavior radio
-groups (Task 9 of the layered-retrigger plan).
-
-## `getAudioFileByHash` is one unguarded caller away from returning any row
-
-`getAudioFileByHash(hash)` ends in `tx.store.index("hash").getAll(hash)` and
-returns `results[0]`. `getAll` with an undefined key is IndexedDB for _every
-row_, so a caller that passes an absent hash gets an arbitrary unrelated audio
-file back and treats it as a content match — two different sounds merged, with
-no way to tell afterwards.
-
-Both current callers happen to guard: `googleDrive/sync.ts:329` uses
-`ref.hash ? … : undefined`, and `serverAudio/transfer.ts:249` filters
-`hostedRefs` down to `ref is typeof ref & { hash: string }` first. So nothing
-is broken today. But the guard lives in the callers rather than in the
-function, `hash: string` is a type rather than a runtime fact, and the refs it
-is fed come from unvalidated JSON in an archive manifest or a sync blob.
-
-`findAudioFileIdByHashIn` (added in `db.ts` by the audio-dedup plan) already
-carries the guard and a comment explaining why. `getAudioFileByHash` should
-grow the same `if (!hash) return undefined;` — better still, the two should
-become one function, since they now ask the same question of the same index
-and differ only in whether they return the record or its id.
-
-Noticed while adding `addOrReuseAudioFile` (Task 1 of the audio-dedup plan).
-
-## Drive's legacy import still matches audio by _name_
-
-`googleDrive/dataAccess.ts`'s `updateLocalData` reuses an existing audio row
-through `findLocalAudioMatch`, which tries the content hash first and then
-falls back to the `name` index. The name fallback merges two genuinely
-different recordings that happen to share a filename — `horn.wav` from one
-library and `horn.wav` from another become one row, and every pad on both
-sides plays whichever arrived first. Nothing can undo that afterwards.
-
-The rest of the codebase now identifies audio by its bytes and nothing else
-(`addOrReuseAudioFile`, `findAudioFileIdByHashIn`, `importAudioSources`). This
-is the one place left that does not. It survives because it is the legacy
-base64 path — a modern blob carries a hash — so the fallback fires only for
-old data, which is also exactly the data most likely to collide.
-
-Left alone by Task 3 of the audio-dedup plan on purpose: converting it to
-`addOrReuseAudioFile` would drop the name fallback (a behaviour change for old
-profiles) _and_ the `driveFileIds` backfill sitting in the same branch. Worth
-doing deliberately, with a test for each half, rather than as a side effect.
-
-Noticed while enumerating the inbound audio paths (Task 3 of the audio-dedup
-plan).
+Noticed while making the Drive reader identify audio by content hash only.
 
 ## Two sound rows in the pad editor can share a `data-testid`
 
@@ -245,43 +112,6 @@ is to tag the row with the drag id and keep the file id only where a spec
 genuinely needs to read it back.
 
 Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
-
-## ~~The pre-commit hook does not run `tsc`~~ — done on main
-
-**Resolved.** `hk.pkl` now has a `tsc` step running `npm run typecheck`, which
-lands on this branch with the merge from main. The entry is kept because the
-reasoning below is still the argument for it, and because Tasks 1-6 of the
-audio-dedup plan were written against the old behaviour and say so.
-
-## The pre-commit hook did not run `tsc`
-
-`hk.pkl` runs prettier, eslint, gitleaks, jscpd, vitest, a large-file check
-and an exec-bit check. It does not typecheck, so a commit can pass the hook
-cleanly and still fail CI — which is what happened to a test fixture on the
-audio-dedup branch that built a `TokenInfo` without its `refreshToken`. ESLint
-does not catch it either, because the type error is in the argument, not in
-the lint rules.
-
-Adding `npx tsc --noEmit` to the hook costs a few seconds per commit on this
-repo and closes the gap between "the hook passed" and "CI will pass".
-
-Noticed while committing Task 3 of the audio-dedup plan.
-
-## `clearCachedAudioBuffer` leaves the pin behind
-
-`src/lib/audio/cache.ts` keeps two maps keyed by audio file id: the buffer
-cache and `pinnedAudioFileIds`. `clearCachedAudioBuffer` deletes from the
-first only, so a row deleted while one of its buffers was pinned leaves a pin
-under an id that no longer exists — `isAudioBufferPinned` answers true for it
-forever, and the entry is never collected.
-
-Harmless today: nothing can reference the deleted id, so the stale pin only
-protects a cache entry that is already gone. It becomes wrong the moment
-autoIncrement hands the number out again, which IndexedDB will not do — but
-the asymmetry is still a trap for the next person reading either map.
-
-Noticed while enumerating what a duplicate collapse has to clean up (Task 5 of
-the audio-dedup plan).
 
 ## The duplicate-audio panel names no sounds
 
@@ -315,24 +145,49 @@ repo's characteristic regression.
 Noticed while checking whether Task 8 of the audio-dedup plan still needed to
 add `MAX_BANKS` (it did not — main had already added it, to `db.ts`).
 
-## A pad drop can be refused without a word
+## A radio group's validation error is rendered twice
 
-`PadGrid` decides per render whether a pad accepts a drop, through
-`usePadDrop`'s `isDropAllowed`, and when the answer is no its `onDropAudio`
-returns `Promise.resolve()`. The dropzone itself is only `disabled` for
-special pads and delete/move mode, so react-dropzone still fires, the handler
-still runs, and nothing is written, logged or shown. Every other refusal on
-that path says something — `console.error` for no profile, `console.warn` for
-a profile that takes no changes, an `alert` for a write that threw.
+All four `RadioGroup` sites pass the same `error` to the wrapping `FormField`
+as well as to the group itself — `EditPadForm.tsx:337,359`,
+`ProfileEditForm.tsx:76`, `PlaybackSettingsForm.tsx:55` — and both components
+render it in their own `<p>`. A validation failure on one of these groups
+therefore shows the same sentence twice, one line apart. Nothing validates
+`playbackType` or `activePadBehavior` today, so it has never been seen; it
+would appear the moment a validator did.
 
-It is reachable: a file dropped in the few milliseconds after a profile
-switch, while that answer is still settling, is silently lost. Measured while
-writing `e2e-tests/bank-transfer.spec.ts` — the first drop into a
-just-created profile was dropped every run, and the same drop moments later
-took every run, which is why `dropOnPad` there re-issues the way
-`activatePad` does. A human cannot hit a window that small, so this is a
-diagnosability complaint rather than a live bug: the fix is a `console.warn`
-in the refusal branch, saying which pad and why.
+The fix is to pick one owner. `FormField` is the better one — it already owns
+the label and the field's spacing — which would mean dropping `error` from the
+`RadioGroup` call sites rather than from the component, since a standalone
+group still needs somewhere to say it.
 
-Noticed while writing the cross-profile bank transfer spec (Task 16 of the
-audio-dedup plan).
+Noticed while giving the four groups an accessible name (🟡 3 of the 08-21
+review).
+
+## A failed orphan scan tells the user nothing
+
+`OrphanedAudioPanel`'s `handleScanOrphans` catches, writes a
+`console.error`, and leaves the panel exactly as it was — the comment in the
+branch still reads "You could add error handling here if needed". Press Scan,
+watch the spinner come and go, and nothing appears: indistinguishable from a
+scan that found nothing, except that the results box is absent rather than
+saying "0 orphaned". `handleScanMissing` is the same shape.
+
+Both sit one panel away from `DuplicateAudioPanel`, which does the thing
+worth copying — an `error` piece of state, rendered in a `role="alert"` box
+naming the message. There is a test for the swallowed branch already
+(`leaves no results behind when the scan itself fails`), so the fix is the
+state plus the box plus one changed assertion.
+
+## The cleanup report vanishes half a second after it appears
+
+A cleanup that deleted something schedules a re-scan 500 ms later, and
+`handleScanOrphans` opens by clearing the cleanup result. So "Files deleted:
+2, Cache entries cleared: 1" is on screen for half a second and is then
+replaced by a scan saying 0 orphans — the report of what was deleted is the
+one thing a user might want to read twice, and it is the thing that goes. The
+re-scan itself is right (the counts on screen come from the database rather
+than from the panel's arithmetic); it is the clearing that is wrong, and
+`handleScanOrphans` clears it because it is also the manual Scan handler.
+
+Noticed while extracting the Maintenance tab into its own panels (finding 8
+of the 2026-08-21 review).

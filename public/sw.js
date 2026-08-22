@@ -13,7 +13,8 @@
  * - `/_next/static/**` — content-hashed and therefore immutable. Cache-first.
  * - `/`, and any other navigated document — cached after a *successful*
  *   network fetch, so the offline fallback is always the last page that
- *   actually loaded.
+ *   actually loaded. Keyed by path, never by full URL — see
+ *   `documentCacheKey`.
  * - `/icons/**`, `/favicon.ico`, `/manifest.webmanifest`, `/offline.html` —
  *   the small unhashed set an installed PWA needs. Cache-first, refreshed by
  *   each new build (see cache naming below).
@@ -212,23 +213,51 @@ async function precache() {
 }
 
 /**
+ * Where a navigated document is filed: its path, with the query dropped.
+ *
+ * A share link is `/server/open?id=…&token=…`, and the token in it is the
+ * whole credential. Keying the cache on `request.url` wrote that token into a
+ * Cache Storage key that then outlived the visit — it is only evicted when the
+ * next build changes `?build=` and `activate` deletes the old caches. Cache
+ * Storage is not a place a credential has any business being, and nothing here
+ * needed it there.
+ *
+ * Dropping the query costs nothing, because no document this app serves varies
+ * with it. Every page that reads a query parameter — `/server/open`,
+ * `/drive/open` — is a client component reading `useSearchParams` in the
+ * browser, so the HTML is identical whatever the link says; the parameters
+ * still reach the page from `location`, which the cache never touched. The
+ * only observable change is that opening a *second* share link offline now
+ * finds the same page rather than falling through to the board, which is the
+ * better answer of the two.
+ *
+ * The write and the offline read must use this same key or they stop matching,
+ * which is a bug with no symptom online.
+ */
+function documentCacheKey(requestUrl) {
+  const url = new URL(requestUrl);
+  return url.origin + url.pathname;
+}
+
+/**
  * Documents are network-first: a deploy has to be able to land, and the HTML
  * is the one file whose URL does not change when its contents do. The cached
  * copy is only ever a fallback, and it is refreshed on every successful load
  * so what you get offline is the last thing that actually worked.
  */
 async function handleNavigation(request) {
+  const cacheKey = documentCacheKey(request.url);
   try {
     const response = await fetch(request);
     if (response.ok) {
       const cache = await caches.open(SHELL_CACHE);
-      await cache.put(request.url, response.clone());
+      await cache.put(cacheKey, response.clone());
     }
     return response;
   } catch (error) {
     const cache = await caches.open(SHELL_CACHE);
     const cached =
-      (await cache.match(request.url)) ??
+      (await cache.match(cacheKey)) ??
       // Any other route falls back to the board itself rather than to the
       // "you are offline" page: the board is what the user came for, and the
       // routes that are not it (`/drive/open`, `/server/*`) need the network

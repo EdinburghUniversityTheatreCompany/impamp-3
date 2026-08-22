@@ -11,16 +11,22 @@ import { useProfileStore } from "@/store/profileStore";
 import {
   getAudioFileMetadata,
   getAllPageMetadataForProfile,
-  ActivePadBehavior,
-  PlaybackType,
+  extractPadPlaybackSettings,
+  type PadPlaybackSettings,
 } from "@/lib/db";
 import { getAllPadConfigurationsForProfile } from "@/lib/importExport";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 
 /**
- * Search result item representing a match
+ * Search result item representing a match.
+ *
+ * The playback half is `PadPlaybackSettings` rather than a restatement of its
+ * members. This was a hand-built projection that named eight pad fields, and
+ * the modal then rebuilt a trigger payload and an armed cue out of it by hand
+ * again — three literals, none of which the compiler tied to the others, so a
+ * pad field could go missing at any of the three without a word.
  */
-export interface SearchResult {
+export interface SearchResult extends PadPlaybackSettings {
   /** Profile ID the result belongs to */
   profileId: number;
   /** Identity of the bank containing the result, used to play the pad */
@@ -29,22 +35,8 @@ export interface SearchResult {
   pageIndex: number;
   /** Pad index within the page */
   padIndex: number;
-  /** Pad display name */
+  /** Pad display name — a numbered fallback where the pad has no name */
   name: string;
-  /** IDs of audio files assigned to this pad */
-  audioFileIds: number[];
-  /** Playback strategy for this pad */
-  playbackType: PlaybackType;
-  /** Trim settings per audio file */
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  /** Per-sound manual gain in dB, keyed by audio file ID */
-  audioGainSettings?: Record<number, number>;
-  /** Whole-pad manual gain in dB */
-  padGainDb?: number;
-  /** Whether the pad is disabled and so cannot be played or armed */
-  isDisabled: boolean;
-  /** The pad's own override of the profile's activePadBehavior, if it has one */
-  activePadBehavior?: ActivePadBehavior;
   /** Original filename of the first audio file */
   originalFileName: string;
   /** Display name of the bank containing this pad */
@@ -200,18 +192,14 @@ export function useSearch(searchOptions: SearchOptions = {}) {
 
           if (nameMatches || fileNameMatches) {
             searchResults.push({
+              ...extractPadPlaybackSettings(pad),
               profileId: activeProfileId,
               bankId: pad.bankId,
               pageIndex: bank.pageIndex,
               padIndex: pad.padIndex,
+              // After the spread: an unnamed pad is listed by its number, and
+              // `extractPadPlaybackSettings` would leave the name undefined.
               name: padName,
-              audioFileIds: pad.audioFileIds,
-              playbackType: pad.playbackType,
-              audioTrimSettings: pad.audioTrimSettings,
-              audioGainSettings: pad.audioGainSettings,
-              padGainDb: pad.padGainDb,
-              isDisabled: pad.isDisabled ?? false,
-              activePadBehavior: pad.activePadBehavior,
               originalFileName: displayFileName,
               bankName:
                 bankNames.get(pad.bankId) ||

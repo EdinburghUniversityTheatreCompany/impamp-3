@@ -207,6 +207,22 @@ describe("scanning", () => {
     );
   });
 
+  it("warns that a pad naming both copies comes out a sound shorter", async () => {
+    // `collapseDuplicateAudioGroups` puts the rewritten ids through a `Set`,
+    // deliberately — a pad cannot list one row twice once the two rows are
+    // one. But CLAUDE.md's "one pad can name one audio row twice" is a real
+    // arrangement a user built on purpose, and a sequential pad set to A, B, A
+    // quietly becomes a two-sound pad. The preview is the only place they
+    // could find that out before pressing, so it has to say it.
+    await storedTwice(horn, "horn");
+
+    await click("duplicate-audio-scan");
+
+    const preview = required("duplicate-audio-preview").textContent ?? "";
+    expect(preview).toContain("listed the same sound twice");
+    expect(preview).toContain("listing it once");
+  });
+
   it("says the scan failed instead of leaving the panel unchanged", async () => {
     findDuplicateAudioGroups.mockRejectedValueOnce(new Error("store is shut"));
 
@@ -245,6 +261,10 @@ describe("confirming", () => {
     expect(message).toContain("1 duplicate audio file");
     expect(message).toContain("permanently");
     expect(message).toContain("cannot be undone");
+    // The confirmation is the last thing a user reads, and it used to promise
+    // only that pads would be repointed. A pad that named both rows also loses
+    // an entry, which is a change to what it plays.
+    expect(message).toContain("listed both copies");
   });
 });
 

@@ -82,8 +82,13 @@ A modern, web-based soundboard application built with Next.js, TypeScript, Index
 
    ```bash
    npm test          # unit and API suite (Vitest)
-   npm run test:e2e  # end-to-end (Playwright)
+   npm run test:e2e  # end-to-end (Playwright, chromium)
    ```
+
+   `test:e2e` runs chromium only, which is what CI gates on. Firefox and WebKit
+   are `npm run test:e2e:cross-browser`, and both are known-red for reasons
+   outside the app — read [docs/cross-browser-e2e.md](docs/cross-browser-e2e.md)
+   before acting on either.
 
 ### Building for Production
 

@@ -57,6 +57,9 @@ certificates
 
 # git worktrees (dev-hooks worktree-per-agent workflow) — never tracked
 /.worktrees/
+# and the agent harness's own worktrees, which were kept untracked only by
+# .git/info/exclude — per-clone, so a fresh checkout saw gigabytes as untracked
+.claude/worktrees/
 
 # subagent-driven-development scratch (ledger, briefs, review packages)
 /.superpowers/

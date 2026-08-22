@@ -19,28 +19,26 @@ import {
   loadingStoreActions,
 } from "@/store/loadingStore";
 import type { LoadingState } from "./decoder";
-import type { ActivePadBehavior, PlaybackType } from "@/lib/db";
+import type { PadPlaybackSettings } from "@/lib/db";
 
-/** Everything about the pad that decides what is played and how loudly. */
-export interface TriggerablePad {
+/**
+ * Everything about the pad that decides what is played and how loudly, plus
+ * where on the grid it sits.
+ *
+ * The playback half is `PadPlaybackSettings` itself rather than a copy of its
+ * members, and `triggerPad` forwards it with a spread rather than naming the
+ * fields one at a time. Both halves of that matter, and the second is the one
+ * that bites: every caller builds its argument by spreading
+ * `extractPadPlaybackSettings(pad)` into an object literal, and TypeScript
+ * exempts spread-in properties from excess-property checking — so a field this
+ * interface failed to declare, or one an enumeration failed to copy, went
+ * missing with no compiler error at either point. That is exactly how
+ * `activePadBehavior` came to reach the engine from three paths and not the
+ * fourth. Extending the type is what makes the first omission impossible;
+ * spreading the value is what makes the second one impossible.
+ */
+export interface TriggerablePad extends PadPlaybackSettings {
   padIndex: number;
-  audioFileIds: number[];
-  playbackType: PlaybackType;
-  name?: string;
-  audioTrimSettings?: Record<number, { trimStart: number; trimEnd: number }>;
-  audioGainSettings?: Record<number, number>;
-  padGainDb?: number;
-  isDisabled?: boolean;
-  /**
-   * The pad's own override of the profile's activePadBehavior. Undefined means
-   * follow the profile — see `resolveActivePadBehavior`.
-   *
-   * Every field on this interface is hand-enumerated into the call below, and
-   * both call sites build the object by spreading `extractPadPlaybackSettings`
-   * — which TypeScript exempts from excess-property checking. So a field
-   * missing from *either* place is dropped in silence, with no compiler error.
-   */
-  activePadBehavior?: ActivePadBehavior;
 }
 
 /** Where the pad lives, which is what the loading key is built from. */
@@ -96,17 +94,12 @@ export async function triggerPad(
 
   try {
     await triggerAudioForPadInstant({
-      padIndex: pad.padIndex,
-      audioFileIds: pad.audioFileIds,
-      playbackType: pad.playbackType,
+      // Spread, never enumerated — see `TriggerablePad`. The context and the
+      // callbacks are written after it so they win over anything a caller
+      // happens to carry under the same name.
+      ...pad,
       activeProfileId,
       currentBankId,
-      name: pad.name,
-      audioTrimSettings: pad.audioTrimSettings,
-      audioGainSettings: pad.audioGainSettings,
-      padGainDb: pad.padGainDb,
-      isDisabled: pad.isDisabled,
-      activePadBehavior: pad.activePadBehavior,
       onInstantFeedback: options.onInstantFeedback,
       onLoadingStateChange: (state: LoadingState) => {
         loadingStoreActions.setPadLoadingState(loadingKey, state);

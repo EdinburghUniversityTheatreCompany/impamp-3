@@ -16,6 +16,7 @@ import {
   collectReferencedAudioFileIds,
   ensureAudioFileHash,
   getDb,
+  settleAudioImports,
 } from "./db";
 import type { AudioFile, PadConfiguration } from "./db";
 import { remapAudioFileIdKeys } from "./importExport";
@@ -215,8 +216,10 @@ function mergeAudioMetadata(
  * the preview and the confirmation, never on one click.
  *
  * One transaction over both stores, so no pad can start to name a row between
- * the decision and the delete. Four things happen inside it, in this order,
- * and the order is the safety story:
+ * the decision and the delete — and, before it opens, a wait on
+ * `settleAudioImports`, because an import that is between its audio write and
+ * its pad write has a row in hand that no pad names yet. Four things happen
+ * inside the transaction, in this order, and the order is the safety story:
  *
  * 1. Every `canonicalId` is re-read. `groups` was produced before a dialog the
  *    user may have sat on, and a survivor that has since been deleted — a pad
@@ -254,6 +257,20 @@ export async function collapseDuplicateAudioGroups(
   if (groups.length === 0) return nothing;
 
   const db = await getDb();
+
+  // Nothing here may run while an import is attaching its audio, and this has
+  // to be the last thing before the transaction opens — see
+  // `settleAudioImports`. An import does not have to *create* a row to be hurt
+  // by this: `addOrReuseAudioFile` hands out the lowest id holding the hash
+  // while the election below prefers the analysed one, so a reusing import is
+  // routinely holding a row this pass is about to delete, and it writes the
+  // pad naming it moments later. That leaves a pad naming nothing, which no
+  // later pass can tell from a sound the user removed on purpose.
+  //
+  // An import that registers *after* the line below is safe without waiting:
+  // its audio write serialises behind this readwrite scope, so it cannot land
+  // in the middle of one.
+  await settleAudioImports();
   const tx = db.transaction(["audioFiles", "padConfigurations"], "readwrite");
   const audioStore = tx.objectStore("audioFiles");
   const padStore = tx.objectStore("padConfigurations");

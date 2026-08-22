@@ -61,6 +61,7 @@ export function mockAudioStack(options: AudioStackMockOptions = {}): void {
   vi.doMock("@/lib/audio/cache", () => ({
     getCachedAudioBuffer: vi.fn(() => null),
     clearCachedAudioBuffer: vi.fn(),
+    invalidateCachedAudioBuffer: vi.fn(),
   }));
   vi.doMock("@/lib/audio/context", () => ({
     resumeAudioContext: vi.fn(),

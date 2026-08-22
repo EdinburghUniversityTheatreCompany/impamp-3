@@ -98,38 +98,6 @@ export const checkAndRefreshAuth = async (
 };
 
 /**
- * Formats an authentication error message
- * @param error The error object or message
- * @returns A user-friendly error message
- */
-export const formatAuthError = (error: unknown): string => {
-  if (error instanceof Error) {
-    return `Authentication error: ${error.message}`;
-  }
-  if (typeof error === "string") {
-    return `Authentication error: ${error}`;
-  }
-  return "An unknown authentication error occurred";
-};
-
-/**
- * Handles a 401 Unauthorized response by checking if token refresh is needed
- * @param status The HTTP status code
- * @param tokenInfo The current token information
- * @returns Boolean indicating whether a refresh attempt should be made
- */
-export const shouldAttemptTokenRefresh = (
-  status: number,
-  tokenInfo: TokenInfo | null,
-): boolean => {
-  // Only attempt refresh if we have a 401 status and a refresh token
-  if (status !== 401) return false;
-  if (!tokenInfo?.refreshToken) return false;
-
-  return true;
-};
-
-/**
  * The one refresh in flight, whoever asked for it, and the newest token it
  * produced.
  *

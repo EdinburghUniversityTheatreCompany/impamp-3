@@ -2,11 +2,12 @@
 /**
  * What a search result carries off the pad it found.
  *
- * `SearchResult` is a hand-built projection of `PadConfiguration` rather than
- * a `PadPlaybackSettings`, and the modal then rebuilds a trigger payload and
- * an armed cue out of it by hand again. So a pad field that the projection
- * forgets is gone by the time the modal sees it, and every one of those three
- * literals is free to omit an optional field without a compiler error.
+ * `SearchResult` was a hand-built projection of `PadConfiguration` rather than
+ * a `PadPlaybackSettings`, and the modal rebuilt a trigger payload and an
+ * armed cue out of it by hand again — three literals, none of them tied to
+ * each other by any compiler check, so a pad field the projection forgot was
+ * gone by the time the modal saw it. All three now embed the one type and
+ * spread the one funnel, and these cases are what say so from the outside.
  *
  * `SearchModal.test.tsx` covers the two consuming literals. This covers the
  * projection they consume.
@@ -22,7 +23,12 @@ const mocks = vi.hoisted(() => ({
   getAudioFileMetadata: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
+// The real module underneath: `useSearch` builds its results through
+// `extractPadPlaybackSettings`, and a mock listing only the two reads would
+// leave that undefined — which fails as an empty result list rather than as
+// the incomplete mock it is.
+vi.mock("@/lib/db", async () => ({
+  ...(await vi.importActual<typeof import("@/lib/db")>("@/lib/db")),
   getAllPageMetadataForProfile: mocks.getAllPageMetadataForProfile,
   getAudioFileMetadata: mocks.getAudioFileMetadata,
 }));

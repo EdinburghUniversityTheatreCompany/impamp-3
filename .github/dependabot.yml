@@ -35,8 +35,6 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: eslint
         update-types: [version-update:semver-major]
-      - dependency-name: file-selector
-        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /

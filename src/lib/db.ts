@@ -773,6 +773,47 @@ export async function getAudioFile(id: number): Promise<AudioFile | undefined> {
   return db.get("audioFiles", id);
 }
 
+/**
+ * Whole audio rows, bytes included, for the given ids in one transaction.
+ *
+ * The blob-carrying sibling of `getAudioFileMetadata`, for the callers that
+ * genuinely need the bytes — the archive writers. The alternative is
+ * `for (const id of ids) await getAudioFile(id)`, and since `getAudioFile` is
+ * a bare `db.get`, that is one transaction per sound: a full board of 400 is
+ * 400 of them before the ZIP is started, multiplied again by the number of
+ * profiles in a multi-profile export.
+ *
+ * Every `get` is issued before the first `await`, which is what keeps them
+ * inside one transaction — IndexedDB commits as soon as the event loop turns
+ * with no request outstanding, so awaiting them one at a time would silently
+ * give the per-row behaviour back under a batched-looking API.
+ *
+ * A cursor would be the other shape, and is the wrong one here: it walks rows
+ * the caller did not ask for, and `cursor.value` on this store materialises an
+ * audio Blob per step. `getAudioFileMetadata` can afford that because it never
+ * touches `.blob`; a reader that wants the bytes cannot.
+ *
+ * @param audioFileIds - Which rows to read; order is not preserved
+ * @returns A map from audio file id to its row, omitting ids not found
+ */
+export async function getAudioFilesByIds(
+  audioFileIds: Iterable<number>,
+): Promise<Map<number, AudioFile>> {
+  const wanted = [...new Set(audioFileIds)];
+  const found = new Map<number, AudioFile>();
+  if (wanted.length === 0) return found;
+
+  const db = await getDb();
+  const store = db.transaction("audioFiles", "readonly").store;
+  const rows = await Promise.all(wanted.map((id) => store.get(id)));
+
+  wanted.forEach((id, i) => {
+    const row = rows[i];
+    if (row) found.set(id, row);
+  });
+  return found;
+}
+
 /** Stores a loudness analysis against an audio file. */
 export async function updateAudioFileLoudness(
   id: number,
@@ -904,19 +945,6 @@ export async function deleteAudioFile(id: number): Promise<void> {
   console.log(`Deleted audio file with id: ${id}`);
 }
 
-// Get an audio file by name (returns first match)
-
-// Get an audio file by content hash (returns first match)
-export async function getAudioFileByHash(
-  hash: string,
-): Promise<AudioFile | undefined> {
-  const db = await getDb();
-  const tx = db.transaction("audioFiles", "readonly");
-  const results = await tx.store.index("hash").getAll(hash);
-  await tx.done;
-  return results[0];
-}
-
 /**
  * The one answer to "does a row already hold these bytes?".
  *
@@ -1008,6 +1036,14 @@ export async function addOrReuseAudioFile(
  * hosted-audio downloader, differing only in a temporary variable — which is
  * why the duplication gate never saw them.
  *
+ * It comes back empty when nothing in the library predates hashing, without
+ * reading a single record. Every caller reaches it only after
+ * `createStoredHashIndex` missed, and when every row already carries a stored
+ * hash that miss is already the whole answer: no local row holds those bytes.
+ * Without the check, the common case — a reference to a sound this device has
+ * never had — read and materialised every blob in the library to rediscover
+ * hashes the store was holding all along, on every sync pass that named one.
+ *
  * @returns A getter that builds the index on first call and reuses it after
  */
 export function createHashlessAudioIndex(): () => Promise<Map<string, number>> {
@@ -1017,9 +1053,18 @@ export function createHashlessAudioIndex(): () => Promise<Map<string, number>> {
     if (index) return index;
     const built = new Map<string, number>();
     const db = await getDb();
-    for (const localId of await db.getAllKeys("audioFiles")) {
-      const computed = await ensureAudioFileHash(localId);
-      if (computed) built.set(computed, localId);
+    // IndexedDB leaves a record out of an index when its key is undefined, so
+    // the `hash` index counts exactly the rows that carry one. Two counts,
+    // no records read.
+    const [rows, hashed] = await Promise.all([
+      db.count("audioFiles"),
+      db.countFromIndex("audioFiles", "hash"),
+    ]);
+    if (rows > hashed) {
+      for (const localId of await db.getAllKeys("audioFiles")) {
+        const computed = await ensureAudioFileHash(localId);
+        if (computed) built.set(computed, localId);
+      }
     }
     index = built;
     return index;
@@ -1258,8 +1303,8 @@ export async function deleteUnreferencedAudioFiles(
  * to delete. A cleanup landing in that window took sounds out from under an
  * import that then wrote pads naming files that were already gone.
  *
- * So an import declares itself here (`withAudioImportInProgress`) and the two
- * orphan sweeps wait for it to finish before they look. That is a guarantee
+ * So an import declares itself here (`withAudioImportInProgress`) and every
+ * deleter waits for it to finish before it looks. That is a guarantee
  * rather than a guess: no timer, nothing to tune, and no dependence on how
  * long the import takes. The alternatives do not survive contact with the
  * code. A grace period on recently-created audio cannot work at all —
@@ -1311,8 +1356,20 @@ export function withAudioImportInProgress<T>(
  * sweep's overlapping readwrite scope, so the sweep never sees the new
  * records at all — but one that registers in a turn between the two would be
  * missed.
+ *
+ * **Exported because the rule is repo-wide, not db.ts-wide.** Anything that
+ * deletes audio rows it did not itself create has to call this immediately
+ * before opening its transaction. It was private, and the one such deleter
+ * written outside this file — `collapseDuplicateAudioGroups` — shipped
+ * without the guard because there was no way to reach it. Being unreachable
+ * is not the same as being unnecessary.
+ *
+ * `deleteUnreferencedAudioFiles` is the deliberate exception: it only ever
+ * considers ids its own caller just created, so an unrelated import's rows
+ * are not in range and waiting for one would only make a failed import
+ * slower to clean up after.
  */
-async function settleAudioImports(): Promise<void> {
+export async function settleAudioImports(): Promise<void> {
   while (audioImportsInFlight.size > 0) {
     await Promise.all([...audioImportsInFlight]);
   }

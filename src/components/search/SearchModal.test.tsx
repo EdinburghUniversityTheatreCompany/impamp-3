@@ -2,12 +2,14 @@
 /**
  * What the search modal hands the trigger and the armed queue.
  *
- * Clicking a result plays it; the arm chord queues it. Both build their
- * payload by hand out of a `SearchResult` — a `TriggerablePad` in one case, an
- * `ArmedTrackState` in the other — so every playback field the pad carries has
- * to be named twice more here, in two literals that no compiler check ties to
- * each other or to `SearchResult`. Omitting an optional field from either is
- * silently legal.
+ * Clicking a result plays it; the arm chord queues it. Both used to build
+ * their payload by hand out of a `SearchResult` — a `TriggerablePad` in one
+ * case, an `ArmedTrackState` in the other — so every playback field the pad
+ * carries was named twice more here, in two literals that no compiler check
+ * tied to each other or to `SearchResult`, and omitting an optional field
+ * from either was silently legal. Both now spread
+ * `extractPadPlaybackSettings(result)`; these cases assert from the outside
+ * that the fields still arrive.
  *
  * The pad's own `activePadBehavior` override is the newest such field, and
  * this is the only gate that can tell whether the search path carries it.
@@ -139,5 +141,137 @@ describe("arming a search result", () => {
       "activePadBehavior",
       undefined,
     );
+  });
+});
+
+/**
+ * The keyboard route from Ctrl+F to a cue.
+ *
+ * The arm chord lived only on the result `<button>`, and the input keeps
+ * focus after typing — so arming meant typing, tabbing past whatever lay
+ * between, then holding the chord. Plain Enter in the input did nothing at
+ * all, because nothing activated the first result. During a show the fastest
+ * path has to be type, Enter or chord-Enter, and no Tab anywhere in it.
+ */
+describe("activating the first result from the input", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Opens the modal over `results` and returns the input the modal itself
+   * focused — not one this test focused for it, which would assume away half
+   * of what is being claimed.
+   */
+  function focusedInput(results: SearchResult[]): HTMLInputElement {
+    mocks.results = results;
+    act(() => {
+      root.render(<SearchModal isOpen onClose={() => {}} />);
+    });
+    // The modal focuses the input on a 100 ms timer.
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-testid="search-input"]',
+    );
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    return input!;
+  }
+
+  /** Presses Enter on the element, with or without the arm chord. */
+  function pressEnter(
+    on: HTMLElement,
+    chord: { ctrlKey?: boolean; metaKey?: boolean } = {},
+  ): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      ...chord,
+    });
+    act(() => {
+      on.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("plays the first result on a plain Enter", () => {
+    const input = focusedInput([
+      searchResult({ name: "Horn" }),
+      searchResult({ name: "Stab", padIndex: 4 }),
+    ]);
+
+    pressEnter(input);
+
+    expect(mocks.triggerPad).toHaveBeenCalledTimes(1);
+    expect(mocks.triggerPad.mock.calls[0][0]).toMatchObject({ padIndex: 3 });
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+  });
+
+  it("arms the first result on Ctrl+Enter, and on Cmd+Enter", () => {
+    // Both, because macOS claims Ctrl+click as the secondary click, so the
+    // chord is read through `hasArmModifier` rather than `ctrlKey`. A handler
+    // testing `ctrlKey` directly passes the first half of this and fails the
+    // second.
+    pressEnter(focusedInput([searchResult()]), { ctrlKey: true });
+    expect(mocks.armTrack).toHaveBeenCalledTimes(1);
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+
+    act(() => root.render(<SearchModal isOpen={false} onClose={() => {}} />));
+    pressEnter(focusedInput([searchResult()]), { metaKey: true });
+    expect(mocks.armTrack).toHaveBeenCalledTimes(2);
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+  });
+
+  it("claims the key it acted on, so no global shortcut acts on it too", () => {
+    // `useKeyboardListener` returns early on `defaultPrevented` — that is the
+    // whole of "a global shortcut must not act on a key something nearer the
+    // target already claimed". Without it Enter would both activate a result
+    // and fire an emergency cue.
+    const event = pressEnter(focusedInput([searchResult()]));
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("leaves Enter alone when there is no result to activate", () => {
+    // The other side of the same rule: claiming a key it did nothing with
+    // would swallow the emergency cue whenever the search box was open and
+    // empty.
+    const event = pressEnter(focusedInput([]));
+
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("refuses a disabled first result the way a click on it would", () => {
+    const event = pressEnter(
+      focusedInput([searchResult({ isDisabled: true })]),
+    );
+
+    expect(mocks.triggerPad).not.toHaveBeenCalled();
+    expect(mocks.armTrack).not.toHaveBeenCalled();
+    // Still claimed: the modal consumed the press, it simply had nothing to do
+    // with it.
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("says so in the results header, in the platform's own words", () => {
+    focusedInput([searchResult()]);
+
+    const hint = container.querySelector(
+      '[data-testid="search-activation-hint"]',
+    );
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain("Enter");
+    // Not an Apple platform under jsdom, so the label is the Ctrl one.
+    expect(hint!.textContent).toContain("Ctrl+Enter");
   });
 });

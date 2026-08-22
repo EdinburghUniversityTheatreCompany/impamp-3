@@ -335,6 +335,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
         id="playbackType"
         label="Playback Mode"
         error={errors.playbackType}
+        labelsGroup
       >
         <RadioGroup
           id="playbackType"
@@ -356,6 +357,7 @@ const EditPadForm: React.FC<EditPadFormProps> = ({
         id="activePadBehavior"
         label="When already playing"
         error={errors.activePadBehavior as string}
+        labelsGroup
       >
         <RadioGroup
           id="activePadBehavior"

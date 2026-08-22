@@ -104,10 +104,10 @@ export default defineConfig({
       // (60%)", which also shows the other three are genuinely under the run
       // rather than merely unenforced.
       thresholds: {
-        statements: 58,
-        branches: 49,
-        functions: 55,
-        lines: 59,
+        statements: 60,
+        branches: 52,
+        functions: 57,
+        lines: 61,
       },
     },
   },

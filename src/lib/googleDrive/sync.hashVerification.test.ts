@@ -20,6 +20,7 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
 
 const downloadAudioFileAsBlob = vi.fn();
 
@@ -27,6 +28,12 @@ vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return { ...actual, downloadAudioFileAsBlob };
 });
+
+// Writing an audio row fires a background analysis that reaches Web Audio,
+// which node does not have. Its rejection is logged after this file has
+// finished, and that log is what tears the worker down mid-run under
+// coverage. See loudnessPipelineStub.ts.
+stubLoudnessPipeline();
 
 const { downloadMissingAudioFiles } = await import("./sync");
 const { getDb, computeBlobHash } = await import("@/lib/db");

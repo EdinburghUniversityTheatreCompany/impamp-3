@@ -18,6 +18,13 @@
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { beforeEach, describe, expect, it } from "vitest";
 import { addAudioFiles as addAudio } from "@/lib/testSupport/audioFixtures";
+import { stubLoudnessPipeline } from "@/lib/testSupport/loudnessPipelineStub";
+
+// Writing an audio row fires a background analysis that reaches Web Audio,
+// which node does not have. Its rejection is logged after this file has
+// finished, and that log is what tears the worker down mid-run under
+// coverage. See loudnessPipelineStub.ts.
+stubLoudnessPipeline();
 
 const { updateLocalData } = await import("./dataAccess");
 const { getDb } = await import("@/lib/db");

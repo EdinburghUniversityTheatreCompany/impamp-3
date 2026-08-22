@@ -2,11 +2,12 @@
  * "Do I already have these bytes?", asked once for a whole sync pass.
  *
  * Both audio downloaders open a sync pass by working out which of the remote's
- * references this device already holds, and both asked per reference with
- * `getAudioFileByHash` — one IndexedDB transaction each. A shared board of a
- * few hundred sounds is therefore a few hundred transactions before a single
- * byte is fetched, on every pass, including the overwhelmingly common one that
- * finds nothing to do. A sync makes up to six such passes.
+ * references this device already holds, and both used to ask that once per
+ * reference, through a helper that opened its own read transaction on the
+ * `hash` index. A shared board of a few hundred sounds is therefore a few
+ * hundred transactions before a single byte is fetched, on every pass,
+ * including the overwhelmingly common one that finds nothing to do. A sync
+ * makes up to six such passes.
  *
  * The question does not change during a pass, so neither should the answer:
  * one cursor over `audioFiles` builds the whole map.
@@ -26,7 +27,7 @@
  * records would pull the entire audio library into memory at once.
  */
 
-import { getDb } from "@/lib/db";
+import { getAudioFile, getDb } from "@/lib/db";
 
 /** As much of a local audio file as deciding "already have it" needs. */
 export interface LocalAudioRef {
@@ -83,4 +84,52 @@ export function createStoredHashIndex(): StoredHashIndex {
       (await get()).set(hash, ref);
     },
   };
+}
+
+/**
+ * The local row holding these exact bytes, hashing the pre-hashing rows if it
+ * comes to that.
+ *
+ * The one question every inbound sync path asks, and the one answer they must
+ * all give. Identity is the SHA-256 of the bytes and nothing else — the same
+ * rule `addOrReuseAudioFile` and `importAudioSources` keep. A file *name* looks
+ * like an identity and is not: `horn.wav` from one library and `horn.wav` from
+ * another are two recordings, and merging them onto one row makes every pad on
+ * both sides play whichever arrived first, with nothing left to compare against
+ * afterwards. So a reference with no hash matches nothing. A missing hash must
+ * mean "no match", never "any match".
+ *
+ * The second lookup is what keeps that affordable for a library written before
+ * hashing: those rows are hashed once, from their own bytes, rather than
+ * matched on their names. `createHashlessAudioIndex` costs nothing when there
+ * are none.
+ *
+ * @param hash - The content hash the remote reference carries, if any
+ * @param stored - This pass's index of what the store already has hashes for
+ * @param getHashlessIndex - This pass's lazy index of what it does not
+ * @returns The local row holding these bytes, or undefined
+ */
+export async function lookupLocalAudioByHash(
+  hash: string | undefined,
+  stored: StoredHashIndex,
+  getHashlessIndex: () => Promise<Map<string, number>>,
+): Promise<LocalAudioRef | undefined> {
+  if (!hash) return undefined;
+
+  const byStoredHash = await stored.lookup(hash);
+  if (byStoredHash) return byStoredHash;
+
+  const legacyId = (await getHashlessIndex()).get(hash);
+  if (legacyId === undefined) return undefined;
+
+  // The index knows only the id, and the caller needs to know whether this
+  // profile has already published these bytes.
+  const record = await getAudioFile(legacyId);
+  if (record?.id === undefined) return undefined;
+
+  const found = { id: record.id, driveFileIds: record.driveFileIds };
+  // It carries a stored hash now — `ensureAudioFileHash` wrote one as the
+  // index was built — so the cheap index can answer for it from here on.
+  await stored.remember(hash, found);
+  return found;
 }

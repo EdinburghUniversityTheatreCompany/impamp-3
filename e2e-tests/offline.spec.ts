@@ -168,6 +168,59 @@ test.describe("Offline operation", () => {
     ).toBeVisible();
   });
 
+  test("a share link's token never becomes a cache key", async ({
+    page,
+    context,
+  }) => {
+    // The whole credential in a server share link is its `token` parameter.
+    // Keyed on the full URL, opening one wrote that token into a Cache Storage
+    // key that outlived the visit — evicted only when the next build changed
+    // `?build=` and `activate` swept the old caches. Cache Storage is not
+    // where a credential belongs, and no document this app serves varies with
+    // its query anyway.
+    const token = "sw-cache-key-probe-token";
+
+    await gotoApp(page);
+    await waitForServiceWorkerControl(page);
+
+    // A real navigation through the worker. It fails to connect — there is no
+    // such share — but the *document* is fetched and cached, which is the part
+    // under test.
+    await page.goto(`/server/open?id=42&token=${token}`);
+    await expect(
+      page.getByRole("heading", { name: "Shared profile" }),
+    ).toBeVisible();
+
+    const cachedUrls = await page.evaluate(async () => {
+      const names = await caches.keys();
+      const urls: string[] = [];
+      for (const name of names) {
+        const cache = await caches.open(name);
+        for (const request of await cache.keys()) urls.push(request.url);
+      }
+      return urls;
+    });
+
+    // The guard against a vacuous pass: the document was cached, just not
+    // under a key carrying the token.
+    expect(
+      cachedUrls.map((url) => new URL(url).pathname),
+      "the navigated document should be cached under its bare path",
+    ).toContain("/server/open");
+    expect(cachedUrls.filter((url) => url.includes(token))).toEqual([]);
+    expect(cachedUrls.filter((url) => url.includes("?"))).toEqual([]);
+
+    // And the key the write used is the key the offline read looks for — a
+    // mismatch between the two has no symptom at all while the network is up.
+    await goOffline(page, context);
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Shared profile" }),
+    ).toBeVisible();
+
+    await context.setOffline(false);
+  });
+
   test("nothing under /api is ever cached, and offline it fails honestly", async ({
     page,
     context,
