@@ -2,11 +2,12 @@
  * "Do I already have these bytes?", asked once for a whole sync pass.
  *
  * Both audio downloaders open a sync pass by working out which of the remote's
- * references this device already holds, and both asked per reference with
- * `getAudioFileByHash` — one IndexedDB transaction each. A shared board of a
- * few hundred sounds is therefore a few hundred transactions before a single
- * byte is fetched, on every pass, including the overwhelmingly common one that
- * finds nothing to do. A sync makes up to six such passes.
+ * references this device already holds, and both used to ask that once per
+ * reference, through a helper that opened its own read transaction on the
+ * `hash` index. A shared board of a few hundred sounds is therefore a few
+ * hundred transactions before a single byte is fetched, on every pass,
+ * including the overwhelmingly common one that finds nothing to do. A sync
+ * makes up to six such passes.
  *
  * The question does not change during a pass, so neither should the answer:
  * one cursor over `audioFiles` builds the whole map.

@@ -18,13 +18,6 @@ export type Syncable = (Profile | PadConfiguration | PageMetadata) & {
 };
 
 /**
- * Generates a consistent timestamp (milliseconds since epoch) for synchronization.
- */
-export const generateTimestamp = (): number => {
-  return Date.now();
-};
-
-/**
  * Deep clone an object using JSON stringify/parse.
  * Note: This will lose Date objects, functions, undefined values. Use cautiously.
  * Consider a library like lodash.cloneDeep for more robust cloning if needed.
