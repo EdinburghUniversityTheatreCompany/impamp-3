@@ -81,20 +81,6 @@ when there is no custom name.
 
 Noticed while implementing Task 13 (bank identity components).
 
-## The `audioFiles` `name` index has no readers left
-
-`db.ts` creates it (`audioStore.createIndex("name", "name")`, DB v1) and
-nothing looks anything up in it any more: the Drive reader's name fallback was
-the last reader, and it is gone. The only surviving `index("name")` in the
-codebase is on `profiles`, where import uses it to make a unique profile name.
-
-It costs an index write per audio row and, more to the point, it is a loaded
-gun — the shape of "match a sound by its name" is one lookup away for as long
-as the index exists. Removing it needs a schema version bump and a migration,
-which is why it was not done alongside the fallback.
-
-Noticed while making the Drive reader identify audio by content hash only.
-
 ## The duplicate-audio panel names no sounds
 
 `DuplicateAudioPanel` reports a group count, a copy count and a byte total,
