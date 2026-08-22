@@ -169,17 +169,17 @@ export default function Home() {
 
   return (
     <main
-      className={`flex min-h-screen flex-col items-center p-8 pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? "edit-mode" : ""}`}
+      className={`flex min-h-dvh flex-col items-center p-8 pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? "edit-mode" : ""}`}
     >
       {/* Mode indicators */}
       {isEditMode && (
-        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-1 z-50">
+        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center pb-1 pt-safe z-50">
           <span className="font-bold">EDIT MODE</span>{" "}
           <span className="text-sm">(Release SHIFT to exit)</span>
         </div>
       )}
       {isDeleteMoveMode && (
-        <div className="fixed top-0 left-0 right-0 bg-red-500 text-white text-center py-1 z-50">
+        <div className="fixed top-0 left-0 right-0 bg-red-500 text-white text-center pb-1 pt-safe z-50">
           <span className="font-bold">DELETE AND MOVE MODE</span>{" "}
           <span className="text-sm">(Click the button again to exit)</span>
         </div>
@@ -192,7 +192,7 @@ export default function Home() {
       {readOnlyReason && (
         <div
           data-testid="read-only-banner"
-          className="fixed top-0 right-0 left-0 z-50 bg-slate-600 py-1 text-center text-white"
+          className="fixed top-0 right-0 left-0 z-50 bg-slate-600 pb-1 pt-safe text-center text-white"
         >
           <span className="font-bold">VIEW ONLY</span>{" "}
           <span className="text-sm">{readOnlyReason}</span>

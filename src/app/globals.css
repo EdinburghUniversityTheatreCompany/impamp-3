@@ -93,3 +93,26 @@ body {
   outline: 2px solid rgba(239, 68, 68, 0.5);
   outline-offset: 2px;
 }
+
+/**
+ * Safe-area padding, which Tailwind 4 does not ship and this app needs.
+ *
+ * `pb-safe` was already on both track panels and emitted no CSS whatsoever:
+ * there is no `tailwind.config.*` here and nothing defined it, so it was a
+ * class name doing nothing. Verified by compiling it — the utility produced
+ * zero rules.
+ *
+ * `pt-safe` matters because `layout.tsx` declares
+ * `appleWebApp.statusBarStyle: "black-translucent"`, which runs the page under
+ * the iOS status bar. Without it the fixed mode banners sit beneath the notch.
+ *
+ * `max()` rather than the bare inset, so both are no-ops on every device
+ * reporting zero — which is all of them outside a notched phone in a PWA.
+ */
+@utility pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+@utility pt-safe {
+  padding-top: max(0.25rem, env(safe-area-inset-top));
+}
