@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getAudioObject,
-  hashIsUsedByReachableProfile,
+  deletingHashWouldSilenceAProfile,
   releaseReference,
   storageKeyForHash,
   userHoldsReference,
@@ -68,9 +68,10 @@ export async function DELETE(
   // Letting go of the last reference deletes the bytes, and nothing used to
   // ask whether a board still played them: an owner tidying their library
   // could make their own live profile 404 on the sound it was still using.
-  // Scoped to boards this caller can reach — a stranger naming your hash in a
-  // profile of their own must not be able to pin your storage forever.
-  if (hashIsUsedByReachableProfile(hash, hosting.user.id, hosting.user.email)) {
+  // Asked of the boards this caller's reference actually serves — a stranger
+  // naming your hash in a profile of their own, or inviting you to one, must
+  // not be able to pin your storage forever.
+  if (deletingHashWouldSilenceAProfile(hosting.user.id, hash)) {
     return NextResponse.json(
       {
         error:

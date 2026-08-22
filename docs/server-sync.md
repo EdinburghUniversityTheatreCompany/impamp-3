@@ -169,6 +169,17 @@ Link tokens are bearer credentials scoped to a single profile: a token minted
 for profile A does nothing on profile B, and revoking one link leaves other
 links working.
 
+**An email invite is unilateral, and cannot be declined.** The row is written
+on the inviter's say-so — any address, no acceptance step, no notification —
+and only the profile's owner can remove it. So a share grants access _to_
+someone and is never evidence _about_ them: nothing they hold, and nothing
+they can reach, may be read as consent. Two hosted-audio rules turn on that
+distinction and say so in place (`profileMayServeHash`,
+`deletingHashWouldSilenceAProfile`), because both were bypasses when they
+trusted the share table. What remains is cosmetic rather than dangerous: a
+profile you were invited to appears in your list until its owner removes the
+invitation. Share acceptance is the proper fix and is not built.
+
 ### Identity
 
 Users are keyed on the Google `sub`, which is stable across email changes.

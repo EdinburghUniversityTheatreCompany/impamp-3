@@ -229,29 +229,41 @@ export function storageKeyForHash(
 }
 
 /**
- * Whether a profile *this user can reach* still names this sound.
+ * Whether dropping this user's reference would silence a board that plays it.
  *
  * Deleting from a library used to drop the bucket object the moment the last
  * *reference* went, without asking whether a board still played it — so an
  * owner tidying their library could make their own live profile 404.
  *
- * Scoped to the holder's own profiles and the ones shared with their email
- * address, because the unscoped version was a denial of service. profile_audio
- * is rebuilt from whatever a writer puts in `data`, and any signed-in account
- * may create a profile naming any hash, so a stranger could permanently freeze
- * someone else's storage allowance and stop them deleting their own file — with
- * no way for the victim to see who had done it, the squatting profile being
- * invisible to them. A third party's board is not a board this caller is about
- * to silence.
+ * The question is asked from the other end now: not "does some profile name
+ * this sound", but "is this caller's reference what serves it". Those are the
+ * same two facts `profileMayServeHash` decides a download on — a profile can
+ * play a sound when its owner holds a reference to it, or when whoever
+ * attached it does — so the two functions agree by construction, and a delete
+ * can only be refused when it would really take a pad away.
  *
- * Link shares are deliberately not counted: holding a link grants access to one
- * profile, not membership of it, and there is no way to enumerate them for a
- * user anyway (see listProfilesForUser).
+ * The scope used to be "profiles you own or have been shared", and that was a
+ * denial of service with an extra step. `profile_audio` is rebuilt from
+ * whatever a writer puts in `data`, any signed-in account may create a profile
+ * naming any hash, and `upsertEmailShare` writes an invitation for any address
+ * on the inviter's say-so with no acceptance step and no notification. So a
+ * stranger could name your hash in a board of their own, invite you to it, and
+ * pin your file and its share of your allowance permanently — in a profile you
+ * never asked for, cannot see listed as the cause, and cannot make them
+ * delete. Ownership and `added_by` are both facts about the past that nobody
+ * else can write on your behalf, which is what makes them safe to read here.
+ *
+ * The `NOT EXISTS` is the fail-open half: when somebody else who could serve
+ * that board still holds the bytes — the owner's own copy of a sound their
+ * collaborator also uploaded — this reference is not load-bearing and there is
+ * nothing to protect by refusing.
+ *
+ * Link shares are deliberately not counted, and never were: holding a link
+ * grants access to one profile, not membership of it.
  */
-export function hashIsUsedByReachableProfile(
-  hash: string,
+export function deletingHashWouldSilenceAProfile(
   userId: number,
-  email: string,
+  hash: string,
 ): boolean {
   return (
     queryOne<{ one: number }>(
@@ -259,17 +271,19 @@ export function hashIsUsedByReachableProfile(
          FROM profile_audio pa
          JOIN profiles p ON p.id = pa.profile_id
         WHERE pa.hash = ?
-          AND (
-            p.owner_id = ?
-            OR EXISTS (
-              SELECT 1 FROM profile_shares s
-               WHERE s.profile_id = p.id AND s.email = ?
-            )
+          AND (p.owner_id = ? OR pa.added_by = ?)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM audio_references r
+             WHERE r.hash = pa.hash
+               AND r.user_id <> ?
+               AND (r.user_id = p.owner_id OR r.user_id = pa.added_by)
           )
         LIMIT 1`,
       hash,
       userId,
-      email,
+      userId,
+      userId,
     ) !== undefined
   );
 }
