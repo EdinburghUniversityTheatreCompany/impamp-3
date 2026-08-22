@@ -498,6 +498,23 @@ and the ranges are floors that should move only when something requires it.
   the import cannot exist, because IndexedDB commits as soon as the event loop
   turns with no request outstanding and the importer awaits a network download
   between writes. The register is in memory, so it is one tab wide
+- **A rule with two sides is only fixed when both sides are swept.** This is
+  the repo's third named regression shape, alongside "the same rule written
+  twice" and "a fix took the data and left the guard", and on 2026-08-22 it
+  produced every red finding of a review in one day — twice with the second
+  bug made reachable by the fix immediately before it. The instances:
+  `settleAudioImports` was given to all five _deleters_ and no _writer_, so
+  three sites still wrote audio and its pad in two transactions undeclared;
+  `reindexProfileAudio` protected rows that _survive_ a write and not the
+  delete-and-reinsert path, so an owner's two ordinary saves re-attributed a
+  collaborator's sound to themselves permanently; and the uncommitted-object
+  sweep gained a scan cap without a continuation token, so it could never look
+  past the first 1000 keys. Each fix was verified against its own headline
+  claim and each was incomplete. **When you fix one side of a rule, name the
+  other side out loud and check it before you claim the fix** — "deleters
+  wait" implies "writers declare", "rows that stay are protected" implies
+  "rows that leave and return", "scan a bounded number" implies "resume where
+  you stopped"
 - **A missing or empty hash must mean "no match", never "any match".**
   `index.getAll(key)` returns **every row in the store** when `key` is
   `undefined` — and also when it is an object, measured rather than assumed:

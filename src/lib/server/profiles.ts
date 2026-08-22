@@ -157,7 +157,7 @@ function reindexProfileAudio(
       if (writerId !== null && rowNeedsAdder(profileId, hash)) {
         if (userHoldsReference(writerId, hash)) {
           execute(
-            "UPDATE profile_audio SET added_by = ? WHERE profile_id = ? AND hash = ? AND added_by IS NULL",
+            "UPDATE profile_audio SET added_by = ? WHERE profile_id = ? AND hash = ?",
             writerId,
             profileId,
             hash,
@@ -166,20 +166,46 @@ function reindexProfileAudio(
       }
       continue;
     }
+    // Never record an adder who does not hold the bytes. `added_by` is
+    // evidence that somebody entitled to this sound put it here, so a writer
+    // who merely *names* a hash records nothing: the row goes in NULL, which
+    // is unservable-but-repairable, rather than unservable and unrepairable.
+    //
+    // The protection above only covers rows that SURVIVE a write. A hash
+    // absent from one save is deleted, and the next save naming it again
+    // inserts a fresh row — so two ordinary saves by an owner, one without the
+    // sound and one with it back, re-attributed a collaborator's sound to the
+    // owner. Who holds no reference to it: 404 on their own board, and the 409
+    // protecting the holder's bytes flipped to "safe to delete".
     execute(
       "INSERT OR IGNORE INTO profile_audio (profile_id, hash, added_by) VALUES (?, ?, ?)",
       profileId,
       hash,
-      writerId,
+      writerId !== null && userHoldsReference(writerId, hash) ? writerId : null,
     );
   }
 }
 
-/** Whether this profile's row for the sound still records no adder. */
+/**
+ * Whether this profile's row records nobody who can actually serve the sound.
+ *
+ * "No adder recorded" is not the question. A row can also name someone who no
+ * longer holds the bytes — a collaborator who deleted their copy — and that is
+ * equally unservable. The security argument for repairing either rests
+ * entirely on the *writer* holding them; the old value plays no part in it.
+ * Gating on `added_by IS NULL` is what made a stale attribution permanent.
+ */
 function rowNeedsAdder(profileId: string, hash: string): boolean {
   return (
     queryOne<{ one: number }>(
-      "SELECT 1 AS one FROM profile_audio WHERE profile_id = ? AND hash = ? AND added_by IS NULL",
+      `SELECT 1 AS one
+         FROM profile_audio pa
+        WHERE pa.profile_id = ?
+          AND pa.hash = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM audio_references r
+             WHERE r.hash = pa.hash AND r.user_id = pa.added_by
+          )`,
       profileId,
       hash,
     ) !== undefined
