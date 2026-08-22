@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, execute, getDb } from "./db";
 import { upsertUserFromGoogle } from "./users";
-import { createProfile } from "./profiles";
+import { createProfile, updateProfile } from "./profiles";
 import { upsertEmailShare } from "./shares";
 import { profileMayServeHash } from "./audio";
 
@@ -100,6 +100,68 @@ describe("profileMayServeHash and unilateral invites", () => {
       HASH,
     );
     upsertEmailShare(profile.id, "helper@example.com", "editor", owner.id);
+
+    expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(false);
+  });
+
+  it("repairs a row with no recorded adder when its holder next saves", () => {
+    // How legacy rows recover. Migration 2 backfilled `profile_audio` from
+    // existing blobs before migration 3 added `added_by`, so those rows record
+    // no act by anyone and cannot be served. They cannot be repaired by
+    // guessing — but the holder saving the board IS the missing act, so the
+    // write records it. An attacker cannot trigger this: the repair happens
+    // only for a writer who actually holds the sound.
+    const owner = user("sub-owner-3", "owner3@example.com");
+    const helper = user("sub-helper-3", "helper3@example.com");
+    giveReference(helper.id);
+
+    const profile = createProfile({
+      ownerId: owner.id,
+      name: "Board",
+      data: { audioFiles: [{ hash: HASH }] },
+    } as never);
+    execute(
+      "UPDATE profile_audio SET added_by = NULL WHERE profile_id = ? AND hash = ?",
+      profile.id,
+      HASH,
+    );
+    expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(false);
+
+    updateProfile(profile.id, {
+      name: "Board",
+      data: { audioFiles: [{ hash: HASH }] },
+      expectedVersion: 1,
+      writerId: helper.id,
+    });
+
+    expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(true);
+  });
+
+  it("does not repair the row for a writer who does not hold the sound", () => {
+    // The same write, by someone who does not hold the bytes, must leave the
+    // column alone — otherwise the repair is the bypass again, with an extra
+    // step.
+    const owner = user("sub-owner-4", "owner4@example.com");
+    const helper = user("sub-helper-4", "helper4@example.com");
+    giveReference(helper.id);
+
+    const profile = createProfile({
+      ownerId: owner.id,
+      name: "Board",
+      data: { audioFiles: [{ hash: HASH }] },
+    } as never);
+    execute(
+      "UPDATE profile_audio SET added_by = NULL WHERE profile_id = ? AND hash = ?",
+      profile.id,
+      HASH,
+    );
+
+    updateProfile(profile.id, {
+      name: "Board",
+      data: { audioFiles: [{ hash: HASH }] },
+      expectedVersion: 1,
+      writerId: owner.id,
+    });
 
     expect(profileMayServeHash(profile.id, owner.id, HASH)).toBe(false);
   });

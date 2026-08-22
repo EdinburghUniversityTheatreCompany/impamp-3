@@ -15,6 +15,7 @@ import {
   transaction,
   type ProfileRow,
 } from "./db";
+import { userHoldsReference } from "./audio";
 
 export interface CreateProfileInput {
   ownerId: number;
@@ -113,7 +114,33 @@ function reindexProfileAudio(
   // (a pad moved, a bank renamed, the same sounds). The read that decides is
   // the one above, which had to happen anyway.
   for (const hash of wanted) {
-    if (existing.has(hash)) continue;
+    if (existing.has(hash)) {
+      // A row that records nobody cannot be served at all — `added_by` is the
+      // only evidence that a holder of these bytes put them here, and
+      // `profileMayServeHash` has no other way to say yes. Two kinds of row
+      // are in that state: what migration 2 backfilled before migration 3
+      // added the column, and anything published through an anonymous link
+      // share, which records no writer because an anonymous writer has no
+      // account and therefore cannot hold a reference to anything.
+      //
+      // This write is the missing act. A writer who holds the sound is, by
+      // saving a board that names it, doing exactly what `added_by` records —
+      // so the row is repaired and the board recovers. Guarded on the writer
+      // actually holding it, which is what stops this being the bypass again
+      // with an extra step: someone naming a hash they do not hold repairs
+      // nothing.
+      if (writerId !== null && rowNeedsAdder(profileId, hash)) {
+        if (userHoldsReference(writerId, hash)) {
+          execute(
+            "UPDATE profile_audio SET added_by = ? WHERE profile_id = ? AND hash = ? AND added_by IS NULL",
+            writerId,
+            profileId,
+            hash,
+          );
+        }
+      }
+      continue;
+    }
     execute(
       "INSERT OR IGNORE INTO profile_audio (profile_id, hash, added_by) VALUES (?, ?, ?)",
       profileId,
@@ -121,6 +148,17 @@ function reindexProfileAudio(
       writerId,
     );
   }
+}
+
+/** Whether this profile's row for the sound still records no adder. */
+function rowNeedsAdder(profileId: string, hash: string): boolean {
+  return (
+    queryOne<{ one: number }>(
+      "SELECT 1 AS one FROM profile_audio WHERE profile_id = ? AND hash = ? AND added_by IS NULL",
+      profileId,
+      hash,
+    ) !== undefined
+  );
 }
 
 /**
