@@ -1388,17 +1388,47 @@ const audioImportsInFlight = new Set<Promise<void>>();
 export async function withAudioImportInProgress<T>(
   run: () => Promise<T>,
 ): Promise<T> {
+  const release = beginAudioImport();
+  try {
+    return await run();
+  } finally {
+    release();
+  }
+}
+
+/**
+ * The same declaration, for a writer whose two halves are not one call.
+ *
+ * The pad editor is the case this exists for: it writes a sound's row the
+ * moment the file is picked — the list and the trimmer both read it back by
+ * id, so it has to exist before it can be shown — and the pad naming it only
+ * on Save, which may be minutes later and is a different event entirely. There
+ * is no callback to wrap, so the scope has to be opened and closed by hand.
+ *
+ * Two rules come with that, and neither has a compiler behind it. The release
+ * must run on **every** exit, or every audio deleter in the tab waits for ever
+ * — which is why the one caller releases from an unmount cleanup, the single
+ * path both saving and dismissing take. And it must run **before** any deleter
+ * the same caller then starts: `settleAudioImports` waits for every registered
+ * import and nothing tells it which one its caller is holding, so a deleter
+ * called while this hold is open waits for the hold that is waiting for it.
+ * The release is synchronous and idempotent so that ordering is expressible.
+ *
+ * @returns The release, which may safely be called more than once
+ */
+export function beginAudioImport(): () => void {
   let finish!: () => void;
   const settled = new Promise<void>((resolve) => {
     finish = resolve;
   });
   audioImportsInFlight.add(settled);
-  try {
-    return await run();
-  } finally {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
     audioImportsInFlight.delete(settled);
     finish();
-  }
+  };
 }
 
 /**
