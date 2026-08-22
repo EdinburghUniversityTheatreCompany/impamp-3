@@ -263,6 +263,41 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX audio_pending_created_idx ON audio_pending_uploads(created_at);
   `,
+  `
+  -- Attribution has to outlive the row it is stored on.
+  --
+  -- \`profile_audio\` is rebuilt from whatever a save names, so a hash absent
+  -- from one save is DELETEd and a later save naming it again INSERTs a fresh
+  -- row. \`added_by\` is only recorded for a writer who actually holds the
+  -- bytes, so two ordinary saves by an owner -- one without a collaborator's
+  -- sound, one with it back -- left the row NULL. That is unservable by
+  -- design, but it is also invisible to \`deletingHashWouldSilenceAProfile\`,
+  -- whose whole job is to refuse the holder's delete while a board still plays
+  -- the sound. So the window did not merely fail closed and self-heal: the
+  -- holder was told their bytes were safe to delete, and once deleted the
+  -- "a holder next saves" repair can never fire.
+  --
+  -- This table is the fact the rebuild kept throwing away: who, holding these
+  -- bytes, put this hash on this profile. It is written only when that was
+  -- witnessed, never from a caller's say-so, so it cannot be manufactured by
+  -- naming someone else's hash -- the same property that makes \`added_by\`
+  -- safe to read. It is not deleted when the sound leaves the board, only when
+  -- the profile or the user goes.
+  CREATE TABLE profile_audio_adders (
+    profile_id TEXT    NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    hash       TEXT    NOT NULL,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (profile_id, hash)
+  );
+
+  -- Every attribution the deployed database still holds. Rows already NULL are
+  -- migration 2's backfill and anonymous link-share writes, which record no
+  -- act by anyone and so have nothing to carry forward.
+  INSERT OR IGNORE INTO profile_audio_adders (profile_id, hash, user_id)
+       SELECT profile_id, hash, added_by
+         FROM profile_audio
+        WHERE added_by IS NOT NULL;
+  `,
 ];
 
 let db: DatabaseSync | null = null;

@@ -162,6 +162,7 @@ function reindexProfileAudio(
             profileId,
             hash,
           );
+          rememberAdder(profileId, hash, writerId);
         }
       }
       continue;
@@ -177,13 +178,66 @@ function reindexProfileAudio(
     // sound and one with it back, re-attributed a collaborator's sound to the
     // owner. Who holds no reference to it: 404 on their own board, and the 409
     // protecting the holder's bytes flipped to "safe to delete".
+    //
+    // Which is why the attribution is kept somewhere the rebuild does not
+    // reach. A witnessed adder is recorded there and read back here, so the
+    // round trip no longer loses it — and the row therefore stays visible to
+    // `deletingHashWouldSilenceAProfile`, which is the half of the window that
+    // does not self-heal: told their bytes were safe to delete, the holder
+    // deletes them, and the "a holder next saves" repair can never fire.
+    const witnessed =
+      writerId !== null && userHoldsReference(writerId, hash) ? writerId : null;
+    if (witnessed !== null) rememberAdder(profileId, hash, witnessed);
+
     execute(
       "INSERT OR IGNORE INTO profile_audio (profile_id, hash, added_by) VALUES (?, ?, ?)",
       profileId,
       hash,
-      writerId !== null && userHoldsReference(writerId, hash) ? writerId : null,
+      witnessed ?? rememberedAdder(profileId, hash),
     );
   }
+}
+
+/**
+ * Record that this user, holding these bytes, put this hash on this profile.
+ *
+ * Written only where that was witnessed — a writer who holds a reference —
+ * never from a caller's say-so, which is the same property that makes
+ * `added_by` safe to read. Naming someone else's hash records nothing.
+ *
+ * Last witness wins. Keeping the first would strand a board whose original
+ * contributor has since deleted their copy, even after somebody who does hold
+ * the bytes re-adds them.
+ */
+function rememberAdder(profileId: string, hash: string, userId: number): void {
+  execute(
+    `INSERT INTO profile_audio_adders (profile_id, hash, user_id)
+     VALUES (?, ?, ?)
+     ON CONFLICT(profile_id, hash) DO UPDATE SET user_id = excluded.user_id`,
+    profileId,
+    hash,
+    userId,
+  );
+}
+
+/**
+ * Who was last witnessed attaching this hash to this profile, if anyone.
+ *
+ * The row survives the sound leaving the board, so this answers across the
+ * delete-and-reinsert that `reindexProfileAudio` performs on every save.
+ * Whether that person can still serve it is a separate question and stays
+ * where it was: `profileMayServeHash` joins `audio_references`, so an adder
+ * who has since deleted their copy yields false and `rowNeedsAdder` lets the
+ * next real holder take over.
+ */
+function rememberedAdder(profileId: string, hash: string): number | null {
+  return (
+    queryOne<{ user_id: number }>(
+      "SELECT user_id FROM profile_audio_adders WHERE profile_id = ? AND hash = ?",
+      profileId,
+      hash,
+    )?.user_id ?? null
+  );
 }
 
 /**
