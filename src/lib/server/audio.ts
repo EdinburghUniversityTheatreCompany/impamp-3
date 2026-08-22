@@ -128,6 +128,48 @@ export function getAudioObject(hash: string): AudioObjectRow | undefined {
   );
 }
 
+/**
+ * Which of `hashes` have an `audio_objects` row, in one query.
+ *
+ * The sweep asks this of a whole page of bucket keys at a time. Asking per
+ * object would be a synchronous SQLite round trip per key on the thread that
+ * serves requests, which is what kept the sweep's per-pass budget small enough
+ * to be useless.
+ *
+ * A range rather than an `IN` list because `db.ts` caches prepared statements
+ * by their SQL text and documents every string in the codebase as a literal;
+ * an `IN` with a placeholder per hash would put one entry per page size in
+ * that cache. The range costs nothing extra: a bucket key is
+ * `audio/<first two hex of the hash>/<hash>`, so a page of keys — contiguous
+ * in the bucket's own lexicographic order — is a contiguous range of hashes,
+ * and the rows between the lowest and the highest are that page and its
+ * neighbours' near misses, not the whole table.
+ *
+ * @returns The subset of `hashes` that is committed. Empty in, empty out —
+ *   never "everything".
+ */
+export function committedHashesAmong(hashes: string[]): Set<string> {
+  if (hashes.length === 0) return new Set();
+
+  let lowest = hashes[0];
+  let highest = hashes[0];
+  for (const hash of hashes) {
+    if (hash < lowest) lowest = hash;
+    if (hash > highest) highest = hash;
+  }
+
+  const wanted = new Set(hashes);
+  const rows = queryAll<{ hash: string }>(
+    "SELECT hash FROM audio_objects WHERE hash >= ? AND hash <= ?",
+    lowest,
+    highest,
+  );
+
+  return new Set(
+    rows.map((row) => row.hash).filter((hash) => wanted.has(hash)),
+  );
+}
+
 export function userHoldsReference(userId: number, hash: string): boolean {
   return (
     queryOne<{ one: number }>(

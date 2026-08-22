@@ -18,7 +18,7 @@
  * Server-only.
  */
 
-import { getAudioObject, prunePendingUploads } from "./audio";
+import { committedHashesAmong, prunePendingUploads } from "./audio";
 import type { AudioHostingConfig } from "./s3/config";
 import type { ObjectStore } from "./s3/client";
 
@@ -35,19 +35,62 @@ const AUDIO_PREFIX = "audio/";
  */
 const EXTRA_GRACE_MS = 60 * 60 * 1000;
 
-/** Objects considered per pass, so one sweep cannot become a long request. */
-const MAX_SCANNED_PER_SWEEP = 1000;
+/**
+ * What one pass may cost.
+ *
+ * A parameter rather than three constants because the traversal is the part
+ * worth testing and no test can build ten thousand objects. `sweepIfDue` and
+ * the schedule both use `SWEEP_LIMITS`; nothing in production passes anything
+ * else.
+ */
+export interface SweepLimits {
+  /**
+   * Objects examined per pass.
+   *
+   * Committed objects count against this, and there is no way round that: an
+   * object cannot be told from an orphan without looking it up. What makes
+   * the budget mean something is the other two halves of this module — the
+   * cursor, so each pass spends the budget on keys the last pass did not
+   * reach, and the batched lookup below, so the per-object cost is a set
+   * membership test rather than a synchronous SQLite query. Ten thousand is
+   * ten list round trips and ten queries.
+   */
+  maxScanned: number;
+  /** Keys asked of the bucket per list request. S3 caps this at 1000. */
+  listPageSize: number;
+  /** Deletes attempted per pass. The next sweep picks up whatever is left. */
+  maxRemoved: number;
+}
 
-/** Deletes attempted per pass. The next sweep picks up whatever is left. */
-const MAX_REMOVED_PER_SWEEP = 100;
+export const SWEEP_LIMITS: SweepLimits = {
+  maxScanned: 10_000,
+  listPageSize: 1000,
+  maxRemoved: 100,
+};
 
-/** How often a sweep is worth running at all. */
+/** How often a sweep is worth running when there is nothing left to walk. */
 export const MIN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * How soon a pass that stopped mid-bucket may be followed by the next.
+ *
+ * A pass that ran out of budget knows there is more bucket behind its cursor.
+ * Waiting the full hour would then walk a large library at one pass an hour —
+ * 200k objects is most of a day just to look at every key once — while the
+ * bytes being looked for are billed for ninety days whether anyone finds them
+ * or not.
+ */
+export const RESUME_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface SweepResult {
   scanned: number;
   removed: number;
-  /** True when the pass stopped at a cap rather than at the end of the bucket. */
+  /**
+   * True when the pass stopped at a cap with listing left, so the next one
+   * resumes from its cursor rather than starting over.
+   *
+   * Read by `sweepIfDue`, which brings the next pass forward when it is set.
+   */
   truncated: boolean;
 }
 
@@ -65,7 +108,34 @@ function hashForKey(key: string): string | null {
 }
 
 /**
+ * Where the next pass starts, or null for the top of the listing.
+ *
+ * Module scope, beside `nextSweepAt`, because this is the whole of the fix to
+ * a sweep that could never see past its own scan cap: the token was a local,
+ * so every pass began again at the first key in the bucket and stopped in the
+ * same place. On a deployment holding more objects than the cap, that made the
+ * sweep unable to reach anything — measured at 1200 committed objects plus one
+ * ten-day-old orphan sorting last: three consecutive passes each reported
+ * `scanned: 1000, removed: 0` while the same object in an empty bucket was
+ * removed at once.
+ *
+ * A plain key rather than a continuation token on purpose. A token is opaque
+ * and means something only inside the listing that produced it; this one has
+ * to survive an hour of ordinary traffic between passes.
+ *
+ * In memory, so it restarts at the top after a deploy. That is the safe
+ * direction to be wrong in: the cost is re-examining keys, and a full circuit
+ * happens anyway.
+ */
+let resumeAfterKey: string | null = null;
+
+/**
  * Remove uncommitted objects older than the grace period.
+ *
+ * Bounded work, resumed across passes, rather than one long walk: this app is
+ * a single instance whose event loop serves every request, and `node:sqlite`
+ * is synchronous, so a sweep that read a whole large bucket in one go would
+ * hold the process for as long as it took.
  *
  * @returns What the pass looked at and what it removed
  */
@@ -73,10 +143,12 @@ export async function sweepUncommittedObjects({
   store,
   config,
   now = Date.now(),
+  limits = SWEEP_LIMITS,
 }: {
   store: ObjectStore;
   config: AudioHostingConfig;
   now?: number;
+  limits?: SweepLimits;
 }): Promise<SweepResult> {
   const graceMs = config.uploadUrlTtlSeconds * 1000 + EXTRA_GRACE_MS;
 
@@ -86,49 +158,79 @@ export async function sweepUncommittedObjects({
   // covers whoever does not.
   prunePendingUploads(now - config.uploadUrlTtlSeconds * 1000);
 
+  const startAfter = resumeAfterKey ?? undefined;
+  let continuationToken: string | undefined;
   let scanned = 0;
   let removed = 0;
-  let truncated = false;
-  let continuationToken: string | undefined;
+  let lastKey: string | null = null;
 
-  do {
+  /** Record where the next pass should pick up, and report this one. */
+  const stopAt = (key: string | null): SweepResult => {
+    resumeAfterKey = key;
+    return { scanned, removed, truncated: key !== null };
+  };
+
+  for (;;) {
+    const budget = limits.maxScanned - scanned;
+    if (budget <= 0) return stopAt(lastKey);
+
     const page = await store.list({
       prefix: AUDIO_PREFIX,
-      continuationToken,
-      maxKeys: MAX_SCANNED_PER_SWEEP - scanned,
+      // One or the other, never both: within a pass the bucket's own token is
+      // what continues the listing, and across passes only a plain key still
+      // names a position. S3 ignores `start-after` when a token is present.
+      ...(continuationToken ? { continuationToken } : { startAfter }),
+      maxKeys: Math.min(limits.listPageSize, budget),
     });
+
+    // Aged objects whose key is one of ours, key -> hash. Anything newer than
+    // the grace period, or not shaped like a key we mint, never reaches the
+    // database.
+    const candidates = new Map<string, string>();
+    for (const object of page.objects) {
+      if (now - object.lastModifiedMs < graceMs) continue;
+      const hash = hashForKey(object.key);
+      if (hash) candidates.set(object.key, hash);
+    }
+
+    // One query for the page rather than one per object. `node:sqlite` is
+    // synchronous and this runs on the thread serving requests, so a thousand
+    // round trips per page is a thousand chances to be the reason a request
+    // waited.
+    const committed = committedHashesAmong([...candidates.values()]);
 
     for (const object of page.objects) {
       scanned++;
+      lastKey = object.key;
 
-      if (now - object.lastModifiedMs < graceMs) continue;
-
-      const hash = hashForKey(object.key);
-      if (!hash || getAudioObject(hash)) continue;
+      const hash = candidates.get(object.key);
+      if (!hash || committed.has(hash)) continue;
 
       await store.remove(object.key);
       removed++;
-      if (removed >= MAX_REMOVED_PER_SWEEP) {
-        return { scanned, removed, truncated: true };
-      }
+      // Same as the scan cap, and it used to leave with nothing recorded: the
+      // next pass then re-examined everything in front of whatever it had just
+      // deleted.
+      if (removed >= limits.maxRemoved) return stopAt(object.key);
     }
 
-    continuationToken = page.nextContinuationToken ?? undefined;
-    if (continuationToken && scanned >= MAX_SCANNED_PER_SWEEP) {
-      truncated = true;
-      break;
-    }
-  } while (continuationToken);
+    if (!page.nextContinuationToken) break;
+    continuationToken = page.nextContinuationToken;
+  }
 
-  return { scanned, removed, truncated };
+  // The end of the listing, so the next pass starts at the top again — the
+  // only way an object uploaded in front of the cursor is ever looked at.
+  return stopAt(null);
 }
 
-let lastSweepAt = 0;
+/** The earliest a sweep may next run. */
+let nextSweepAt = 0;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Forget when the last sweep ran, and stop the timer. Tests only. */
+/** Forget the schedule and the cursor, and stop the timer. Tests only. */
 export function resetSweepScheduleForTests(): void {
-  lastSweepAt = 0;
+  nextSweepAt = 0;
+  resumeAfterKey = null;
   if (sweepTimer) clearInterval(sweepTimer);
   sweepTimer = null;
 }
@@ -151,8 +253,14 @@ export function sweepIsScheduledForTests(): boolean {
  * A plain interval is the whole of the coordination needed: this app is
  * documented and deployed as a single instance. `unref` so it can never be the
  * reason the process stays alive, and the admin page keeps its own
- * `sweepIfDue` — both share the same "not more than hourly" throttle, so the
- * two cannot double up.
+ * `sweepIfDue` — both go through the same throttle, so the two cannot double
+ * up.
+ *
+ * The tick is the resume interval rather than the hourly one because
+ * `sweepIfDue` is what decides how long to wait: an idle deployment still
+ * sweeps at most hourly, and one whose last pass stopped mid-bucket gets its
+ * next pass five minutes later instead of in an hour. Ticking hourly would put
+ * that decision out of reach.
  */
 export function ensureSweepScheduled(hosting: {
   store: ObjectStore;
@@ -164,7 +272,7 @@ export function ensureSweepScheduled(hosting: {
     // Not awaited by anyone, and `sweepIfDue` swallows storage failures, so an
     // unreachable bucket cannot become an unhandled rejection.
     void sweepIfDue(hosting);
-  }, MIN_SWEEP_INTERVAL_MS);
+  }, RESUME_SWEEP_INTERVAL_MS);
 
   sweepTimer.unref?.();
 }
@@ -172,22 +280,31 @@ export function ensureSweepScheduled(hosting: {
 /**
  * Run a sweep if one is due, swallowing storage failures.
  *
- * Hung off the admin audio page rather than a timer, so it runs when somebody
- * is already looking at storage and never on an idle instance. A bucket that
- * is unreachable must not take that page down with it, so a failure is logged
- * and reported as `null`.
+ * Called both by the timer above and by the admin audio page, so it runs when
+ * somebody is already looking at storage as well as when nobody is. A bucket
+ * that is unreachable must not take that page down with it, so a failure is
+ * logged and reported as `null`.
+ *
+ * How long until the next one is the pass's own answer: an hour when it walked
+ * the listing to the end, `RESUME_SWEEP_INTERVAL_MS` when it stopped at a cap
+ * with a cursor pointing at the rest. That is what `truncated` is for.
  *
  * @returns The sweep's result, or null if one was not due or it failed
  */
 export async function sweepIfDue(
   hosting: { store: ObjectStore; config: AudioHostingConfig },
   now = Date.now(),
+  limits: SweepLimits = SWEEP_LIMITS,
 ): Promise<SweepResult | null> {
-  if (now - lastSweepAt < MIN_SWEEP_INTERVAL_MS) return null;
-  lastSweepAt = now;
+  if (now < nextSweepAt) return null;
+  // Claimed before the first await, so two overlapping callers cannot both
+  // sweep and a throw still leaves the hour's throttle in place.
+  nextSweepAt = now + MIN_SWEEP_INTERVAL_MS;
 
   try {
-    return await sweepUncommittedObjects({ ...hosting, now });
+    const result = await sweepUncommittedObjects({ ...hosting, now, limits });
+    if (result.truncated) nextSweepAt = now + RESUME_SWEEP_INTERVAL_MS;
+    return result;
   } catch (error) {
     console.error("Sweeping uncommitted audio objects failed:", error);
     return null;

@@ -27,11 +27,7 @@
  */
 
 import { createServer } from "node:http";
-
-const port = Number(process.argv[2] ?? process.env.E2E_S3_PORT ?? 3199);
-
-/** key -> { body: Buffer, contentType: string, lastModified: Date } */
-const objects = new Map();
+import { pathToFileURL } from "node:url";
 
 /** Wide open on purpose: a real bucket needs a CORS rule for the same reason. */
 function cors(response) {
@@ -64,13 +60,24 @@ function escapeXml(value) {
   );
 }
 
-function listObjectsV2(url) {
+/**
+ * ListObjectsV2, including both ways of resuming a listing.
+ *
+ * `continuation-token` is the opaque one S3 hands back mid-listing, modelled
+ * here as the first key of the next page — so it is inclusive. `start-after`
+ * is the documented plain-key one, exclusive, and the only resume point that
+ * still means something an hour later. S3 ignores `start-after` when a
+ * continuation token is present, so this does too.
+ */
+function listObjectsV2(objects, url) {
   const prefix = url.searchParams.get("prefix") ?? "";
   const maxKeys = Number(url.searchParams.get("max-keys") ?? 1000);
   const after = url.searchParams.get("continuation-token");
+  const startAfter = url.searchParams.get("start-after");
 
   let keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort();
   if (after) keys = keys.filter((key) => key >= after);
+  else if (startAfter) keys = keys.filter((key) => key > startAfter);
 
   const page = keys.slice(0, maxKeys);
   const truncated = keys.length > maxKeys;
@@ -91,110 +98,132 @@ function listObjectsV2(url) {
   }</ListBucketResult>`;
 }
 
-const server = createServer(async (request, response) => {
-  const url = new URL(request.url, `http://localhost:${port}`);
-  cors(response);
+/**
+ * A bucket of its own, so a caller can run one per test without a port
+ * collision or objects left over from the last one.
+ *
+ * @returns An unstarted `http.Server`; the caller listens on whichever port
+ *   suits it.
+ */
+export function createFakeS3Server() {
+  /** key -> { body: Buffer, contentType: string, lastModified: Date } */
+  const objects = new Map();
 
-  if (request.method === "OPTIONS") {
-    response.writeHead(204).end();
-    return;
-  }
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://localhost`);
+    cors(response);
 
-  if (url.pathname === "/healthz") {
-    response.writeHead(200, { "Content-Type": "text/plain" }).end("ok");
-    return;
-  }
-
-  // /<bucket>/<key…>. The bucket name is not checked: this server serves
-  // exactly one deployment's worth of objects and has nothing else to confuse
-  // it with.
-  const [, , ...rest] = url.pathname.split("/");
-  const key = decodeURIComponent(rest.join("/"));
-
-  if (request.method === "GET" && url.searchParams.get("list-type") === "2") {
-    const xml = listObjectsV2(url);
-    response
-      .writeHead(200, { "Content-Type": "application/xml" })
-      .end(Buffer.from(xml));
-    return;
-  }
-
-  if (request.method === "PUT") {
-    const body = await readBody(request);
-    objects.set(key, {
-      body,
-      contentType:
-        request.headers["content-type"] ?? "application/octet-stream",
-      lastModified: new Date(),
-    });
-    response.writeHead(200, { ETag: `"${body.byteLength}"` }).end();
-    return;
-  }
-
-  if (request.method === "DELETE") {
-    objects.delete(key);
-    response.writeHead(204).end();
-    return;
-  }
-
-  const object = objects.get(key);
-  if (!object) {
-    response
-      .writeHead(404, { "Content-Type": "application/xml" })
-      .end("<Error><Code>NoSuchKey</Code></Error>");
-    return;
-  }
-
-  // `response-content-type` is how the download URL pins what the object is
-  // served as, whatever the uploader's PUT claimed. Honouring it here is what
-  // makes that a testable promise rather than a signed query parameter nobody
-  // reads.
-  const contentType =
-    url.searchParams.get("response-content-type") ?? object.contentType;
-  const disposition = url.searchParams.get("response-content-disposition");
-
-  if (request.method === "HEAD") {
-    const headers = {
-      "Content-Type": contentType,
-      "Content-Length": String(object.body.byteLength),
-      "Last-Modified": object.lastModified.toUTCString(),
-    };
-    if (disposition) headers["Content-Disposition"] = disposition;
-    response.writeHead(200, headers).end();
-    return;
-  }
-
-  if (request.method === "GET") {
-    const headers = { "Content-Type": contentType };
-    if (disposition) headers["Content-Disposition"] = disposition;
-
-    const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
-    if (range) {
-      const start = Number(range[1]);
-      const end = range[2] ? Number(range[2]) : object.body.byteLength - 1;
-      const slice = object.body.subarray(start, end + 1);
-      response
-        .writeHead(206, {
-          ...headers,
-          "Content-Length": String(slice.byteLength),
-          "Content-Range": `bytes ${start}-${end}/${object.body.byteLength}`,
-        })
-        .end(slice);
+    if (request.method === "OPTIONS") {
+      response.writeHead(204).end();
       return;
     }
 
-    response
-      .writeHead(200, {
-        ...headers,
+    if (url.pathname === "/healthz") {
+      response.writeHead(200, { "Content-Type": "text/plain" }).end("ok");
+      return;
+    }
+
+    // /<bucket>/<key…>. The bucket name is not checked: this server serves
+    // exactly one deployment's worth of objects and has nothing else to confuse
+    // it with.
+    const [, , ...rest] = url.pathname.split("/");
+    const key = decodeURIComponent(rest.join("/"));
+
+    if (request.method === "GET" && url.searchParams.get("list-type") === "2") {
+      const xml = listObjectsV2(objects, url);
+      response
+        .writeHead(200, { "Content-Type": "application/xml" })
+        .end(Buffer.from(xml));
+      return;
+    }
+
+    if (request.method === "PUT") {
+      const body = await readBody(request);
+      objects.set(key, {
+        body,
+        contentType:
+          request.headers["content-type"] ?? "application/octet-stream",
+        lastModified: new Date(),
+      });
+      response.writeHead(200, { ETag: `"${body.byteLength}"` }).end();
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      objects.delete(key);
+      response.writeHead(204).end();
+      return;
+    }
+
+    const object = objects.get(key);
+    if (!object) {
+      response
+        .writeHead(404, { "Content-Type": "application/xml" })
+        .end("<Error><Code>NoSuchKey</Code></Error>");
+      return;
+    }
+
+    // `response-content-type` is how the download URL pins what the object is
+    // served as, whatever the uploader's PUT claimed. Honouring it here is what
+    // makes that a testable promise rather than a signed query parameter nobody
+    // reads.
+    const contentType =
+      url.searchParams.get("response-content-type") ?? object.contentType;
+    const disposition = url.searchParams.get("response-content-disposition");
+
+    if (request.method === "HEAD") {
+      const headers = {
+        "Content-Type": contentType,
         "Content-Length": String(object.body.byteLength),
-      })
-      .end(object.body);
-    return;
-  }
+        "Last-Modified": object.lastModified.toUTCString(),
+      };
+      if (disposition) headers["Content-Disposition"] = disposition;
+      response.writeHead(200, headers).end();
+      return;
+    }
 
-  response.writeHead(405).end();
-});
+    if (request.method === "GET") {
+      const headers = { "Content-Type": contentType };
+      if (disposition) headers["Content-Disposition"] = disposition;
 
-server.listen(port, () => {
-  console.log(`fake S3 listening on ${port}`);
-});
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
+      if (range) {
+        const start = Number(range[1]);
+        const end = range[2] ? Number(range[2]) : object.body.byteLength - 1;
+        const slice = object.body.subarray(start, end + 1);
+        response
+          .writeHead(206, {
+            ...headers,
+            "Content-Length": String(slice.byteLength),
+            "Content-Range": `bytes ${start}-${end}/${object.body.byteLength}`,
+          })
+          .end(slice);
+        return;
+      }
+
+      response
+        .writeHead(200, {
+          ...headers,
+          "Content-Length": String(object.body.byteLength),
+        })
+        .end(object.body);
+      return;
+    }
+
+    response.writeHead(405).end();
+  });
+
+  return server;
+}
+
+// Run as a server when invoked directly, which is how playwright.config.ts
+// starts it; imported, it is just the factory above.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const port = Number(process.argv[2] ?? process.env.E2E_S3_PORT ?? 3199);
+  createFakeS3Server().listen(port, () => {
+    console.log(`fake S3 listening on ${port}`);
+  });
+}

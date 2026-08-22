@@ -63,20 +63,48 @@ Two things this does **not** do. It does not bound what a PUT actually writes
 — the presign signs only `host`, so the declared size is a claim, and commit
 measuring the object in the bucket is what settles the real number. And it does
 not bound bytes uploaded under a lie: an object PUT for a hash that is never
-committed is removed by the sweep below rather than accounted for.
+committed is removed by the sweep below rather than accounted for, so the
+bucket holds those bytes until a pass reaches them.
 
 ### The sweep
 
 Objects that were PUT and never committed are unreachable in every other
 sense: no `audio_objects` row means no quota counts them, the admin view sums
 that table so it cannot show them, and no API can delete them — while Wasabi
-bills its 90-day minimum for each. So a sweep removes them, an hour after the
-upload URL that could have written them expired.
+bills its 90-day minimum for each. So a sweep removes them. An object becomes
+eligible an hour after the upload URL that could have written it expired; that
+is when it becomes eligible, not when it goes, because the sweep has to reach
+it first.
 
-It runs **hourly, on a timer**, started by the first hosted-audio request the
-process serves; the admin storage page also triggers one, and both share the
-same "not more than hourly" throttle. It used to hang off the admin page
-alone, which made the only recovery depend on somebody opening a page.
+It runs on a timer, started by the first hosted-audio request the process
+serves; the admin storage page also triggers one, and both go through the same
+throttle. It used to hang off the admin page alone, which made the only
+recovery depend on somebody opening a page.
+
+**One pass does bounded work and the next continues from it.** A pass lists
+the bucket a page at a time, examines at most 10,000 objects and deletes at
+most 100, then records the key it stopped at; the next pass starts after that
+key, and a pass that reaches the end of the listing clears the cursor so the
+one after it starts at the top again. Committed objects are examined too — an
+object cannot be told from an orphan without looking it up — so the budget is
+spent on whatever the bucket holds, not on orphans alone.
+
+Bounded on purpose: the app is a single instance whose event loop serves every
+request, and its database driver is synchronous, so a pass that read a large
+bucket in one go would hold the process for as long as it took. The cursor is
+what makes the bound safe. Without one, every pass restarts at the first key,
+stops in the same place, and nothing sorting behind the cap is ever reachable —
+which is what this did until 2026-08-22, measurably: 1200 committed objects
+plus one ten-day-old orphan sorting last gave three consecutive passes of
+`scanned: 1000, removed: 0`.
+
+**How long a full circuit takes.** A pass that stopped at a cap knows there is
+more behind its cursor, and the next one follows five minutes later rather than
+in an hour; when there is nothing left to walk it goes back to hourly. So a
+bucket of 200,000 objects is looked at end to end in about a hundred minutes of
+five-minute passes, and an idle deployment sweeps once an hour and finds
+nothing. The cursor is in memory, so a restart begins again at the top of the
+listing — harmless, since a circuit happens anyway.
 
 **Deleting frees the user's allowance immediately.** Wasabi bills a 90-day
 minimum retention per object regardless, so the deployment absorbs a residual
