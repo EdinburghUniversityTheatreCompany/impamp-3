@@ -118,12 +118,35 @@ the reload it triggers rebuilt the list from the truncated ids, so nothing on
 screen admitted it. Ten e2e workers writing 5 MB WAVs to one disk is what
 stretched the read far enough to see it.
 
-### Still open, deliberately
+### Phase 8's findings, all closed
 
-- 🟡 The attribution residual is wider than the fix's comment claims: inside the
-  NULL window the holder's own delete is allowed, and orphans the object.
-- 🟢 `sweepIfDue`'s overlap guard has no test, and the pad-editor hold's stated
-  reason is false (the behaviour is right, the comment is not).
+Four were still open when phase 8 was first called done, and one of those —
+the tour opening over share links — had not been fixed at all despite the
+table saying otherwise.
+
+- **The sweep decided per hash, not per key.** Keys are content-addressed but
+  carry an extension, so the same bytes offered as `horn.wav` and `horn.mp3`
+  mint two keys; one commits, and asking whether the _hash_ was committed
+  protected the abandoned twin on every pass forever. The sweep is the only
+  thing that could ever reach it.
+- **Attribution is now kept across the rebuild** (`profile_audio_adders`,
+  migration 7). The old residual was described as failing closed and
+  self-healing; it did neither on the delete side, where a NULL `added_by` is
+  invisible to `deletingHashWouldSilenceAProfile` and the real holder was told
+  bytes a live board still plays were safe to delete.
+- **The tour is offered from the board**, not from the root layout that mounts
+  on every route.
+- **`openProfileManager` closes any open modal**, so the pad editor's safety
+  argument is true rather than resting on one z-index.
+
+### The lesson, again: mutation or it did not happen
+
+Two of the four fixes were verified by tests that could not fail. The tour
+spec passed with the offer still mounted everywhere, because `toHaveCount(0)`
+is equally true of a modal that has not rendered yet — the same trap as the
+`toBeHidden()` assertion earlier in the run. `sweepIfDue`'s throttle placement
+had seventeen green tests over it and not one of them moved when the claim
+did. **Write the mutant, run it, watch it fail.**
 
 Known-unfixed going into 7–8, and still unfixed on purpose:
 
