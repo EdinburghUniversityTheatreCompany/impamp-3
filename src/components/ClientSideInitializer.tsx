@@ -195,6 +195,39 @@ const ClientSideInitializer: React.FC<{ children: React.ReactNode }> = ({
     void runLoadBanks(activeProfileId);
   }, [activeProfileId]);
 
+  // The first-use tour (issue #8).
+  //
+  // Runs once per mount and only decides once, which is why the ref is here
+  // rather than relying on the effect's deps: `activeProfileId` changes when
+  // the user switches profiles, and offering a tutorial because someone opened
+  // a fresh second profile would be exactly the interruption the empty-board
+  // gate exists to prevent.
+  const tourDecidedRef = useRef(false);
+  useEffect(() => {
+    if (activeProfileId === null || tourDecidedRef.current) return;
+    tourDecidedRef.current = true;
+
+    void (async () => {
+      try {
+        const { getPadConfigurationsForProfile } = await import("@/lib/db");
+        const pads = await getPadConfigurationsForProfile(activeProfileId);
+        const configured = pads.filter(
+          (pad) => (pad.audioFileIds?.length ?? 0) > 0,
+        ).length;
+        const { shouldOfferWelcomeTour, openWelcomeTour } =
+          await import("@/lib/uiUtils");
+        if (shouldOfferWelcomeTour(configured)) openWelcomeTour();
+      } catch (error) {
+        // Never let deciding whether to show a tutorial stop the board from
+        // starting. A read that fails simply means no tour this time.
+        console.warn(
+          "[ClientSideInitializer] Welcome tour check failed:",
+          error,
+        );
+      }
+    })();
+  }, [activeProfileId]);
+
   useEffect(() => {
     if (activeProfileId === null) return;
 
