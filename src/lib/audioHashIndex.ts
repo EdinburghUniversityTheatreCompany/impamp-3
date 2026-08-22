@@ -104,6 +104,37 @@ export function createStoredHashIndex(): StoredHashIndex {
  * matched on their names. `createHashlessAudioIndex` costs nothing when there
  * are none.
  *
+ * **An empty stored hash cannot switch that second lookup off.** Asked and
+ * answered so nobody derives it again — it was 🟢 12 of the 2026-08-22
+ * subsystem review, raised as a claim its author could not settle from the
+ * source. `createHashlessAudioIndex` decides whether to scan by comparing
+ * `db.count("audioFiles")` with `db.countFromIndex("audioFiles", "hash")`, and
+ * `""` is a valid IndexedDB key, so a row holding one does count as hashed.
+ * Two things follow, and the second is the one the finding had backwards
+ * (both measured, in `db.hashlessIndex.test.ts`):
+ *
+ * - A library whose *only* unhashed rows carry `""` is skipped, and those rows
+ *   keep their empty hash. Nothing can then be matched by content, so the
+ *   bytes are downloaded again.
+ * - A row with no hash at all is **not** hidden by them. An empty hash adds
+ *   one to each count and is therefore neutral; a missing one adds to the left
+ *   alone and keeps `rows > hashed` true by itself. The scan runs, and
+ *   `ensureAudioFileHash` tests the stored hash for truth, so it repairs the
+ *   empty rows on the way past.
+ *
+ * And no production writer makes one. Both writers of new rows normalise with
+ * `||` — `addOrReuseAudioFile` and `importAudioSources`, each with a test
+ * naming this exact case — and every other writer `put`s a row it just read,
+ * carrying whatever hash was there. `addAudioFile` is the one place still
+ * using `??`, and it has no production callers left; it survives for the dedup
+ * tests, which need a writer that can still make a duplicate. Before 2ab873a
+ * the Drive downloader passed a remote `ref.hash` straight into it, so a
+ * foreign or corrupt sync blob could have written such a row into a database
+ * that still exists — but this app never publishes an empty hash (a ref takes
+ * its hash from the stored one or from `ensureAudioFileHash`, both computed),
+ * the cost is a re-download rather than a wrong sound, and the second point
+ * above means it heals the moment any row lacks a hash entirely.
+ *
  * @param hash - The content hash the remote reference carries, if any
  * @param stored - This pass's index of what the store already has hashes for
  * @param getHashlessIndex - This pass's lazy index of what it does not
