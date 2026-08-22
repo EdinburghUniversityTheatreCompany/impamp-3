@@ -97,22 +97,6 @@ genuinely needs to read it back.
 
 Noticed while converting the pad editor (Task 3 of the audio-dedup plan).
 
-## The duplicate-audio panel names no sounds
-
-`DuplicateAudioPanel` reports a group count, a copy count and a byte total,
-because that is all `DuplicateAudioGroup` carries — `hash`, `canonicalId`,
-`duplicateIds`, `reclaimableBytes`. Before deleting audio it would be better to
-show _which_ sounds, the way the Missing Audio Files section lists its pads:
-"horn.wav / horn (1).wav — 2 copies, 1.4 MB".
-
-The names are in the `audioFiles` rows the scan already opens a cursor over, so
-this is a field on the group rather than a second pass — but adding one changes
-the interface Task 5 pinned with eight tests, which is why it was left out of
-Task 7 rather than bolted on.
-
-Noticed while building the duplicate-audio panel (Task 7 of the audio-dedup
-plan).
-
 ## `bankUtils.ts` spells the 20-bank cap out three times
 
 `MAX_BANKS` lives in `db.ts:139` and is read by `addBank`, `page.tsx` and
