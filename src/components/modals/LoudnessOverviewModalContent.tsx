@@ -364,7 +364,10 @@ export default function LoudnessOverviewModalContent() {
   };
 
   return (
-    <div className="flex max-h-[70vh] flex-col" data-testid="loudness-overview">
+    <div
+      className="flex max-h-[70dvh] flex-col"
+      data-testid="loudness-overview"
+    >
       <div className="mb-3 flex items-center gap-4">
         <div className="flex gap-1" role="tablist">
           {(["sounds", "pads"] as const).map((t) => (
