@@ -1272,7 +1272,12 @@ test.describe("hosted audio", () => {
     await page.goto("/server/storage");
 
     await expect(
-      page.getByRole("heading", { name: "Server audio storage" }),
+      // `level: 1` because the page's own <h1> and AudioStoragePanel's <h3>
+      // carry the same text, so the unqualified locator matches two elements
+      // and throws Playwright's strict-mode violation — but only once the
+      // panel has loaded. Measured at 2 failures in 12 on an idle machine,
+      // which is why the suite read green for a whole day.
+      page.getByRole("heading", { level: 1, name: "Server audio storage" }),
     ).toBeVisible();
     // The allowance bar is the one thing on this page that only renders for an
     // account the deployment will actually store audio for.
@@ -1284,7 +1289,12 @@ test.describe("hosted audio", () => {
   }) => {
     await page.goto("/server/storage");
     await expect(
-      page.getByRole("heading", { name: "Server audio storage" }),
+      // `level: 1` because the page's own <h1> and AudioStoragePanel's <h3>
+      // carry the same text, so the unqualified locator matches two elements
+      // and throws Playwright's strict-mode violation — but only once the
+      // panel has loaded. Measured at 2 failures in 12 on an idle machine,
+      // which is why the suite read green for a whole day.
+      page.getByRole("heading", { level: 1, name: "Server audio storage" }),
     ).toBeVisible();
     // Not signed in, so no allowance and no admin panel — whether or not this
     // deployment hosts audio.
