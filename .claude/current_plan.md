@@ -120,9 +120,6 @@ stretched the read far enough to see it.
 
 ### Still open, deliberately
 
-- 🔴 The hourly sweep decides per **hash**, but the bucket is keyed
-  `hash.extension`. An object stored under a junk extension is invisible to it
-  permanently — one was reported as 1024 bytes against 18 MB stored.
 - 🟡 The attribution residual is wider than the fix's comment claims: inside the
   NULL window the holder's own delete is allowed, and orphans the object.
 - 🟢 `sweepIfDue`'s overlap guard has no test, and the pad-editor hold's stated

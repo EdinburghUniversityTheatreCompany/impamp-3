@@ -126,6 +126,55 @@ describe("sweepUncommittedObjects", () => {
     expect(store.keys()).toEqual([key]);
   });
 
+  it("removes an orphan whose hash was committed under a different extension", async () => {
+    // The leak this module exists to stop, in the one shape it could not see.
+    // Keys are content-addressed but carry an extension, and before a commit
+    // exists `storageKeyForHash` has nothing to honour but the extension this
+    // caller declared — so the same bytes offered as `horn.wav` and `horn.mp3`
+    // mint two keys. One commits; the other is abandoned.
+    //
+    // Deciding per hash then protects it forever: `committed.has(hash)` is
+    // true, so the sweep skips the very object it was written to collect, on
+    // every pass, for as long as the deployment lives. Nothing else can reach
+    // it either — quota sums `audio_objects`, so does the admin view, and no
+    // API takes a key.
+    const kept = committed(20);
+    const stray = objectKeyForHash(hash(20), "mp3");
+    store.put(stray, 4 * KB);
+    store.setLastModified(stray, LONG_AGO);
+
+    expect(await sweep()).toMatchObject({ scanned: 2, removed: 1 });
+    expect(store.keys()).toEqual([kept]);
+  });
+
+  it("keeps the committed key when a stray sorts before it", async () => {
+    // Ordering is not incidental: `.mp3` sorts before `.wav`, so the stray is
+    // examined first. Whichever order the bucket lists them in, the survivor
+    // is the key the row names.
+    const kept = commitRow(21);
+    store.put(kept, KB);
+    store.setLastModified(kept, LONG_AGO);
+    const stray = objectKeyForHash(hash(21), "aac");
+    store.put(stray, KB);
+    store.setLastModified(stray, LONG_AGO);
+
+    await sweep();
+    expect(store.keys()).toEqual([kept]);
+  });
+
+  it("keeps a recent stray, because its commit may still be arriving", async () => {
+    // The grace period governs the extension case exactly as it governs a
+    // plain orphan — two clients uploading the same bytes under different
+    // names is a race, not an abandonment, and the loser may still be PUTting.
+    const kept = committed(22);
+    const stray = objectKeyForHash(hash(22), "mp3");
+    store.put(stray, KB);
+    store.setLastModified(stray, NOW - 60_000);
+
+    expect(await sweep()).toMatchObject({ removed: 0 });
+    expect(store.keys().sort()).toEqual([kept, stray].sort());
+  });
+
   it("keeps a recent orphan, because its commit may still be arriving", async () => {
     // The presigned PUT is valid for uploadUrlTtlSeconds, so an upload can
     // still be in flight. Deleting a file out from under someone mid-upload is

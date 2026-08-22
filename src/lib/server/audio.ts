@@ -145,10 +145,22 @@ export function getAudioObject(hash: string): AudioObjectRow | undefined {
  * and the rows between the lowest and the highest are that page and its
  * neighbours' near misses, not the whole table.
  *
- * @returns The subset of `hashes` that is committed. Empty in, empty out —
- *   never "everything".
+ * It answers in **keys, not hashes**, and that is the whole point of it. Keys
+ * are content-addressed but carry an extension, and before a commit exists
+ * `storageKeyForHash` has nothing to honour but the extension the caller
+ * declared — so the same bytes offered as `horn.wav` and `horn.mp3` mint two
+ * keys, one of which is then abandoned. Answering "is this hash committed"
+ * protects both, so the abandoned one survives every pass forever: quota sums
+ * `audio_objects` and so does the admin view, and no API takes a key, which
+ * makes the sweep the only thing that could ever have reached it. Answering
+ * "is this the key its row names" collects it, and still keeps an object whose
+ * row exists — the two cases the sweep has to tell apart fall out of one
+ * membership test.
+ *
+ * @returns The keys, among rows for `hashes`, that a committed row names.
+ *   Empty in, empty out — never "everything".
  */
-export function committedHashesAmong(hashes: string[]): Set<string> {
+export function committedKeysAmong(hashes: string[]): Set<string> {
   if (hashes.length === 0) return new Set();
 
   let lowest = hashes[0];
@@ -159,14 +171,16 @@ export function committedHashesAmong(hashes: string[]): Set<string> {
   }
 
   const wanted = new Set(hashes);
-  const rows = queryAll<{ hash: string }>(
-    "SELECT hash FROM audio_objects WHERE hash >= ? AND hash <= ?",
+  const rows = queryAll<{ hash: string; extension: string }>(
+    "SELECT hash, extension FROM audio_objects WHERE hash >= ? AND hash <= ?",
     lowest,
     highest,
   );
 
   return new Set(
-    rows.map((row) => row.hash).filter((hash) => wanted.has(hash)),
+    rows
+      .filter((row) => wanted.has(row.hash))
+      .map((row) => objectKeyForHash(row.hash, row.extension)),
   );
 }
 

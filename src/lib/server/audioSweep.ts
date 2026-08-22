@@ -18,7 +18,7 @@
  * Server-only.
  */
 
-import { committedHashesAmong, prunePendingUploads } from "./audio";
+import { committedKeysAmong, prunePendingUploads } from "./audio";
 import type { AudioHostingConfig } from "./s3/config";
 import type { ObjectStore } from "./s3/client";
 
@@ -197,14 +197,18 @@ export async function sweepUncommittedObjects({
     // synchronous and this runs on the thread serving requests, so a thousand
     // round trips per page is a thousand chances to be the reason a request
     // waited.
-    const committed = committedHashesAmong([...candidates.values()]);
+    const committedKeys = committedKeysAmong([...candidates.values()]);
 
     for (const object of page.objects) {
       scanned++;
       lastKey = object.key;
 
-      const hash = candidates.get(object.key);
-      if (!hash || committed.has(hash)) continue;
+      // By key, never by hash. A hash can name two keys — the same bytes
+      // offered under two extensions mint two — and only one of them ever
+      // gets a row, so asking whether the *hash* is committed protects the
+      // abandoned twin on every pass forever.
+      if (!candidates.has(object.key) || committedKeys.has(object.key))
+        continue;
 
       await store.remove(object.key);
       removed++;
