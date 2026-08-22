@@ -169,7 +169,7 @@ export default function Home() {
 
   return (
     <main
-      className={`flex min-h-dvh flex-col items-center p-8 pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? "edit-mode" : ""}`}
+      className={`flex min-h-dvh flex-col items-center p-4 pb-0 sm:p-8 sm:pb-0 bg-gray-100 dark:bg-gray-800 ${isEditMode ? "edit-mode" : ""}`}
     >
       {/* Mode indicators */}
       {isEditMode && (
