@@ -31,6 +31,7 @@ import { useState } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { formatBytes } from "@/lib/serverAudio/format";
 import { count } from "@/lib/plural";
+import { errorMessage } from "@/lib/errorMessage";
 import type { DuplicateAudioGroup } from "@/lib/audioDedup";
 
 /** How many rows a preview would delete, and how many bytes that gives back. */
@@ -45,10 +46,6 @@ function totals(groups: DuplicateAudioGroup[]): {
     }),
     { copies: 0, bytes: 0 },
   );
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export default function DuplicateAudioPanel() {
@@ -75,7 +72,7 @@ export default function DuplicateAudioPanel() {
       setGroups(await findDuplicateAudioGroups());
     } catch (caught) {
       console.error("Failed to scan for duplicate audio files:", caught);
-      setError(`The scan could not finish: ${message(caught)}.`);
+      setError(`The scan could not finish: ${errorMessage(caught)}.`);
     } finally {
       setIsScanning(false);
     }
@@ -111,7 +108,7 @@ export default function DuplicateAudioPanel() {
     } catch (caught) {
       console.error("Failed to remove duplicate audio files:", caught);
       setError(
-        `Removing the duplicates failed: ${message(caught)}. ` +
+        `Removing the duplicates failed: ${errorMessage(caught)}. ` +
           "Scan again to see what is left.",
       );
     } finally {

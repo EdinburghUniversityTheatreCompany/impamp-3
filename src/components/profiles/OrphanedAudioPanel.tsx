@@ -22,6 +22,8 @@
 
 import { useState } from "react";
 
+import { errorMessage } from "@/lib/errorMessage";
+
 export default function OrphanedAudioPanel() {
   // Orphan cleanup state
   const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
@@ -36,11 +38,13 @@ export default function OrphanedAudioPanel() {
     totalAudioFiles: number;
   } | null>(null);
   const [isScanningOrphans, setIsScanningOrphans] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const handleScanOrphans = async () => {
     setIsScanningOrphans(true);
     setOrphanScanResult(null);
     setOrphanCleanupResult(null);
+    setScanError(null);
 
     try {
       const { findOrphanedAudioFiles } = await import("@/lib/db");
@@ -48,7 +52,11 @@ export default function OrphanedAudioPanel() {
       setOrphanScanResult(result);
     } catch (error) {
       console.error("Failed to scan for orphaned audio files:", error);
-      // You could add error handling here if needed
+      // Said out loud, not only to the console. A swallowed failure leaves the
+      // panel exactly as it was, which is what a library with no orphans looks
+      // like too — the results box is simply absent rather than saying "0
+      // orphaned", and no user can tell those two apart.
+      setScanError(`The scan could not finish: ${errorMessage(error)}.`);
     } finally {
       setIsScanningOrphans(false);
     }
@@ -131,6 +139,16 @@ export default function OrphanedAudioPanel() {
             )}
           </button>
         </div>
+
+        {scanError && (
+          <div
+            role="alert"
+            data-testid="orphan-scan-error"
+            className="rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20 text-sm text-yellow-800 dark:text-yellow-200"
+          >
+            {scanError}
+          </div>
+        )}
 
         {/* Scan Results */}
         {orphanScanResult && (

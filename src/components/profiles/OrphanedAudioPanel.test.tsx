@@ -191,15 +191,31 @@ describe("scanning", () => {
     expect(testId("orphan-cleanup")).toBeNull();
   });
 
-  it("leaves no results behind when the scan itself fails", async () => {
+  it("says the scan failed rather than leaving the panel as it was", async () => {
+    // The swallowed branch: press Scan, watch the spinner, and see nothing —
+    // which is what a library with no orphans looks like too, except that
+    // even the "0 orphaned" box is missing. The panel has to say which.
     findOrphanedAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
 
     await click("orphan-scan");
 
+    const alert = required("orphan-scan-error");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("store is shut");
     expect(testId("orphan-scan-result")).toBeNull();
     // And the button comes back, so a failed scan is retryable rather than a
     // dead panel.
     expect((required("orphan-scan") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("takes the failure back when the next scan works", async () => {
+    findOrphanedAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
+
+    await click("orphan-scan");
+    await click("orphan-scan");
+
+    expect(testId("orphan-scan-error")).toBeNull();
+    expect(text("orphan-scan-result")).toContain("Orphaned files: 0");
   });
 });
 

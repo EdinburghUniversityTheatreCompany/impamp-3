@@ -43,6 +43,14 @@ vi.doMock("@/store/profileStore", () => ({
   useProfileStore: { getState: () => ({ incrementPadConfigsVersion }) },
 }));
 
+// The real implementation behind a spy, so a scan can be made to fail.
+// `importActual` resolves the module's own imports normally, so this is one
+// connection and one memoised `getDb` — the same database the fixtures below
+// write through.
+const realDb = await vi.importActual<typeof import("@/lib/db")>("@/lib/db");
+const findMissingAudioFiles = vi.fn(realDb.findMissingAudioFiles);
+vi.doMock("@/lib/db", () => ({ ...realDb, findMissingAudioFiles }));
+
 const MissingAudioPanel = (
   await import("@/components/profiles/MissingAudioPanel")
 ).default;
@@ -52,7 +60,7 @@ const {
   getDb,
   upsertPadConfiguration,
   upsertPageMetadata,
-} = await import("@/lib/db");
+} = realDb;
 
 /**
  * A bank id that is a minted UUID at a position that is not its index.
@@ -144,6 +152,7 @@ async function storedPad(
 beforeEach(async () => {
   await clearAllStores();
   vi.clearAllMocks();
+  findMissingAudioFiles.mockImplementation(realDb.findMissingAudioFiles);
   profileId = await addProfile({ name: "Show", syncType: "local" });
   await upsertPageMetadata({
     profileId,
@@ -230,6 +239,38 @@ describe("scanning", () => {
     const row = panel.all("missing-audio-row")[0].textContent ?? "";
     expect(row).toContain("Bank 6 ›");
     expect(row).not.toContain("Bank Bank");
+  });
+
+  it("says the scan failed rather than going quiet", async () => {
+    // A swallowed failure is indistinguishable from a clean library: the
+    // spinner comes and goes and nothing appears, except that even the "no
+    // missing audio files" line is absent. A user cannot tell those apart,
+    // and one of them means their board is still broken.
+    findMissingAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
+
+    await click("missing-audio-scan");
+
+    const alert = required("missing-audio-scan-error");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("store is shut");
+    expect(testId("missing-audio-result")).toBeNull();
+    // And the button comes back, so a failed scan is retryable rather than a
+    // dead panel.
+    expect((required("missing-audio-scan") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("takes the failure back when the next scan works", async () => {
+    findMissingAudioFiles.mockRejectedValueOnce(new Error("store is shut"));
+
+    await click("missing-audio-scan");
+    await click("missing-audio-scan");
+
+    expect(testId("missing-audio-scan-error")).toBeNull();
+    expect(required("missing-audio-result").textContent).toContain(
+      "No missing audio files found",
+    );
   });
 
   it("keeps two profiles' banks apart when both call a bank '0'", async () => {
