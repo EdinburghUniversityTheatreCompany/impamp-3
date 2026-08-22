@@ -354,7 +354,7 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
 
   return (
     <div
-      className={`flex flex-col h-full max-h-[80vh] ${isDragging ? "bg-blue-50 dark:bg-blue-900/10" : ""}`}
+      className={`flex flex-col h-full max-h-[80dvh] ${isDragging ? "bg-blue-50 dark:bg-blue-900/10" : ""}`}
     >
       {/* Error message */}
       {errorMessage && (

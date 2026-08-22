@@ -74,7 +74,7 @@ const ActiveTracksPanel: React.FC = () => {
           </div>
         ) : (
           // List of active tracks with better overflow handling for bottom panel
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[20vh] overflow-y-auto pr-1 pb-safe">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[20dvh] overflow-y-auto pr-1 pb-safe">
             {trackGroups.map((group) => (
               <PadTrackGroup key={group.baseKey} group={group} />
             ))}

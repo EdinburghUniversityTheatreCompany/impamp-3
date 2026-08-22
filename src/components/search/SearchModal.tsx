@@ -259,7 +259,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     >
       <div
         ref={modalRef}
-        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[80dvh] flex flex-col"
         data-testid="search-modal"
       >
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center">

@@ -60,7 +60,7 @@ export default function BankTab({
           onSelect(bank.bankId);
         }
       }}
-      className={`relative px-4 py-2 rounded-t-lg flex items-center text-sm font-medium transition-colors
+      className={`relative px-4 py-2 rounded-t-lg flex items-center whitespace-nowrap text-sm font-medium transition-colors
                                 ${
                                   isSelected
                                     ? "bg-blue-500 text-white"

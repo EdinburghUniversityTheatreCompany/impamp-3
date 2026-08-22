@@ -10,27 +10,16 @@
  * reuse by content hash ended the exemption, and `db.importRace.test.ts` is
  * what it left behind.
  *
- * The collapse considers every row in a duplicate group, so a row an import
- * has *reused* — already handed out, not yet named by any pad — is squarely in
- * range. Two independent choices have to disagree for that to bite, and they
- * do:
+ * An import does not have to *create* a row to be caught. Two choices
+ * disagree about which of a duplicate pair is the keeper:
+ * `addOrReuseAudioFile` hands back the lowest id holding the hash (IndexedDB
+ * returns equal index keys in primary-key order), while the collapse elects
+ * the analysed one so the expensive thing survives. They differ whenever a
+ * higher-id duplicate carries an analysis and the lowest-id one does not —
+ * ordinary, since analysis is fire-and-forget and allowed to fail.
  *
- *  - `addOrReuseAudioFile` hands a caller the **lowest** id holding the hash.
- *    `findAudioFileIdByHashIn` takes the first of `index.getAll(hash)`, and
- *    IndexedDB returns equal index keys in primary-key order.
- *  - the collapse elects the canonical **analysed first**, then lowest id, so
- *    that the expensive thing is the thing that survives.
- *
- * They differ whenever a higher-id duplicate carries an analysis and the
- * lowest-id one does not, which is ordinary rather than contrived: analysis is
- * fired without awaiting and is allowed to fail, and `loadPipeline.ts` records
- * a measured run where 14 of 40 files never got one.
- *
- * The fixture below is that shape, and nothing more elaborate. Without the
- * guard the collapse deletes the row the import is holding, the import then
- * writes a pad naming it, and the pad is silent for the rest of the library's
- * life — there is no later pass that could notice, because a pad naming a
- * missing sound is indistinguishable from a pad whose sound the user deleted.
+ * Without the guard the pad ends up naming a deleted row, which no later pass
+ * can tell from a sound the user removed on purpose.
  */
 
 // Must be the first import: it installs `window` before `db.ts` can read it.

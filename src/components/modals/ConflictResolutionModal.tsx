@@ -154,7 +154,7 @@ export const ConflictResolutionModal: React.FC<
 
   return (
     <>
-      <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto text-sm">
+      <div className="p-4 space-y-4 max-h-[70dvh] overflow-y-auto text-sm">
         {resolveError && (
           <p
             role="alert"

@@ -16,7 +16,6 @@ import {
 import { useArmedTracks } from "@/store/playbackStore";
 import {
   GRID_COLS,
-  GRID_ROWS,
   SPECIAL_PAD_CONFIG,
   SPECIAL_PAD_INDICES,
   TOTAL_PADS,
@@ -364,6 +363,17 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
       const isSpecialPad = SPECIAL_PAD_INDICES.includes(padIndex);
 
       // --- Special Pad Logic ---
+      //
+      // The two transport pads are painted last in portrait, Stop All last of
+      // all so it lands bottom-right under the thumb. On a board you scroll
+      // down, "the last column" is not muscle memory — "scroll to the bottom"
+      // is. Their INDICES do not move: 23 and 35 are wired to Escape and Space
+      // in keyboardUtils.ts and every stored profile is keyed on pad index.
+      //
+      // `order` normally desynchronises visual order from DOM order, which
+      // breaks tab sequence and screen-reader browse order. It is safe here
+      // for one specific reason: `Pad` is tabIndex={-1} and Tab can never park
+      // focus on the board (CLAUDE.md). Do not "fix" this by removing it.
       if (padIndex === SPECIAL_PAD_CONFIG.STOP_ALL.index) {
         return (
           <Pad
@@ -372,6 +382,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             padIndex={padIndex}
             profileId={activeProfileId}
             bankId={bankId}
+            className="order-[9999] lg:order-none"
             keyBinding={SPECIAL_PAD_CONFIG.STOP_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.STOP_ALL.label}
             // A special pad holds no sounds. It used to claim two, to switch
@@ -398,6 +409,7 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
             padIndex={padIndex}
             profileId={activeProfileId}
             bankId={bankId}
+            className="order-[9998] lg:order-none"
             keyBinding={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.keyBinding}
             name={SPECIAL_PAD_CONFIG.FADE_OUT_ALL.label}
             // As above: no sounds, and `isSpecialPad` is what refuses drops.
@@ -470,11 +482,24 @@ const PadGrid: React.FC<PadGridProps> = ({ bankId }) => {
       )}
 
       <div
-        className="grid gap-2 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg shadow"
-        style={{
-          gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, 1fr))`,
-        }}
+        className="grid gap-2 p-2 sm:p-4 grid-cols-4 md:grid-cols-6 lg:grid-cols-(--pad-cols) bg-gray-50 dark:bg-gray-900 rounded-lg shadow"
+        style={
+          {
+            // The desktop count, still derived from the constant that defines
+            // the data shape. It cannot be a Tailwind class: `grid-cols-${GRID_COLS}`
+            // is invisible to the JIT scanner, and a hardcoded `grid-cols-12`
+            // would be the same rule written twice.
+            //
+            // The narrow counts above are hardcoded on purpose. 4 and 6 are
+            // presentation and have nothing to do with `GRID_COLS`; deriving
+            // them would imply a relationship that does not exist.
+            //
+            // No `gridTemplateRows`: the children are `aspect-square`, so the
+            // ratio already drives row height, and a fixed four rows is wrong
+            // the moment the column count is not twelve.
+            "--pad-cols": `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+          } as React.CSSProperties
+        }
       >
         {padElements}
       </div>

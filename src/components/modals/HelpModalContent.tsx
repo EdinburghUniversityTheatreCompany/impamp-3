@@ -550,7 +550,7 @@ const HelpModalContent: React.FC = () => {
   ];
 
   return (
-    <div className="flex flex-col h-[70vh]">
+    <div className="flex flex-col h-[70dvh]">
       {/* Tabs */}
       <div className="flex border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
         {tabs.map((tab) => (

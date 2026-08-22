@@ -206,23 +206,38 @@ describe("addOrReuseAudioFile", () => {
   });
 
   it("queues analysis for a row it creates and not for one it reuses", async () => {
-    const { id } = await addOrReuseAudioFile({
-      name: "horn.wav",
-      type: "audio/wav",
-      blob: horn(),
-    });
-    await vi.waitFor(() => expect(analyseAndStore).toHaveBeenCalledWith(id));
+    // Web Audio, supplied because this is the one suite asserting that
+    // analysis is *queued*. `startBackgroundAnalysis` returns early without an
+    // AudioContext — a browser that cannot decode cannot measure — and
+    // `browserGlobals` deliberately does not install one, which is what keeps
+    // every other database suite from firing an analysis it never asked for.
+    const noAudioContext = !("AudioContext" in globalThis);
+    if (noAudioContext) {
+      (globalThis as Record<string, unknown>).AudioContext = class {};
+    }
+    try {
+      const { id } = await addOrReuseAudioFile({
+        name: "horn.wav",
+        type: "audio/wav",
+        blob: horn(),
+      });
+      await vi.waitFor(() => expect(analyseAndStore).toHaveBeenCalledWith(id));
 
-    analyseAndStore.mockClear();
-    await addOrReuseAudioFile({
-      name: "horn-copy.wav",
-      type: "audio/wav",
-      blob: horn(),
-    });
-    // The reused row keeps the analysis it has. That each set of bytes is
-    // analysed once is the whole saving.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(analyseAndStore).not.toHaveBeenCalled();
+      analyseAndStore.mockClear();
+      await addOrReuseAudioFile({
+        name: "horn-copy.wav",
+        type: "audio/wav",
+        blob: horn(),
+      });
+      // The reused row keeps the analysis it has. That each set of bytes is
+      // analysed once is the whole saving.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(analyseAndStore).not.toHaveBeenCalled();
+    } finally {
+      if (noAudioContext) {
+        delete (globalThis as Record<string, unknown>).AudioContext;
+      }
+    }
   });
 
   it("adds a row rather than reusing one whose hash was never stored", async () => {

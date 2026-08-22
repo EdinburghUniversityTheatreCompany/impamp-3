@@ -19,6 +19,11 @@ interface PadProps {
   soundCount: number; // Number of sounds configured for this pad
   audioFileIds?: number[]; // Audio file IDs for intelligent preloading
   isDisabled?: boolean; // Whether the pad is disabled (configured, but refuses to play)
+  /**
+   * Extra classes, merged last so a caller can override. The one caller today
+   * is the portrait `order-*` on the two transport pads.
+   */
+  className?: string;
   isEditMode: boolean; // Whether we're in edit mode (shift key is pressed)
   isDeleteMoveMode?: boolean; // Whether we're in delete/move mode
   isSpecialPad?: boolean; // Whether this is a special control pad (Stop All, Fade Out All) that can't be deleted or moved
@@ -41,6 +46,7 @@ const Pad: React.FC<PadProps> = ({
   keyBinding,
   name = "Empty Pad",
   isDisabled = false,
+  className,
   isEditMode,
   isDeleteMoveMode = false,
   isSpecialPad = false, // Default to false
@@ -287,8 +293,10 @@ const Pad: React.FC<PadProps> = ({
             (isDragReject || (isDragActive && isDropDisabled)) &&
             !isDeleteMoveMode,
         },
+        className,
       ),
     [
+      className,
       isConfigured,
       isDisabled,
       isEditMode,
@@ -458,7 +466,7 @@ const Pad: React.FC<PadProps> = ({
       {/* Pad Name Display - with better wrapping and edit mode indicator */}
       <span
         className={clsx(
-          "text-sm font-medium break-all w-full text-center z-10",
+          "text-sm font-medium break-words w-full text-center z-10",
           isDisabled && "line-through",
         )}
       >
