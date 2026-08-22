@@ -46,7 +46,10 @@ import {
   ItemConflict,
 } from "./types";
 import { coalesceSyncRun, createSyncRunRegistry } from "@/lib/syncReplay";
-import { createStoredHashIndex } from "@/lib/audioHashIndex";
+import {
+  createStoredHashIndex,
+  lookupLocalAudioByHash,
+} from "@/lib/audioHashIndex";
 
 /**
  * Verify all audio files for a profile exist in Drive, uploading any that are
@@ -317,20 +320,13 @@ export async function downloadMissingAudioFiles(
   for (const ref of audioRefs) {
     if (!ref.driveFileId) continue; // legacy base64 ref — handled by updateLocalData
 
-    // Hash-first deduplication: check by content hash if available
-    let existingFile = ref.hash ? await stored.lookup(ref.hash) : undefined;
-
-    // If no hash match, local files without a stored hash may still be the same
-    // audio — hash them once and retry the lookup
-    if (!existingFile && ref.hash) {
-      const localId = (await getHashlessIndex()).get(ref.hash);
-      if (localId !== undefined) {
-        const record = await getAudioFile(localId);
-        if (record?.id !== undefined) {
-          existingFile = { id: record.id, driveFileIds: record.driveFileIds };
-        }
-      }
-    }
+    // By content hash, and by nothing else — including for local files
+    // written before hashing, which are hashed rather than matched on name.
+    const existingFile = await lookupLocalAudioByHash(
+      ref.hash,
+      stored,
+      getHashlessIndex,
+    );
 
     if (existingFile) {
       // Backfill driveFileId for this profile if missing

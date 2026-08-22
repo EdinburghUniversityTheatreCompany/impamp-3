@@ -1036,6 +1036,14 @@ export async function addOrReuseAudioFile(
  * hosted-audio downloader, differing only in a temporary variable — which is
  * why the duplication gate never saw them.
  *
+ * It comes back empty when nothing in the library predates hashing, without
+ * reading a single record. Every caller reaches it only after
+ * `createStoredHashIndex` missed, and when every row already carries a stored
+ * hash that miss is already the whole answer: no local row holds those bytes.
+ * Without the check, the common case — a reference to a sound this device has
+ * never had — read and materialised every blob in the library to rediscover
+ * hashes the store was holding all along, on every sync pass that named one.
+ *
  * @returns A getter that builds the index on first call and reuses it after
  */
 export function createHashlessAudioIndex(): () => Promise<Map<string, number>> {
@@ -1045,9 +1053,18 @@ export function createHashlessAudioIndex(): () => Promise<Map<string, number>> {
     if (index) return index;
     const built = new Map<string, number>();
     const db = await getDb();
-    for (const localId of await db.getAllKeys("audioFiles")) {
-      const computed = await ensureAudioFileHash(localId);
-      if (computed) built.set(computed, localId);
+    // IndexedDB leaves a record out of an index when its key is undefined, so
+    // the `hash` index counts exactly the rows that carry one. Two counts,
+    // no records read.
+    const [rows, hashed] = await Promise.all([
+      db.count("audioFiles"),
+      db.countFromIndex("audioFiles", "hash"),
+    ]);
+    if (rows > hashed) {
+      for (const localId of await db.getAllKeys("audioFiles")) {
+        const computed = await ensureAudioFileHash(localId);
+        if (computed) built.set(computed, localId);
+      }
     }
     index = built;
     return index;

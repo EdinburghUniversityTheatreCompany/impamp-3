@@ -53,6 +53,42 @@ describe("createHashlessAudioIndex", () => {
     expect(index.get(await computeBlobHash(new Blob(["horn-bytes"])))).toBe(id);
   });
 
+  it("adds nothing when every row already carries its stored hash", async () => {
+    // The expensive half of this index is reading every blob in the library,
+    // and every caller reaches it only after `createStoredHashIndex` missed.
+    // If nothing predates hashing, that miss already means no local row holds
+    // these bytes — so there is nothing this index could add, and the library
+    // must not be read to find that out.
+    await addAudioFile({
+      blob: new Blob(["horn-bytes"]),
+      name: "horn.mp3",
+      type: "audio/mpeg",
+    });
+
+    expect(await createHashlessAudioIndex()()).toEqual(new Map());
+  });
+
+  it("still scans once a single row predates hashing", async () => {
+    // The counts above decide for the whole library, so one unhashed row has
+    // to be enough to bring the scan back — including for the rows that do
+    // carry a hash, since the map is what the caller looks in.
+    const hashedId = await addAudioFile({
+      blob: new Blob(["stab-bytes"]),
+      name: "stab.mp3",
+      type: "audio/mpeg",
+    });
+    const hashlessId = await addHashlessAudio("horn.mp3", "horn-bytes");
+
+    const index = await createHashlessAudioIndex()();
+
+    expect(index.get(await computeBlobHash(new Blob(["horn-bytes"])))).toBe(
+      hashlessId,
+    );
+    expect(index.get(await computeBlobHash(new Blob(["stab-bytes"])))).toBe(
+      hashedId,
+    );
+  });
+
   it("builds nothing until it is asked", async () => {
     await addHashlessAudio("horn.mp3", "horn-bytes");
     const db = await getDb();
