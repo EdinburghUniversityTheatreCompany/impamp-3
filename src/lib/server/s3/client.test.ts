@@ -280,6 +280,23 @@ describe("list", () => {
     expect(result.nextContinuationToken).toBeNull();
   });
 
+  it("asks the bucket to start after a key, without a continuation token", async () => {
+    // The two resume mechanisms are not interchangeable. A continuation token
+    // is opaque and means something only inside one listing; `start-after` is
+    // a plain key and is the only one that still names a position an hour
+    // later, which is what the sweep needs to carry across passes. S3 ignores
+    // `start-after` when a token is also present, so sending both would
+    // silently be sending neither.
+    const fetchImpl = respondXml(page(""));
+    const store = createObjectStore(config, fetchImpl);
+
+    await store.list({ prefix: "audio/", startAfter: `audio/aa/${HASH}.wav` });
+
+    const url = new URL(String(fetchImpl.mock.calls[0][0]));
+    expect(url.searchParams.get("start-after")).toBe(`audio/aa/${HASH}.wav`);
+    expect(url.searchParams.get("continuation-token")).toBeNull();
+  });
+
   it("hands back a continuation token only when the listing is truncated", async () => {
     const entries = entry("audio/aa/x", 1, "2026-08-17T09:00:00Z");
 

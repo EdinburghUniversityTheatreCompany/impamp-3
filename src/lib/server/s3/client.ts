@@ -28,8 +28,23 @@ export interface ListedObject {
 
 export interface ListOptions {
   prefix: string;
-  /** Continues a previous page. */
+  /**
+   * Continues a previous page.
+   *
+   * Opaque, and only meaningful inside the listing that produced it — so it
+   * is for paging within one pass, never for resuming hours later.
+   */
   continuationToken?: string;
+  /**
+   * Start the listing after this key, exclusive.
+   *
+   * The durable half of the pair: a plain key, so it still names a position
+   * in the bucket long after the listing that saw it ended, and it needs no
+   * cooperation from the store to remain valid. This is how the sweep resumes
+   * where its last pass stopped. S3 ignores it when a continuation token is
+   * given as well, so callers send one or the other.
+   */
+  startAfter?: string;
   maxKeys?: number;
 }
 
@@ -239,7 +254,7 @@ export function createObjectStore(
         : body;
     },
 
-    async list({ prefix, continuationToken, maxKeys = 1000 }) {
+    async list({ prefix, continuationToken, startAfter, maxKeys = 1000 }) {
       // The bucket itself, not an object under it — so this is the one request
       // whose signature covers a query string.
       const url = new URL(`${config.endpoint}/${uriEncode(config.bucket)}`);
@@ -248,6 +263,8 @@ export function createObjectStore(
       url.searchParams.set("max-keys", String(maxKeys));
       if (continuationToken) {
         url.searchParams.set("continuation-token", continuationToken);
+      } else if (startAfter) {
+        url.searchParams.set("start-after", startAfter);
       }
 
       const target = url.toString();

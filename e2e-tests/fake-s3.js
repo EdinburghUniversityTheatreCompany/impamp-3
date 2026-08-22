@@ -60,13 +60,24 @@ function escapeXml(value) {
   );
 }
 
+/**
+ * ListObjectsV2, including both ways of resuming a listing.
+ *
+ * `continuation-token` is the opaque one S3 hands back mid-listing, modelled
+ * here as the first key of the next page — so it is inclusive. `start-after`
+ * is the documented plain-key one, exclusive, and the only resume point that
+ * still means something an hour later. S3 ignores `start-after` when a
+ * continuation token is present, so this does too.
+ */
 function listObjectsV2(objects, url) {
   const prefix = url.searchParams.get("prefix") ?? "";
   const maxKeys = Number(url.searchParams.get("max-keys") ?? 1000);
   const after = url.searchParams.get("continuation-token");
+  const startAfter = url.searchParams.get("start-after");
 
   let keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort();
   if (after) keys = keys.filter((key) => key >= after);
+  else if (startAfter) keys = keys.filter((key) => key > startAfter);
 
   const page = keys.slice(0, maxKeys);
   const truncated = keys.length > maxKeys;

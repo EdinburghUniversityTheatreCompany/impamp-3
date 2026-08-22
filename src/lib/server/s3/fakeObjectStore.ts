@@ -45,16 +45,23 @@ export function createFakeObjectStore(): FakeObjectStore {
       lastModified.set(key, ms);
     },
 
-    async list({ prefix, continuationToken, maxKeys = 1000 }) {
-      const all = [...objects.entries()]
+    // `continuationToken` is modelled as the first key of the next page, so
+    // it is inclusive; `start-after` is a plain key and exclusive. Both match
+    // what `e2e-tests/fake-s3.js` does over real HTTP, and a token wins over
+    // `startAfter` the way S3's does.
+    async list({ prefix, continuationToken, startAfter, maxKeys = 1000 }) {
+      let all = [...objects.entries()]
         .filter(([key]) => key.startsWith(prefix))
         .sort(([a], [b]) => (a < b ? -1 : 1));
 
-      const start = continuationToken
-        ? all.findIndex(([key]) => key === continuationToken)
-        : 0;
-      const page = all.slice(start, start + maxKeys);
-      const next = all[start + maxKeys];
+      if (continuationToken) {
+        all = all.filter(([key]) => key >= continuationToken);
+      } else if (startAfter) {
+        all = all.filter(([key]) => key > startAfter);
+      }
+
+      const page = all.slice(0, maxKeys);
+      const next = all[maxKeys];
 
       return {
         objects: page.map(([key, object]) => ({
