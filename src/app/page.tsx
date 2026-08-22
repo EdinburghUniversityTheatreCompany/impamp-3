@@ -236,7 +236,11 @@ export default function Home() {
         {/* Main content area */}
         <div className="flex flex-col min-w-0">
           {/* Help text panel */}
-          <div className="bg-white dark:bg-gray-700 rounded-lg p-4 mb-4 shadow-sm">
+          {/* Keyboard-only instructions — every sentence names a key — so they are
+              hidden where there is no keyboard rather than taking a third of a
+              phone screen to say nothing usable. The Help modal, reachable from
+              the toolbar, carries the same content and more. */}
+          <div className="hidden sm:block bg-white dark:bg-gray-700 rounded-lg p-4 mb-4 shadow-sm">
             <div className="text-gray-700 dark:text-gray-300">
               <span className="font-medium text-lg">ImpAmp Soundboard</span>
               <span className="text-sm ml-4 text-gray-500">

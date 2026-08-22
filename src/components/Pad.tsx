@@ -466,7 +466,7 @@ const Pad: React.FC<PadProps> = ({
       {/* Pad Name Display - with better wrapping and edit mode indicator */}
       <span
         className={clsx(
-          "text-sm font-medium break-all w-full text-center z-10",
+          "text-sm font-medium break-words w-full text-center z-10",
           isDisabled && "line-through",
         )}
       >
