@@ -25,7 +25,8 @@
  * `ready`/`error` leaves a pad spinning forever with the sound already
  * playing.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { quietConsole } from "@/lib/testSupport/quietConsole";
 import type { LoadingState } from "./decoder";
 
 /** What `getAudioFile` will answer with, per id. Empty means "not found". */
@@ -104,9 +105,11 @@ beforeEach(() => {
   undecodable.clear();
   getAudioFile.mockClear();
   decodeAudioData.mockClear();
-  vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  quietConsole();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("decodeAudioBlob", () => {

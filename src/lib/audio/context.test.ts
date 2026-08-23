@@ -17,6 +17,7 @@
  * trigger path and a listener per call would leak one per pad press.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { quietConsole } from "@/lib/testSupport/quietConsole";
 
 type ContextState = "running" | "suspended" | "closed" | "interrupted";
 
@@ -60,9 +61,7 @@ async function loadContextModule(
 
 beforeEach(() => {
   FakeAudioContext.created = [];
-  vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  quietConsole();
 });
 
 afterEach(() => {

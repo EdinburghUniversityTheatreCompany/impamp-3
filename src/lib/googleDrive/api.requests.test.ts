@@ -25,7 +25,8 @@
  * empty one: DELETE answers 204 and some PATCHes answer 200 with nothing at
  * all, and `JSON.parse("")` throws.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { quietConsole } from "@/lib/testSupport/quietConsole";
 import type { TokenInfo } from "./types";
 
 const fetchWithTimeout = vi.fn();
@@ -87,9 +88,11 @@ beforeEach(() => {
   fetchWithTimeout.mockReset();
   sharedCheckAndRefresh.mockReset();
   noteRefreshedToken.mockReset();
-  vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  quietConsole();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("authentication", () => {
