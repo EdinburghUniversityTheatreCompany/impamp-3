@@ -87,6 +87,21 @@ e2e-tests
 playwright.config.ts
 plans
 
+# Test files, for the same reason and one step further. `tsconfig.json`
+# includes `**/*.ts`, so `next build` type-checks every test left in the
+# context — and a test importing something excluded above fails the *image*
+# build with no local symptom at all, because the file resolves fine in the
+# checkout. That has now happened twice: first `playwright.config.ts`
+# importing ./e2e-tests/env, and then `src/lib/server/audioSweep.test.ts`
+# importing ../../../e2e-tests/fake-s3.js to borrow a real HTTP bucket.
+#
+# Naming each casualty is whack-a-mole, so the tests go instead. The runtime
+# image has no use for one, and nothing outside a test imports `testSupport`
+# (checked, not assumed).
+**/*.test.ts
+**/*.test.tsx
+src/lib/testSupport
+
 # Documentation
 README.md
 LICENCE
