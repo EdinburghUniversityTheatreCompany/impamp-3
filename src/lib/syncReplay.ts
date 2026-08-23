@@ -95,9 +95,7 @@ interface FanOutable {
  * @param listeners - The live set of waiting callbacks
  * @returns Callbacks of the same shape, forwarding to all of them
  */
-function fanOutSyncCallbacks<C extends FanOutable>(
-  listeners: Set<C>,
-): C {
+function fanOutSyncCallbacks<C extends FanOutable>(listeners: Set<C>): C {
   const each = (run: (one: C) => void) => listeners.forEach(run);
 
   return {

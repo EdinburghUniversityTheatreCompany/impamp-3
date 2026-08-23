@@ -251,21 +251,21 @@ fix the repo has already made and documented.
 
 One commit per finding, on `review/fullsweep`.
 
-| # | Finding | Commit |
-|---|---|---|
-| 2 | Timeout covered only the headers | `fix(fetch): carry the timeout across the body` |
-| 1, 3 | Forgeable gate, no rate limiting, no SSE cap | `feat(server): rate-limit the unauthenticated surfaces` |
-| 4 | No CSP | `feat(headers): add a Report-Only CSP, HSTS and Permissions-Policy` |
-| 5 | Sequential audio transfers | `perf(sync): move audio a few files at a time` |
-| 6 | `db.ts` god-module | `refactor(db): give the audio-import register its own module` |
-| 7 | `??` vs `\|\|` twin | `fix(db): an empty hash is a missing hash in addAudioFile too` |
-| 8 | Stale focus-trap comment | `docs(modal): the focus trap's reason was removed` |
-| 9 | Bare `fetch` | `fix(admin): use the timeout wrapper the file already imports` |
-| 10 | Untested escaper | `test(drive): pin the query escaper's ordering` |
-| 11 | Over-exports | `refactor: stop exporting fifteen symbols` |
-| 12 | No reduced-motion | `feat(a11y): honour prefers-reduced-motion` |
-| 13 | Dependency patch | `chore(deps): @zip.js/zip.js 2.8.55 -> 2.8.57` |
-| 14 | Doubled fixture extension | `test(e2e): stop asking for tour-guard.wav.wav` |
+| #    | Finding                                      | Commit                                                              |
+| ---- | -------------------------------------------- | ------------------------------------------------------------------- |
+| 2    | Timeout covered only the headers             | `fix(fetch): carry the timeout across the body`                     |
+| 1, 3 | Forgeable gate, no rate limiting, no SSE cap | `feat(server): rate-limit the unauthenticated surfaces`             |
+| 4    | No CSP                                       | `feat(headers): add a Report-Only CSP, HSTS and Permissions-Policy` |
+| 5    | Sequential audio transfers                   | `perf(sync): move audio a few files at a time`                      |
+| 6    | `db.ts` god-module                           | `refactor(db): give the audio-import register its own module`       |
+| 7    | `??` vs `\|\|` twin                          | `fix(db): an empty hash is a missing hash in addAudioFile too`      |
+| 8    | Stale focus-trap comment                     | `docs(modal): the focus trap's reason was removed`                  |
+| 9    | Bare `fetch`                                 | `fix(admin): use the timeout wrapper the file already imports`      |
+| 10   | Untested escaper                             | `test(drive): pin the query escaper's ordering`                     |
+| 11   | Over-exports                                 | `refactor: stop exporting fifteen symbols`                          |
+| 12   | No reduced-motion                            | `feat(a11y): honour prefers-reduced-motion`                         |
+| 13   | Dependency patch                             | `chore(deps): @zip.js/zip.js 2.8.55 -> 2.8.57`                      |
+| 14   | Doubled fixture extension                    | `test(e2e): stop asking for tour-guard.wav.wav`                     |
 
 ### Three bugs the fixing uncovered
 
@@ -297,7 +297,7 @@ On the finished branch, from a cold build:
   production server, and the object-store origin confirmed present with a
   build-time env var and absent without one
 
-**A process note worth keeping.** An intermediate e2e run failed *every* test
+**A process note worth keeping.** An intermediate e2e run failed _every_ test
 at `waitForAppReady`, which looked exactly like the concurrency work breaking
 startup. It was not. Two manual `npm run build` invocations — run to inspect
 the CSP headers — left `.next` holding chunks with `NEXT_PUBLIC_E2E_HOOKS`
