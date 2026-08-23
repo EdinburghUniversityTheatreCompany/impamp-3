@@ -323,8 +323,10 @@ and the ranges are floors that should move only when something requires it.
   (everything below `controls.ts`, installed with `vi.doMock` because
   `vi.mock` is hoisted into the file it is written in and cannot be called on
   another file's behalf), `loudnessPipelineStub.ts`, `legacyDatabase.ts`,
-  `browserGlobals.ts`, `zipArchive.ts`, `reactPanel.tsx` or
-  `audioFixtures.ts` before writing a third
+  `browserGlobals.ts`, `zipArchive.ts`, `reactPanel.tsx`,
+  `httpClientHarness.ts` (the `Response` stand-in and the fetch spy both API
+  clients' suites need), `quietConsole.ts` or `audioFixtures.ts` before
+  writing a third
 - **A suite that writes an audio row must call `stubLoudnessPipeline()`**,
   unless it mocks `@/lib/db` wholesale or is one of the two suites testing the
   pipeline itself. `addAudioFile` and `addOrReuseAudioFile` fire
@@ -336,6 +338,26 @@ and the ranges are floors that should move only when something requires it.
   after. The suite stays green and the **command exits 1**, so it reads as
   your change breaking everything; and because it is timing, one passing run
   is no evidence at all
+- **A new assertion is worth only what a mutation of the source can prove.**
+  Every suite added by the coverage sweep was checked by breaking the thing it
+  claims to hold and confirming the suite goes red, and that found four
+  assertions that looked right and tested nothing. The instances are worth
+  knowing because each is a _shape_, not a one-off: a caller with its own
+  rescue for the condition under test (`findDriveFileById` catches any message
+  containing "404", so it answers `null` whether or not `authenticatedRequest`
+  has a 404 branch at all — assert through a caller that has no rescue); a
+  second copy of the rule elsewhere (`fadeOutAllTracks`'s `isFading` check,
+  and the trimmer's explicit stop of its previous preview, both redundant with
+  something else that already does it); a stand-in registered in the wrong
+  event phase (a capture-phase fake panic button beats `useEscapeToClose` on
+  registration order, where the real bubble-phase one does not, so the test
+  measured the order rather than the guard); and a React handler read in the
+  same tick as the state it closes over (a `pointermove` dispatched
+  immediately after `pointerdown` still sees `dragging === null`, so the drag
+  test passed whatever the drag logic did). Where the mutation survives for a
+  reason worth recording rather than fixing, the finding goes to
+  `plans/off-topic-improvements.md` and the test carries a comment pointing
+  at it
 - Playwright for comprehensive E2E testing
 - Tests cover audio playback, profile management, edit mode, keyboard shortcuts
 - Test helper utilities in `e2e-tests/test-helpers.ts`
