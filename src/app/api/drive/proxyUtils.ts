@@ -8,7 +8,7 @@ import { clientKey, consume, LIMITS } from "@/lib/server/rateLimit";
  * Returns the server API key and the validated ?id= param, or a ready-made
  * error response when either is missing/invalid.
  */
-export function getProxyRequestParams(
+function getProxyRequestParams(
   request: NextRequest,
 ):
   | { apiKey: string; fileId: string; errorResponse?: undefined }

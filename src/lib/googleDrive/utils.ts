@@ -49,7 +49,7 @@ export const isTokenValid = (
  * @param profileId The profile ID
  * @returns A localStorage-compatible key
  */
-export const getSyncTimestampKey = (profileId: number): string => {
+const getSyncTimestampKey = (profileId: number): string => {
   return `lastSync_${profileId}`;
 };
 

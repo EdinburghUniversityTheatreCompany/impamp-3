@@ -62,7 +62,7 @@ export interface SweepLimits {
   maxRemoved: number;
 }
 
-export const SWEEP_LIMITS: SweepLimits = {
+const SWEEP_LIMITS: SweepLimits = {
   maxScanned: 10_000,
   listPageSize: 1000,
   maxRemoved: 100,

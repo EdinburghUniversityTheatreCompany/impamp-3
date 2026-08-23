@@ -131,7 +131,7 @@ function decodeXmlText(value: string): string {
  * rather than throwing — a sweep that crashes is worse than a sweep that
  * removes nothing.
  */
-export function parseListObjectsV2(xml: string): ListPage {
+function parseListObjectsV2(xml: string): ListPage {
   const objects: ListedObject[] = [];
 
   for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {

@@ -37,7 +37,7 @@ import type { AnalyseResponse } from "./analyse.worker";
  * analysis per second of stereo audio), which leaves room for a slow machine
  * and a busy tab without ever being mistaken for a working request.
  */
-export const LOUDNESS_WORKER_TIMEOUTS = {
+const LOUDNESS_WORKER_TIMEOUTS = {
   /** Floor for any request, however short the audio. */
   base: 30_000,
   /** Extra allowance per second of audio still queued. */
@@ -80,7 +80,7 @@ export function loudnessWorkerTimeoutMs(queuedAudioSeconds: number): number {
 }
 
 /** Thrown when a round trip runs out of time, so it reads as itself in a log. */
-export class LoudnessWorkerTimeoutError extends Error {
+class LoudnessWorkerTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`The loudness worker did not answer within ${timeoutMs}ms`);
     this.name = "LoudnessWorkerTimeoutError";
