@@ -275,3 +275,47 @@ is also defensible. What is not defensible is a test that pretends to exercise
 them.
 
 Noticed while writing tests for `waveform.ts` and `authUtils.ts`.
+
+## `fadeOutAllTracks` checks `isFading` twice
+
+```ts
+// playback.ts, fadeOutAllTracks
+if (!activeTracks.get(key)?.isFading) {
+  if (fadeOutInstance(key, durationInSeconds)) { ... }
+}
+```
+
+`fadeOutInstance` opens with `if (!track || track.isFading) return false;`, so
+the outer check cannot change any outcome — pressing Fade Out All twice is
+already a no-op for the tracks already fading, with or without it.
+
+This is the repo's "same rule written twice" shape, the one CLAUDE.md names as
+its characteristic regression, sitting in the tree in miniature. Removing the
+outer check leaves the suite green (measured), which is the point: the two
+copies cannot drift _visibly_. Deleting it makes `fadeOutInstance` the single
+place that decides, which is where the rule already lives.
+
+Noticed while mutation-testing `playback.progressLoop.test.ts` — the mutation
+that removed the outer check failed to break anything.
+
+## A trim end that outlived its audio reports a length the file does not have
+
+`playBlobStreaming` computes `track.duration` from the trim range at trigger
+time (`trimEnd - trimStart`). The `loadedmetadata` handler then re-clamps
+`trimStart`/`trimEnd` against the real duration — an unusable `trimEnd`
+becomes `undefined`, play to the natural end — but only recomputes
+`track.duration` `if (track.duration <= 0)`.
+
+So a pad carrying `trimEnd: 500` on a ten-second file plays correctly and
+reports 8:19 remaining for its whole length. This is reachable rather than
+theoretical: `audioTrimSettings` is keyed by audio file id and survives
+`replaceMissingAudioFile`, so replacing a missing sound with a shorter one
+produces exactly this.
+
+The fix is one line — recompute `track.duration` from the re-clamped range
+whenever the range actually changed, not only when the duration is still zero.
+`playback.streaming.test.ts` asserts the current behaviour with a comment
+pointing here, so the test will need updating with the fix.
+
+Noticed while writing that suite; the assertion was written to what the code
+does after the expectation of 9 measured 499.
