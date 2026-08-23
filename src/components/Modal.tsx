@@ -96,9 +96,15 @@ const Modal: React.FC<ModalProps> = ({
 
   // Keep Tab inside the dialog.
   //
-  // `useKeyboardListener` suppresses Tab app-wide but bails while any overlay
-  // is open, so inside a modal Tab is the browser's again — and with nothing
-  // holding it, it walked straight out into the page underneath.
+  // This used to explain itself by saying `useKeyboardListener` suppresses Tab
+  // app-wide and bails for overlays. It does not, and has not since app-wide
+  // suppression was removed for costing the header, the bank tabs and the
+  // profile selector every keyboard route in — see the note at the `Tab is
+  // deliberately *not* suppressed here any more` comment in that hook.
+  //
+  // Which makes this trap load-bearing rather than a backstop: it is now the
+  // only thing keeping Tab inside an open dialog, and without it focus walks
+  // straight out into the page underneath.
   const handleTabKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
 
