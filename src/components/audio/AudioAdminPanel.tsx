@@ -38,7 +38,10 @@ export default function AudioAdminPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/admin/audio")
+    // Not a bare `fetch`: this file already imports the wrapper and uses it
+    // for the PATCH below, and a GET with no deadline leaves the panel on its
+    // spinner for as long as the socket stays open.
+    fetchWithTimeout("/api/admin/audio")
       .then(async (response) => {
         if (!response.ok) {
           // 404 is the ordinary answer for a non-admin, and 501 for a
