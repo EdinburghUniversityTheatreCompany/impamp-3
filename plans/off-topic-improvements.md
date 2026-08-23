@@ -235,3 +235,115 @@ the third.
 
 Noticed when a dev server started for a manual check left `CLAUDE.md`
 modified and blocked a merge.
+
+## The preloader's batch-level retry defeats its own batching
+
+When `loadAndDecodeAudioPipelined` _rejects_ — as opposed to answering with a
+map of nulls — `processBatch` re-queues each task from its own
+`setTimeout(…, 1000 * task.attempts)`, and each of those callbacks calls
+`processQueue()`. The first timer to fire starts a run with one task in the
+queue, so a failed batch of N comes back as N single-file requests rather than
+as one batch of N. The delay is per task and identical, so this is not a
+deliberate stagger.
+
+One shared timer that re-queues the whole batch and then calls `processQueue`
+once would restore the batching. Nothing is broken by the current shape — every
+file is still retried and still ends up cached — so this is efficiency, not
+correctness.
+
+Noticed while writing `preloader.test.ts`'s "retries every task when the
+decoder itself throws", which had to be written to the current behaviour.
+
+## Two branches that no input can reach
+
+Both are harmless, and both would read as covered-by-accident if anyone judged
+this repo's coverage number by file:
+
+- `getWaveformPeaks` clamps its bucket end with
+  `Math.min(start + samplesPerPoint, length)`. `samplesPerPoint` is
+  `floor(length / targetPoints)`, so the largest end computed is
+  `targetPoints * floor(length / targetPoints)`, which is `<= length` by
+  construction. The clamp can never bind.
+- `validateAuthState` wraps its `refreshGoogleToken` call in a `try`/`catch`,
+  but `refreshGoogleToken` has its own `try`/`catch` around the whole of its
+  body and returns `{ success: false }` rather than throwing. The outer
+  `catch` is unreachable.
+
+Leaving both is defensible — the clamp documents an intent and the catch is
+cheap insurance against a later edit to `refreshGoogleToken`. Deleting either
+is also defensible. What is not defensible is a test that pretends to exercise
+them.
+
+Noticed while writing tests for `waveform.ts` and `authUtils.ts`.
+
+## `fadeOutAllTracks` checks `isFading` twice
+
+```ts
+// playback.ts, fadeOutAllTracks
+if (!activeTracks.get(key)?.isFading) {
+  if (fadeOutInstance(key, durationInSeconds)) { ... }
+}
+```
+
+`fadeOutInstance` opens with `if (!track || track.isFading) return false;`, so
+the outer check cannot change any outcome — pressing Fade Out All twice is
+already a no-op for the tracks already fading, with or without it.
+
+This is the repo's "same rule written twice" shape, the one CLAUDE.md names as
+its characteristic regression, sitting in the tree in miniature. Removing the
+outer check leaves the suite green (measured), which is the point: the two
+copies cannot drift _visibly_. Deleting it makes `fadeOutInstance` the single
+place that decides, which is where the rule already lives.
+
+Noticed while mutation-testing `playback.progressLoop.test.ts` — the mutation
+that removed the outer check failed to break anything.
+
+## A trim end that outlived its audio reports a length the file does not have
+
+`playBlobStreaming` computes `track.duration` from the trim range at trigger
+time (`trimEnd - trimStart`). The `loadedmetadata` handler then re-clamps
+`trimStart`/`trimEnd` against the real duration — an unusable `trimEnd`
+becomes `undefined`, play to the natural end — but only recomputes
+`track.duration` `if (track.duration <= 0)`.
+
+So a pad carrying `trimEnd: 500` on a ten-second file plays correctly and
+reports 8:19 remaining for its whole length. This is reachable rather than
+theoretical: `audioTrimSettings` is keyed by audio file id and survives
+`replaceMissingAudioFile`, so replacing a missing sound with a shorter one
+produces exactly this.
+
+The fix is one line — recompute `track.duration` from the re-clamped range
+whenever the range actually changed, not only when the duration is still zero.
+`playback.streaming.test.ts` asserts the current behaviour with a comment
+pointing here, so the test will need updating with the fix.
+
+Noticed while writing that suite; the assertion was written to what the code
+does after the expectation of 9 measured 499.
+
+## The trimmer stops its previous preview twice
+
+`WaveformTrimmer.handlePreview` opens with an explicit
+`if (previewKey) stopTrack(previewKey)`, and the component also holds
+
+```ts
+useEffect(
+  () => () => {
+    if (previewKey) stopTrack(previewKey);
+  },
+  [previewKey],
+);
+```
+
+whose cleanup fires on every change of `previewKey` — i.e. on exactly the same
+event. Removing the explicit stop leaves `WaveformTrimmer.test.tsx` green
+(measured), because the effect covers it.
+
+They are not quite identical, which is the only argument for keeping both: the
+explicit stop runs _before_ `playBuffer`, while the effect cleanup runs after
+the render, so relying on the effect alone leaves a frame in which both
+previews are audible. If that is the reason, it deserves a comment; if it is
+not, one of the two should go. This is the repo's "same rule written twice"
+shape either way.
+
+Noticed while mutation-testing the trimmer: the mutation that deleted the
+explicit stop broke nothing.

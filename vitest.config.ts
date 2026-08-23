@@ -60,54 +60,40 @@ export default defineConfig({
         "src/lib/server/s3/fakeObjectStore.ts",
       ],
       reporter: ["text-summary", "html"],
-      // Three back-to-back runs after the layered-retrigger work all measured
-      // 49.65 / 42.80 / 46.37 / 50.45; two earlier runs during that work
-      // measured 49.72 / 42.70 / 46.32 / 50.48. The floor sits under the
-      // *lowest* figure seen for each metric across all five, because the
-      // numbers move by a few tenths between runs and a ratchet set against a
-      // single run's figure would fail the next one. The gap below that is
-      // deliberate but small — enough that an ordinary refactor moving a few
-      // uncovered lines around does not fail the build, not enough for a whole
-      // untested module to land unnoticed.
+      // The floor is a ratchet: set under what the suite actually achieves,
+      // so deleting tests or landing a large untested module fails the build
+      // and ordinary work does not. Never lowered to make a build pass.
       //
-      // The previous floor of 44 / 37 / 39 / 44 came from the bank-identity
-      // branch and was set against a 45.51 run; layering added five test files
-      // and left it five points behind.
+      // History, kept because each raise records what the suite could do at
+      // the time. Layered retrigger: 49.65 / 42.80 / 46.37 / 50.45 across
+      // three runs, floor 44 / 37 / 39 / 44 from the bank-identity branch
+      // before it. The test-quality branch: 50.32 / 43.29 / 46.57 / 51.04.
+      // All five lanes merged: 54.43 / 46.32 / 51.25 / 55.14. The audio-dedup
+      // and bank-transfer plan: 59.27 / 50.95 / 56.65 / 60.11 as the lowest
+      // of four back-to-back runs, floor 60 / 52 / 57 / 61.
       //
-      // The test-quality branch then took it to 50.32 / 43.29 / 46.57 / 51.04,
-      // identical across two back-to-back runs — the additions are mostly
-      // whole branches that were unreachable before (the unconfigured audio
-      // deployment, the transaction rollback, the sub-block loudness
-      // fallback), which do not move between runs the way a partially covered
-      // module does. Floor raised to sit just under, keeping the same small
-      // deliberate gap.
-      // Raised again after all five lanes merged. The 50/43/46/50 above it was
-      // set from the test-quality branch alone, against its own 50.32 run; the
-      // other four lanes then added the server redaction, the sync download
-      // paths, the import register and the keyboard work, and the combined
-      // tree measures 54.43 / 46.32 / 51.25 / 55.14. A floor four points below
-      // what the suite actually does is not a ratchet, it is decoration.
+      // Raised again by the coverage sweep. Four back-to-back runs on an idle
+      // machine measured 73.15 / 64.72 / 70.44 / 74.17 (the lowest seen for
+      // each metric; three of the four runs were identical, which is what a
+      // suite made mostly of whole branches rather than partially covered
+      // modules looks like). The floor sits two points under each. The gate
+      // was proved to bite before it was set: 74 / 65 / 71 / 75 exits 1, and
+      // reports all four — "Coverage for lines (74.22%) does not meet global
+      // threshold (75%)" and one like it per metric — so every one of the
+      // four is genuinely under the run rather than merely unenforced.
       //
-      // Raised once more at the end of the audio-dedup + bank-transfer plan.
-      // Sixteen tasks each declined to touch this block, deliberately, so that
-      // one measurement at the end would cover the whole of it rather than
-      // sixteen small ones against a floor main had meanwhile overtaken. Four
-      // back-to-back runs on an idle machine measured
-      // 59.31 / 50.95 / 56.65 / 60.12,
-      // 59.31 / 50.95 / 56.65 / 60.12,
-      // 59.27 / 50.98 / 56.70 / 60.11 and
-      // 59.31 / 50.95 / 56.70 / 60.13 — so the lowest seen for each metric is
-      // 59.27 / 50.95 / 56.65 / 60.11, and the floor sits about a point and a
-      // half under each, the same deliberate gap as every raise above. The
-      // gate was proved to bite before it was set: 60 / 49 / 55 / 59 exits 1
-      // with "Coverage for statements (59.31%) does not meet global threshold
-      // (60%)", which also shows the other three are genuinely under the run
-      // rather than merely unenforced.
+      // What moved: the two HTTP clients, the Drive request helper and its
+      // upload passes, the audio decoder's single-file paths, the preload
+      // queue, the playback monitoring loop and the streaming path, the
+      // profile store's create/import/export half, and four components that
+      // had no test at all — the modal shell, the waveform trimmer, the
+      // conflict dialog and the loudness overview — plus the Escape stack
+      // they share.
       thresholds: {
-        statements: 60,
-        branches: 52,
-        functions: 57,
-        lines: 61,
+        statements: 71,
+        branches: 63,
+        functions: 69,
+        lines: 72,
       },
     },
   },
