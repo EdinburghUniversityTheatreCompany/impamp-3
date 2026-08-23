@@ -28,6 +28,7 @@ import { convertIndexToBankNumber } from "./bankUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
 import { fetchWithTimeout } from "./fetchWithTimeout";
+import { forEachWithConcurrency } from "./concurrency";
 import type { Entry } from "@zip.js/zip.js";
 
 /**
@@ -610,23 +611,13 @@ export async function importAudioSources(
     });
   };
 
-  if (concurrency <= 1) {
-    for (const source of audioSources) {
-      await importOne(source, true);
-    }
-  } else {
-    let nextIndex = 0;
-    const workers = Array.from(
-      { length: Math.min(concurrency, audioSources.length) },
-      async () => {
-        while (nextIndex < audioSources.length) {
-          const source = audioSources[nextIndex++];
-          await importOne(source, false);
-        }
-      },
-    );
-    await Promise.all(workers);
-  }
+  // `concurrency <= 1` is a real path, not a degenerate pool: it is what a
+  // caller asks for when it wants failures attributable in order, and
+  // `importOne`'s second argument says which it is in.
+  const sequential = concurrency <= 1;
+  await forEachWithConcurrency(audioSources, concurrency, (source) =>
+    importOne(source, sequential),
+  );
 
   console.log(
     `Completed audio file import, mapped ${audioIdMap.size} files (${createdIds.length} new)`,
@@ -2369,7 +2360,7 @@ export async function importProfilesFromZip(
 // JSON imports must be read into a single string, and V8 caps strings at
 // ~512 MB — larger legacy exports simply cannot be parsed in the browser.
 // (.iaz archives have no such limit since they are streamed.)
-export const MAX_JSON_IMPORT_BYTES = 480 * 1024 * 1024;
+const MAX_JSON_IMPORT_BYTES = 480 * 1024 * 1024;
 
 /**
  * The most an *uncompressed* metadata entry inside a `.iaz` may be.

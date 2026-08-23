@@ -31,7 +31,7 @@ import type { GoogleUserInfo } from "@/store/profileStore";
  * opened, never the whole Drive. Shared so the three sign-in entry points
  * cannot ask for different things.
  */
-export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo";
 

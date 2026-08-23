@@ -59,7 +59,7 @@ export const UNNAMED_BANK = "Unnamed bank";
  * @param pages The profile's banks, in any order
  * @param pads Every pad row of that profile, from every bank
  */
-export function summariseBanks(
+function summariseBanks(
   pages: PageMetadata[],
   pads: PadConfiguration[],
   collectReferencedAudioFileIds: (pads: PadConfiguration[]) => Set<number>,

@@ -87,7 +87,7 @@ test.describe("first-use tour", () => {
     await page.getByTestId("welcome-tour-skip").click();
     await expect(page.getByTestId("welcome-tour")).toBeHidden();
 
-    const file = await createTestAudioFilePath("tour-guard.wav");
+    const file = await createTestAudioFilePath("tour-guard");
     await openEditPadModal(page, 0);
     await addSoundsToPadModal(page, [file]);
     await savePadEditModal(page);

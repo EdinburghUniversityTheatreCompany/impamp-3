@@ -41,7 +41,7 @@ export interface ConnectDriveOptions {
 }
 
 /** The shape every connect path validates before writing anything. */
-export function isDriveProfileData(
+function isDriveProfileData(
   data: ProfileSyncData | null,
 ): data is ProfileSyncData {
   return Boolean(data && data._syncFormatVersion === 1 && data.profile);

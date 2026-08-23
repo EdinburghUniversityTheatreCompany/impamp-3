@@ -466,7 +466,9 @@ and the ranges are floors that should move only when something requires it.
   table and the playback path both call `resolveGain`; a second implementation
   would let the table disagree with what is heard
 - Anything that writes an audio file and the pad naming it in **separate
-  transactions** must run inside `withAudioImportInProgress` (`db.ts`), and
+  transactions** must run inside `withAudioImportInProgress`
+  (`src/lib/audioImportRegister.ts`, re-exported from `db.ts` so every existing
+  import still resolves — new code should import from the register), and
   **every deleter of audio rows must `await settleAudioImports()` as the last
   thing before it opens its transaction, and must not be called from inside
   `withAudioImportInProgress`.** That is one sentence with no exceptions,

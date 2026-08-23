@@ -181,7 +181,7 @@ const APP_FOLDER_NAME = "ImpAmp_Data";
  * @param refreshCallback Callback to update token if refreshed
  * @returns The folder ID
  */
-export const getOrCreateAppFolder = async (
+const getOrCreateAppFolder = async (
   tokenInfo: TokenInfo | null,
   refreshCallback: (token: TokenInfo) => void,
 ): Promise<string> => {

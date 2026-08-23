@@ -14,7 +14,7 @@
  * @module lib/testHooks
  */
 
-export const e2eHooksEnabled =
+const e2eHooksEnabled =
   process.env.NODE_ENV !== "production" ||
   process.env.NEXT_PUBLIC_E2E_HOOKS === "1";
 

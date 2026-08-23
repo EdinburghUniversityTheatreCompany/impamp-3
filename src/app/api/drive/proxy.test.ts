@@ -17,6 +17,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { resetRateLimitState } from "@/lib/server/rateLimit";
 
 const fetchWithTimeout = vi.fn();
 vi.mock("@/lib/fetchWithTimeout", () => ({
@@ -31,6 +32,7 @@ const FILE_ID = "1AbC_def-123";
 beforeEach(() => {
   process.env.GOOGLE_API_KEY = "test-key";
   fetchWithTimeout.mockReset();
+  resetRateLimitState();
 });
 
 afterEach(() => {
@@ -125,5 +127,115 @@ describe("the public file proxy", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+describe("rate limiting", () => {
+  /**
+   * A request that looks like it came through kamal-proxy. The other tests in
+   * this file deliberately send no forwarding header, which is how a dev or
+   * E2E request looks — the limiter stands down for those, so they are
+   * unaffected by anything here.
+   */
+  function fromClient(address: string) {
+    return new NextRequest(
+      `http://localhost/api/drive/public-file?id=${FILE_ID}`,
+      {
+        headers: {
+          "sec-fetch-site": "same-origin",
+          "x-forwarded-for": `10.0.0.1, ${address}`,
+        },
+      },
+    );
+  }
+
+  /**
+   * A fresh Response per call — a body can only be consumed once, and these
+   * tests make hundreds of requests through the same mock.
+   */
+  function jsonFile() {
+    fetchWithTimeout.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+  }
+
+  it("refuses a client past the limit, with a Retry-After", async () => {
+    jsonFile();
+    const { LIMITS } = await import("@/lib/server/rateLimit");
+
+    for (let i = 0; i < LIMITS.driveProxy.limit; i++) {
+      expect((await getFile(fromClient("203.0.113.5"))).status).toBe(200);
+    }
+
+    const refused = await getFile(fromClient("203.0.113.5"));
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+  });
+
+  it("counts the proxy-supplied address, not one the caller invented", async () => {
+    jsonFile();
+    const { LIMITS } = await import("@/lib/server/rateLimit");
+
+    // Every request claims a different leftmost hop. Keying on that would
+    // hand one script an unlimited number of identities.
+    for (let i = 0; i < LIMITS.driveProxy.limit; i++) {
+      const spoofed = new NextRequest(
+        `http://localhost/api/drive/public-file?id=${FILE_ID}`,
+        {
+          headers: {
+            "sec-fetch-site": "same-origin",
+            "x-forwarded-for": `10.0.0.${i % 250}, 203.0.113.6`,
+          },
+        },
+      );
+      expect((await getFile(spoofed)).status).toBe(200);
+    }
+
+    expect((await getFile(fromClient("203.0.113.6"))).status).toBe(429);
+  });
+
+  it("leaves a different client's budget alone", async () => {
+    jsonFile();
+    const { LIMITS } = await import("@/lib/server/rateLimit");
+
+    for (let i = 0; i < LIMITS.driveProxy.limit; i++) {
+      await getFile(fromClient("203.0.113.7"));
+    }
+    expect((await getFile(fromClient("203.0.113.7"))).status).toBe(429);
+    expect((await getFile(fromClient("203.0.113.8"))).status).toBe(200);
+  });
+
+  it("does not limit a request with nothing in front of it", async () => {
+    jsonFile();
+    const { LIMITS } = await import("@/lib/server/rateLimit");
+
+    // The dev server and the E2E run. Bucketing these together would let one
+    // caller lock out every other, which is worse than not limiting.
+    for (let i = 0; i < LIMITS.driveProxy.limit + 5; i++) {
+      const bare = new NextRequest(
+        `http://localhost/api/drive/public-file?id=${FILE_ID}`,
+        { headers: { "sec-fetch-site": "same-origin" } },
+      );
+      expect((await getFile(bare)).status).toBe(200);
+    }
+  });
+
+  it("refuses before spending the API key", async () => {
+    jsonFile();
+    const { LIMITS } = await import("@/lib/server/rateLimit");
+
+    for (let i = 0; i < LIMITS.driveProxy.limit; i++) {
+      await getFile(fromClient("203.0.113.9"));
+    }
+    const callsBefore = fetchWithTimeout.mock.calls.length;
+
+    await getFile(fromClient("203.0.113.9"));
+
+    // The whole point: a refused request must not reach Google. A limiter
+    // placed after the fetch would bound the response and not the cost.
+    expect(fetchWithTimeout.mock.calls.length).toBe(callsBefore);
   });
 });

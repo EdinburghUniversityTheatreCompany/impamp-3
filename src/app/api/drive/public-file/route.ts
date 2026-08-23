@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getProxyRequestParams,
-  driveErrorResponse,
-  isSameHostRequest,
-} from "../proxyUtils";
+import { beginProxyRequest, driveErrorResponse } from "../proxyUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
@@ -23,13 +19,9 @@ import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 export async function GET(request: NextRequest) {
-  const params = getProxyRequestParams(request);
-  if (params.errorResponse) return params.errorResponse;
-  const { apiKey, fileId } = params;
-
-  if (!isSameHostRequest(request)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const begun = beginProxyRequest(request);
+  if (begun instanceof NextResponse) return begun;
+  const { apiKey, fileId } = begun;
 
   const wantMeta = request.nextUrl.searchParams.get("meta") === "1";
 

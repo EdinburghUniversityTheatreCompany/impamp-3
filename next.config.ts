@@ -72,6 +72,32 @@ const nextConfig: NextConfig = {
             key: "Referrer-Policy",
             value: "strict-origin-when-cross-origin",
           },
+          {
+            // Report-Only on purpose — see `contentSecurityPolicy` below.
+            key: "Content-Security-Policy-Report-Only",
+            value: contentSecurityPolicy(),
+          },
+          {
+            // TLS is terminated at kamal-proxy (`ssl: true` in
+            // config/deploy.yml), which obtains the certificate but does not
+            // add this. Without it, the first request of a session can still
+            // be made over plaintext and downgraded.
+            //
+            // No `preload`, and no `includeSubDomains`: this app is one host
+            // under bedlamtheatre.co.uk, and asserting a policy for the whole
+            // domain — irreversibly, in the case of preload — is not this
+            // deployment's to assert.
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000",
+          },
+          {
+            // The board needs none of these. Denying them costs nothing and
+            // means a compromised dependency cannot quietly ask for the
+            // microphone on a machine sitting in a venue.
+            key: "Permissions-Policy",
+            value:
+              "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+          },
         ],
       },
       {
@@ -102,5 +128,87 @@ const nextConfig: NextConfig = {
     ];
   },
 };
+
+/**
+ * The Content-Security-Policy, shipped **Report-Only** to begin with.
+ *
+ * There was no CSP at all, which matters more here than for an ordinary app:
+ * the Drive proxies serve a stranger's bytes from this app's own origin.
+ * `nosniff` is on those responses, but CSP is the layer that contains anything
+ * that does get through.
+ *
+ * Report-Only because the enforcing version cannot be written from reading the
+ * source. Two of the origins below were found only by reading a dependency and
+ * an env-var contract:
+ *
+ * - `@react-oauth/google` injects `https://accounts.google.com/gsi/client` at
+ *   runtime. A repo-wide grep for `<script>` and `next/script` finds nothing,
+ *   which is exactly how "this app loads no third-party scripts" came to be
+ *   written down and be wrong.
+ * - Hosted audio is uploaded and downloaded **straight from the browser to the
+ *   bucket** on presigned URLs, so `connect-src` has to name a host that is
+ *   configured per deployment (`IMPAMP_S3_ENDPOINT`) and is absent entirely
+ *   when hosting is off.
+ *
+ * And that second one comes with a caveat that has to be stated rather than
+ * discovered: **Next evaluates `headers()` when it builds, not per request**,
+ * so `IMPAMP_S3_ENDPOINT` is only picked up if it is set *at build time*.
+ * Measured, not assumed — setting it only in the run environment leaves the
+ * origin out of the header. `config/deploy.yml` supplies it at run time, so a
+ * Kamal-built image ships a policy that does not name the bucket, and hosted
+ * audio will show up in the reports. That is survivable precisely because this
+ * is Report-Only; it is also the thing that must be fixed before promoting the
+ * header, either by passing the endpoint as a build ARG (which pins one image
+ * to one bucket) or by emitting the policy from middleware, where the value
+ * can be read per request. The nonce that `script-src` wants needs that same
+ * middleware, so the two are one piece of work.
+ *
+ * Neither is the kind of thing to discover by enforcing it in front of an
+ * audience. Watch the reports through a real show — a sign-in, a sync, an
+ * upload, a shared board — then promote the header to `Content-Security-Policy`
+ * and tighten `script-src` with a nonce.
+ *
+ * `'unsafe-inline'` is in `script-src` deliberately for now: Next inlines its
+ * own hydration bootstrap, and removing it needs a nonce, which needs
+ * middleware this app does not have. Reporting on it would fire on every page
+ * load and teach everyone to ignore the report.
+ */
+function contentSecurityPolicy(): string {
+  // Wasabi (or whatever S3-compatible endpoint is configured). Absent when
+  // hosted audio is off, in which case nothing ever connects there.
+  const objectStore = process.env.IMPAMP_S3_ENDPOINT?.trim();
+
+  const connect = [
+    "'self'",
+    "https://www.googleapis.com",
+    "https://accounts.google.com",
+    ...(objectStore ? [objectStore.replace(/\/+$/, "")] : []),
+  ];
+
+  return [
+    "default-src 'self'",
+    // See the note above: 'unsafe-inline' goes when a nonce arrives.
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com",
+    // Tailwind and Next both emit inline style attributes.
+    "style-src 'self' 'unsafe-inline'",
+    `connect-src ${connect.join(" ")}`,
+    // `data:` for generated icons, `blob:` for waveforms and object URLs,
+    // googleusercontent for the signed-in user's avatar.
+    "img-src 'self' data: blob: https://*.googleusercontent.com",
+    // Every sound plays from an object URL over IndexedDB bytes.
+    "media-src 'self' blob:",
+    // The loudness analyser runs off-thread.
+    "worker-src 'self' blob:",
+    // Google Identity Services renders its prompt in an iframe.
+    "frame-src https://accounts.google.com",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    // The same statement as X-Frame-Options: DENY, in the header that
+    // supersedes it.
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
 
 export default withBundleAnalyzer(nextConfig);

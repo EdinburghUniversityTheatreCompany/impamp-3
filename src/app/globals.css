@@ -116,3 +116,33 @@ body {
 @utility pt-safe {
   padding-top: max(0.25rem, env(safe-area-inset-top));
 }
+
+/**
+ * Respect a reduced-motion preference.
+ *
+ * The board carries twelve indefinite animations — nine `animate-spin`
+ * spinners and three `animate-pulse` placeholders — and nothing anywhere in
+ * the app asked whether the operator wanted them. Indefinite is the category
+ * that matters for vestibular sensitivity: a one-off transition ends, a
+ * spinner does not.
+ *
+ * A blanket rule rather than `motion-reduce:` on each of the twelve, because
+ * the twelve are the ones that exist today and the rule should cover the
+ * thirteenth. Animations are reduced to a single frame rather than removed, so
+ * a spinner still *appears* — it is the thing telling an operator mid-show
+ * that a sync is running, and making it vanish would cost information to save
+ * motion.
+ *
+ * Scroll behaviour goes too: `scroll-behavior: smooth` is the other motion a
+ * user cannot opt out of once it is set.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
