@@ -138,7 +138,7 @@ export type PlaybackType = "sequential" | "random" | "round-robin";
 export const DEFAULT_PLAYBACK_TYPE: PlaybackType = "round-robin";
 
 /** The banks every profile starts with, so every tab has an identity. */
-export const DEFAULT_BANK_COUNT = 10;
+const DEFAULT_BANK_COUNT = 10;
 
 // Define the structure of pad configuration data
 export interface PadConfiguration {
@@ -789,7 +789,15 @@ export async function addAudioFile(
   audioFile: Omit<AudioFile, "id" | "createdAt">,
 ): Promise<number> {
   const db = await getDb();
-  const hash = audioFile.hash ?? (await computeBlobHash(audioFile.blob));
+  // `||` rather than `??`, matching `addOrReuseAudioFile`: an empty string is a
+  // missing hash, not a key to store rows under. This was `??` — the drifted
+  // twin of a fix made 246 lines below, where the corrected copy carries the
+  // explanation. Nothing in production calls this (it survives as the one
+  // writer that can still make a duplicate, which the dedup tests need), so it
+  // stored no poisoned key; a seam the dedup suite is built on is not a good
+  // place to leave the trap lying, and `hash: ""` is exactly what
+  // `createHashlessAudioIndex` mistakes for a hashed row.
+  const hash = audioFile.hash || (await computeBlobHash(audioFile.blob));
   const tx = db.transaction("audioFiles", "readwrite");
   const id = await tx.store.add({ ...audioFile, hash, createdAt: new Date() });
   await tx.done;
