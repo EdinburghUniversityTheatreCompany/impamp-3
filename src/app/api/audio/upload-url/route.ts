@@ -8,6 +8,7 @@ import {
 } from "@/lib/server/audio";
 import { beginAudioRequest, uploadRefusal } from "@/lib/server/audioRequests";
 import { proofRangeFor } from "@/lib/server/proofOfPossession";
+import { consume, LIMITS } from "@/lib/server/rateLimit";
 
 /**
  * POST /api/audio/upload-url — ask permission to upload one audio file.
@@ -27,6 +28,20 @@ export async function POST(request: NextRequest) {
   if (begun instanceof NextResponse) return begun;
   const { ctx, body, fields } = begun;
   const { user, store, config } = ctx;
+
+  // Per account, not per IP: this route is authenticated, so the account is
+  // both the stabler key and the thing being spent. It bounds a stolen session
+  // minting presigned PUTs in a loop; the quota bounds what they can hold.
+  const minting = consume(`upload-url:${user.id}`, LIMITS.uploadUrl);
+  if (!minting.allowed) {
+    return NextResponse.json(
+      { error: "Too many upload requests. Try again shortly." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(minting.retryAfterSeconds) },
+      },
+    );
+  }
 
   if (
     typeof body.sizeBytes !== "number" ||

@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getProxyRequestParams,
-  driveErrorResponse,
-  isSameHostRequest,
-} from "../proxyUtils";
+import { beginProxyRequest, driveErrorResponse } from "../proxyUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /**
@@ -82,13 +78,9 @@ function allowedAudioType(mimeType: string): string | null {
 }
 
 export async function GET(request: NextRequest) {
-  const params = getProxyRequestParams(request);
-  if (params.errorResponse) return params.errorResponse;
-  const { apiKey, fileId } = params;
-
-  if (!isSameHostRequest(request)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const begun = beginProxyRequest(request);
+  if (begun instanceof NextResponse) return begun;
+  const { apiKey, fileId } = begun;
 
   try {
     // Check metadata first so we can enforce type and size before streaming
