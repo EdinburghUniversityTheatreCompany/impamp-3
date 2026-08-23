@@ -1,4 +1,5 @@
 import { openDB, DBSchema, IDBPDatabase, IDBPTransaction } from "idb";
+import { hasWebAudio } from "./audio/capability";
 import { loadLoudnessPipeline } from "@/lib/audio/loudness/loadPipeline";
 import type {
   LoudnessAnalysis,
@@ -783,7 +784,12 @@ function startBackgroundAnalysis(id: number): void {
   // answer and stays, because a suite asserting on analysis still wants it;
   // this is the answer for the twenty-odd suites that merely touch the
   // database and were one indirect writer away from the same flake.
-  if (typeof AudioContext === "undefined") return;
+  // Through the shared capability check, not a bare `typeof AudioContext`:
+  // that misses a browser carrying only `webkitAudioContext`, which
+  // `getAudioContext` deliberately falls back to. There, playback worked and
+  // nothing was ever analysed, so every file played un-normalised at 0 dB
+  // with nothing to show for it.
+  if (!hasWebAudio()) return;
   void loadLoudnessPipeline()
     .then(({ analyseAndStore }) => analyseAndStore(id))
     .catch((error) => {

@@ -7,10 +7,7 @@
  * @module lib/audio/context
  */
 
-// Define an interface for window with potential webkitAudioContext
-interface ExtendedWindow extends Window {
-  webkitAudioContext?: typeof AudioContext;
-}
+import { getAudioContextConstructor } from "./capability";
 
 // Track client-side environment
 const isClient = typeof window !== "undefined";
@@ -31,11 +28,13 @@ export function getAudioContext(): AudioContext {
   }
 
   if (!audioContext) {
-    // Cast window to the extended type to check for webkitAudioContext (Safari support)
-    const extendedWindow = window as ExtendedWindow;
-    audioContext = new (
-      window.AudioContext || extendedWindow.webkitAudioContext
-    )();
+    // Shared with `startBackgroundAnalysis`'s guard, so "can we analyse" and
+    // "which constructor do we call" can never disagree. See ./capability.
+    const Ctor = getAudioContextConstructor();
+    if (!Ctor) {
+      throw new Error("Web Audio is not available in this browser");
+    }
+    audioContext = new Ctor();
 
     console.log("[Audio Context] Created new AudioContext instance");
     setupAudioContextListeners();
