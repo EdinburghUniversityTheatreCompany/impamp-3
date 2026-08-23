@@ -15,6 +15,7 @@ import {
   createHashlessAudioIndex,
   withAudioImportInProgress,
 } from "@/lib/db";
+import { DEFAULT_CONCURRENCY, forEachWithConcurrency } from "@/lib/concurrency";
 import { detectProfileConflicts } from "@/lib/syncUtils";
 import { isReadOnlyForSync } from "@/lib/syncState";
 import { getProfileSyncFilename, updateSyncTimestamp } from "./utils";
@@ -70,88 +71,97 @@ export async function repairDriveAudioFiles(
   // Metadata for the survey, blobs only for what turns out to need re-upload.
   const metadata = await getAudioFileMetadata(audioFileIds);
 
-  for (const id of audioFileIds) {
-    const audioFile = metadata.get(id);
-    if (!audioFile) continue;
-    checked++;
+  // Four at a time. Every branch below is a network round trip — a lookup, and
+  // sometimes an upload — and this used to make all of them one after another,
+  // so a large board's repair took as long as its sound count times a round
+  // trip. Counters and the error list are order-independent, which is what
+  // lets this be a pool at all.
+  await forEachWithConcurrency(
+    audioFileIds,
+    DEFAULT_CONCURRENCY,
+    async (id) => {
+      const audioFile = metadata.get(id);
+      if (!audioFile) return;
+      checked++;
 
-    let needsUpload = false;
-    const existingDriveId = audioFile.driveFileIds?.[profileId];
+      let needsUpload = false;
+      const existingDriveId = audioFile.driveFileIds?.[profileId];
 
-    if (!existingDriveId) {
-      needsUpload = true;
-    } else {
-      const existing = await findDriveFileById(
-        existingDriveId,
-        tokenInfo,
-        refreshCallback,
-      );
-      if (!existing) {
-        console.log(
-          `Audio file "${audioFile.name}" missing from Drive — will re-upload`,
-        );
+      if (!existingDriveId) {
         needsUpload = true;
-      } else if (folderId && !existing.parents?.includes(folderId)) {
-        console.log(
-          `Audio file "${audioFile.name}" exists in Drive but not in profile folder — will re-upload`,
-        );
-        needsUpload = true;
-      }
-    }
-
-    if (!needsUpload) continue;
-
-    // Before uploading, check if another browser already uploaded this file to the folder
-    if (folderId) {
-      try {
-        const existing = await findAudioFileInDriveFolder(
-          audioFile.name,
-          profileId,
-          folderId,
+      } else {
+        const existing = await findDriveFileById(
+          existingDriveId,
           tokenInfo,
           refreshCallback,
         );
-        if (existing) {
+        if (!existing) {
           console.log(
-            `Audio file "${audioFile.name}" already exists in Drive folder — recording ID without re-uploading`,
+            `Audio file "${audioFile.name}" missing from Drive — will re-upload`,
           );
-          await updateAudioFileDriveId(id, existing.id, profileId);
-          continue;
+          needsUpload = true;
+        } else if (folderId && !existing.parents?.includes(folderId)) {
+          console.log(
+            `Audio file "${audioFile.name}" exists in Drive but not in profile folder — will re-upload`,
+          );
+          needsUpload = true;
         }
-      } catch (err) {
-        console.warn(
-          `Could not check Drive for existing "${audioFile.name}" — will upload:`,
-          err,
-        );
       }
-    }
 
-    // The bytes, at last — only for the files that actually need re-uploading.
-    const withBlob = await getAudioFile(id);
-    if (!withBlob) continue;
+      if (!needsUpload) return;
 
-    try {
-      const driveFile = await uploadAudioFile(
-        withBlob.name,
-        withBlob.blob,
-        withBlob.type,
-        null,
-        profileId,
-        tokenInfo,
-        refreshCallback,
-        folderId,
-      );
-      await updateAudioFileDriveId(id, driveFile.id, profileId);
-      uploaded++;
-      console.log(
-        `Repaired audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`"${audioFile.name}": ${msg}`);
-      console.error(`Failed to repair audio file "${audioFile.name}":`, err);
-    }
-  }
+      // Before uploading, check if another browser already uploaded this file to the folder
+      if (folderId) {
+        try {
+          const existing = await findAudioFileInDriveFolder(
+            audioFile.name,
+            profileId,
+            folderId,
+            tokenInfo,
+            refreshCallback,
+          );
+          if (existing) {
+            console.log(
+              `Audio file "${audioFile.name}" already exists in Drive folder — recording ID without re-uploading`,
+            );
+            await updateAudioFileDriveId(id, existing.id, profileId);
+            return;
+          }
+        } catch (err) {
+          console.warn(
+            `Could not check Drive for existing "${audioFile.name}" — will upload:`,
+            err,
+          );
+        }
+      }
+
+      // The bytes, at last — only for the files that actually need re-uploading.
+      const withBlob = await getAudioFile(id);
+      if (!withBlob) return;
+
+      try {
+        const driveFile = await uploadAudioFile(
+          withBlob.name,
+          withBlob.blob,
+          withBlob.type,
+          null,
+          profileId,
+          tokenInfo,
+          refreshCallback,
+          folderId,
+        );
+        await updateAudioFileDriveId(id, driveFile.id, profileId);
+        uploaded++;
+        console.log(
+          `Repaired audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`"${audioFile.name}": ${msg}`);
+        console.error(`Failed to repair audio file "${audioFile.name}":`, err);
+      }
+    },
+  );
 
   return { checked, uploaded, errors };
 }
@@ -174,39 +184,48 @@ export async function uploadMissingAudioFiles(
   // nothing to do.
   const metadata = await getAudioFileMetadata(audioFileIds);
 
-  for (const id of audioFileIds) {
-    const audioFile = metadata.get(id);
-    if (!audioFile) continue;
-    if (audioFile.driveFileIds?.[profileId]) {
-      console.log(
-        `Audio file "${audioFile.name}" already on Drive for profile ${profileId} — skipping upload`,
-      );
-      continue;
-    }
-    // Only now is the blob needed, and only for the files actually going up.
-    const withBlob = await getAudioFile(id);
-    if (!withBlob) continue;
+  // Four at a time, matching the downloader. The reads above were batched once
+  // already — a 960-sound board used to do 960 sequential *reads* per sync to
+  // discover there was nothing to do — but the 960 sequential network
+  // **uploads** underneath were left, which is the far larger cost and the one
+  // that holds `withAudioImportInProgress` open while it runs.
+  await forEachWithConcurrency(
+    audioFileIds,
+    DEFAULT_CONCURRENCY,
+    async (id) => {
+      const audioFile = metadata.get(id);
+      if (!audioFile) return;
+      if (audioFile.driveFileIds?.[profileId]) {
+        console.log(
+          `Audio file "${audioFile.name}" already on Drive for profile ${profileId} — skipping upload`,
+        );
+        return;
+      }
+      // Only now is the blob needed, and only for the files actually going up.
+      const withBlob = await getAudioFile(id);
+      if (!withBlob) return;
 
-    try {
-      const driveFile = await uploadAudioFile(
-        withBlob.name,
-        withBlob.blob,
-        withBlob.type,
-        null,
-        profileId,
-        tokenInfo,
-        refreshCallback,
-        folderId,
-      );
-      await updateAudioFileDriveId(id, driveFile.id, profileId);
-      console.log(
-        `Uploaded audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
-      );
-    } catch (err) {
-      console.error(`Failed to upload audio file "${audioFile.name}":`, err);
-      // Non-fatal: continue syncing other files; profile JSON will omit driveFileId for this one
-    }
-  }
+      try {
+        const driveFile = await uploadAudioFile(
+          withBlob.name,
+          withBlob.blob,
+          withBlob.type,
+          null,
+          profileId,
+          tokenInfo,
+          refreshCallback,
+          folderId,
+        );
+        await updateAudioFileDriveId(id, driveFile.id, profileId);
+        console.log(
+          `Uploaded audio file "${audioFile.name}" → Drive ID: ${driveFile.id}`,
+        );
+      } catch (err) {
+        console.error(`Failed to upload audio file "${audioFile.name}":`, err);
+        // Non-fatal: continue syncing other files; profile JSON will omit driveFileId for this one
+      }
+    },
+  );
 }
 
 /**

@@ -30,6 +30,7 @@ import {
 import { createStoredHashIndex } from "@/lib/audioHashIndex";
 import type { ProfileSyncData } from "@/lib/syncUtils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { DEFAULT_CONCURRENCY, forEachWithConcurrency } from "@/lib/concurrency";
 import { getAudioFileMetadata } from "@/lib/db";
 import { proofOfPossession } from "./proofOfPossession";
 
@@ -258,9 +259,20 @@ export async function downloadProfileAudio(
   // hash index. See `createHashlessAudioIndex` for why it is a factory.
   const getHashlessIndex = createHashlessAudioIndex();
 
-  for (const ref of hostedRefs) {
-    if (await stored.lookup(ref.hash)) continue;
-    if ((await getHashlessIndex()).has(ref.hash)) continue;
+  // Four at a time. Each reference is a presign request followed by a download,
+  // and this ran them one after another — so a board's worth of hosted sounds
+  // cost its count times two round trips, in series, inside the sync's
+  // `withAudioImportInProgress` scope.
+  //
+  // Safe to overlap for the same reason the comment on `addOrReuseAudioFile`
+  // below already gives: the lookup here and the write there are separate
+  // transactions and a browser already runs several syncs at once, so two
+  // fetches of the same bytes were always possible and are collapsed by the
+  // reuse inside the writing transaction. Concurrency widens that window
+  // within one pass rather than introducing it.
+  await forEachWithConcurrency(hostedRefs, DEFAULT_CONCURRENCY, async (ref) => {
+    if (await stored.lookup(ref.hash)) return;
+    if ((await getHashlessIndex()).has(ref.hash)) return;
 
     try {
       const ticket = await requestProfileDownloadUrl(
@@ -276,7 +288,7 @@ export async function downloadProfileAudio(
         // A presigned URL that has expired, or a bucket hiccup — both are
         // worth another attempt on the next sync.
         retryable.push(`${ref.name}: download failed (${response.status})`);
-        continue;
+        return;
       }
 
       const blob = await response.blob();
@@ -318,7 +330,7 @@ export async function downloadProfileAudio(
         retryable.push(`${ref.name}: ${message}`);
       }
     }
-  }
+  });
 
   return { warnings, retryable, downloaded };
 }
