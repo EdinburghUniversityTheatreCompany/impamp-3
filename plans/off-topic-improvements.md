@@ -347,3 +347,32 @@ shape either way.
 
 Noticed while mutation-testing the trimmer: the mutation that deleted the
 explicit stop broke nothing.
+
+## The search matcher does not trim the term it matches on
+
+`useSearch` decides _whether to search_ on a trimmed term:
+
+```ts
+const hasQuery = searchTerm.trim().length > 0 && activeProfileId !== null;
+```
+
+but it matches on the raw one:
+
+```ts
+const searchTermLower = searchTerm.toLowerCase();
+const nameMatches = padName.toLowerCase().includes(searchTermLower);
+```
+
+So typing `"horn "` searches — `hasQuery` is true — and matches nothing, because
+no pad name contains a trailing space. The operator sees "No sounds found" for
+a sound that is on the board. A trailing space is easy to arrive at: it is what
+a double-tap on a phone keyboard's space bar leaves behind, and what pasting a
+cue name out of a script usually carries.
+
+The fix is one line (match on the trimmed term), but it is a behaviour change
+in the middle of a live-performance path, so it wants its own commit and its
+own case in `useSearch.test.tsx` rather than riding along with something else.
+
+Noticed while writing the failure-path tests for the same hook: a test that
+typed `"horn "` as "a different term that still matches" found nothing, and the
+hook was right to find nothing.
