@@ -50,6 +50,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
     isLoading,
     isStale,
     resultsTerm,
+    error,
   } = useSearch();
 
   // Why the last press did nothing, when it did nothing. A refusal the
@@ -319,6 +320,18 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => {
           {isLoading ? (
             <div className="p-4 text-center text-gray-500 dark:text-gray-400">
               Searching...
+            </div>
+          ) : error ? (
+            // Said here rather than left as "No sounds found", because the two
+            // are the opposite advice: one means the board does not hold it,
+            // the other means nobody looked. Every sibling maintenance panel
+            // grew an error box for this reason; the search never did, and a
+            // failed read showed as an empty board.
+            <div
+              data-testid="search-error"
+              className="p-4 text-center text-red-600 dark:text-red-400"
+            >
+              Search failed: {error}
             </div>
           ) : results.length === 0 ? (
             <div className="p-4 text-center text-gray-500 dark:text-gray-400">

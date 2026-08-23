@@ -215,3 +215,82 @@ describe("results that belong to an earlier term", () => {
     expect(seen.latest!.isStale).toBe(false);
   });
 });
+
+/**
+ * A search that throws still has to answer the term it was given.
+ *
+ * `isStale` is "the visible results were computed for a different term", and a
+ * failed read left `completed` on the *previous* term forever — so the term
+ * that failed was permanently stale with `isLoading` false. The modal reads
+ * exactly that pair: it shows "Searching…" that never resolves, and refuses
+ * Enter with "Still searching. These results are for <old term>", for a search
+ * that will never finish. The failure itself was only ever a console line.
+ */
+describe("a search that fails", () => {
+  function mountSearch() {
+    const seen: { latest?: ReturnType<typeof useSearch> } = {};
+    function Probe() {
+      seen.latest = useSearch();
+      return null;
+    }
+    return { seen, render: () => root.render(<Probe />) };
+  }
+
+  it("stops being stale, and says why", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getAllPadConfigurationsForProfile.mockRejectedValue(
+      new Error("IndexedDB is gone"),
+    );
+
+    const { seen, render } = mountSearch();
+    await act(async () => {
+      render();
+    });
+    await act(async () => {
+      seen.latest!.setSearchTerm("horn");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(seen.latest!.isLoading).toBe(false);
+    expect(seen.latest!.isStale).toBe(false);
+    expect(seen.latest!.resultsTerm).toBe("horn");
+    expect(seen.latest!.results).toHaveLength(0);
+    expect(seen.latest!.error).toContain("IndexedDB is gone");
+    quiet.mockRestore();
+  });
+
+  it("clears the failure once a later term succeeds", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getAllPadConfigurationsForProfile.mockRejectedValueOnce(
+      new Error("IndexedDB is gone"),
+    );
+
+    const { seen, render } = mountSearch();
+    await act(async () => {
+      render();
+    });
+    await act(async () => {
+      seen.latest!.setSearchTerm("horn");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(seen.latest!.error).not.toBeNull();
+
+    // A different term, so the effect runs again, and one that still matches
+    // the board's only pad ("Horn" / horn.wav).
+    mocks.getAllPadConfigurationsForProfile.mockResolvedValue([padOnDisk()]);
+    await act(async () => {
+      seen.latest!.setSearchTerm("orn");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(seen.latest!.error).toBeNull();
+    expect(seen.latest!.results).toHaveLength(1);
+    quiet.mockRestore();
+  });
+});

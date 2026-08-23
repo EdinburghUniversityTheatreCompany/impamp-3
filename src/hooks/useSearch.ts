@@ -64,6 +64,14 @@ interface CompletedSearch {
   term: string;
   profileId: number | null;
   results: SearchResult[];
+  /**
+   * Why this term found nothing, when it *failed* rather than matched nothing.
+   *
+   * Stored beside the term for the same reason the results are: a render that
+   * saw the failure without the term it belongs to could show it against the
+   * next query.
+   */
+  error: string | null;
 }
 
 export function useSearch(searchOptions: SearchOptions = {}) {
@@ -80,6 +88,7 @@ export function useSearch(searchOptions: SearchOptions = {}) {
     term: "",
     profileId: null,
     results: NO_RESULTS,
+    error: null,
   });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -229,10 +238,27 @@ export function useSearch(searchOptions: SearchOptions = {}) {
             term: searchTerm,
             profileId: activeProfileId,
             results: searchResults,
+            error: null,
           });
         }
       } catch (error) {
         console.error("Error searching pads:", error);
+        // A search that threw has still *answered* this term, and has to say
+        // so. Leaving `completed` on the previous term left `isStale` true for
+        // this one forever, with `isLoading` false throughout: the modal shows
+        // a "Searching…" that never resolves, and refuses Enter with "these
+        // results are for <the previous term>" for a search that will never
+        // finish. Recording the failure against the term is what ends both,
+        // and the message is what puts the failure on screen instead of only
+        // in the console.
+        if (!cancelled) {
+          setCompleted({
+            term: searchTerm,
+            profileId: activeProfileId,
+            results: NO_RESULTS,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       } finally {
         if (!cancelled) {
           setIsLoading(false);
@@ -276,6 +302,13 @@ export function useSearch(searchOptions: SearchOptions = {}) {
     isStale,
     /** The term the visible results were computed for, so a caller can say so. */
     resultsTerm: completed.term,
+    /**
+     * Why the current term found nothing, when the search failed outright.
+     *
+     * Gated on `hasQuery` alongside `results` and `isStale`, so emptying the
+     * box hides the failure with everything else it belongs to.
+     */
+    error: hasQuery ? completed.error : null,
 
     // Helper method to clear the search
     clearSearch: () => setSearchTerm(""),
