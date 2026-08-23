@@ -34,20 +34,13 @@ interface Step {
 function steps(modifier: string): Step[] {
   return [
     {
-      title: "Every pad is a key",
+      title: "Control ImpAmp with the keyboard",
       body: (
-        <>
-          <p>
-            The grid is your keyboard. The letter in the corner of a pad is the
-            key that fires it — no modifier, no focus, just the key. That is the
-            whole point of the app: during a show your hands never leave the
-            keyboard.
-          </p>
-          <p>
-            <strong>Esc</strong> stops everything, from anywhere. It is worth
-            knowing that one before you need it.
-          </p>
-        </>
+        <p>
+          To play a sound, just press the key that&apos;s on the pad.{" "}
+          <strong>Esc</strong> stops all sounds, and <strong>space</strong>{" "}
+          fades them all out. Your hands never have to leave the keyboard.
+        </p>
       ),
     },
     {
@@ -55,13 +48,14 @@ function steps(modifier: string): Step[] {
       body: (
         <>
           <p>
-            Drag an audio file onto any pad, or click the pad to open its
-            editor. A pad can hold several sounds and play them in order, at
-            random, or round-robin.
+            To add a sound, just drag a soundfile onto a pad, or click a pad to
+            open its editor. One pad can hold a whole stack of sounds and play
+            them in order, at random, or round-robin, and you can tweak the
+            length and volume of each sound.
           </p>
           <p>
-            Sounds live in this browser. Nothing is uploaded unless you connect
-            a profile to Google Drive or to a server.
+            Your sounds stay in this browser. Nothing gets uploaded anywhere
+            unless you connect a profile to Google Drive or to a server.
           </p>
         </>
       ),
@@ -69,32 +63,27 @@ function steps(modifier: string): Step[] {
     {
       title: "Banks are your cue sheet",
       body: (
-        <>
-          <p>
-            The tabs above the grid are banks — twenty of them, each a full
-            board. Press <strong>1</strong> to <strong>9</strong> and{" "}
-            <strong>0</strong> to switch, or tap a tab.
-          </p>
-          <p>
-            Most people give a bank to an act, a scene, or a character. Hold{" "}
-            <strong>Shift</strong> to rename one, or to drag them into the order
-            your script runs in.
-          </p>
-        </>
+        <p>
+          The tabs above the grid are banks: you can have at most twenty of
+          them, and each is a full board. Press <strong>1</strong> to{" "}
+          <strong>9</strong> and <strong>0</strong> to switch, or add{" "}
+          <strong>Ctrl</strong> for bank 11 to 20, or click a tab.
+        </p>
       ),
     },
     {
-      title: "When you need more",
+      title: "Find out more",
       body: (
         <>
           <p>
-            The <strong>?</strong> button in the toolbar has everything: every
-            shortcut, importing and exporting boards, sharing and syncing.
+            The <strong>?</strong> button in the toolbar can tell you everything
+            about ImpAmp: every shortcut, importing and exporting boards,
+            sharing and syncing.
           </p>
           <p>
-            Two worth knowing now: <strong>{modifier}+F</strong> searches every
-            sound in every bank, and <strong>{modifier}+click</strong> queues a
-            sound to fire later with <strong>F9</strong>.
+            Two extra shortcuts here: <strong>{modifier}+F</strong> searches
+            every sound in every bank, and <strong>{modifier}+click</strong>{" "}
+            queues a sound to fire later with <strong>F9</strong>.
           </p>
         </>
       ),

@@ -26,7 +26,7 @@ test.describe("first-use tour", () => {
     const tour = page.getByTestId("welcome-tour");
     await expect(tour).toBeVisible();
     await expect(page.getByTestId("welcome-tour-title")).toHaveText(
-      "Every pad is a key",
+      "Control ImpAmp with the keyboard",
     );
 
     // Forward through every step, then out.
