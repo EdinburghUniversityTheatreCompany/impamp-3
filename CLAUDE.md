@@ -36,6 +36,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run test:e2e:edit` - Run edit mode tests
 - `npm run test:e2e:keyboard` - Run keyboard shortcut tests
 - `npm run test:e2e:loudness` - Run loudness and gain tests
+- `npm run test:e2e:portrait` - Run the one portrait-layout spec on a Pixel 7.
+  The only `test:e2e*` script that is not chromium-the-project, though it is
+  still the chromium binary. CI names this project alongside `chromium`
 - `npm run test:e2e:debug` - Run tests in debug mode
 - `npm run test:e2e:cross-browser` - Run firefox and webkit, on demand only.
   Both are known-red for reasons outside the app; read
@@ -406,8 +409,10 @@ and the ranges are floors that should move only when something requires it.
   untrue before dedup for anything comparing content; dedup only made it
   visible. A fixture needing two different sounds should also assert they got
   different ids
-- **Every `test:e2e*` script names `--project=chromium`, and that is not
-  decoration.** `test:e2e` used to be a bare `playwright test`, which runs
+- **Every `test:e2e*` script names a project, and that is not decoration.**
+  All but one name `--project=chromium`; `test:e2e:portrait` names
+  `--project=mobile-portrait`, which is the same browser binary on a Pixel 7.
+  `test:e2e` used to be a bare `playwright test`, which runs
   firefox and webkit as well — both known-red below — so it exited 1 on a
   perfectly good tree, and the html reporter swallowed the stdout that would
   have said why. It looked exactly like your change breaking everything, and
@@ -420,7 +425,13 @@ and the ranges are floors that should move only when something requires it.
   running by an earlier call lets the next call through **without pressing the
   pad it was handed**, which then fails on a progress bar it never triggered.
   Any spec activating a second pad must silence the first
-- E2E gates on **chromium only**. Firefox and WebKit are **on demand only** —
+- E2E gates on the **chromium binary only**, in two projects: the desktop
+  suite and `mobile-portrait`. That second one is a lesson rather than a
+  detail — it was declared in `playwright.config.ts`, `testIgnore`d out of all
+  three browser projects, and then selected by no npm script and no CI job, so
+  the portrait layout's only coverage never ran anywhere from the day it was
+  written. A project is not a gate until something names it.
+  Firefox and WebKit are **on demand only** —
   they do not run on push or PR (Actions → ci → Run workflow, or
   `gh workflow run ci`). Both are known-red for reasons outside the app, so
   running them every push cost ~35 minutes for no actionable signal. Read

@@ -139,9 +139,10 @@ jobs:
       - name: Type-check (tsc)
         run: npm run typecheck
 
-  # Playwright end-to-end suite. Chromium only for now: the Firefox and WebKit
-  # projects have not been run green yet, so gating on them would land a red
-  # pipeline (see the "known failures" note in e2e-tests/README.md).
+  # Playwright end-to-end suite. The two chromium-engine projects only — the
+  # desktop suite and the single portrait spec — for now: the Firefox and
+  # WebKit projects have not been run green yet, so gating on them would land a
+  # red pipeline (see the "known failures" note in e2e-tests/README.md).
   #
   # playwright.config.ts serves a production build rather than `next dev` —
   # on-demand Turbopack compilation was the source of this suite's timeouts and
@@ -167,7 +168,11 @@ jobs:
       - name: Install Playwright browser (chromium)
         run: npx playwright install --with-deps chromium
       - name: Run e2e tests
-        run: npx playwright test --project=chromium
+        # Both chromium projects: the desktop suite, and `mobile-portrait`,
+        # which is one spec on a Pixel 7 and the only coverage the portrait
+        # layout has. It was matched by no npm script and no CI job, so it had
+        # never run anywhere. Same browser binary, so nothing extra to install.
+        run: npx playwright test --project=chromium --project=mobile-portrait
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

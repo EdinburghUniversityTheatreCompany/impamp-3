@@ -95,8 +95,13 @@ export default defineConfig({
     // Deliberately not a fourth full-suite browser. The other 190-odd specs
     // are written against `devices["Desktop Chrome"]` (1280x720, no touch);
     // running them at 390px would assert a layout nobody designed and would
-    // double an already long suite for no signal. CI still gates on chromium
-    // alone, and this project is what `npm run test:e2e:portrait` runs.
+    // double an already long suite for no signal. It is the same browser
+    // binary as `chromium`, though, so CI names both projects and this gates
+    // alongside the desktop suite; `npm run test:e2e:portrait` runs it alone.
+    //
+    // Naming it here is not enough on its own, and that is the trap this
+    // comment was caught by: a project no script and no job selects never
+    // runs. It sat matched by nothing from the day it was written.
     //
     // The `testIgnore` above is the other half: without it the portrait spec
     // would also run at 1280px, where every one of its assertions passes

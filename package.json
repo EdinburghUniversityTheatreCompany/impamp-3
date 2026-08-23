@@ -22,6 +22,7 @@
     "test:e2e:edit": "playwright test --project=chromium edit-mode.spec.ts",
     "test:e2e:keyboard": "playwright test --project=chromium keyboard-shortcuts.spec.ts",
     "test:e2e:loudness": "playwright test --project=chromium loudness.spec.ts",
+    "test:e2e:portrait": "playwright test --project=mobile-portrait",
     "test:e2e:debug": "playwright test --project=chromium --debug",
     "test:e2e:cross-browser": "playwright test --project=firefox --project=webkit"
   },
