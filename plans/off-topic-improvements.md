@@ -376,3 +376,33 @@ own case in `useSearch.test.tsx` rather than riding along with something else.
 Noticed while writing the failure-path tests for the same hook: a test that
 typed `"horn "` as "a different term that still matches" found nothing, and the
 hook was right to find nothing.
+
+## Nothing on the board distinguishes "playing" from "audible"
+
+Every playback signal the operator has — the pad's green progress bar, the
+Active Tracks panel, the live region — reports that a source was _started_.
+None of them can tell the difference between a cue coming out of the speakers
+and a cue being started into a muted output. That gap is exactly what made the
+iOS silent-switch bug (fixed in `src/lib/audio/audioSession.ts`) so hard to
+report: the board looked completely healthy, so it arrived as "impamp doesn't
+work on mobile" rather than as a routing problem.
+
+The declared audio session closes the iOS half, but not the general case. A
+phone whose media volume is at zero, an output device that has gone away
+mid-show, or an OS-level Do Not Disturb configured to include media all produce
+the same silent-but-healthy-looking board, and none of them is something the
+page can fix — only something it can _notice_.
+
+An `AnalyserNode` on the master bus would notice it: if a track has been
+running for a second or so and peak amplitude has never left the noise floor,
+something between the graph and the speakers is swallowing the audio, and the
+operator should be told before the second cue rather than after the show. It
+does not diagnose the cause, and it should not try to — "sound is playing but
+nothing is coming out" is the whole of the useful message.
+
+Deliberately not done with the silent-switch fix: it is a new always-on node in
+the playback graph and a new piece of UI in a live-performance path, which is a
+different change with a different risk profile from a one-line declaration that
+no other platform even reads.
+
+Noticed while fixing the iOS ringer-switch bug.
