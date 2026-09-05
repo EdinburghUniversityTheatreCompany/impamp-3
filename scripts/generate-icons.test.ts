@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
 import {
+  APP_ICON_BACKGROUND,
   APP_ICON_SIZES,
   composeAppIcon,
   faviconSvgPath,
@@ -141,5 +142,13 @@ describe("the committed icons", () => {
       await renderFavicon(FAVICON_SVG, 256),
       "favicon.ico",
     );
+  });
+
+  it("uses the background the manifest declares", async () => {
+    // manifest.ts spells the same colour out as background_color, so the
+    // splash screen and the icon's tile agree. This is the check that keeps
+    // the two literals in step.
+    const { default: manifest } = await import("../src/app/manifest");
+    expect(manifest().background_color).toBe(APP_ICON_BACKGROUND);
   });
 });

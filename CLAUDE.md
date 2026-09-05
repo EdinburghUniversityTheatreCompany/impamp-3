@@ -49,7 +49,7 @@ else here is, and these were all written without it.)
 
 ### Utilities
 
-- `npm run generate-favicon` - Generate favicon from SVG
+- `npm run generate-favicon` - Generate `src/app/favicon.ico` from `public/icons/icon.svg` (also runs as `prebuild`)
 - Scripts are located in `/scripts/` directory for build-time generation
 
 ## Architecture Overview
@@ -505,10 +505,16 @@ and the ranges are floors that should move only when something requires it.
   at `/manifest.webmanifest`. A second hand-written `public/manifest.json` used
   to sit alongside it, linked from nowhere and naming two icons that did not
   exist. Do not add a static one back
-- `scripts/generate-icons.js` produces the whole icon set from
-  `public/icons/icon-512x512.png`. It is a manual step, not a build step, and
-  its output is what is committed — so change the master and re-run it rather
-  than editing individual PNGs
+- `public/icons/icon.svg` is the only artwork: the favicon is it rasterised,
+  and `scripts/generate-icons.js` derives the whole home-screen set from it —
+  the glyph at 56% on the dark `#0a0a0a` tile, inside the maskable safe zone,
+  which is what lets the manifest declare every icon `maskable`. Generating
+  the set is a manual step, not a build step, and its output is what is
+  committed — so change the SVG and re-run it rather than editing individual
+  PNGs. `scripts/generate-icons.test.ts` fails when the committed PNGs or the
+  favicon are not what the scripts produce from the SVG, and when the glyph
+  strays outside the safe zone; `src/app/manifest.test.ts` fails when the
+  manifest names a size that does not exist on disk
 - Google Drive integration uses appData scope (hidden files, no quota impact)
 - Server sync needs `IMPAMP_DB_PATH` and a persistent volume; the SSE bus is
   in-process, so the app must run as a single instance

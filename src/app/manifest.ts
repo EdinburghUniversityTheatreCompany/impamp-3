@@ -12,11 +12,21 @@ import type { MetadataRoute } from "next";
  * sizes now exist — see scripts/generate-icons.js — and the static file is
  * gone.
  *
- * `purpose` stays "any" rather than "any maskable", which is what the old file
- * claimed. These icons are full-bleed: the glyph reaches close enough to the
- * corners that a launcher's circular mask would clip it. Declaring maskable
- * without a safe zone drawn for it is a promise the artwork does not keep.
+ * `purpose` is "any maskable", and that is a promise about the artwork: a
+ * launcher may crop a maskable icon to a circle of radius 40% of the tile,
+ * so nothing but background may lie outside that circle. The old
+ * public/manifest.json claimed maskable over full-bleed icons the mask would
+ * have clipped; the icons scripts/generate-icons.js derives now keep the glyph
+ * inside the safe zone, and scripts/generate-icons.test.ts measures that
+ * rather than trusting it. `background_color` is the tile behind the glyph,
+ * so the splash screen and the installed icon are one surface — the same test
+ * holds the two literals together.
+ *
+ * Each size is listed twice, once per purpose, because Next's `Icon` type
+ * takes a single purpose per entry where the specification would accept
+ * "any maskable" in one. The file is the same either way.
  */
+const ICON_PURPOSES = ["any", "maskable"] as const;
 const ICON_SIZES = [48, 72, 96, 128, 144, 152, 192, 384, 512];
 
 export default function manifest(): MetadataRoute.Manifest {
@@ -27,15 +37,17 @@ export default function manifest(): MetadataRoute.Manifest {
       "Web-based soundboard application for triggering audio clips via keyboard shortcuts",
     start_url: "/",
     display: "standalone",
-    background_color: "#000000",
+    background_color: "#0a0a0a",
     theme_color: "#f2801f",
     orientation: "any",
-    icons: ICON_SIZES.map((size) => ({
-      src: `/icons/icon-${size}x${size}.png`,
-      sizes: `${size}x${size}`,
-      type: "image/png",
-      purpose: "any",
-    })),
+    icons: ICON_SIZES.flatMap((size) =>
+      ICON_PURPOSES.map((purpose) => ({
+        src: `/icons/icon-${size}x${size}.png`,
+        sizes: `${size}x${size}`,
+        type: "image/png",
+        purpose,
+      })),
+    ),
     prefer_related_applications: false,
   };
 }
