@@ -898,23 +898,47 @@ export async function openProfileManager(page: Page) {
  * did?". Written out twice it failed the jscpd gate, which is the gate working.
  */
 export async function countAudioFiles(page: Page): Promise<number> {
+  return audioFilesRequest<number>(page, "count");
+}
+
+/**
+ * Deletes every audio row while leaving the pads that name them alone.
+ *
+ * This is the state a board is in after a sync brought the pads across and
+ * the audio did not, and it is the one reproducible way to make a pad fail
+ * to play: the decoded buffer is cached in memory, so the deletion has to be
+ * followed by a reload before a press feels it.
+ */
+export async function clearAudioFiles(page: Page): Promise<void> {
+  await audioFilesRequest<undefined>(page, "clear");
+}
+
+/** One request against the `audioFiles` store, resolved with its result. */
+function audioFilesRequest<T>(
+  page: Page,
+  operation: "count" | "clear",
+): Promise<T> {
   return page.evaluate(
-    () =>
-      new Promise<number>((resolve, reject) => {
+    (op) =>
+      new Promise<T>((resolve, reject) => {
         const open = indexedDB.open("impamp3DB");
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;
-          const request = db
-            .transaction("audioFiles", "readonly")
-            .objectStore("audioFiles")
-            .count();
+          const store = db
+            .transaction(
+              "audioFiles",
+              op === "clear" ? "readwrite" : "readonly",
+            )
+            .objectStore("audioFiles");
+          const request = op === "clear" ? store.clear() : store.count();
           request.onsuccess = () => {
-            resolve(request.result);
+            resolve(request.result as T);
             db.close();
           };
           request.onerror = () => reject(request.error);
         };
       }),
+    operation,
   );
 }
