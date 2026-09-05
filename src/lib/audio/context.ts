@@ -8,6 +8,7 @@
  */
 
 import { getAudioContextConstructor } from "./capability";
+import { configureAudioSessionForPlayback } from "./audioSession";
 
 // Track client-side environment
 const isClient = typeof window !== "undefined";
@@ -34,6 +35,13 @@ export function getAudioContext(): AudioContext {
     if (!Ctor) {
       throw new Error("Web Audio is not available in this browser");
     }
+
+    // Before the constructor, not after: iOS picks the audio route as the
+    // context comes up, and the route it picks by default is the one the
+    // ringer switch silences. See ./audioSession. This is the only place a
+    // context is built, which is what keeps the declaration a single line
+    // rather than a rule every caller has to remember.
+    configureAudioSessionForPlayback();
     audioContext = new Ctor();
 
     console.log("[Audio Context] Created new AudioContext instance");

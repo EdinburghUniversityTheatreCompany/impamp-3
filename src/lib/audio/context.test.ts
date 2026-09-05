@@ -24,10 +24,22 @@ type ContextState = "running" | "suspended" | "closed" | "interrupted";
 class FakeAudioContext {
   static created: FakeAudioContext[] = [];
   state: ContextState = "suspended";
+  /**
+   * The audio session type as it stood the moment this context was built.
+   *
+   * Captured rather than read afterwards because the ordering is the whole
+   * point: a declaration made after `new AudioContext()` is a different claim
+   * from one made before it, and only a snapshot taken inside the constructor
+   * can tell the two apart.
+   */
+  sessionTypeAtConstruction: string | undefined;
   resume = vi.fn(async () => {
     this.state = "running";
   });
   constructor() {
+    this.sessionTypeAtConstruction = (
+      navigator as Navigator & { audioSession?: { type: string } }
+    ).audioSession?.type;
     FakeAudioContext.created.push(this);
   }
 }
@@ -65,6 +77,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete (navigator as Navigator & { audioSession?: unknown }).audioSession;
   vi.restoreAllMocks();
 });
 
@@ -233,5 +246,27 @@ describe("the listeners registered on first creation", () => {
 
     expect(() => window.dispatchEvent(new Event("focus"))).not.toThrow();
     await vi.waitFor(() => expect(context.resume).toHaveBeenCalled());
+  });
+});
+
+describe("the iOS audio session", () => {
+  it("is declared playback before the context is constructed", async () => {
+    // Ordering, not just the value: Safari picks the route as the context is
+    // built, and `"auto"` resolves to `"ambient"` for a Web Audio page —
+    // the one category the hardware ringer switch mutes. Declared late, the
+    // first cue of a show is still silent.
+    const session = { type: "auto" };
+    Object.defineProperty(navigator, "audioSession", {
+      configurable: true,
+      writable: true,
+      value: session,
+    });
+
+    const { getAudioContext } = await loadContextModule(FakeAudioContext);
+    getAudioContext();
+
+    expect(FakeAudioContext.created[0].sessionTypeAtConstruction).toBe(
+      "playback",
+    );
   });
 });

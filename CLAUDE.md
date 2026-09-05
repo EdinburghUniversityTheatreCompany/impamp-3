@@ -472,6 +472,28 @@ and the ranges are floors that should move only when something requires it.
 
 - Always check for `typeof window !== 'undefined'` before IndexedDB operations
 - Audio context requires user interaction to start (handle suspended state)
+- **iOS silences Web Audio with the ringer switch, and only a declared audio
+  session stops it.** Safari's default session type is `"auto"`, which for a
+  page whose output is Web Audio resolves to `"ambient"` — the category the
+  hardware switch mutes. Every other symptom looks healthy, which is why this
+  survived as "impamp doesn't work on mobile" rather than a bug report anyone
+  could act on: the context reaches `"running"`, the sources start and stop,
+  the pad lights up, the progress bar sweeps and Active Tracks fills, and the
+  phone emits nothing. "The same file plays fine in Safari's own player" is
+  not evidence against it either — `<audio>` and `<video>` elements have never
+  been subject to the switch, and that asymmetry is the whole bug.
+  `configureAudioSessionForPlayback` (`src/lib/audio/audioSession.ts`)
+  declares `"playback"` instead, and `getAudioContext` calls it **immediately
+  before** `new Ctor()`, because iOS picks the route as the context comes up —
+  declared late, the first cue of a show is still silent. Both halves are
+  pinned: `context.test.ts` snapshots the session type from inside a fake
+  constructor, and `e2e-tests/audio-session.spec.ts` presses a pad in a real
+  browser and reads it back, because no unit test can prove the call survived
+  into the shipped bundle. Two iOS consequences come with `"playback"` and are
+  wanted here: other apps' audio is paused rather than mixed with, and sound
+  keeps running when the screen locks. No other platform routes Web Audio
+  through a ringer switch and no other browser implements the API, so this is
+  a no-op everywhere else
 - Keyboard shortcuts have precedence rules (bank switching > pad triggers)
 - Edit mode uses visual indicators (amber borders, "EDIT MODE" banner)
 - The service worker registers only in production builds, and in `next dev` it
