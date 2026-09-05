@@ -31,6 +31,7 @@ import {
 import { MAX_BANKS } from "@/lib/constants";
 import { convertIndexToBankNumber } from "@/lib/bankUtils";
 import { positionOfBank } from "@/lib/bankOrder";
+import { noticeActions, reportFailure } from "@/store/noticeStore";
 import BackupReminderNotification from "@/components/BackupReminderNotification"; // Import the new component
 
 // Pre-load ProfileSelector component to avoid remounting during bank switches
@@ -149,8 +150,7 @@ export default function Home() {
           }
           requestSync(activeProfileId);
         } catch (error) {
-          console.error(`Failed to update bank ${bankNumber}:`, error);
-          alert(`Failed to update bank ${bankNumber}. Please try again.`);
+          reportFailure(`Could not save bank ${bankNumber}`, error);
           throw error; // Re-throw to prevent modal from closing
         }
       },
@@ -272,8 +272,7 @@ export default function Home() {
                     incrementPadConfigsVersion();
                     requestSync(activeProfileId);
                   } catch (error) {
-                    console.error("Failed to reorder the banks:", error);
-                    alert("Failed to reorder the banks. Please try again.");
+                    reportFailure("Could not reorder the banks", error);
                   }
                 }}
               />
@@ -283,10 +282,9 @@ export default function Home() {
                 <button
                   disabled={banks.length >= MAX_BANKS}
                   onClick={() => {
-                    if (banks.length >= MAX_BANKS) {
-                      alert(`Maximum number of banks reached (${MAX_BANKS})`);
-                      return;
-                    }
+                    // The button is disabled at the cap; this only guards a
+                    // click that raced the render.
+                    if (banks.length >= MAX_BANKS) return;
 
                     // The bank about to be created lands at the next free
                     // position, which — since nothing ever deletes a bank —
@@ -339,18 +337,14 @@ export default function Home() {
                               `Created new bank "${finalBankName}" (id ${newBank.bankId})`,
                             );
                           } catch (error) {
-                            console.error(`Failed to create new bank:`, error);
-                            alert(
-                              "Failed to create new bank. Please try again.",
-                            );
+                            reportFailure("Could not create the bank", error);
                           } finally {
                             closeModal();
                           }
                         } else {
-                          console.error(
-                            "[Add Bank Button] activeProfileId is null, cannot create bank.",
+                          noticeActions.error(
+                            "Cannot create a bank: no active profile.",
                           );
-                          alert("Cannot create bank, no active profile.");
                           closeModal();
                         }
                       },

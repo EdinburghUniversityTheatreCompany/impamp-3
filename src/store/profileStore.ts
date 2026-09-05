@@ -37,6 +37,7 @@ import { syncStatusActions } from "@/store/syncStatusStore";
 import { useUIStore } from "@/store/uiStore";
 import { exposeE2EHook } from "@/lib/testHooks";
 import { getSyncState } from "@/lib/syncState";
+import { reportFailure } from "@/store/noticeStore";
 
 // Define a type for the decoded Google user info (adjust as needed)
 // Export this type so it can be used elsewhere (like in ProfileManager)
@@ -1016,18 +1017,12 @@ export const useProfileStore = create<ProfileState>()(
               ),
             }));
           } catch (error) {
-            console.error(
-              `Failed to set normalisation settings for profile ${activeProfileId}:`,
-              error,
-            );
             // Said out loud, because this is the one place a write failure has
             // no other symptom: the control simply snaps back to where it was,
             // with the explanation previously going into a store field that
             // had no readers. The store's other write failures either throw to
-            // a caller that alerts, or are alerted about by the pad hooks.
-            alert(
-              `Could not save the loudness settings: ${error instanceof Error ? error.message : "unknown error"}`,
-            );
+            // a caller that reports them, or are reported by the pad hooks.
+            reportFailure("Could not save the loudness settings", error);
           }
         },
 

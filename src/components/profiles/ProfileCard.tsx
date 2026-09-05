@@ -28,6 +28,7 @@ import {
 import { getSyncTimestamp } from "@/lib/googleDrive/utils";
 import ProfileSyncPanel from "./sync/ProfileSyncPanel";
 import SyncStatusChip from "./sync/SyncStatusChip";
+import { reportFailure } from "@/store/noticeStore";
 
 // Helper to convert period (ms) to days string, handling 'Never' (-1)
 function formatReminderPeriod(periodMs: number | undefined): string {
@@ -164,20 +165,16 @@ export default function ProfileCard({ profile, isActive }: ProfileCardProps) {
   }, [profile.id]);
 
   const handleDelete = async () => {
-    if (isActive) {
-      alert(
-        "Cannot delete the active profile. Please switch to another profile first.",
-      );
-      return;
-    }
+    // The Delete button is not rendered for the active profile; this only
+    // guards a call that reached here some other way.
+    if (isActive) return;
 
     try {
       setIsDeleting(true);
       await deleteProfile(profile.id!);
       setIsDeleting(false);
     } catch (error) {
-      console.error("Failed to delete profile:", error);
-      alert("Failed to delete profile. Please try again.");
+      reportFailure(`Could not delete the profile "${profile.name}"`, error);
       setIsDeleting(false);
     }
   };

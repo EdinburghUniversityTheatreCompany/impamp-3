@@ -37,6 +37,7 @@ const EditPadModalContent = React.lazy(
 const EditPadModalFallback = () =>
   React.createElement(ModalLoadingSpinner, null);
 import { extractPadPlaybackSettings } from "@/lib/db";
+import { noticeActions, reportFailure } from "@/store/noticeStore";
 
 interface PadInteractionsParams {
   currentBankId: string;
@@ -65,8 +66,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
   const handleEditInteraction = useCallback(
     (padIndex: number) => {
       if (activeProfileId === null) {
-        console.error("Cannot edit pad, no active profile.");
-        alert("Cannot edit pad, no active profile selected.");
+        noticeActions.error("Cannot edit a pad: no active profile.");
         return;
       }
 
@@ -124,10 +124,7 @@ export function usePadInteractions(params: PadInteractionsParams) {
           try {
             await savePadConfiguration(updatedPadConfigData);
           } catch (error) {
-            console.error(`Failed to save changes for pad ${padIndex}:`, error);
-            alert(
-              `Failed to save changes for pad ${padIndex}. Please try again.`,
-            );
+            reportFailure(`Could not save pad ${padIndex + 1}`, error);
             // Rethrown so useFormModal keeps the modal open rather than
             // closing on a save that did not happen.
             throw error;
@@ -208,8 +205,10 @@ export function usePadInteractions(params: PadInteractionsParams) {
           });
           console.log(`Removed single sound from pad ${padIndex}`);
         } catch (error) {
-          console.error(`Failed to remove sound from pad ${padIndex}:`, error);
-          alert(`Failed to remove sound "${soundName}". Please try again.`);
+          reportFailure(
+            `Could not remove "${soundName}" from pad ${padIndex + 1}`,
+            error,
+          );
         } finally {
           closeModal();
         }

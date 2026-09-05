@@ -45,6 +45,22 @@ const eslintConfig = [
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+      // A native alert halts the page's JavaScript until it is dismissed, so
+      // while one is up ESC cannot stop a sound and Fade Out All cannot fade
+      // one. Seventeen of them were the app's whole failure surface until
+      // 2026-09; failures go through `noticeActions` / `reportFailure` in
+      // `src/store/noticeStore.ts` now. `confirm` and `prompt` are not named
+      // here on purpose — both are still in use, and blocking the page to ask
+      // a question the operator chose to be asked is a different thing from
+      // blocking it to report a failure they did not.
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "alert",
+          message:
+            "Blocks the page, and with it ESC and Fade Out All. Use reportFailure / noticeActions.error from src/store/noticeStore.ts.",
+        },
+      ],
     },
   },
 ];

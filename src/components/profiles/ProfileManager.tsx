@@ -25,6 +25,7 @@ import { useConnectDriveProfile } from "@/hooks/useConnectDriveProfile";
 import { useEscapeToClose } from "@/hooks/modal/useEscapeToClose";
 import { useShallow } from "zustand/react/shallow";
 import XIcon from "@/components/icons/XIcon";
+import { reportFailure } from "@/store/noticeStore";
 
 /**
  * An ImpAmp share link, if that is what this is.
@@ -104,6 +105,9 @@ export default function ProfileManager() {
 
   // State management
   const [newProfileName, setNewProfileName] = useState("");
+  const [newProfileNameError, setNewProfileNameError] = useState<string | null>(
+    null,
+  );
   const [isCreating, setIsCreating] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "profiles" | "import-export" | "maintenance"
@@ -181,8 +185,10 @@ export default function ProfileManager() {
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    // The input is `required`, so the browser refuses an empty submit before
+    // this runs; a name that is all whitespace is the case it lets through.
     if (!newProfileName.trim()) {
-      alert("Please enter a profile name");
+      setNewProfileNameError("Enter a name for the profile.");
       return;
     }
     try {
@@ -194,8 +200,7 @@ export default function ProfileManager() {
       setNewProfileName("");
       setIsCreating(false);
     } catch (error) {
-      console.error("Failed to create profile:", error);
-      alert("Failed to create profile. Please try again.");
+      reportFailure("Could not create the profile", error);
       setIsCreating(false);
     }
   };
@@ -482,11 +487,24 @@ export default function ProfileManager() {
                       id="profileName"
                       type="text"
                       value={newProfileName}
-                      onChange={(e) => setNewProfileName(e.target.value)}
+                      onChange={(e) => {
+                        setNewProfileName(e.target.value);
+                        setNewProfileNameError(null);
+                      }}
+                      aria-invalid={newProfileNameError !== null}
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
                       placeholder="Enter profile name"
                       required
                     />
+                    {newProfileNameError && (
+                      <p
+                        role="alert"
+                        data-testid="profile-name-error"
+                        className="mt-1 text-sm text-red-600 dark:text-red-400"
+                      >
+                        {newProfileNameError}
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -558,10 +576,9 @@ export default function ProfileManager() {
                 {/* Export Selected Button */}
                 <button
                   onClick={async () => {
-                    if (exportSelectionIds.size === 0) {
-                      alert("Please select at least one profile to export.");
-                      return;
-                    }
+                    // Disabled with nothing selected; this only guards a
+                    // click that raced the render.
+                    if (exportSelectionIds.size === 0) return;
                     try {
                       setIsExporting(true);
                       const success = await exportMultipleProfilesToZip(
@@ -574,12 +591,9 @@ export default function ProfileManager() {
                       // success === false with no throw means the user
                       // cancelled the save dialog — keep the selection.
                     } catch (error) {
-                      console.error(
-                        "Failed to export selected profiles:",
+                      reportFailure(
+                        "Could not export the selected profiles",
                         error,
-                      );
-                      alert(
-                        "Failed to export selected profiles. Please try again.",
                       );
                     } finally {
                       setIsExporting(false);

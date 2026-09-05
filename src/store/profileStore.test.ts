@@ -1,6 +1,7 @@
 // Must be the first import: it installs `window` before `db.ts` can read it.
 import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { noticeActions, useNoticeStore } from "@/store/noticeStore";
 import { useProfileStore } from "@/store/profileStore";
 import { syncStatusActions, useSyncStatusStore } from "@/store/syncStatusStore";
 import { useUIStore } from "@/store/uiStore";
@@ -234,14 +235,10 @@ describe("whether the active profile may be edited", () => {
 });
 
 describe("reporting a failed write", () => {
-  const alerts: string[] = [];
-  const originalAlert = globalThis.alert;
+  const notices = () => useNoticeStore.getState().notices.map((n) => n.message);
 
   beforeEach(() => {
-    alerts.length = 0;
-    globalThis.alert = ((message: string) => {
-      alerts.push(message);
-    }) as typeof globalThis.alert;
+    noticeActions.dismissAll();
     vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.updateProfile.mockReset();
 
@@ -252,7 +249,7 @@ describe("reporting a failed write", () => {
   });
 
   afterEach(() => {
-    globalThis.alert = originalAlert;
+    noticeActions.dismissAll();
     vi.restoreAllMocks();
   });
 
@@ -273,8 +270,8 @@ describe("reporting a failed write", () => {
 
     await state().setNormalisation({ enabled: true, targetLufs: -18 });
 
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toContain("QuotaExceededError");
+    expect(notices()).toHaveLength(1);
+    expect(notices()[0]).toContain("QuotaExceededError");
   });
 
   it("leaves the profile untouched when the write fails", async () => {
@@ -290,7 +287,7 @@ describe("reporting a failed write", () => {
 
     await state().setNormalisation({ enabled: true, targetLufs: -18 });
 
-    expect(alerts).toHaveLength(0);
+    expect(notices()).toHaveLength(0);
     expect(state().profiles[0].normalisation).toEqual({
       enabled: true,
       targetLufs: -18,

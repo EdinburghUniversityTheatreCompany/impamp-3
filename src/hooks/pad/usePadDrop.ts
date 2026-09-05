@@ -15,6 +15,7 @@ import {
 } from "@/lib/db";
 import { savePadConfiguration } from "./padWrites";
 import { loadAndDecodeAudio } from "@/lib/audio/decoder";
+import { reportFailure } from "@/store/noticeStore";
 
 /**
  * Hook that provides pad drop functionality
@@ -97,11 +98,10 @@ export function usePadDrop(currentBankId: string) {
           `Audio file ${file.name} added to pad ${padIndex} and preloaded`,
         );
       } catch (error) {
-        console.error(
-          `Error processing dropped file for pad ${padIndex}:`,
+        reportFailure(
+          `Could not add "${file.name}" to pad ${padIndex + 1}`,
           error,
         );
-        alert(`Failed to add audio file "${file.name}". Please try again.`);
       }
     },
     [activeProfileId, currentBankId],

@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { useProfileStore } from "@/store/profileStore";
 import { PadConfiguration, swapPadConfigurations } from "@/lib/db";
 import { notifyPadConfigsChanged } from "./padWrites";
+import { reportFailure } from "@/store/noticeStore";
 
 interface PadSwapParams {
   currentBankId: string;
@@ -76,11 +77,10 @@ export function usePadSwap(params: PadSwapParams) {
         notifyPadConfigsChanged(activeProfileId);
         console.log(`Successfully swapped pads ${fromIndex} and ${toIndex}`);
       } catch (error) {
-        console.error(
-          `Failed to swap pads ${fromIndex} and ${toIndex}:`,
+        reportFailure(
+          `Could not swap pads ${fromIndex + 1} and ${toIndex + 1}`,
           error,
         );
-        alert(`Failed to swap pads. Please try again.`);
       }
     },
     [activeProfileId, currentBankId, padConfigs, specialPadIndices],

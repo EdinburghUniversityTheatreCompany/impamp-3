@@ -9,8 +9,8 @@ import XIcon from "@/components/icons/XIcon";
  * The failures the operator has been told about, top right, newest at the
  * bottom.
  *
- * Positioned as a sibling of the backup banner (top centre) rather than in
- * it, and given `pointer-events-none` on the column so the empty space
+ * Above the profile manager and the search modal (both `z-50`), because a
+ * failed delete or export is reported from inside one of them. Given `pointer-events-none` on the column so the empty space
  * between notices never swallows a click meant for a pad. Nothing here takes
  * focus on its own: a `<button>` that did would turn the operator's next
  * Space into "dismiss" rather than "fade out all".
@@ -24,7 +24,7 @@ export default function NoticeStack() {
   return (
     <div
       data-testid="notice-stack"
-      className="pointer-events-none fixed top-4 right-4 z-40 flex w-full max-w-sm flex-col gap-2"
+      className="pointer-events-none fixed top-4 right-4 z-[60] flex w-full max-w-sm flex-col gap-2"
     >
       {notices.map((notice) => (
         <div
