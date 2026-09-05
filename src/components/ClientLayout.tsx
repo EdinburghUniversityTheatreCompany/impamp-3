@@ -7,6 +7,7 @@ import ModalRenderer from "@/components/ModalRenderer";
 import ClientSideInitializer from "@/components/ClientSideInitializer";
 import GoogleAuthProviderWrapper from "@/components/auth/GoogleAuthProviderWrapper";
 import AuthNotification from "@/components/AuthNotification";
+import NoticeStack from "@/components/NoticeStack";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
   OverlayErrorFallback,
@@ -55,6 +56,9 @@ const ClientLayout: React.FC<ClientLayoutProps> = ({ children }) => {
         >
           <ModalRenderer />
         </ErrorBoundary>
+        {/* Outside every boundary: a board that has just crashed is exactly
+            when the notice saying why must stay on screen. */}
+        <NoticeStack />
       </KeyboardListenerWrapper>
     </GoogleAuthProviderWrapper>
   );
