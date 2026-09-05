@@ -288,3 +288,30 @@ describe("the pad's loading overlay", () => {
     expect(loadingStateFor(padIndex)).toMatchObject({ status: "error" });
   });
 });
+
+describe("reporting a press that failed", () => {
+  it("reports a total failure to onError exactly once", async () => {
+    // `handleAudioFallback` used to call `onError` itself when recovery came
+    // back empty, and its one caller then reported the same null again. Two
+    // callbacks for one failure was invisible while `onError` only wrote to
+    // the console; once it posts a notice, the operator got two boxes for one
+    // press — measured in `e2e-tests/error-notices.spec.ts` as a strict-mode
+    // violation on the notice locator.
+    decoderMocks.loadAndDecodeAudioInstant.mockResolvedValue(null);
+    decoderMocks.loadAndDecodeAudioEnhanced.mockResolvedValue(null);
+    const onError = vi.fn();
+
+    await triggerPad(
+      {
+        padIndex: nextPadIndex++,
+        audioFileIds: [GOOD],
+        playbackType: "sequential",
+        name: "Pad",
+      },
+      { activeProfileId: 1, currentBankId: "0" },
+      { onError },
+    );
+
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+});

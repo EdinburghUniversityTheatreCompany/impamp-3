@@ -201,17 +201,18 @@ async function recoverFromLoadError(
 /**
  * Handle graceful fallback when audio fails to load or play
  *
+ * Does not take `onError`: its one caller reports a null result itself, and
+ * when this reported it too the operator got two notices for one press.
+ *
  * @param audioFileIds - All available audio file IDs for this pad
  * @param failedAudioFileId - The ID that failed to load
  * @param onStateChange - Loading state callback
- * @param onError - Error callback
  * @returns The buffer *and which file it belongs to*, or null
  */
 async function handleAudioFallback(
   audioFileIds: number[],
   failedAudioFileId: number,
   onStateChange?: LoadingStateCallback,
-  onError?: (error: string) => void,
 ): Promise<{ buffer: AudioBuffer; audioFileId: number } | null> {
   console.log(
     `[Audio Controls] Handling fallback for failed audio file ID: ${failedAudioFileId}`,
@@ -258,9 +259,9 @@ async function handleAudioFallback(
   );
 
   if (!recoveredBuffer) {
-    const errorMsg = `All audio files failed to load for this pad. Original ID: ${failedAudioFileId}, Alternatives tried: ${alternativeIds.length}`;
-    onError?.(errorMsg);
-    console.error(`[Audio Controls] ${errorMsg}`);
+    console.error(
+      `[Audio Controls] All audio files failed to load for this pad. Original ID: ${failedAudioFileId}, Alternatives tried: ${alternativeIds.length}`,
+    );
     return null;
   }
 
@@ -603,7 +604,6 @@ export async function triggerAudioForPadInstant(
         audioFileIds,
         audioFileId,
         onLoadingStateChange,
-        onError,
       );
       if (fallback) {
         buffer = fallback.buffer;
@@ -637,8 +637,14 @@ export async function triggerAudioForPadInstant(
       // Play the buffer with the appropriate parameters
       playBuffer(buffer, playbackKey, buildPlayParams(playingFileId));
     } else {
-      const errorMsg = `Failed to load audio file ID: ${audioFileId} for pad ${padIndex}`;
-      console.error(`[Audio Controls] [Instant] ${errorMsg}`);
+      // Read by the operator now, not only the console: `triggerPad` puts it
+      // on a notice as "Could not play <pad>: <this>". The ids stay in for
+      // whoever has to find the row.
+      const errorMsg =
+        audioFileIds.length > 1
+          ? `none of its ${audioFileIds.length} sounds could be loaded (audio files ${audioFileIds.join(", ")})`
+          : `its sound could not be loaded (audio file ${audioFileId})`;
+      console.error(`[Audio Controls] [Instant] pad ${padIndex}: ${errorMsg}`);
       onError?.(errorMsg);
     }
   } catch (error) {
