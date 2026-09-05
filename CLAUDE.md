@@ -117,6 +117,32 @@ IndexedDB abstraction in `src/lib/db.ts` with four object stores:
   barrel**: an `index.ts` re-exporting all twenty put all twenty into a chunk
   every route loads, measured at +5 KB raw on `/_not-found`, which renders none
   of them. Import each glyph from its own module
+- **Notices** - a failure the operator has to be told about goes through
+  `reportFailure(context, thrown)` or `noticeActions.error(message)` in
+  `src/store/noticeStore.ts`, and `NoticeStack` renders it top right as a
+  `role="alert"` box that never takes focus and never claims a key. Notices
+  stay until dismissed, an identical message is not stacked twice, and the
+  oldest goes past five. **Never `window.alert`**: a native alert halts the
+  page's JavaScript until it is dismissed, so while one is up ESC cannot stop
+  a sound and Fade Out All cannot fade one — and it fires exactly when
+  something has just gone wrong on the board. Seventeen of them were the
+  app's whole failure surface until 2026-09, and `no-restricted-globals` in
+  `eslint.config.mjs` refuses the name now. `confirm` and `prompt` are still
+  allowed: blocking the page to ask a question the operator chose to be asked
+  is a different thing from blocking it to report a failure they did not. A
+  failure that belongs to a field or a panel stays inline (the maintenance
+  panels' `role="alert"` boxes, the profile-name input); the stack is for
+  the hooks and stores with nowhere to put one. A pad that cannot play is
+  the one failure with two surfaces: `triggerPad` holds the pad's `"error"`
+  loading state for `ERROR_OVERLAY_MS` so the board shows _which_ pad, and
+  the notice carries _why_. That overlay was rendered by `Pad.tsx` for a
+  year and set by nothing — `onError` cleared the key in the same breath —
+  so no unit test of the component could have caught it, which is why
+  `e2e-tests/error-notices.spec.ts` presses a pad whose audio row is gone
+  and reads the overlay back from a real browser. The same spec proved the
+  engine reported one failure twice: `handleAudioFallback` called `onError`
+  and so did its only caller, harmless while `onError` only wrote to the
+  console and two boxes for one press the moment it did not
 
 ### Key Features Implementation
 

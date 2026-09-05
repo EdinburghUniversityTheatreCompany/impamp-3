@@ -420,3 +420,23 @@ different change with a different risk profile from a one-line declaration that
 no other platform even reads.
 
 Noticed while fixing the iOS ringer-switch bug.
+
+## A missing audio row is retried for three seconds before anyone hears about it
+
+`handleAudioFallback` hands a failed load to `recoverFromLoadError`, which
+retries it `maxRetries` (2) times with `retryDelayMs * attempt` between —
+one second, then two. That is the right shape for a decode that failed under
+memory pressure, and the wrong shape for the failure the error notices were
+built around: a pad naming a row that is no longer in `audioFiles`. A row that
+is not there will not be there two seconds later either, and the decoder
+already caches the miss, so the retries are three seconds of silence on a live
+board before the operator is told the cue is not coming. The e2e spec for the
+notices (`error-notices.spec.ts`) spends most of its wall-clock in that window.
+
+The decoder's "error" state already distinguishes a missing row from a failed
+decode (`getAudioFileBlobOrFail`), so recovery could be skipped for the former
+and the press reported at once. Not done with the notices because it changes
+what the engine does on a real transient failure, which is a different risk
+from changing how a settled failure is reported.
+
+Noticed while writing `e2e-tests/error-notices.spec.ts`.
