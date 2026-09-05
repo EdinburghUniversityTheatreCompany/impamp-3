@@ -26,9 +26,23 @@ consequences, both hit on 2026-08-22:
 
 The unit suite failed once in six consecutive runs on a machine at load
 average 17 while merging the icon set, and passed the other five; the failing
-test's name was not captured, so this is the shape rather than a specific
-diagnosis. Fake timers, or a settle that waits on a condition rather than a
-count, would end the class. Noticed while merging `p2/icons`.
+test's name was not captured then. It was captured on 2026-09-05, when the
+pre-commit hook rejected the same tree twice while five direct runs of
+`npx vitest run` passed: `hk` runs jscpd and gitleaks alongside vitest, and
+that load alone was enough. The names, so the next person has a specific
+target rather than a shape:
+
+- `MissingAudioPanel.test.tsx` — "repairs one of two pads naming the same
+  dead row" and "gives a pad naming one dead id twice a row apiece". Both
+  assert `Replaced` on a row straight after `chooseReplacement`, which is one
+  `panel.settle()` over a file hash, an IndexedDB write and a re-read.
+- `EditPadForm.dedup.test.tsx` — `addSounds` has its own copy of the shape, a
+  loop of 100 × 5 ms polls. It failed with "expected 2 sounds listed, saw 0".
+
+`HK_JOBS=1 git commit` is the workaround that got the commits through: same
+gates, run one at a time. Fake timers, or a settle that waits on a condition
+rather than a count, would end the class. Noticed while merging `p2/icons`,
+and again while landing the orange-window icons.
 
 ## A nested `withAudioImportInProgress` would hang an import's rollback
 
