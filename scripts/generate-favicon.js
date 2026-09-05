@@ -1,38 +1,25 @@
-import fs from "fs";
-import path from "path";
-import sharp from "sharp";
-import { fileURLToPath } from "url";
+/**
+ * Writes src/app/favicon.ico from public/icons/icon.svg. This one is a build
+ * step (see `prebuild` in package.json), so the checked-in file is always
+ * what the SVG says. The rasteriser is shared with generate-icons.js, which
+ * derives the home-screen set from the same SVG.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { faviconSvgPath, renderFavicon } from "./generate-icons.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Paths
-const svgPath = path.join(__dirname, "../public/icons/icon.svg");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const faviconPath = path.join(__dirname, "../src/app/favicon.ico");
 
-// Size to generate
+/** A PNG in a .ico's clothing; every browser this app targets accepts that. */
 const faviconSize = 256;
 
-async function generateFavicon() {
-  try {
-    console.log("Reading SVG source...");
-    const svgBuffer = fs.readFileSync(svgPath);
-
-    // Generate single 256x256 favicon
-    console.log(`Generating ${faviconSize}x${faviconSize} favicon...`);
-    const faviconBuffer = await sharp(svgBuffer)
-      .resize(faviconSize, faviconSize)
-      .png()
-      .toBuffer();
-
-    // Save as favicon.ico
-    fs.writeFileSync(faviconPath, faviconBuffer);
-
-    console.log("✓ Favicon generated successfully!");
-  } catch (error) {
-    console.error("Error generating favicon:", error);
-    process.exit(1);
-  }
+try {
+  const svg = fs.readFileSync(faviconSvgPath);
+  fs.writeFileSync(faviconPath, await renderFavicon(svg, faviconSize));
+  console.log("✓ Favicon generated successfully!");
+} catch (error) {
+  console.error("Error generating favicon:", error);
+  process.exit(1);
 }
-
-generateFavicon();
