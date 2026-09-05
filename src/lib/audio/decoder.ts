@@ -327,7 +327,11 @@ export async function loadAndDecodeAudioPipelined(
  * Loading states for instant response feedback
  */
 export interface LoadingState {
-  audioFileId: number;
+  /**
+   * Absent only on the error state `triggerPad` writes for a press that
+   * failed before any file was chosen. Nothing reads it back off the store.
+   */
+  audioFileId?: number;
   status: "loading" | "decoding" | "ready" | "error";
   progress?: number; // 0-1 for progress indication
   error?: string;

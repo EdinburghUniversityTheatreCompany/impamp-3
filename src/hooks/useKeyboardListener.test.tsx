@@ -91,6 +91,9 @@ vi.mock("@/store/loadingStore", () => ({
     setPadLoadingState: vi.fn(),
     clearPadLoadingState: vi.fn(),
   },
+  // `triggerPad` reads the current state back to decide whether a failed
+  // press's error overlay is still its own before clearing it.
+  useLoadingStore: { getState: () => ({ padLoadingStates: new Map() }) },
   generatePadLoadingKey: () => "pad-1-0-3",
 }));
 vi.mock("@/store/playbackStore", () => ({

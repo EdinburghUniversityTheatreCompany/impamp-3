@@ -273,12 +273,18 @@ describe("the pad's loading overlay", () => {
     expect(loadingStateFor(padIndex)).toBeUndefined();
   });
 
-  it("comes down when nothing could be loaded at all", async () => {
+  it("stays up as an error when nothing could be loaded at all", async () => {
+    // The one ending that does not clear at once. This case used to assert
+    // the overlay came down here too, which pinned the bug: a press whose
+    // sound could not be loaded looked exactly like a press nobody made.
+    // How long it stays, and that it does come down, is `triggerPad.test.ts`'s
+    // business — this file runs the real recovery path, whose retry delays
+    // do not mix with fake timers.
     decoderMocks.loadAndDecodeAudioInstant.mockResolvedValue(null);
     decoderMocks.loadAndDecodeAudioEnhanced.mockResolvedValue(null);
 
     const padIndex = await triggerReportingProgress();
 
-    expect(loadingStateFor(padIndex)).toBeUndefined();
+    expect(loadingStateFor(padIndex)).toMatchObject({ status: "error" });
   });
 });

@@ -17,9 +17,20 @@ import { triggerAudioForPadInstant } from "./controls";
 import {
   generatePadLoadingKey,
   loadingStoreActions,
+  useLoadingStore,
 } from "@/store/loadingStore";
+import { noticeActions } from "@/store/noticeStore";
 import type { LoadingState } from "./decoder";
 import type { PadPlaybackSettings } from "@/lib/db";
+
+/**
+ * How long a pad stays in its error state before clearing itself.
+ *
+ * Long enough to be seen on a board the operator is looking at, short enough
+ * that a pad is not still red at the next cue. The notice carries the reason
+ * and stays until dismissed; the overlay only has to say *which* pad.
+ */
+export const ERROR_OVERLAY_MS = 4000;
 
 /**
  * Everything about the pad that decides what is played and how loudly, plus
@@ -72,6 +83,13 @@ export interface TriggerPadOptions {
  * label either, just a spinner over a full progress bar, until that pad is
  * next triggered successfully.
  *
+ * A failure is the one ending that does *not* clear at once. `Pad.tsx` had
+ * rendered an `"error"` status since the overlay was written and nothing
+ * ever set it, because `onError` cleared the key in the same breath — so a
+ * press whose sound could not be loaded looked exactly like a press nobody
+ * made. The pad now holds the error state for `ERROR_OVERLAY_MS`, and the
+ * reason goes to the notice stack, where it stays until dismissed.
+ *
  * @param pad - What to play
  * @param context - The profile and bank it belongs to
  * @param options - Per-call-site extras
@@ -107,15 +125,46 @@ export async function triggerPad(
       onAudioReady: clearLoading,
       onError: (error: string) => {
         console.error(`${logPrefix} pad ${pad.padIndex}:`, error);
-        clearLoading();
+        markFailed(loadingKey, error);
+        noticeActions.error(
+          `Could not play ${pad.name || `pad ${pad.padIndex + 1}`}: ${error}`,
+        );
         options.onError?.(error);
       },
     });
   } finally {
-    // Every terminal outcome wants the overlay gone — played, failed, or
+    // Every terminal outcome but one wants the overlay gone — played, or
     // cancelled by a stop. Clearing a key that is already clear is a no-op,
     // so the callbacks above stay as the thing that clears it *promptly*,
-    // and this is only what catches the outcomes they do not describe.
-    clearLoading();
+    // and this is only what catches the outcomes they do not describe. The
+    // exception is a failure: `markFailed` has just written the error state
+    // and owns its clearing, and wiping it here is exactly what left a failed
+    // press indistinguishable from a press nobody made.
+    if (currentState(loadingKey)?.status !== "error") clearLoading();
   }
+}
+
+const currentState = (loadingKey: string): LoadingState | undefined =>
+  useLoadingStore.getState().padLoadingStates.get(loadingKey);
+
+/**
+ * Puts the pad in its error state and clears it again after
+ * `ERROR_OVERLAY_MS` — but only if the state is still the one written here.
+ * A press in the meantime has replaced it with a loading state of its own,
+ * and that must not be wiped by the timer of the press before it.
+ */
+function markFailed(loadingKey: string, error: string): void {
+  const previous = currentState(loadingKey);
+  const failed: LoadingState = {
+    audioFileId: previous?.audioFileId,
+    status: "error",
+    error,
+    startTime: previous?.startTime ?? performance.now(),
+  };
+  loadingStoreActions.setPadLoadingState(loadingKey, failed);
+  setTimeout(() => {
+    if (currentState(loadingKey) === failed) {
+      loadingStoreActions.clearPadLoadingState(loadingKey);
+    }
+  }, ERROR_OVERLAY_MS);
 }

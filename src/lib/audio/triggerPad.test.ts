@@ -155,3 +155,157 @@ describe("triggerPad forwards the pad it was given", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// A pad that cannot play.
+//
+// `Pad.tsx` has rendered an `"error"` loading status since the overlay was
+// written, and nothing ever set it: `onError` cleared the loading key at once,
+// so a failed press looked exactly like a press nobody made. The cases below
+// pin the state the pad is left in, the notice the operator gets, and that
+// the error state goes away on its own without taking a newer state with it.
+// ---------------------------------------------------------------------------
+import { afterEach } from "vitest";
+import { generatePadLoadingKey, useLoadingStore } from "@/store/loadingStore";
+import { noticeActions, useNoticeStore } from "@/store/noticeStore";
+import { ERROR_OVERLAY_MS } from "./triggerPad";
+
+const KEY = generatePadLoadingKey(
+  WHERE.activeProfileId,
+  WHERE.currentBankId,
+  3,
+);
+const loadingState = () =>
+  useLoadingStore.getState().padLoadingStates.get(KEY) ?? null;
+const notices = () => useNoticeStore.getState().notices.map((n) => n.message);
+
+type EngineArgs = {
+  onLoadingStateChange: (state: {
+    audioFileId: number;
+    status: "loading";
+    startTime: number;
+  }) => void;
+  onAudioReady: () => void;
+  onError: (error: string) => void;
+};
+
+/** An engine that starts loading and then gives up with `message`. */
+const failingWith = (message: string) =>
+  mocks.triggerAudioForPadInstant.mockImplementation(
+    async (args: EngineArgs) => {
+      args.onLoadingStateChange({
+        audioFileId: 10,
+        status: "loading",
+        startTime: 0,
+      });
+      args.onError(message);
+    },
+  );
+
+const applause = {
+  padIndex: 3,
+  audioFileIds: [10],
+  playbackType: "sequential" as const,
+  name: "Applause",
+};
+
+describe("triggerPad when the pad cannot play", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    noticeActions.dismissAll();
+    useLoadingStore.getState().actions.clearAllLoadingStates();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    noticeActions.dismissAll();
+    useLoadingStore.getState().actions.clearAllLoadingStates();
+  });
+
+  it("leaves the pad in an error state instead of clearing the overlay", async () => {
+    failingWith("Failed to load audio file ID: 10 for pad 3");
+
+    await triggerPad(applause, WHERE);
+
+    expect(loadingState()).toMatchObject({
+      status: "error",
+      error: "Failed to load audio file ID: 10 for pad 3",
+    });
+  });
+
+  it("tells the operator which pad failed and why", async () => {
+    failingWith("Failed to load audio file ID: 10 for pad 3");
+
+    await triggerPad(applause, WHERE);
+
+    expect(notices()).toEqual([
+      "Could not play Applause: Failed to load audio file ID: 10 for pad 3",
+    ]);
+  });
+
+  it("names an unnamed pad by its number", async () => {
+    failingWith("boom");
+
+    await triggerPad({ ...applause, name: undefined }, WHERE);
+
+    expect(notices()).toEqual(["Could not play pad 4: boom"]);
+  });
+
+  it("still hands the failure to the caller", async () => {
+    failingWith("boom");
+    const onError = vi.fn();
+
+    await triggerPad(applause, WHERE, { onError });
+
+    expect(onError).toHaveBeenCalledWith("boom");
+  });
+
+  it("clears the error state by itself once the operator has had time to see it", async () => {
+    failingWith("boom");
+    await triggerPad(applause, WHERE);
+
+    vi.advanceTimersByTime(ERROR_OVERLAY_MS - 1);
+    expect(loadingState()?.status).toBe("error");
+
+    vi.advanceTimersByTime(1);
+    expect(loadingState()).toBeNull();
+  });
+
+  it("does not clear a newer state the next press has since written", async () => {
+    // The operator presses again before the error has timed out and the
+    // second press is loading. The first press's timer must not wipe that
+    // out, or the pad shows nothing while a sound is on its way.
+    failingWith("boom");
+    await triggerPad(applause, WHERE);
+
+    useLoadingStore.getState().actions.setPadLoadingState(KEY, {
+      audioFileId: 10,
+      status: "loading",
+      startTime: 1,
+    });
+    vi.advanceTimersByTime(ERROR_OVERLAY_MS);
+
+    expect(loadingState()?.status).toBe("loading");
+  });
+
+  it("still clears the overlay for a press that was cancelled mid-load", async () => {
+    // The outcome the `finally` exists for: stopped while loading, so neither
+    // `onAudioReady` nor `onError` fires. Kept red-able so the error branch
+    // above cannot be implemented by never clearing at all.
+    mocks.triggerAudioForPadInstant.mockImplementation(
+      async (args: EngineArgs) => {
+        args.onLoadingStateChange({
+          audioFileId: 10,
+          status: "loading",
+          startTime: 0,
+        });
+      },
+    );
+
+    await triggerPad(applause, WHERE);
+
+    expect(loadingState()).toBeNull();
+  });
+});

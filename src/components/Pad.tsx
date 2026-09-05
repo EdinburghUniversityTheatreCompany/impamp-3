@@ -8,6 +8,7 @@ import { hasArmModifier } from "@/lib/platform";
 import { preloadOnHover, generatePlaybackKey } from "@/lib/audio";
 import { usePadPlaybackState, usePadLayerCount } from "@/store/playbackStore";
 import PadProgressBar from "./PadProgressBar"; // Import the new component
+import WarningTriangleIcon from "@/components/icons/WarningTriangleIcon";
 
 interface PadProps {
   id: string; // Unique identifier for the pad element itself
@@ -506,8 +507,24 @@ const Pad: React.FC<PadProps> = ({
           />
         )}
 
+      {/* A press that failed. Its own overlay rather than a branch of the
+          spinner's: a failed press is not a slow one. The reason is on the
+          notice stack; here it rides on `title` for whoever hovers to ask. */}
+      {isLoading && loadingStatus === "error" && !isDeleteMoveMode && (
+        <div
+          data-testid="pad-load-error"
+          title={loadingError}
+          className="absolute inset-0 bg-red-900/70 flex items-center justify-center z-15 rounded-md"
+        >
+          <div className="text-center px-1">
+            <WarningTriangleIcon className="h-6 w-6 text-red-200 mx-auto mb-1" />
+            <div className="text-white text-xs font-medium">Could not play</div>
+          </div>
+        </div>
+      )}
+
       {/* Loading indicator for instant response */}
-      {isLoading && !isDeleteMoveMode && (
+      {isLoading && loadingStatus !== "error" && !isDeleteMoveMode && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-15 rounded-md">
           <div className="text-center">
             {/* Spinner */}
@@ -515,10 +532,7 @@ const Pad: React.FC<PadProps> = ({
 
             {/* Loading status text */}
             <div className="text-white text-xs font-medium">
-              {loadingStatus === "loading" && "Loading..."}
-              {loadingStatus === "decoding" && "Decoding..."}
-              {loadingStatus === "error" && "Error"}
-              {!loadingStatus && "Loading..."}
+              {loadingStatus === "decoding" ? "Decoding..." : "Loading..."}
             </div>
 
             {/* Progress bar for loading */}
@@ -528,13 +542,6 @@ const Pad: React.FC<PadProps> = ({
                   className="h-full bg-white transition-all duration-200"
                   style={{ width: `${Math.round(loadingProgress * 100)}%` }}
                 />
-              </div>
-            )}
-
-            {/* Error message */}
-            {loadingError && (
-              <div className="text-red-300 text-xs mt-1 max-w-20 truncate">
-                {loadingError}
               </div>
             )}
           </div>
