@@ -142,38 +142,6 @@ All of this becomes worth doing if the answer to "what is a phone for here"
 ever changes from convenience to performance. Noticed while building the
 portrait layout.
 
-## `npm run dev` does not start the app
-
-`CLAUDE.md` and the README both document `npm run dev` as the way to start the
-development server. On a clean checkout it returns **500** on every request:
-
-```
-ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID environment variable is not set.
-⨯ Error: Google OAuth components must be used within GoogleOAuthProvider
-    at useGoogleSignIn (src/hooks/useGoogleSignIn.ts:66)
-    at AuthNotification (src/components/AuthNotification.tsx:56)
-```
-
-`GoogleAuthProviderWrapper` renders no provider without the variable, and
-`AuthNotification` calls `useGoogleSignIn` unconditionally on the only page,
-so the whole board fails to render — not just the sign-in button.
-
-`fnox exec -- npm run dev` works, because `fnox.toml` carries the reference.
-Nothing says so: the deploy note in memory covers `fnox exec -- kamal deploy`
-and the dev server is documented as a bare `npm run dev`.
-
-Two candidate fixes, and they are not the same. Making the script
-`fnox exec -- next dev --turbopack` fixes it for anyone with the vault, and
-breaks it for anyone without. Making `AuthNotification` degrade when the
-variable is absent — the app is fully usable without Google Drive, and the
-production build already treats these as build-time-inlined optionals — fixes
-it for everyone and matches what the three `NEXT_PUBLIC_*` ARGs in the
-Dockerfile already imply. The e2e suite supplies a dummy value for exactly
-this reason (`playwright.config.ts`), which is the third option: document a
-dummy in `.env.dist` and say so in the README.
-
-Noticed while starting a dev server so Mick could try the first-use tour.
-
 ## `next dev` writes a block into CLAUDE.md
 
 Starting the dev server appends a `<!-- BEGIN:nextjs-agent-rules -->` block to

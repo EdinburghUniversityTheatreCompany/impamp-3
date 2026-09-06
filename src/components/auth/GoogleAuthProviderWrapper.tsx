@@ -31,63 +31,37 @@ const GoogleAuthProviderWrapper: React.FC<GoogleAuthProviderWrapperProps> = ({
     // No need to subscribe to store changes here as this is just for logging
   }, []);
 
-  // Ensure the environment variable is set, otherwise throw an error during development
-  // In production, it might be better to handle this gracefully, but for setup, an error is clear.
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
-  if (!clientId) {
-    // Provide a helpful error message if the Client ID is missing
-
-    if (process.env.NODE_ENV === "development") {
-      console.error(
-        "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID environment variable is not set.",
-      );
-      return (
-        <div
-          style={{
-            padding: "20px",
-            backgroundColor: "#ffdddd",
-            border: "1px solid #ff0000",
-            color: "#d8000c",
-          }}
-        >
-          <h2>Google Client ID Missing</h2>
-          <p>
-            The <code>NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> environment variable
-            is required for Google Drive Sync functionality.
-          </p>
-          <p>
-            Please create a <code>.env.local</code> file in the project root and
-            add the following line:
-          </p>
-          <pre>NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-google-client-id-here</pre>
-          <p>
-            You can obtain a Client ID from the Google Cloud Console after
-            setting up your OAuth 2.0 credentials. Refer to the project
-            documentation for setup steps.
-          </p>
-          {children}{" "}
-          {/* Render children anyway in dev to allow other parts of the app to load */}
-        </div>
-      );
-    } else {
-      console.error("Google Client ID is not configured.");
-    }
-  }
-
-  // The provider is mounted even with no client id, deliberately.
+  // One behaviour in every environment, and a provider in all of them.
   //
-  // Dropping it was worse than it looked: `useGoogleLogin` throws outright
-  // without an enclosing provider, and it is called during render, so an
-  // unconfigured build did not degrade to "Drive sign-in does nothing" — it
-  // failed `next build` while prerendering /_not-found, with a stack trace
-  // naming the hook and nothing about configuration. That is why a bare
-  // `docker build .`, the command the README gives, could not produce an
-  // image at all unless someone happened to pass --build-arg.
+  // `useGoogleLogin` throws outright without an enclosing provider, and it is
+  // called during render — `AuthNotification` calls `useGoogleSignIn`
+  // unconditionally, on the only page there is. So "no provider" is not
+  // "Drive sign-in does nothing"; it is the whole board failing to render.
+  //
+  // That used to be a production-only argument, and the development branch
+  // did exactly the forbidden thing: it returned a setup-instructions box
+  // with `children` inside a plain `<div>`. On a clean checkout `npm run dev`
+  // — the command both the README and CLAUDE.md give — therefore answered 500
+  // on every request with "Google OAuth components must be used within
+  // GoogleOAuthProvider", and the board never appeared. The app is fully
+  // usable without Google Drive, so failing to start over an optional
+  // credential was the wrong trade in the environment where someone is most
+  // likely not to have one.
   //
   // With a placeholder the tree renders, the app works, and Drive sign-in
   // fails at the point someone clicks it — which is the honest place for a
-  // missing credential to surface.
+  // missing credential to surface. The console is where a developer who
+  // *wanted* Drive finds out; `.env.dist` carries the variable.
+  if (!clientId) {
+    console.error(
+      "NEXT_PUBLIC_GOOGLE_CLIENT_ID is not set, so Google Drive sync is " +
+        "unavailable. Everything else works. Set it in .env.local (see " +
+        ".env.dist) to enable Drive sign-in.",
+    );
+  }
+
   return (
     <GoogleOAuthProvider clientId={clientId ?? "unconfigured.invalid"}>
       {children}
