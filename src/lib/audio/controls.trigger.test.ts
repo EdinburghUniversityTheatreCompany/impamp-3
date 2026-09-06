@@ -176,7 +176,11 @@ describe("falling back to another sound on a pad", () => {
         padGainDb: 0,
       });
 
-    // First press takes the sequential cursor to the second sound.
+    // First press takes the sequential cursor to the second sound. It plays
+    // the first sound directly: this used to lean on recovery re-loading it
+    // after the instant load failed, which stopped being possible once a row
+    // the stub reports as missing is no longer retried.
+    decoderMocks.loadAndDecodeAudioInstant.mockResolvedValueOnce(fakeBuffer);
     await play();
     expect(
       playbackMocks.playBuffer.mock.calls[0][2].multiSoundState
@@ -313,5 +317,66 @@ describe("reporting a press that failed", () => {
     );
 
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Recovery retries a load twice, a second and then two seconds apart. That
+ * is the right shape for a decode that failed under memory pressure and the
+ * wrong shape for a pad naming a row that is no longer in `audioFiles`: a
+ * missing row will not be there two seconds later either, so the retries were
+ * three seconds of silence on a live board before the operator was told the
+ * cue was not coming. The row is asked for once before any retry.
+ */
+describe("recovering from a failed load", () => {
+  beforeEach(() => {
+    decoderMocks.loadAndDecodeAudioInstant.mockResolvedValue(null);
+    decoderMocks.loadAndDecodeAudioEnhanced.mockResolvedValue(null);
+  });
+
+  it("does not retry a sound whose row is gone", async () => {
+    // The shared stub's `getAudioFile` answers null: the row is not there.
+    const started = performance.now();
+
+    await triggerPad(
+      {
+        padIndex: nextPadIndex++,
+        audioFileIds: [GOOD],
+        playbackType: "sequential",
+        name: "Pad",
+      },
+      { activeProfileId: 1, currentBankId: "0" },
+    );
+
+    expect(decoderMocks.loadAndDecodeAudioEnhanced).not.toHaveBeenCalled();
+    // The retry delays alone are three seconds; a row lookup is not.
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("still retries a sound whose row is there but would not decode", async () => {
+    const { getAudioFile } = await import("@/lib/db");
+    vi.mocked(getAudioFile).mockResolvedValue({
+      blob: new Blob(["bytes"]),
+    } as Awaited<ReturnType<typeof getAudioFile>>);
+    vi.useFakeTimers();
+    try {
+      const pressed = triggerPad(
+        {
+          padIndex: nextPadIndex++,
+          audioFileIds: [GOOD],
+          playbackType: "sequential",
+          name: "Pad",
+        },
+        { activeProfileId: 1, currentBankId: "0" },
+      );
+      // One second before the first retry, two before the second.
+      await vi.advanceTimersByTimeAsync(3000);
+      await pressed;
+    } finally {
+      vi.useRealTimers();
+      vi.mocked(getAudioFile).mockResolvedValue(undefined);
+    }
+
+    expect(decoderMocks.loadAndDecodeAudioEnhanced).toHaveBeenCalledTimes(2);
   });
 });
