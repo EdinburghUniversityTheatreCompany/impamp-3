@@ -10,6 +10,16 @@ const withBundleAnalyzer = bundleAnalyzer({
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // `next dev` otherwise appends a `<!-- BEGIN:nextjs-agent-rules -->` block to
+  // CLAUDE.md and re-creates it on every run, so reverting it leaves a tree
+  // that goes dirty again the next time anyone develops — which is how a
+  // manual check once blocked a merge.
+  //
+  // Off rather than committed, because CLAUDE.md here is hand-authored and
+  // nearly every paragraph of it exists because something broke. A generated
+  // section pointing an agent at `node_modules/next/dist/docs/` is not that,
+  // and would be the one part of the file nobody may edit.
+  agentRules: false,
   compiler: {
     // Strip `console.log` from production builds, keeping everything that
     // reports a problem or a decision.

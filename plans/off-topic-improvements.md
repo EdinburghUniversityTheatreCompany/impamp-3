@@ -142,25 +142,6 @@ All of this becomes worth doing if the answer to "what is a phone for here"
 ever changes from convenience to performance. Noticed while building the
 portrait layout.
 
-## `next dev` writes a block into CLAUDE.md
-
-Starting the dev server appends a `<!-- BEGIN:nextjs-agent-rules -->` block to
-`CLAUDE.md` and logs "Generated CLAUDE.md for AI agents. Set `agentRules:
-false` in next.config to disable." The block re-creates itself on every run, so
-reverting it leaves a tree that goes dirty again the next time anyone develops.
-
-Three options, and the choice is about whose document this is. Committing the
-block keeps the tree clean and is what the block itself suggests. Setting
-`agentRules: false` in `next.config.ts` keeps `CLAUDE.md` entirely
-hand-authored, which is what the rest of this file plainly is — nearly every
-paragraph exists because something broke, and an auto-generated section
-telling an agent to read `node_modules/next/dist/docs/` sits oddly among them.
-Moving the generated content to its own file, if Next supports that, would be
-the third.
-
-Noticed when a dev server started for a manual check left `CLAUDE.md`
-modified and blocked a merge.
-
 ## Nothing on the board distinguishes "playing" from "audible"
 
 Every playback signal the operator has — the pad's green progress bar, the
