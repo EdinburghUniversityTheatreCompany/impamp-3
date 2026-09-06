@@ -268,28 +268,6 @@ correctness.
 Noticed while writing `preloader.test.ts`'s "retries every task when the
 decoder itself throws", which had to be written to the current behaviour.
 
-## A trim end that outlived its audio reports a length the file does not have
-
-`playBlobStreaming` computes `track.duration` from the trim range at trigger
-time (`trimEnd - trimStart`). The `loadedmetadata` handler then re-clamps
-`trimStart`/`trimEnd` against the real duration — an unusable `trimEnd`
-becomes `undefined`, play to the natural end — but only recomputes
-`track.duration` `if (track.duration <= 0)`.
-
-So a pad carrying `trimEnd: 500` on a ten-second file plays correctly and
-reports 8:19 remaining for its whole length. This is reachable rather than
-theoretical: `audioTrimSettings` is keyed by audio file id and survives
-`replaceMissingAudioFile`, so replacing a missing sound with a shorter one
-produces exactly this.
-
-The fix is one line — recompute `track.duration` from the re-clamped range
-whenever the range actually changed, not only when the duration is still zero.
-`playback.streaming.test.ts` asserts the current behaviour with a comment
-pointing here, so the test will need updating with the fix.
-
-Noticed while writing that suite; the assertion was written to what the code
-does after the expectation of 9 measured 499.
-
 ## Nothing on the board distinguishes "playing" from "audible"
 
 Every playback signal the operator has — the pad's green progress bar, the

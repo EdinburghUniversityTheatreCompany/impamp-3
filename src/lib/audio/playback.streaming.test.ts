@@ -333,11 +333,13 @@ describe("once metadata arrives", () => {
 
     const track = playback.getActiveTrack("pad-1");
     expect(track?.trimEnd).toBeUndefined();
-    // The *duration* is not recomputed: it was already set from the trim end
-    // the archive supplied, and the handler only fills a duration that is
-    // still zero. So a pad whose trim outlived its audio reports a length the
-    // file does not have. Recorded in plans/off-topic-improvements.md.
-    expect(track?.duration).toBe(499);
+    // And the duration goes with it. The handler used to fill in only a
+    // duration that was still zero, so this reported 499 — the length implied
+    // by a trim end the file does not have — for its whole nine seconds of
+    // playback. Reachable rather than theoretical: `audioTrimSettings` is
+    // keyed by audio file id and survives `replaceMissingAudioFile`, so
+    // replacing a missing sound with a shorter one produces exactly this.
+    expect(track?.duration).toBe(9);
   });
 
   it("retries the start seek the element refused earlier", () => {

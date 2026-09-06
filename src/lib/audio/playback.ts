@@ -700,9 +700,15 @@ export function playBlobStreaming(
         track.trimStart = reclamped.trimStart;
         track.trimEnd = reclamped.trimEnd;
 
-        if (track.duration <= 0) {
-          track.duration = (track.trimEnd ?? duration) - track.trimStart;
-        }
+        // Recomputed unconditionally, not only when it is still zero. Both
+        // ends have just been clamped against the file's real duration, so
+        // this is the first point at which the playable length is knowable;
+        // the value set at trigger time came from a trim range checked
+        // against nothing. Filling in only a zero left a pad carrying
+        // `trimEnd: 500` on a ten-second file reporting 8:19 remaining for
+        // its whole length — reachable, because `audioTrimSettings` is keyed
+        // by audio file id and survives `replaceMissingAudioFile`.
+        track.duration = (track.trimEnd ?? duration) - track.trimStart;
 
         if (track.trimStart > 0 && element.currentTime < track.trimStart) {
           try {
