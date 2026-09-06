@@ -338,6 +338,46 @@ describe("walking a bucket that answers over HTTP", () => {
   });
 });
 
+describe("a store that never makes progress", () => {
+  it("gives up instead of spinning the event loop for ever", async () => {
+    // The loop leaves on two conditions: the listing ended, or the scan budget
+    // ran out. A page with no objects in it consumes no budget, so a store
+    // answering every request with an empty page and the same continuation
+    // token satisfied neither — for ever, inside a request handler, on a
+    // single instance whose event loop serves everything else.
+    //
+    // Real S3 always makes progress, so this is hardening rather than a bug
+    // anyone has seen; the point of the test is that the claim is checked.
+    let calls = 0;
+    const stuck = {
+      ...store,
+      async list() {
+        calls++;
+        // Fail loudly rather than hanging until the suite's timeout, so a
+        // regression reads as "listed for ever" rather than as a slow test.
+        if (calls > 20) throw new Error("list() called without ever advancing");
+        return { objects: [], nextContinuationToken: "stuck" };
+      },
+    } as unknown as typeof store;
+
+    expect(
+      await sweepUncommittedObjects({ store: stuck, config, now: NOW }),
+    ).toEqual({ scanned: 0, removed: 0, truncated: false });
+
+    // Once to be handed the token, once to discover it did not move.
+    expect(calls).toBe(2);
+  });
+
+  it("still walks a bucket whose pages do advance", async () => {
+    // The guard keys on "empty page *and* the same token", so a real listing
+    // that hands back a fresh token every page must be untouched by it.
+    orphan(1);
+    orphan(2);
+
+    expect(await sweep()).toMatchObject({ scanned: 2, removed: 2 });
+  });
+});
+
 describe("sweepIfDue", () => {
   it("runs the first time it is asked", async () => {
     orphan(8);

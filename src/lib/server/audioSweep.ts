@@ -183,6 +183,24 @@ export async function sweepUncommittedObjects({
       maxKeys: Math.min(limits.listPageSize, budget),
     });
 
+    // A page with nothing in it that hands back the token it was given cannot
+    // be advanced past: the loop's two exits are "the listing ended" and "the
+    // budget ran out", and an empty page consumes no budget, so this spun for
+    // ever — inside a request handler, on the single instance whose event loop
+    // serves everything else. Real S3 always makes progress, so this is
+    // hardening rather than a bug anyone has seen.
+    //
+    // Only the empty case needs the guard: a page with objects in it spends
+    // budget, so a repeated token there still terminates. Nothing was scanned,
+    // so there is no position worth resuming from and the next pass starts at
+    // the top.
+    if (
+      page.objects.length === 0 &&
+      page.nextContinuationToken === continuationToken
+    ) {
+      return stopAt(lastKey);
+    }
+
     // Aged objects whose key is one of ours, key -> hash. Anything newer than
     // the grace period, or not shaped like a key we mint, never reaches the
     // database.
