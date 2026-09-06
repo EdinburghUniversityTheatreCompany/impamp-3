@@ -248,6 +248,20 @@ async function handleAudioFallback(
     }
   }
 
+  // Recovery retries the load a second and then two seconds apart, which is
+  // the right shape for a decode that failed under memory pressure and the
+  // wrong shape for a row that is no longer in the library: it will not be
+  // there two seconds later either, so the retries were three seconds of
+  // silence on a live board before the operator was told the cue was not
+  // coming. One lookup settles it. A row without a blob counts as gone, the
+  // same reading the decoder gives it.
+  if (!(await getAudioFile(failedAudioFileId))?.blob) {
+    console.warn(
+      `[Audio Controls] Audio file ID ${failedAudioFileId} is not in the library; not retrying a row that cannot come back.`,
+    );
+    return null;
+  }
+
   // If no alternatives work, try error recovery on the original file
   console.log(
     `[Audio Controls] No alternatives available, attempting error recovery for ID: ${failedAudioFileId}`,
