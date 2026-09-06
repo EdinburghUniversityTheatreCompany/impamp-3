@@ -28,6 +28,7 @@ import { convertIndexToBankNumber } from "./bankUtils";
 import { LOUDNESS_ALGO_VERSION } from "./audio/loudness/constants";
 import { toWireProfile } from "./profileWire";
 import { fetchWithTimeout } from "./fetchWithTimeout";
+import { count } from "./plural";
 import { forEachWithConcurrency } from "./concurrency";
 import type { Entry } from "@zip.js/zip.js";
 
@@ -461,7 +462,10 @@ function describeAudioImportFailures(
   failures: AudioImportFailure[],
   total: number,
 ): string {
-  const detail = `${failures.length} of ${total} sound${total === 1 ? "" : "s"} could not be imported (${nameSome(failures.map((f) => f.name))}).`;
+  // `count` on the *total* rather than on `failures.length`: the number
+  // rendered first and the noun's agreement come from different numbers here,
+  // and "1 of 1 sound" / "2 of 5 sounds" is what that reads as.
+  const detail = `${failures.length} of ${count(total, "sound", "sounds")} could not be imported (${nameSome(failures.map((f) => f.name))}).`;
 
   if (failures.some((f) => isQuotaExceededError(f.error))) {
     return `${detail} This device has run out of storage space, so importing again will fail the same way — free some up (deleting an unused profile, or clearing other sites' data) first.`;
@@ -784,7 +788,7 @@ async function importPageMetadata(
     // `importProfileCore` still deletes the profile: a board missing a bank
     // is not the board that was exported.
     throw new Error(
-      `${skipped.length} bank${skipped.length === 1 ? "" : "s"} could not be imported (${nameSome(skipped)}).`,
+      `${count(skipped.length, "bank", "banks")} could not be imported (${nameSome(skipped)}).`,
     );
   }
   console.log(`Imported ${pageMetadata.length} page metadata entries.`);
