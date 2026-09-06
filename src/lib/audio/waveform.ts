@@ -53,6 +53,12 @@ export function getWaveformPeaks(
 
   for (let i = 0; i < targetPoints; i++) {
     const start = i * samplesPerPoint;
+    // The clamp can never bind, and is kept to state the intent rather than
+    // to defend against anything: `samplesPerPoint` is
+    // `floor(length / targetPoints)` and `i` stops at `targetPoints - 1`, so
+    // the largest end computed is `targetPoints * floor(length / targetPoints)`,
+    // which is `<= length` by construction. Do not write a test claiming to
+    // exercise the `length` side of it — no input reaches it.
     const end = Math.min(start + samplesPerPoint, length);
 
     let min = Infinity;

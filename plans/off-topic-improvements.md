@@ -268,28 +268,6 @@ correctness.
 Noticed while writing `preloader.test.ts`'s "retries every task when the
 decoder itself throws", which had to be written to the current behaviour.
 
-## Two branches that no input can reach
-
-Both are harmless, and both would read as covered-by-accident if anyone judged
-this repo's coverage number by file:
-
-- `getWaveformPeaks` clamps its bucket end with
-  `Math.min(start + samplesPerPoint, length)`. `samplesPerPoint` is
-  `floor(length / targetPoints)`, so the largest end computed is
-  `targetPoints * floor(length / targetPoints)`, which is `<= length` by
-  construction. The clamp can never bind.
-- `validateAuthState` wraps its `refreshGoogleToken` call in a `try`/`catch`,
-  but `refreshGoogleToken` has its own `try`/`catch` around the whole of its
-  body and returns `{ success: false }` rather than throwing. The outer
-  `catch` is unreachable.
-
-Leaving both is defensible — the clamp documents an intent and the catch is
-cheap insurance against a later edit to `refreshGoogleToken`. Deleting either
-is also defensible. What is not defensible is a test that pretends to exercise
-them.
-
-Noticed while writing tests for `waveform.ts` and `authUtils.ts`.
-
 ## A trim end that outlived its audio reports a length the file does not have
 
 `playBlobStreaming` computes `track.duration` from the trim range at trigger

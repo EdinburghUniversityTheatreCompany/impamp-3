@@ -64,6 +64,12 @@ export const validateAuthState = async (
         return { isValid: false, needsReauth: true };
       }
     } catch (error) {
+      // Unreachable as things stand, and kept as insurance against a later
+      // edit: `refreshGoogleToken` wraps the whole of its own body in a
+      // try/catch and answers `{ success: false }` rather than throwing, so
+      // nothing above ever rejects. A test that mocks the network into
+      // failing exercises *that* catch, not this one — so do not write one
+      // here and call this branch covered.
       console.error("Error refreshing token:", error);
       return { isValid: false, needsReauth: true };
     }
