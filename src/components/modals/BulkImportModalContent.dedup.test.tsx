@@ -141,6 +141,31 @@ describe("saving a bulk import", () => {
     ]);
   });
 
+  it("announces the whole import once, not once per pad", async () => {
+    // The loop's comment said the announcement was "deliberately not per-pad:
+    // one import can write sixty of them, and every bump re-reads the bank",
+    // and the very next call was `savePadConfiguration` — whose whole job is
+    // `upsertPadConfiguration` *plus* `notifyPadConfigsChanged`. So a
+    // sixty-file import fired sixty bumps and then a sixty-first at the end.
+    // The comment was true when the loop wrote through `upsertPadConfiguration`
+    // directly; adopting the shared tail took the write and left the comment.
+    await chooseFiles([
+      horn("horn.wav"),
+      new File(["a completely different stab"], "stab.wav", {
+        type: "audio/wav",
+      }),
+    ]);
+    await act(async () => {
+      button("Auto-Assign").click();
+    });
+
+    await save(2);
+
+    // Two pads written, one announcement — the trailing one.
+    expect(incrementPadConfigsVersion).toHaveBeenCalledTimes(1);
+    expect(requestSync).toHaveBeenCalledTimes(1);
+  });
+
   it("stores a row per sound when the bytes differ", async () => {
     // The other half: reuse must not collapse two sounds into one row.
     await chooseFiles([

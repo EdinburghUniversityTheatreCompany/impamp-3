@@ -2,11 +2,12 @@
 
 import React, { useState, useRef } from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { addOrReuseAudioFile, withAudioImportInProgress } from "@/lib/db";
 import {
-  notifyPadConfigsChanged,
-  savePadConfiguration,
-} from "@/hooks/pad/padWrites";
+  addOrReuseAudioFile,
+  upsertPadConfiguration,
+  withAudioImportInProgress,
+} from "@/lib/db";
+import { notifyPadConfigsChanged } from "@/hooks/pad/padWrites";
 import {
   GRID_COLS,
   GRID_ROWS,
@@ -330,10 +331,16 @@ const BulkImportModalContent: React.FC<BulkImportModalContentProps> = ({
             type: file.type,
           });
 
-          // Create pad configuration. The announcement is deliberately not
-          // per-pad: one import can write sixty of them, and every bump
-          // re-reads the bank.
-          await savePadConfiguration({
+          // `upsertPadConfiguration` rather than `savePadConfiguration`,
+          // because the announcement is deliberately not per-pad: one import
+          // can write sixty of them, and every bump re-reads the bank. The
+          // single one at the end of the run is the whole of it.
+          //
+          // This said exactly that while calling `savePadConfiguration`, whose
+          // job is `upsertPadConfiguration` *plus* `notifyPadConfigsChanged` —
+          // the comment was written when the loop wrote directly, and adopting
+          // the shared tail took the write and left the comment behind.
+          await upsertPadConfiguration({
             profileId,
             bankId,
             padIndex: assignment.padIndex,

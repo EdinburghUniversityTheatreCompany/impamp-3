@@ -37,18 +37,22 @@ vi.doMock("@/store/profileStore", () => ({
 
 // The gate sits in front of the pad write and nowhere else, so the importer
 // stops with its first audio row committed and no pad naming it.
+//
+// On `upsertPadConfiguration` rather than `padWrites.savePadConfiguration`,
+// because the loop writes through the former directly — its announcement is
+// one per run, not one per pad. Gating the wrapper the importer no longer
+// calls does not fail; it hangs, which is a 20-second timeout rather than a
+// readable failure, so keep this pointed at whatever the loop actually awaits.
 let gate: RaceGate;
-vi.doMock("@/hooks/pad/padWrites", async () => {
-  const actual = await vi.importActual<typeof import("@/hooks/pad/padWrites")>(
-    "@/hooks/pad/padWrites",
-  );
+vi.doMock("@/lib/db", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/db")>("@/lib/db");
   return {
     ...actual,
-    savePadConfiguration: async (
-      pad: Parameters<typeof actual.savePadConfiguration>[0],
+    upsertPadConfiguration: async (
+      pad: Parameters<typeof actual.upsertPadConfiguration>[0],
     ) => {
       await gate.arrive();
-      return actual.savePadConfiguration(pad);
+      return actual.upsertPadConfiguration(pad);
     },
   };
 });
