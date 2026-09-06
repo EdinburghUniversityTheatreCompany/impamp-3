@@ -447,10 +447,7 @@ describe("the preview", () => {
 
   it("silences the previous preview before starting another", async () => {
     // Otherwise two presses of Preview overlap, which is not what the button
-    // says it does. Two things do this — the explicit stop in `handlePreview`
-    // and the cleanup of the effect keyed on `previewKey` — and this
-    // assertion cannot tell them apart. Removing the explicit one leaves the
-    // suite green; see plans/off-topic-improvements.md.
+    // says it does.
     await openTrimmer();
 
     await panel!.press(button("Preview"));
@@ -459,6 +456,29 @@ describe("the preview", () => {
     const firstKey = playBuffer.mock.calls[0][1];
     expect(stopTrack).toHaveBeenCalledWith(firstKey);
     expect(playBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it("silences it *before* the next one starts, not a frame later", async () => {
+    // The ordering is the whole reason `handlePreview` stops the previous key
+    // explicitly when the effect keyed on `previewKey` already stops it on
+    // every change. That cleanup runs after the render, i.e. after
+    // `playBuffer` has already started the second preview, so without the
+    // explicit stop there is a frame with both audible. Asserting only "was
+    // stopped" cannot tell the two mechanisms apart — this asserts *when*.
+    await openTrimmer();
+
+    await panel!.press(button("Preview"));
+    await panel!.press(button("Preview"));
+
+    const firstKey = playBuffer.mock.calls[0][1];
+    const stopOfFirst = stopTrack.mock.calls.findIndex(
+      (call) => call[0] === firstKey,
+    );
+    expect(stopOfFirst).toBeGreaterThanOrEqual(0);
+
+    expect(stopTrack.mock.invocationCallOrder[stopOfFirst]).toBeLessThan(
+      playBuffer.mock.invocationCallOrder[1],
+    );
   });
 
   it("stops the preview when the trimmer is closed", async () => {

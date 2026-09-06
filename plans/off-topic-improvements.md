@@ -312,34 +312,6 @@ pointing here, so the test will need updating with the fix.
 Noticed while writing that suite; the assertion was written to what the code
 does after the expectation of 9 measured 499.
 
-## The trimmer stops its previous preview twice
-
-`WaveformTrimmer.handlePreview` opens with an explicit
-`if (previewKey) stopTrack(previewKey)`, and the component also holds
-
-```ts
-useEffect(
-  () => () => {
-    if (previewKey) stopTrack(previewKey);
-  },
-  [previewKey],
-);
-```
-
-whose cleanup fires on every change of `previewKey` — i.e. on exactly the same
-event. Removing the explicit stop leaves `WaveformTrimmer.test.tsx` green
-(measured), because the effect covers it.
-
-They are not quite identical, which is the only argument for keeping both: the
-explicit stop runs _before_ `playBuffer`, while the effect cleanup runs after
-the render, so relying on the effect alone leaves a frame in which both
-previews are audible. If that is the reason, it deserves a comment; if it is
-not, one of the two should go. This is the repo's "same rule written twice"
-shape either way.
-
-Noticed while mutation-testing the trimmer: the mutation that deleted the
-explicit stop broke nothing.
-
 ## The search matcher does not trim the term it matches on
 
 `useSearch` decides _whether to search_ on a trimmed term:

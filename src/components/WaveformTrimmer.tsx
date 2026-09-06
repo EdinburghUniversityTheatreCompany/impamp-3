@@ -372,7 +372,13 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     const buffer = bufferRef.current;
     if (!buffer) return;
 
-    // Stop previous preview if playing
+    // Stop the previous preview *before* starting the next one. The effect
+    // below stops it too — its cleanup runs on every change of `previewKey`,
+    // which is this same event — so this looks like the repo's "same rule
+    // written twice" shape and is not: the effect cleanup runs after the
+    // render, so relying on it alone leaves a frame in which both previews
+    // are audible. Deleting this line leaves the suite green, which is why
+    // the reason is written down rather than left to be rediscovered.
     if (previewKey) {
       stopTrack(previewKey);
     }
@@ -429,7 +435,10 @@ const WaveformTrimmer: React.FC<WaveformTrimmerProps> = ({
     setTrimEnd(duration);
   }, [duration]);
 
-  // Stop preview on unmount
+  // Stop the preview on unmount — and on every change of `previewKey`, which
+  // is the *second* half of what `handlePreview` does explicitly. This half is
+  // the one that covers closing the trimmer mid-preview; that one is the one
+  // that covers pressing Preview twice without a silent frame between.
   useEffect(() => {
     return () => {
       if (previewKey) {
