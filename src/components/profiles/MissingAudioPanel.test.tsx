@@ -126,7 +126,18 @@ async function chooseReplacement(key: string, file: File): Promise<void> {
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await panel.settle();
+  // Waited for, not settled for. `handleReplaceMissingFile` puts the key in
+  // `replacingIds` synchronously and takes it out in its `finally`, and the
+  // row's picker is `disabled` for exactly that window — so "the picker is
+  // gone (the row says Replaced) or is back to enabled" is the true end of the
+  // write, whatever the machine is doing. A fixed number of macrotask turns is
+  // not: this is one file hash, one IndexedDB write and a re-read, none of them
+  // paced by the timer queue, and two cases here failed under `hk`'s parallel
+  // load while passing five direct runs.
+  await panel.waitFor(() => {
+    const picker = panel.testId(`missing-audio-replace-${key}`);
+    return picker === null || !(picker as HTMLInputElement).disabled;
+  }, `the replacement of ${key} to finish`);
 }
 
 /** A replacement file with bytes of its own. */

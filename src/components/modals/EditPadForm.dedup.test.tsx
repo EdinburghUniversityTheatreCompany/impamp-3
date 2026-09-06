@@ -18,6 +18,7 @@ import { clearAllStores } from "@/lib/testSupport/browserGlobals";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { waitForCondition } from "@/lib/testSupport/reactPanel";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PadFormValues } from "@/types/forms";
 
@@ -89,14 +90,18 @@ async function addSounds(files: File[], expectedRows: number): Promise<void> {
   Object.defineProperty(input, "files", { value: files, configurable: true });
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    for (
-      let tick = 0;
-      tick < 100 && soundRows().length < expectedRows;
-      tick++
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
   });
+  // The wait is a wall clock over the rendered list, not a count of turns
+  // inside one `act` scope. The count this replaced was both: 100 × 5 ms of
+  // budget, with `soundRows()` read from inside the scope that was holding
+  // React's commits — so it was watching a DOM the wait itself kept still, on
+  // a budget unrelated to the content hash and IndexedDB write it was waiting
+  // for. It failed under `hk`'s parallel load with "expected 2 sounds listed,
+  // saw 0" while passing five direct runs.
+  await waitForCondition(
+    () => soundRows().length >= expectedRows,
+    `${expectedRows} sounds to be listed`,
+  );
   if (soundRows().length !== expectedRows) {
     throw new Error(
       `expected ${expectedRows} sounds listed, saw ${soundRows().length}`,

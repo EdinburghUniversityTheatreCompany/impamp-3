@@ -5,44 +5,59 @@ Each entry: what, where, why it matters.
 
 Deferred dependency upgrades live in `plans/deferred-upgrades.md`, not here.
 
-## `reactPanel`'s settle is a tick count, not a bounded wait
+## The rest of the panel suites still settle by tick count
 
-`src/lib/testSupport/reactPanel.tsx` settles a press by awaiting 40
-`setTimeout(0)` turns inside one `act` scope. `setTimeout(0)` is clamped to
-about a millisecond, so those 40 turns are roughly 40 ms on an idle machine
-and can stretch past half a second on a loaded one. Two independent
-consequences, both hit on 2026-08-22:
+`reactPanel.tsx` now offers `waitForCondition` — a wall-clock wait on a
+condition, checked _between_ `act` scopes — and the two suites that were
+measured failing under `hk`'s parallel load use it: `MissingAudioPanel`'s
+`chooseReplacement` waits for the row's picker to leave its disabled window,
+and `EditPadForm.dedup`'s `addSounds` waits for the rows to be listed.
 
-- A component timer set inside the settle window fires _during_ the wait
-  rather than after it. `OrphanedAudioPanel`'s 500 ms re-scan did exactly
-  this, clearing state the assertion was about. That specific case is fixed —
-  `runOrphanScan` no longer clears the cleanup report — but the mechanism is
-  general, and the fix each time has been to spy on `setTimeout` and
-  intercept the request rather than wait for it.
-- A dynamic `import()` a module has not been fetched yet can land _after_ all
-  40 turns, because vite-node's fetch is not a macrotask the count can see.
-  `cleanupOrphanedAudioFiles` reaches `await import("./audio/cache")`, and
-  with `SETTLE_TICKS` cut to 4 that was the only failure in its file.
+`settle()` and its 40 `setTimeout(0)` turns remain, and about a dozen suites
+still assert straight after one. Each is the same shape: `setTimeout(0)` is
+clamped to about a millisecond, so the budget is roughly 40 ms of wall clock
+and is unrelated to the file hash, IndexedDB write or dynamic `import()` the
+assertion is actually waiting for. Migrating one is mechanical — say what the
+press should produce and wait for that — and worth doing to whichever suite
+next fails on a loaded machine rather than all at once.
 
-The unit suite failed once in six consecutive runs on a machine at load
-average 17 while merging the icon set, and passed the other five; the failing
-test's name was not captured then. It was captured on 2026-09-05, when the
-pre-commit hook rejected the same tree twice while five direct runs of
-`npx vitest run` passed: `hk` runs jscpd and gitleaks alongside vitest, and
-that load alone was enough. The names, so the next person has a specific
-target rather than a shape:
+Two things not to re-derive. Checking a condition from _inside_ a single
+long-running `act` scope can never work: React commits an update when the scope
+it was queued in exits, so the wait holds the DOM still and then reads it.
+Measured, not assumed — the first version of `waitForCondition` did exactly
+that and sat for the full five seconds watching a frozen picker. And the
+original flake was **not reproducible** here: the old code passed ten
+consecutive runs of both suites at load average 26, so the migration rests on
+the mechanism being wrong rather than on a red run anyone has since seen.
+`HK_JOBS=1 git commit` is still the workaround if it recurs.
 
-- `MissingAudioPanel.test.tsx` — "repairs one of two pads naming the same
-  dead row" and "gives a pad naming one dead id twice a row apiece". Both
-  assert `Replaced` on a row straight after `chooseReplacement`, which is one
-  `panel.settle()` over a file hash, an IndexedDB write and a re-read.
-- `EditPadForm.dedup.test.tsx` — `addSounds` has its own copy of the shape, a
-  loop of 100 × 5 ms polls. It failed with "expected 2 sounds listed, saw 0".
+## Two loudness suites failed once inside `hk` and never again
 
-`HK_JOBS=1 git commit` is the workaround that got the commits through: same
-gates, run one at a time. Fake timers, or a settle that waits on a condition
-rather than a count, would end the class. Noticed while merging `p2/icons`,
-and again while landing the orange-window icons.
+On 2026-09-06 a commit was rejected by the pre-commit hook with
+
+    FAIL src/lib/audio/loudness/analyse.sliding.test.ts > the sliding block sum
+         > matches a re-summing reference on a huge dynamic range
+    FAIL src/lib/audio/loudness/query.test.ts > measureRange
+         > gives a different answer for a trimmed range than the whole file
+
+and passed on the immediate retry and on every run since — full suite included,
+repeatedly. Recorded because the failure mode is not obvious and the next person
+should not start from scratch.
+
+It is **not** a timeout, which is the first guess and the wrong one:
+`vitest.config.ts` sets `testTimeout: 20_000` and both tests run in about 500 ms
+idle, so a 40x stall would be needed. Both are pure numeric comparisons against
+a re-summing reference over a deterministic generated signal — there is no
+clock, no I/O and no shared state in either — so a genuine non-determinism
+would have to come from below them: the worker pool, `Float32Array`
+allocation under memory pressure, or something in vitest's teardown reporting
+the wrong test. That last one is worth ruling out first, since this repo has
+already had one teardown failure that read as an unrelated suite breaking (the
+`stubLoudnessPipeline` rule in CLAUDE.md).
+
+Nothing was changed for it: one unreproducible failure is not enough to act on,
+and a speculative `retry` on these two would hide it if it comes back. Note the
+run and the machine's load if it does.
 
 ## A nested `withAudioImportInProgress` would hang an import's rollback
 
