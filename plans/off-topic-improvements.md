@@ -214,24 +214,6 @@ the third.
 Noticed when a dev server started for a manual check left `CLAUDE.md`
 modified and blocked a merge.
 
-## The preloader's batch-level retry defeats its own batching
-
-When `loadAndDecodeAudioPipelined` _rejects_ — as opposed to answering with a
-map of nulls — `processBatch` re-queues each task from its own
-`setTimeout(…, 1000 * task.attempts)`, and each of those callbacks calls
-`processQueue()`. The first timer to fire starts a run with one task in the
-queue, so a failed batch of N comes back as N single-file requests rather than
-as one batch of N. The delay is per task and identical, so this is not a
-deliberate stagger.
-
-One shared timer that re-queues the whole batch and then calls `processQueue`
-once would restore the batching. Nothing is broken by the current shape — every
-file is still retried and still ends up cached — so this is efficiency, not
-correctness.
-
-Noticed while writing `preloader.test.ts`'s "retries every task when the
-decoder itself throws", which had to be written to the current behaviour.
-
 ## Nothing on the board distinguishes "playing" from "audible"
 
 Every playback signal the operator has — the pad's green progress bar, the

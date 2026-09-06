@@ -326,11 +326,14 @@ describe("when a load fails", () => {
     expect(getCachedAudioBuffer(92)).toBeNull();
   });
 
-  it("retries every task when the decoder itself throws", async () => {
+  it("retries a rejected batch as a batch, not as one request per file", async () => {
     // A rejection is different from a map of nulls: no per-file result comes
     // back at all, so every task in the batch has to be re-queued by hand.
-    // Each gets its own timer, and each timer restarts the queue, so the
-    // batch comes back as one request per file rather than as a batch.
+    // Each used to get its own timer, and each of those timers called
+    // `processQueue`, so the first to fire started a run with one task in the
+    // queue — a failed batch of N came back as N single-file requests. The
+    // delays were per task and identical, so it was not a deliberate stagger;
+    // it was the batching defeating itself.
     vi.useFakeTimers();
     pipelinedLoad.mockRejectedValue(new Error("audio context is closed"));
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -341,10 +344,9 @@ describe("when a load fails", () => {
     expect(batchedIds()).toEqual([[93, 94]]);
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(batchedIds().slice(1)).toEqual([[93], [94]]);
+    expect(batchedIds().slice(1)).toEqual([[93, 94]]);
 
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(pipelinedLoad).toHaveBeenCalledTimes(3);
     expect(getCachedAudioBuffer(93)).toBeNull();
     expect(getCachedAudioBuffer(94)).toBeNull();
   });

@@ -372,19 +372,30 @@ class AudioPreloader {
       console.error(`[Audio Preloader] ✗ Batch processing failed:`, error);
 
       // Mark all tasks as failed and update stats
+      const retrying: PreloadTask[] = [];
       tasks.forEach((task) => {
         if (task.attempts < task.maxAttempts) {
           task.attempts++;
-          // Re-queue individual tasks for retry
-          setTimeout(() => {
-            this.taskQueue.push(task);
-            this.processQueue();
-          }, 1000 * task.attempts);
+          retrying.push(task);
         } else {
           this.stats.totalFailed++;
           cacheAudioBuffer(task.audioFileId, null);
         }
       });
+
+      // One timer for the whole batch, not one per task. Each task used to get
+      // its own, and every one of those called `processQueue`, so the first to
+      // fire started a run with a single task in the queue — a failed batch of
+      // N came back as N single-file requests. The delays were per task and
+      // identical, so that was not a deliberate stagger; it was the batching
+      // undoing itself on the one path where batching matters most.
+      if (retrying.length > 0) {
+        const attempt = Math.max(...retrying.map((task) => task.attempts));
+        setTimeout(() => {
+          this.taskQueue.push(...retrying);
+          this.processQueue();
+        }, 1000 * attempt);
+      }
     }
   }
 
