@@ -89,8 +89,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Searches for "horn" over a board holding exactly `pad`, and returns the hit. */
-async function searchFor(pad: PadConfiguration): Promise<SearchResult> {
+/** Searches `term` over a board holding exactly `pad`, and returns the hit. */
+async function searchFor(
+  pad: PadConfiguration,
+  term = "horn",
+): Promise<SearchResult> {
   mocks.getAllPadConfigurationsForProfile.mockResolvedValue([pad]);
 
   let latest: ReturnType<typeof useSearch> | undefined;
@@ -103,7 +106,7 @@ async function searchFor(pad: PadConfiguration): Promise<SearchResult> {
     root.render(<Probe />);
   });
   await act(async () => {
-    latest!.setSearchTerm("horn");
+    latest!.setSearchTerm(term);
   });
   // The hook debounces before it reads anything.
   await act(async () => {
@@ -113,6 +116,31 @@ async function searchFor(pad: PadConfiguration): Promise<SearchResult> {
   expect(latest!.results).toHaveLength(1);
   return latest!.results[0];
 }
+
+/**
+ * A term with whitespace around it searches, and must also *match*.
+ *
+ * The hook decided whether to search on a trimmed term and then matched on the
+ * raw one, so `"horn "` was a search that could never hit anything: no pad
+ * name contains a trailing space. The operator saw "No sounds found" for a
+ * sound that was on the board, and a trailing space is easy to arrive at — a
+ * double-tap on a phone keyboard's space bar leaves one, and a cue name pasted
+ * out of a script usually carries one.
+ */
+describe("a term with whitespace around it", () => {
+  it("matches the same pads as the trimmed term", async () => {
+    const result = await searchFor(padOnDisk(), "horn ");
+
+    expect(result).toMatchObject({ name: "Horn", padIndex: 3 });
+  });
+
+  it("matches on a file name through the whitespace too", async () => {
+    // The other of the two matchers, which had its own copy of the raw term.
+    const result = await searchFor(padOnDisk({ name: "Cue 12" }), "  horn.wav");
+
+    expect(result).toMatchObject({ originalFileName: "horn.wav" });
+  });
+});
 
 describe("a search result", () => {
   it("carries the pad's activePadBehavior override", async () => {

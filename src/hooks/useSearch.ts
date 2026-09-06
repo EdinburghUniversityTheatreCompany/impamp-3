@@ -208,8 +208,13 @@ export function useSearch(searchOptions: SearchOptions = {}) {
             );
           }
 
-          // Check if pad matches search term (pad name OR any original file name)
-          const searchTermLower = searchTerm.toLowerCase();
+          // Check if pad matches search term (pad name OR any original file
+          // name). Trimmed, and it has to be: `hasQuery` above decides whether
+          // to search at all on a *trimmed* term, so matching on the raw one
+          // made `"horn "` a search that ran and could never hit anything —
+          // no pad name contains a trailing space, so the operator was told
+          // "No sounds found" about a sound that was on the board.
+          const searchTermLower = searchTerm.trim().toLowerCase();
           const nameMatches = padName.toLowerCase().includes(searchTermLower);
           const fileNameMatches = originalFileNames.some((name) =>
             name.toLowerCase().includes(searchTermLower),
