@@ -1153,11 +1153,12 @@ export function fadeOutAllTracks(durationInSeconds: number = 3): number {
 
   let fadedCount = 0;
   keys.forEach((key) => {
-    // Check if the instance is already fading to avoid restarting the fade
-    if (!activeTracks.get(key)?.isFading) {
-      if (fadeOutInstance(key, durationInSeconds)) {
-        fadedCount++;
-      }
+    // No `isFading` check here on purpose: `fadeOutInstance` opens with
+    // `if (!track || track.isFading) return false`, so it is already the one
+    // place that decides whether a track is a candidate. A second copy of the
+    // rule here changed no outcome and could only drift out of step with it.
+    if (fadeOutInstance(key, durationInSeconds)) {
+      fadedCount++;
     }
   });
 

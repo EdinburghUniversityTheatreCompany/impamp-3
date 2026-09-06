@@ -358,9 +358,10 @@ describe("fadeOutAllTracks", () => {
 
   it("skips a pad already fading, so its ramp is not restarted", () => {
     // Fade Out All pressed twice must not extend the first fade. The count is
-    // what this can see; note that `fadeOutInstance` refuses an already-fading
-    // track too, so the loop's own `isFading` check is a second copy of the
-    // same rule (recorded in plans/off-topic-improvements.md).
+    // what this can see, and it now sees the *only* copy of the rule:
+    // `fadeOutAllTracks` used to re-check `isFading` itself before calling in,
+    // which changed no outcome and could only drift away from
+    // `fadeOutInstance`'s own guard. Break that guard and this goes to 2.
     playback.playBuffer(bufferOf(10), "pad-1", params("pad-1"));
     playback.playBuffer(bufferOf(10), "pad-2", params("pad-2"));
     playback.fadeOutInstance("pad-1", 2);

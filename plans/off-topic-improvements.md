@@ -290,28 +290,6 @@ them.
 
 Noticed while writing tests for `waveform.ts` and `authUtils.ts`.
 
-## `fadeOutAllTracks` checks `isFading` twice
-
-```ts
-// playback.ts, fadeOutAllTracks
-if (!activeTracks.get(key)?.isFading) {
-  if (fadeOutInstance(key, durationInSeconds)) { ... }
-}
-```
-
-`fadeOutInstance` opens with `if (!track || track.isFading) return false;`, so
-the outer check cannot change any outcome — pressing Fade Out All twice is
-already a no-op for the tracks already fading, with or without it.
-
-This is the repo's "same rule written twice" shape, the one CLAUDE.md names as
-its characteristic regression, sitting in the tree in miniature. Removing the
-outer check leaves the suite green (measured), which is the point: the two
-copies cannot drift _visibly_. Deleting it makes `fadeOutInstance` the single
-place that decides, which is where the rule already lives.
-
-Noticed while mutation-testing `playback.progressLoop.test.ts` — the mutation
-that removed the outer check failed to break anything.
-
 ## A trim end that outlived its audio reports a length the file does not have
 
 `playBlobStreaming` computes `track.duration` from the trim range at trigger
