@@ -29,7 +29,7 @@ services:
       - IMPAMP_DB_PATH=/data/impamp.db
     # Everything else the server reads — GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY,
     # NEXT_PUBLIC_GOOGLE_CLIENT_ID, IMPAMP_ALLOWED_EMAILS, the five IMPAMP_S3_*
-    # and the IMPAMP_AUDIO_* limits; config/deploy.yml is the full list. A
+    # and the IMPAMP_AUDIO_* limits; docs/configuration.md is the full list. A
     # Portainer stack writes its environment variables to stack.env beside this
     # file, but interpolation only fills ${...} placeholders: without this, not
     # one of them reached the container, so sign-in, hosted audio and the signup

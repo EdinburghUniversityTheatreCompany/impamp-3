@@ -132,7 +132,7 @@ describe("the public file proxy", () => {
 
 describe("rate limiting", () => {
   /**
-   * A request that looks like it came through kamal-proxy. The other tests in
+   * A request that looks like it came through the reverse proxy. The other tests in
    * this file deliberately send no forwarding header, which is how a dev or
    * E2E request looks — the limiter stands down for those, so they are
    * unaffected by anything here.

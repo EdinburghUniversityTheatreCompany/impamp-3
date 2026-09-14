@@ -28,8 +28,8 @@ afterEach(() => {
 
 describe("resolveCommitHash", () => {
   it("shortens a full 40-character SHA", () => {
-    // Kamal's version and GitHub's github.sha are both full hashes, and the
-    // Help modal renders this next to a version number.
+    // GitHub's github.sha is a full hash, and the Help modal renders this
+    // next to a version number.
     const git = fakeGit("ffffff0\n");
     expect(
       resolveCommitHash(
@@ -75,7 +75,7 @@ describe("resolveCommitHash", () => {
 
   it("does not report nogit inside an image built with the arg", () => {
     // The regression this whole change exists for: no .git in the container,
-    // GIT_SHA supplied by config/deploy.yml.
+    // GIT_SHA supplied as a build arg.
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(
       resolveCommitHash(

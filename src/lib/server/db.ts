@@ -3,7 +3,7 @@
  *
  * Uses Node's built-in `node:sqlite` (no native dependency to compile, no
  * extra image build tooling). The database file lives on a persistent volume
- * in production — see `IMPAMP_DB_PATH` and the Kamal `volumes:` entry.
+ * in production — see `IMPAMP_DB_PATH` in `docs/configuration.md`.
  *
  * This module must only ever be imported from server code (route handlers and
  * their tests). Importing it from a client component would try to bundle

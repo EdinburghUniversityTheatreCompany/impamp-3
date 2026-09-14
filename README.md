@@ -172,7 +172,7 @@ For Portainer deployment:
    - Run time: `GOOGLE_CLIENT_SECRET`, `GOOGLE_API_KEY`,
      `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `IMPAMP_ALLOWED_EMAILS`, and for hosted
      audio the five `IMPAMP_S3_*` variables plus any `IMPAMP_AUDIO_*` limits.
-     `config/deploy.yml` documents each one
+     `docs/configuration.md` documents each one
 5. Deploy the stack
 
 #### Development with Docker Compose

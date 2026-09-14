@@ -266,7 +266,10 @@ whichever bank sits third.
 ### Docker Deployment
 
 - Production Dockerfile with multi-stage build
-- Kamal2 deployment configuration in `config/deploy.yml`
+- Deployed as a Portainer git stack from `docker-compose.yml`. Every
+  environment variable is documented in `docs/configuration.md`, and
+  `src/lib/configurationDocs.test.ts` fails when the code reads one it does
+  not name
 - Health check endpoint at `/up`
 - Development compose setup with profiles
 

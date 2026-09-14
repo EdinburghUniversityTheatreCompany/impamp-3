@@ -6,8 +6,8 @@
  * pulls — which is what takes collaboration latency from the Drive model's
  * 15 minutes down to about a second.
  *
- * This is deliberately in-process: the app runs as a single container behind
- * Kamal, so there is no second instance to fan out to. Running more than one
+ * This is deliberately in-process: the app runs as a single container, so
+ * there is no second instance to fan out to. Running more than one
  * replica would need an external bus (Redis pub/sub or Postgres LISTEN) —
  * until then, notifications would only reach viewers on the same instance,
  * with the client's periodic poll as the safety net.

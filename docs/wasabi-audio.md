@@ -133,7 +133,7 @@ Optional limits, with their defaults:
 | `IMPAMP_AUDIO_USER_QUOTA_BYTES` | 2 GiB   | Per approved account            |
 | `IMPAMP_AUDIO_MAX_OBJECT_BYTES` | 100 MB  | Largest single file             |
 | `IMPAMP_AUDIO_UPLOAD_URL_TTL`   | 900     | Presigned PUT lifetime, seconds |
-| `IMPAMP_AUDIO_DOWNLOAD_URL_TTL` | 3600    | Presigned GET lifetime, seconds |
+| `IMPAMP_AUDIO_DOWNLOAD_URL_TTL` | 300     | Presigned GET lifetime, seconds |
 
 A per-user override set by an admin beats `IMPAMP_AUDIO_USER_QUOTA_BYTES`;
 clearing it puts that user back on the default, so raising the default lifts

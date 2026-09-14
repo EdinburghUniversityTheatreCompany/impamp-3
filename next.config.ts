@@ -88,10 +88,10 @@ const nextConfig: NextConfig = {
             value: contentSecurityPolicy(),
           },
           {
-            // TLS is terminated at kamal-proxy (`ssl: true` in
-            // config/deploy.yml), which obtains the certificate but does not
-            // add this. Without it, the first request of a session can still
-            // be made over plaintext and downgraded.
+            // TLS is terminated in front of the app (Cloudflare, then the
+            // reverse proxy), and nothing there is relied on to add this.
+            // Without it, the first request of a session can still be made
+            // over plaintext and downgraded.
             //
             // No `preload`, and no `includeSubDomains`: this app is one host
             // under bedlamtheatre.co.uk, and asserting a policy for the whole
@@ -164,9 +164,10 @@ const nextConfig: NextConfig = {
  * discovered: **Next evaluates `headers()` when it builds, not per request**,
  * so `IMPAMP_S3_ENDPOINT` is only picked up if it is set *at build time*.
  * Measured, not assumed — setting it only in the run environment leaves the
- * origin out of the header. `config/deploy.yml` supplies it at run time, so a
- * Kamal-built image ships a policy that does not name the bucket, and hosted
- * audio will show up in the reports. That is survivable precisely because this
+ * origin out of the header. The Portainer stack supplies it at run time only
+ * (through `stack.env`; `docker-compose.yml` does not pass it as a build arg),
+ * so the deployed image ships a policy that does not name the bucket, and
+ * hosted audio will show up in the reports. That is survivable precisely because this
  * is Report-Only; it is also the thing that must be fixed before promoting the
  * header, either by passing the endpoint as a build ARG (which pins one image
  * to one bucket) or by emitting the policy from middleware, where the value

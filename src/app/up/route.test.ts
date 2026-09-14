@@ -1,5 +1,5 @@
 /**
- * The health check Kamal promotes on.
+ * The container's health check.
  *
  * The failure worth catching is not "the app is running" — a constant answers
  * that — but "the volume this app writes to is usable". The deployed

@@ -8,9 +8,9 @@
 // The environment variable is not a convenience: the production image is built
 // with `.git` excluded by .dockerignore, so `git rev-parse` inside it fails and
 // every deployed build used to report its commit as "nogit" — the running app
-// could not say which commit it was. config/deploy.yml and the CI image build
-// both pass GIT_SHA now; "nogit" is left as the last resort so a build from a
-// tarball still produces a valid file rather than failing.
+// could not say which commit it was. The CI image build passes GIT_SHA; "nogit"
+// is left as the last resort so a build without it (a Portainer stack, or a
+// tarball) still produces a valid file rather than failing.
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
@@ -28,8 +28,8 @@ const SHORT_SHA_LENGTH = 7;
  * The commit to report, as a short hash.
  *
  * GIT_SHA is normalised rather than trusted verbatim, because the obvious
- * things to pass it are full 40-character hashes — Kamal's own version is one,
- * and so is GitHub's `github.sha`. Both would otherwise render as a wall of hex
+ * things to pass it are full 40-character hashes, GitHub's `github.sha` among
+ * them. Those would otherwise render as a wall of hex
  * in the Help modal next to a version number. A value that is not a plain hash
  * (a `git describe` output, say, or a hash marked `-dirty`) is passed through
  * untouched: it identifies the build too, and truncating it would destroy that.

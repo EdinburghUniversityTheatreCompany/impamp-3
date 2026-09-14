@@ -4,7 +4,7 @@ import { assertDatabaseUsable } from "@/lib/server/db";
 export const dynamic = "force-dynamic";
 
 /**
- * The health check Kamal promotes a container on.
+ * The container's health check (`healthcheck` in `docker-compose.yml`).
  *
  * It used to return a constant, which meant it could not see the one failure
  * mode this deployment has actually hit. `getDb()` opens the file lazily on the

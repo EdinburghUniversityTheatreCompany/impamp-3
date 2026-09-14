@@ -245,9 +245,9 @@ jobs:
 
   # Build and smoke-test the production image — the artefact that actually ships.
   #
-  # Nothing in this pipeline used to touch it: `kamal deploy` builds locally on the
-  # operator's machine, so a broken Dockerfile or .dockerignore was discovered mid-deploy,
-  # on the deploying machine, with the running site already being replaced. Both failure
+  # Nothing in this pipeline used to touch it: the image is built where it is deployed
+  # (the operator's machine under Kamal, the Portainer host since), so a broken Dockerfile
+  # or .dockerignore was discovered mid-deploy, on the deploying machine. Both failure
   # modes have happened. The .dockerignore rewrite dropped playwright.config.ts while
   # keeping e2e-tests/ out, which fails `next build` at the type-check step; and the image
   # created /data but never set IMPAMP_DB_PATH, so every server-sync route 500'd with

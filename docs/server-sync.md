@@ -35,7 +35,7 @@ The server needs one environment variable and one persistent volume:
 
 - `IMPAMP_DB_PATH` — where the SQLite database lives. Defaults to
   `./data/impamp.db`, which is fine for local development. Production sets
-  `/data/impamp.db`, backed by the `impamp_data` volume in `config/deploy.yml`.
+  `/data/impamp.db`, backed by the `impamp_data` volume in `docker-compose.yml`.
 - `IMPAMP_ALLOWED_EMAILS` — **who may hold a server-sync account.** Optional,
   comma-separated, accepting full addresses and `@domain` suffixes:
 
@@ -66,14 +66,13 @@ The bucket then holds the only copy of those sounds, and the two have to be
 captured and restored as a pair, in that order. See
 [Backups](wasabi-audio.md#backups) in `wasabi-audio.md`.
 
-**The runnable command lives in the comment block above `volumes:` in
-[`config/deploy.yml`](../config/deploy.yml)**, next to the volume it copies. It
-is deliberately not repeated here. This file used to carry its own copy, which
-ran `sqlite3` through `kamal app exec` — and the app image is `node:alpine`,
-which has no `sqlite3` binary, so that command could never have worked. The
-same command was corrected in `deploy.yml` and not here, which left the broken
-copy sitting in the file a maintainer actually opens during an incident. One
-command, one home.
+**The runnable command lives in [Backups](configuration.md#backups) in
+`configuration.md`.** It is deliberately not repeated here. This file used to
+carry its own copy, which ran `sqlite3` through `kamal app exec` — and the app
+image is `node:alpine`, which has no `sqlite3` binary, so that command could
+never have worked. The same command was corrected in the deploy config and not
+here, which left the broken copy sitting in the file a maintainer actually
+opens during an incident. One command, one home.
 
 ## How a user turns it on
 
@@ -202,7 +201,7 @@ surface is not advertised to non-admins.
 ## Limitations
 
 - **Single instance only.** The SSE bus is in-process, which suits the
-  single-container Kamal deployment. A second replica would need an external
+  single-container deployment. A second replica would need an external
   bus (Redis pub/sub, Postgres `LISTEN`); until then notifications would reach
   only viewers on the same instance, with the periodic sync as the safety net.
 - **No replication.** The SQLite file lives on one volume with no streaming

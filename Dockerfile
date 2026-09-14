@@ -23,8 +23,8 @@ COPY . .
 # container does nothing at all — the browser never sees it. The Drive Picker in
 # ProfileManager.tsx reads all three; only the client id used to be passed, so
 # the deployed image rendered <drive-picker> with app-id and developer-key both
-# undefined, while config/deploy.yml's env.clear entry for the API key looked
-# like configuration and was inert.
+# undefined, while a run-time setting for the API key looked like configuration
+# and was inert.
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ARG NEXT_PUBLIC_GOOGLE_API_KEY
 ARG NEXT_PUBLIC_GOOGLE_APP_ID
@@ -39,8 +39,8 @@ ENV NEXT_PUBLIC_GOOGLE_APP_ID=${NEXT_PUBLIC_GOOGLE_APP_ID}
 # scripts/generate-build-info.js cannot work in here and returns its "nogit"
 # fallback. That is baked into the client bundle, so every deployed build
 # reported its version as "0.42.0-nogit" in the Help modal and nobody could
-# tell which commit was live without asking the host over SSH. Passed by
-# config/deploy.yml and by CI's image build; unset elsewhere, which leaves the
+# tell which commit was live without asking the host over SSH. Passed by CI's
+# image build; unset elsewhere, docker-compose.yml included, which leaves the
 # old fallback rather than failing a local `docker build`.
 ARG GIT_SHA
 ENV GIT_SHA=${GIT_SHA}
@@ -66,11 +66,11 @@ COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
 # The server-sync SQLite database lives here (IMPAMP_DB_PATH=/data/impamp.db,
-# config/deploy.yml). Creating it in the image owned by `node` is what makes a
+# docker-compose.yml). Creating it in the image owned by `node` is what makes a
 # *newly created* named volume land with the right ownership — Docker seeds a
 # fresh volume from the image directory it is mounted over. An volume that
 # already exists keeps whatever ownership it has, so an existing deployment
-# needs a one-off `chown -R 1000:1000` on it; see config/deploy.yml.
+# needs a one-off `chown -R 1000:1000` on it; see docs/configuration.md.
 RUN mkdir -p /data && chown node:node /data
 
 # Point the app at the directory the line above just created and chowned. The
@@ -78,9 +78,9 @@ RUN mkdir -p /data && chown node:node /data
 # — and server.js does `process.chdir(__dirname)`, so without this it resolves
 # to /app/data. /app is created by WORKDIR as root and COPY --chown does not
 # change it, so as uid 1000 that mkdir fails with EACCES and every server-sync
-# route 500s. docker-compose.yml and config/deploy.yml both set this variable,
-# which is exactly why the gap went unnoticed: the two paths anyone tests were
-# fine, and the bare `docker run` the README documents was not.
+# route 500s. docker-compose.yml sets this variable, and so did the Kamal config
+# before it, which is exactly why the gap went unnoticed: the paths anyone tested
+# were fine, and the bare `docker run` the README documents was not.
 ENV IMPAMP_DB_PATH=/data/impamp.db
 
 # Drop root. The server needs no privileged port and writes nothing outside

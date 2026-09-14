@@ -85,7 +85,6 @@ fnox.toml
 # dropping the tests without it fails `next build` at the type-check step.
 .claude
 .github
-.kamal
 e2e-tests
 playwright.config.ts
 plans

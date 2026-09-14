@@ -10,7 +10,7 @@
  * nothing at all about a script — see the note there.
  *
  * In-process for the same reason `events.ts` is: the app runs as a single
- * container behind Kamal, so there is no second instance whose counts would
+ * container, so there is no second instance whose counts would
  * have to agree. Running more than one replica would multiply every limit
  * below by the replica count, which is a reason to reach for a shared store,
  * not a reason to have no limit now.
@@ -27,14 +27,16 @@ import type { NextRequest } from "next/server";
  * list the client starts and each proxy appends to, so the leftmost value is
  * whatever the caller chose to claim — one `curl -H 'X-Forwarded-For: …'` and
  * every request looks like a different client. The rightmost was written by
- * the nearest proxy, which behind kamal-proxy is the only one there is.
+ * the nearest proxy: the reverse proxy directly in front of the container.
+ * Behind Cloudflare that proxy sees Cloudflare's edge rather than the visitor;
+ * see `plans/off-topic-improvements.md`.
  *
  * Returns `null` when no proxy header is present at all. That is a deployment
  * with nothing in front of it — a dev server, or the E2E run — and callers
  * treat it as "do not limit". The alternative, bucketing every such request
  * together, would hand one caller the ability to lock out everyone else, which
- * is a worse failure than the one being prevented. In production kamal-proxy
- * always sets the header, so there is nothing to strip.
+ * is a worse failure than the one being prevented. In production the reverse
+ * proxy always sets the header, so there is nothing to strip.
  */
 export function clientKey(request: NextRequest): string | null {
   const forwarded = request.headers.get("x-forwarded-for");
