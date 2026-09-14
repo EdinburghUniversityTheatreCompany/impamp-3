@@ -7,6 +7,9 @@ export default defineConfig({
     // Server code talks to node:sqlite and node:crypto — it needs a real Node
     // environment, not jsdom.
     environment: "node",
+    // Generates src/generated/build-info.json, which app modules import. Here
+    // rather than in npm's `pretest`, which `npx vitest run` never triggers.
+    globalSetup: ["scripts/vitest-global-setup.ts"],
     // scripts/ is in here for generate-build-info.test.ts: that script
     // decides what commit the deployed app reports, and it is the one
     // build-time script whose output the app itself reads.

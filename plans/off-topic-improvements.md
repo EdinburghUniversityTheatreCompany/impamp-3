@@ -187,20 +187,6 @@ no other platform even reads.
 
 Noticed while fixing the iOS ringer-switch bug.
 
-## hk's vitest step skips `pretest`, so a fresh clone fails its first commit
-
-`hk.pkl` runs `npx vitest run`, which does not trigger npm's `pretest` hook, and
-`pretest` is the only thing that writes `src/generated/build-info.json`.
-`src/lib/serviceWorker/register.ts` imports that file, so in a fresh clone all
-11 tests in `register.test.ts` fail with `Failed to resolve import
-"@/generated/build-info.json"`. Measured on untouched `main` at `f391100`. It
-passes in any checkout where `npm test`, `npm run typecheck` or a build has run
-once, which is why it looks intermittent and why CI (`npm test`) never sees it.
-Running `npm test` from hk instead of `npx vitest run`, or generating the file
-in a vitest `globalSetup`, closes it.
-
-Noticed while moving the deployment from Kamal to Portainer.
-
 ## A Portainer build reports its version as "nogit"
 
 `docker-compose.yml` does not pass `GIT_SHA`, and `.dockerignore` keeps `.git`
