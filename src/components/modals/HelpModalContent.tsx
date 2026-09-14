@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useIsApplePlatform } from "@/hooks/useIsApplePlatform";
 import { armModifierLabel } from "@/lib/platform";
 import buildInfo from "@/generated/build-info.json";
+import { versionLabel } from "@/lib/buildVersion";
 
 // Define the tab interface
 interface HelpTab {
@@ -600,9 +601,7 @@ const HelpModalContent: React.FC = () => {
           </kbd>{" "}
           at any time to open this help page.
         </p>
-        <p className="mt-2">
-          Version: {buildInfo.version}-{buildInfo.commitHash}
-        </p>
+        <p className="mt-2">Version: {versionLabel(buildInfo)}</p>
       </div>
     </div>
   );

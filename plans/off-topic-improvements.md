@@ -187,19 +187,6 @@ no other platform even reads.
 
 Noticed while fixing the iOS ringer-switch bug.
 
-## A Portainer build reports its version as "nogit"
-
-`docker-compose.yml` does not pass `GIT_SHA`, and `.dockerignore` keeps `.git`
-out of the build context, so an image built by the Portainer stack (or any
-plain `docker compose up app`) shows `0.42.0-nogit` in the Help modal. Kamal
-used to pass it. Portainer has no built-in variable holding the deployed
-commit, and a stack variable set by hand goes stale on the next redeploy. So
-the likelier fix is for `scripts/generate-build-info.js` to take the commit
-from somewhere Portainer does control, or to accept "nogit" as the
-non-CI answer.
-
-Noticed while moving the deployment from Kamal to Portainer.
-
 ## The rate limiter counts Cloudflare's edge, not the visitor
 
 `clientKey` in `src/lib/server/rateLimit.ts` takes the rightmost
