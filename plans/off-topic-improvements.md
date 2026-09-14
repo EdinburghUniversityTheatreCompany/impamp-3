@@ -186,19 +186,3 @@ different change with a different risk profile from a one-line declaration that
 no other platform even reads.
 
 Noticed while fixing the iOS ringer-switch bug.
-
-## The rate limiter counts Cloudflare's edge, not the visitor
-
-`clientKey` in `src/lib/server/rateLimit.ts` takes the rightmost
-`X-Forwarded-For` entry, which is whatever the proxy nearest the container
-saw. In production the chain is Cloudflare, then the reverse proxy, then the
-app. So that entry is a Cloudflare edge address, shared by every visitor routed
-through that edge. The Drive proxy limits and the anonymous SSE cap therefore
-bucket unrelated people together, and one heavy user can exhaust a whole
-edge's allowance. This was equally true behind kamal-proxy, which Cloudflare
-also fronted, so the move did not cause it. The fix is to trust
-`CF-Connecting-IP` when the request comes from Cloudflare, which the reverse
-proxy can guarantee because it already requires Cloudflare's origin-pull
-certificate.
-
-Noticed while moving the deployment from Kamal to Portainer.

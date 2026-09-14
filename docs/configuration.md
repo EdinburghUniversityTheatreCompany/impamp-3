@@ -24,12 +24,13 @@ only on the running container does nothing; change it and redeploy.
 
 ## Run time
 
-| Variable                | Default            | Purpose                                                                                                                          |
-| ----------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_SECRET`  | none               | OAuth code exchange and token refresh. Unset, Google sign-in fails                                                               |
-| `GOOGLE_API_KEY`        | none               | Server key the public Drive proxies spend. Unset, shared boards cannot download audio while signed out                           |
-| `IMPAMP_DB_PATH`        | `./data/impamp.db` | The server-sync SQLite database. The image and `docker-compose.yml` set `/data/impamp.db`, on the `impamp_data` volume           |
-| `IMPAMP_ALLOWED_EMAILS` | unset: anyone      | Who may hold a server-sync account: comma-separated addresses and `@domain` suffixes. See [server-sync.md](server-sync.md#setup) |
+| Variable                        | Default            | Purpose                                                                                                                                                                                                      |
+| ------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GOOGLE_CLIENT_SECRET`          | none               | OAuth code exchange and token refresh. Unset, Google sign-in fails                                                                                                                                           |
+| `GOOGLE_API_KEY`                | none               | Server key the public Drive proxies spend. Unset, shared boards cannot download audio while signed out                                                                                                       |
+| `IMPAMP_DB_PATH`                | `./data/impamp.db` | The server-sync SQLite database. The image and `docker-compose.yml` set `/data/impamp.db`, on the `impamp_data` volume                                                                                       |
+| `IMPAMP_ALLOWED_EMAILS`         | unset: anyone      | Who may hold a server-sync account: comma-separated addresses and `@domain` suffixes. See [server-sync.md](server-sync.md#setup)                                                                             |
+| `IMPAMP_TRUST_CF_CONNECTING_IP` | unset: off         | `1` makes rate limits count each visitor by Cloudflare's `CF-Connecting-IP` rather than by Cloudflare's edge address. Set it only when nothing but Cloudflare can reach the app, or the header can be forged |
 
 ### Server-hosted audio
 

@@ -28,8 +28,16 @@ import type { NextRequest } from "next/server";
  * whatever the caller chose to claim — one `curl -H 'X-Forwarded-For: …'` and
  * every request looks like a different client. The rightmost was written by
  * the nearest proxy: the reverse proxy directly in front of the container.
- * Behind Cloudflare that proxy sees Cloudflare's edge rather than the visitor;
- * see `plans/off-topic-improvements.md`.
+ *
+ * Behind Cloudflare that is not enough, because the reverse proxy sees
+ * Cloudflare's edge rather than the visitor: every visitor routed through one
+ * edge shares one key, so one heavy user can use up the whole edge's allowance.
+ * Cloudflare names the visitor in `cf-connecting-ip`, but anyone who reaches
+ * the app without going through Cloudflare can write that header too. So it is
+ * used only when `IMPAMP_TRUST_CF_CONNECTING_IP=1`, which a deployment should
+ * set only when nothing but Cloudflare can reach it. The production reverse
+ * proxy requires Cloudflare's origin-pull certificate, and the app's host takes
+ * no inbound traffic from the internet.
  *
  * Returns `null` when no proxy header is present at all. That is a deployment
  * with nothing in front of it — a dev server, or the E2E run — and callers
@@ -39,6 +47,11 @@ import type { NextRequest } from "next/server";
  * proxy always sets the header, so there is nothing to strip.
  */
 export function clientKey(request: NextRequest): string | null {
+  if (process.env.IMPAMP_TRUST_CF_CONNECTING_IP === "1") {
+    const visitor = request.headers.get("cf-connecting-ip")?.trim();
+    if (visitor) return visitor;
+  }
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
     const hops = forwarded

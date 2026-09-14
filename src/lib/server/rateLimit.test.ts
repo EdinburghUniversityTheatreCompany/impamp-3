@@ -16,6 +16,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   resetRateLimitState();
 });
 
@@ -59,6 +60,58 @@ describe("clientKey", () => {
     // bucketing every such request together would let one caller lock out
     // everyone else, which is worse than the problem.
     expect(clientKey(requestWith({}))).toBeNull();
+  });
+
+  describe("behind Cloudflare", () => {
+    // In production the chain is Cloudflare, then the reverse proxy, then the
+    // app, so the rightmost x-forwarded-for entry is a Cloudflare edge address
+    // shared by every visitor routed through it. Cloudflare's own header names
+    // the visitor, but anyone who can reach the app without Cloudflare can
+    // write it too, so it is trusted only where the deployment says so.
+    const throughCloudflare = {
+      "cf-connecting-ip": "198.51.100.4",
+      "x-forwarded-for": "198.51.100.4, 172.68.229.189",
+    };
+
+    it("ignores cf-connecting-ip unless the deployment trusts it", () => {
+      expect(clientKey(requestWith(throughCloudflare))).toBe("172.68.229.189");
+    });
+
+    it("keys on the visitor when IMPAMP_TRUST_CF_CONNECTING_IP=1", () => {
+      vi.stubEnv("IMPAMP_TRUST_CF_CONNECTING_IP", "1");
+      expect(clientKey(requestWith(throughCloudflare))).toBe("198.51.100.4");
+    });
+
+    it("tells two visitors on the same edge apart", () => {
+      vi.stubEnv("IMPAMP_TRUST_CF_CONNECTING_IP", "1");
+      const other = {
+        ...throughCloudflare,
+        "cf-connecting-ip": "203.0.113.50",
+      };
+      expect(clientKey(requestWith(throughCloudflare))).not.toBe(
+        clientKey(requestWith(other)),
+      );
+    });
+
+    it("is not switched on by any value other than 1", () => {
+      vi.stubEnv("IMPAMP_TRUST_CF_CONNECTING_IP", "0");
+      expect(clientKey(requestWith(throughCloudflare))).toBe("172.68.229.189");
+    });
+
+    it("falls back to x-forwarded-for when trusted but the header is missing or blank", () => {
+      vi.stubEnv("IMPAMP_TRUST_CF_CONNECTING_IP", "1");
+      expect(
+        clientKey(requestWith({ "x-forwarded-for": "9.9.9.9, 203.0.113.7" })),
+      ).toBe("203.0.113.7");
+      expect(
+        clientKey(
+          requestWith({
+            "cf-connecting-ip": "   ",
+            "x-forwarded-for": "9.9.9.9, 203.0.113.7",
+          }),
+        ),
+      ).toBe("203.0.113.7");
+    });
   });
 });
 
