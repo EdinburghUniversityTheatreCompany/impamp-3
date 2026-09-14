@@ -13,6 +13,12 @@ services:
         # local .env (see .env.dist), which compose loads automatically — but a
         # placeholder is enough for everything that is not Google sign-in.
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-unset.apps.googleusercontent.com}
+        # The Drive Picker's developer key and app id. Both are inlined into the
+        # client bundle at build time like the client id above, so they must be
+        # build args; left unset, the Picker renders without them, which is what
+        # every compose build did before these two lines existed.
+        NEXT_PUBLIC_GOOGLE_API_KEY: ${NEXT_PUBLIC_GOOGLE_API_KEY:-}
+        NEXT_PUBLIC_GOOGLE_APP_ID: ${NEXT_PUBLIC_GOOGLE_APP_ID:-}
     image: impamp3:latest
     container_name: impamp3-app
     restart: unless-stopped
@@ -21,7 +27,18 @@ services:
     environment:
       - NODE_ENV=production
       - IMPAMP_DB_PATH=/data/impamp.db
-      # Add any additional environment variables here
+    # Everything else the server reads — GOOGLE_CLIENT_SECRET, GOOGLE_API_KEY,
+    # NEXT_PUBLIC_GOOGLE_CLIENT_ID, IMPAMP_ALLOWED_EMAILS, the five IMPAMP_S3_*
+    # and the IMPAMP_AUDIO_* limits; config/deploy.yml is the full list. A
+    # Portainer stack writes its environment variables to stack.env beside this
+    # file, but interpolation only fills ${...} placeholders: without this, not
+    # one of them reached the container, so sign-in, hosted audio and the signup
+    # allowlist were silently off. Only variables that are actually set arrive,
+    # so an unset IMPAMP_ALLOWED_EMAILS stays unset rather than becoming "".
+    # Optional, so a plain local `docker compose up app` still works without one.
+    env_file:
+      - path: stack.env
+        required: false
     volumes:
       # Server-sync SQLite database — must outlive the container.
       - impamp_data:/data

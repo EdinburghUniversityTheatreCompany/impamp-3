@@ -51,6 +51,9 @@ Thumbs.db
 # Environment files
 .env*
 !.env.dist
+# A Portainer stack's variables, secrets included, written beside
+# docker-compose.yml. `.env*` does not match it.
+stack.env
 
 # Gitignored local artifacts. Docker does not read .gitignore, so every one of
 # these would otherwise be tarred up and shipped to the daemon by `COPY . .`,

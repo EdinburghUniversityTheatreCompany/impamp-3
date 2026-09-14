@@ -163,7 +163,17 @@ For Portainer deployment:
 1. Add the docker-compose.yml file to your Portainer stack
 2. By default, only the production app will start (the dev service has a profile restriction)
 3. You can set the HOST_PORT environment variable in Portainer to change the default port (3025)
-4. Deploy the stack
+4. Set the rest of the configuration as the stack's environment variables.
+   Portainer writes them to `stack.env`, which the `app` service loads, so
+   they reach the container without editing the compose file:
+   - Build time (baked into the client bundle, so a change needs a rebuild):
+     `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `NEXT_PUBLIC_GOOGLE_API_KEY`,
+     `NEXT_PUBLIC_GOOGLE_APP_ID`
+   - Run time: `GOOGLE_CLIENT_SECRET`, `GOOGLE_API_KEY`,
+     `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `IMPAMP_ALLOWED_EMAILS`, and for hosted
+     audio the five `IMPAMP_S3_*` variables plus any `IMPAMP_AUDIO_*` limits.
+     `config/deploy.yml` documents each one
+5. Deploy the stack
 
 #### Development with Docker Compose
 

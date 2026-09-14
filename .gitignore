@@ -35,6 +35,8 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.dist
+# Portainer's per-stack variables, secrets included (see docker-compose.yml)
+stack.env
 
 # fnox — local-only secret references (this repo has non-fnox contributors)
 fnox.toml
