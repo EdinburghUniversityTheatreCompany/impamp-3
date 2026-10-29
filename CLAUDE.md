@@ -279,8 +279,8 @@ whichever bank sits third.
 
 As resolved in `package-lock.json` — keep in sync when upgrading dependencies:
 Next.js 16, React 19, TypeScript 6, Tailwind CSS 4, Zustand 5, idb 8,
-react-dropzone 20, Playwright 1.62, ESLint 9 with eslint-config-next 16,
-Prettier 3.9, Vitest 4.1 with `@vitest/coverage-v8` on the same version (the
+react-dropzone 20, Playwright 1.64, ESLint 9 with eslint-config-next 16,
+Prettier 3.9, Vitest 5.0 with `@vitest/coverage-v8` on the same version (the
 coverage provider is released in lockstep with Vitest, so bump the two
 together).
 

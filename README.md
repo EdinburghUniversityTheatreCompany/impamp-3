@@ -273,7 +273,7 @@ whenever dependencies are upgraded.
 - **Local Storage**: IndexedDB (via idb 8)
 - **Audio**: Web Audio API
 - **File Handling**: react-dropzone 20
-- **Testing**: Vitest 4 for the unit and API suite (`npm test`), Playwright 1.62 for end-to-end (chromium is what CI gates on)
+- **Testing**: Vitest 5 for the unit and API suite (`npm test`), Playwright 1.64 for end-to-end (chromium is what CI gates on)
 - **Linting**: ESLint 9 + eslint-config-next 16, Prettier 3.9
 
 ## License
