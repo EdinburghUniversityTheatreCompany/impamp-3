@@ -98,3 +98,11 @@ out at `eslint: ^9.7`. Both hold.
 its own dependency to `^5.0.0`, which inverted the pin — holding 4.1.0 became
 the thing that forked the tree. That was the written retry condition, so both
 moved together.
+
+## Re-checked 2026-10-29
+
+Both still hold. `typescript-eslint@8.72.1` (latest, and what
+`eslint-config-next@16.4.3` resolves) peers `typescript: >=4.8.4 <6.1.0`, so
+TypeScript 7.0.2 is still refused. `eslint-plugin-react@7.37.5` is still the
+latest stable and still peers `eslint: ^9.7`, so ESLint 10.13.0 is still out of
+reach (`7.8.0-rc.0` remains a prerelease on the `next` tag).
