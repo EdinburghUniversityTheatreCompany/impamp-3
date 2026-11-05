@@ -12,7 +12,7 @@ updates:
     # Supply-chain seasoning: never propose a release less than a week old, so
     # a compromised publish has time to be noticed and yanked.
     #
-    # Seven rather than the four in mise.toml and scripts/run-jscpd.sh, which
+    # Seven rather than the three in mise.toml and scripts/run-jscpd.sh, which
     # is what zizmor's dependabot-cooldown audit asks for and what this gate
     # fails below. The two are not quite the same question either: those cover
     # *tooling* pulled at run time by someone watching the output, this covers
@@ -27,6 +27,11 @@ updates:
         update-types:
           - minor
           - patch
+      # Every security fix in one PR, so a one-package PR can't fail the audit
+      # on the other vulnerable packages still on main.
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
     ignore:
       # Held back deliberately, with the reasons and retry conditions in
       # plans/deferred-upgrades.md. Dependabot cannot know that, and would
@@ -44,4 +49,8 @@ updates:
       default-days: 7
     groups:
       actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      actions-security:
+        applies-to: security-updates
         patterns: ["*"]
